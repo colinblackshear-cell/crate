@@ -106,3 +106,7 @@ jobs:
       - run: ctest --test-dir build --output-on-failure
         env:
           MPC_FIXTURES: ${{ github.workspace }}/fixtures/resources/demodata
+      - name: Phone app tests
+        run: node --test tests/phone/*.test.mjs
+        env:
+          MPC_FIXTURES: ${{ github.workspace }}/fixtures/resources/demodata

@@ -56,6 +56,27 @@ In Logic, add MPC Bank Builder as an instrument (AU Instruments > Colin Blackshe
 instrument track. The track's MIDI plays the pads, and your kits and their sounds are saved with
 the Logic project.
 
+### Crate on your phone
+
+A web app for recording on the go: open
+[colinblackshear-cell.github.io/crate](https://colinblackshear-cell.github.io/crate/) in Safari, then
+**Share > Add to Home Screen** so it opens like an app (and iOS keeps your sounds). It works with no
+signal once it has opened once.
+
+- **Record** from the phone's mic, with the phone's call processing turned off so field
+  recordings sound natural. Drag across the waveform to select, then keep, delete, trim silence,
+  fade, normalize or reverse. Undo goes back 50 steps.
+- **Effects:** pitch (tape style), low and high cut with resonance, drive, bit crusher, sample
+  rate reducer, delay and reverb. Hear them as you go, then apply.
+- **Chop** at each hit, into equal slices, or at markers you tap onto the waveform.
+- **Sounds** is the phone's library. **Share** sends a WAV to Files, iCloud Drive or AirDrop; save
+  it to `Music/Crate/Sounds` on your Mac to use it in the other tools. **Import** brings in audio
+  files and MPC `.SND` files.
+- **Pads:** 4 banks of 16, laid out like the MPC. Tap to play. Turn on **Edit pads** to set a pad's
+  volume, pan, tune and how it plays, or chop it across the pads after it.
+- **Export for MPC** makes a zip of the kit's folder (`.PGM` plus `.SND` files). Unzip it in the
+  Files app straight onto the MPC's SD card with an SD card reader, or AirDrop it to the Mac.
+
 ## The shared sound library
 
 `~/Music/Crate/Sounds` is a plain folder of WAV files, so you can also manage it in Finder or drag
@@ -106,7 +127,9 @@ and writes back byte for byte (CI uses the demo kits from [vMPC2000XL](https://g
 core/          shared by every tool: sound files, edits, effects, the sound library, common UI
 tools/editor/  the Sample Editor (app + AU + VST3)
 tools/mpc/     the MPC Bank Builder (app + AU instrument + VST3); mpc/ reads and writes .SND and .PGM
-tests/         headless tests for the core and the tools, and the MPC file format tests
+tools/phone/   Crate on your phone: a web app (plain JavaScript, no build step), published to GitHub Pages
+tests/         headless tests for the core and the tools, the MPC file format tests, and
+               tests/phone (run with `node --test tests/phone/*.test.mjs`)
 ```
 
 A new tool goes in `tools/<name>/` with its own `CMakeLists.txt`. It links `crate_core` and uses

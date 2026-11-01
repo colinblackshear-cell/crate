@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Crate">
+<meta name="theme-color" content="#1c1d20">
+<title>Crate</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+
+<header class="top">
+  <h1>Crate</h1>
+  <span id="status" class="status" role="status"></span>
+</header>
+
+<main>
+  <!-- Record and edit -->
+  <section id="page-record" class="page active">
+    <div class="recordbar">
+      <button id="record" class="record" aria-label="Record"><span></span></button>
+      <div class="recinfo">
+        <div id="rectime" class="rectime">Tap to record</div>
+        <div class="meter"><div id="meter"></div></div>
+      </div>
+    </div>
+
+    <div class="wave-wrap">
+      <canvas id="wave" class="wave"></canvas>
+      <div id="wave-empty" class="wave-empty">Record something, or open a sound from your library.</div>
+    </div>
+    <div id="wave-info" class="dim small"></div>
+
+    <div class="row">
+      <button id="play" class="primary">Play</button>
+      <button id="select-all">Select all</button>
+      <button id="undo">Undo</button>
+      <button id="redo">Redo</button>
+    </div>
+
+    <div class="tools">
+      <button data-edit="keep">Keep selection</button>
+      <button data-edit="delete">Delete</button>
+      <button data-edit="trim">Trim silence</button>
+      <button data-edit="fadein">Fade in</button>
+      <button data-edit="fadeout">Fade out</button>
+      <button data-edit="normalize">Normalize</button>
+      <button data-edit="reverse">Reverse</button>
+    </div>
+
+    <details id="fx-panel" class="panel">
+      <summary>Effects <span id="fx-state" class="dim small"></span></summary>
+      <div id="fx-sliders" class="sliders"></div>
+      <div class="row">
+        <label class="toggle"><input type="checkbox" id="hear-fx" checked> Hear effects</label>
+        <button id="fx-apply">Apply</button>
+        <button id="fx-reset">Reset</button>
+      </div>
+    </details>
+
+    <details class="panel">
+      <summary>Chop <span id="chop-count" class="dim small"></span></summary>
+      <div class="row">
+        <button id="find-hits">Find hits</button>
+        <select id="slices" aria-label="Even slices">
+          <option value="">Even slices…</option>
+          <option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16">16</option>
+        </select>
+        <button id="clear-markers">Clear</button>
+      </div>
+      <label class="slider"><span>Sensitivity</span><input type="range" id="sensitivity" min="0" max="1" step="0.01" value="0.5"></label>
+      <p class="dim small">Tap the waveform with Chop open to add a marker; tap a marker to remove it.</p>
+    </details>
+
+    <div class="output">
+      <input id="name" placeholder="Name" maxlength="40" autocomplete="off" autocapitalize="words">
+      <div class="row">
+        <button id="save" class="primary">Save to library</button>
+        <button id="to-pad">To pad</button>
+        <button id="chop-to-pads">Chop to pads</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Library -->
+  <section id="page-sounds" class="page">
+    <div class="row">
+      <input id="search" type="search" placeholder="Search sounds">
+      <label class="button" for="import">Import</label>
+      <input id="import" type="file" accept="audio/*,.wav,.aif,.aiff,.mp3,.m4a,.snd" multiple hidden>
+    </div>
+    <p id="persist-note" class="dim small"></p>
+    <ul id="sound-list" class="list"></ul>
+    <p id="sounds-empty" class="dim center">No sounds yet. Record one, or import files.</p>
+  </section>
+
+  <!-- Pads -->
+  <section id="page-pads" class="page">
+    <div class="row">
+      <input id="kit-name" placeholder="Kit name" maxlength="16" autocapitalize="characters">
+      <button id="export" class="primary">Export for MPC</button>
+    </div>
+    <div class="row banks" role="tablist">
+      <button data-bank="0" class="on">A</button><button data-bank="1">B</button>
+      <button data-bank="2">C</button><button data-bank="3">D</button>
+      <label class="toggle edit-toggle"><input type="checkbox" id="pad-edit"> Edit pads</label>
+    </div>
+    <div id="pads" class="pads"></div>
+    <div id="pad-panel" class="panel pad-panel" hidden>
+      <div class="row"><strong id="pad-title"></strong><span id="pad-sound" class="dim small"></span></div>
+      <label class="slider"><span>Volume</span><input type="range" id="pad-volume" min="0" max="100" step="1"></label>
+      <label class="slider"><span>Pan</span><input type="range" id="pad-pan" min="0" max="100" step="1"></label>
+      <label class="slider"><span>Tune</span><input type="range" id="pad-tune" min="-120" max="120" step="1"></label>
+      <div class="row">
+        <select id="pad-mode" aria-label="How the pad plays">
+          <option value="oneShot">One shot</option>
+          <option value="mono">Mono (cuts the last hit)</option>
+          <option value="noteOff">Note off (stops on release)</option>
+        </select>
+        <button id="pad-chop">Chop across pads</button>
+        <button id="pad-clear">Clear</button>
+      </div>
+    </div>
+    <p class="dim small" id="kit-memory"></p>
+  </section>
+</main>
+
+<nav class="tabs">
+  <button data-page="record" class="on">Record</button>
+  <button data-page="sounds">Sounds</button>
+  <button data-page="pads">Pads</button>
+</nav>
+
+
+</body>
+</html>
