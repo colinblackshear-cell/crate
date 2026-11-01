@@ -90,7 +90,7 @@ EditorView::EditorView (EditorProcessor& p)
     infoLabel.setColour (juce::Label::textColourId, crate::Theme::textDim);
 
     // edits
-    for (auto* l : { &editHeading, &shapeHeading })
+    for (auto* l : { &editHeading, &fadeHeading, &levelHeading })
     {
         l->setFont (juce::FontOptions (11.0f, juce::Font::bold));
         l->setColour (juce::Label::textColourId, crate::Theme::textDim);
@@ -120,8 +120,22 @@ EditorView::EditorView (EditorProcessor& p)
     trimSilenceButton.setTooltip ("Cut the quiet bits off the start and end");
     snapToggle.setTooltip ("Move cut points to where the wave crosses zero, so cuts don't click");
     snapToggle.setToggleState (true, juce::dontSendNotification);
-    fadeInButton.setTooltip ("Fade in across the selection (I)");
-    fadeOutButton.setTooltip ("Fade out across the selection (O)");
+    fadeInButton.setTooltip ("Fade in across the selection, or over Length at the start if nothing is selected (I)");
+    fadeOutButton.setTooltip ("Fade out across the selection, or over Length at the end if nothing is selected (O)");
+    for (auto* l : { &fadeLengthLabel, &fadeAmountLabel })
+        l->setColour (juce::Label::textColourId, crate::Theme::textDim);
+    fadeLength.setRange (5.0, 10000.0, 1.0);
+    fadeLength.setSkewFactorFromMidPoint (500.0);
+    fadeLength.setValue (300.0, juce::dontSendNotification);
+    fadeLength.setTextValueSuffix (" ms");
+    fadeLength.setTextBoxStyle (juce::Slider::TextBoxRight, false, 72, 22);
+    fadeLength.setTooltip ("How long fades are when nothing is selected. With a selection, the fade covers the selection.");
+    fadeAmount.setRange (5.0, 100.0, 1.0);
+    fadeAmount.setValue (100.0, juce::dontSendNotification);
+    fadeAmount.setTextValueSuffix (" %");
+    fadeAmount.setTextBoxStyle (juce::Slider::TextBoxRight, false, 56, 22);
+    fadeAmount.setDoubleClickReturnValue (true, 100.0);
+    fadeAmount.setTooltip ("How far the level drops: 100% fades to silence, 50% only to half volume");
     curveBox.addItemList ({ "Straight", "Smooth", "Fast", "Slow" }, 1);
     curveBox.setSelectedId (2, juce::dontSendNotification);
     curveBox.setTooltip ("The shape of fades: Smooth is gentle at both ends, Fast changes early, Slow changes late");
@@ -136,19 +150,36 @@ EditorView::EditorView (EditorProcessor& p)
 
     message.setColour (juce::Label::textColourId, crate::Theme::textDim);
 
+    effects.onChange = [this]
+    {
+        if (playingPreview && processor.isPlaying())
+            previewDueAt = juce::Time::getMillisecondCounterHiRes() + 150.0;   // re-render once the control settles
+        refresh();
+    };
+    effects.onPreviewChanged = [this] (bool on)
+    {
+        if (processor.isPlaying())
+            processor.stop();
+        playingPreview = false;
+        say (on ? "Effects preview is on: press Play (Space) to hear the selection, or the whole sound, with the effects."
+                : "Effects preview is off.");
+    };
+    effects.onApply = [this] { applyEffects(); };
+
     for (auto* c : std::initializer_list<juce::Component*> {
              &recordButton, &meter, &recordTime, &openButton, &saveButton, &exportButton, &nameLabel, &nameEditor,
              &libraryList, &wave, &playButton, &loopButton, &zoomOutButton, &zoomInButton, &fitButton, &zoomSelButton,
-             &infoLabel, &editHeading, &shapeHeading, &undoButton, &redoButton, &cutButton, &copyButton, &pasteButton,
+             &infoLabel, &editHeading, &undoButton, &redoButton, &cutButton, &copyButton, &pasteButton,
              &deleteButton, &cropButton, &silenceButton, &trimSilenceButton, &snapToggle, &fadeInButton,
-             &fadeOutButton, &curveBox, &reverseButton, &normalizeButton, &gainSlider, &gainButton, &message })
+             &fadeOutButton, &curveBox, &fadeHeading, &levelHeading, &fadeLength, &fadeAmount,
+             &fadeLengthLabel, &fadeAmountLabel, &effects, &reverseButton, &normalizeButton, &gainSlider, &gainButton, &message })
         addAndMakeVisible (c);
 
     document.addChangeListener (this);
     setWantsKeyboardFocus (true);
     setResizable (true, true);
-    setResizeLimits (900, 600, 2400, 1600);
-    setSize (1180, 720);
+    setResizeLimits (1100, 680, 2600, 1700);
+    setSize (1440, 800);
 
     changeListenerCallback (&document);   // show the sound that's already open (window reopened)
     say (processor.hasInput() ? "Press Record, open a file, or pick a sound from the library."
@@ -159,6 +190,7 @@ EditorView::EditorView (EditorProcessor& p)
 
 EditorView::~EditorView()
 {
+    renderPool.removeAllJobs (true, 5000);
     document.removeChangeListener (this);
     setLookAndFeel (nullptr);
 }
@@ -171,7 +203,8 @@ void EditorView::paint (juce::Graphics& g)
     // the tools panel under the waveform
     auto tools = getLocalBounds().reduced (12);
     tools.removeFromLeft (252);
-    tools = tools.removeFromBottom (128).withTrimmedBottom (26);
+    tools.removeFromRight (kEffectsWidth + 12);
+    tools = tools.removeFromBottom (kToolsHeight + 26).withTrimmedBottom (26);
     g.setColour (crate::Theme::panel);
     g.fillRoundedRectangle (tools.toFloat(), 6.0f);
 }
@@ -199,44 +232,54 @@ void EditorView::resized()
     r.removeFromTop (12);
     libraryList.setBounds (r.removeFromLeft (240));
     r.removeFromLeft (12);
+    effects.setBounds (r.removeFromRight (kEffectsWidth));
+    r.removeFromRight (12);
 
     // tools and message at the bottom
     message.setBounds (r.removeFromBottom (22));
     r.removeFromBottom (4);
-    auto tools = r.removeFromBottom (102).reduced (10, 8);
+    auto tools = r.removeFromBottom (kToolsHeight).reduced (10, 6);
     r.removeFromBottom (10);
 
-    auto row1 = tools.removeFromTop (40).reduced (0, 4);
+    auto row1 = tools.removeFromTop (38).reduced (0, 4);
     editHeading.setBounds (row1.removeFromLeft (52));
     for (auto* b : { &undoButton, &redoButton })
         b->setBounds (row1.removeFromLeft (58)), row1.removeFromLeft (4);
     row1.removeFromLeft (10);
     for (auto* b : { &cutButton, &copyButton, &pasteButton, &deleteButton })
-        b->setBounds (row1.removeFromLeft (62)), row1.removeFromLeft (4);
+        b->setBounds (row1.removeFromLeft (60)), row1.removeFromLeft (4);
     row1.removeFromLeft (10);
-    cropButton.setBounds (row1.removeFromLeft (128));
+    cropButton.setBounds (row1.removeFromLeft (124));
     row1.removeFromLeft (4);
-    silenceButton.setBounds (row1.removeFromLeft (70));
+    silenceButton.setBounds (row1.removeFromLeft (68));
     row1.removeFromLeft (4);
-    trimSilenceButton.setBounds (row1.removeFromLeft (120));
-    row1.removeFromLeft (10);
-    snapToggle.setBounds (row1.removeFromLeft (120));
+    trimSilenceButton.setBounds (row1.removeFromLeft (118));
 
-    auto row2 = tools.removeFromTop (40).reduced (0, 4);
-    shapeHeading.setBounds (row2.removeFromLeft (52));
+    auto row2 = tools.removeFromTop (38).reduced (0, 4);
+    fadeHeading.setBounds (row2.removeFromLeft (52));
     fadeInButton.setBounds (row2.removeFromLeft (72));
     row2.removeFromLeft (4);
     fadeOutButton.setBounds (row2.removeFromLeft (76));
     row2.removeFromLeft (4);
     curveBox.setBounds (row2.removeFromLeft (96));
     row2.removeFromLeft (14);
-    reverseButton.setBounds (row2.removeFromLeft (76));
-    row2.removeFromLeft (4);
-    normalizeButton.setBounds (row2.removeFromLeft (88));
-    row2.removeFromLeft (14);
-    gainButton.setBounds (row2.removeFromLeft (92));
-    row2.removeFromLeft (4);
-    gainSlider.setBounds (row2.removeFromLeft (juce::jmin (220, row2.getWidth())));
+    fadeLengthLabel.setBounds (row2.removeFromLeft (52));
+    fadeLength.setBounds (row2.removeFromLeft (200));
+    row2.removeFromLeft (12);
+    fadeAmountLabel.setBounds (row2.removeFromLeft (60));
+    fadeAmount.setBounds (row2.removeFromLeft (juce::jmin (180, row2.getWidth())));
+
+    auto row3 = tools.removeFromTop (38).reduced (0, 4);
+    levelHeading.setBounds (row3.removeFromLeft (52));
+    reverseButton.setBounds (row3.removeFromLeft (76));
+    row3.removeFromLeft (4);
+    normalizeButton.setBounds (row3.removeFromLeft (88));
+    row3.removeFromLeft (14);
+    gainButton.setBounds (row3.removeFromLeft (92));
+    row3.removeFromLeft (4);
+    gainSlider.setBounds (row3.removeFromLeft (juce::jmin (220, row3.getWidth())));
+    row3.removeFromLeft (16);
+    snapToggle.setBounds (row3.removeFromLeft (juce::jmin (130, row3.getWidth())));
 
     // transport under the waveform
     auto transport = r.removeFromBottom (30);
@@ -297,12 +340,13 @@ void EditorView::refresh()
     redoButton.setTooltip (document.canRedo() ? "Redo " + document.getRedoName() + " (Cmd+Shift+Z)" : "Nothing to redo");
 
     for (auto* b : { &copyButton, &reverseButton, &normalizeButton, &gainButton, &trimSilenceButton,
-                     &saveButton, &exportButton, &playButton })
+                     &saveButton, &exportButton, &playButton, &fadeInButton, &fadeOutButton })
         b->setEnabled (has && ! recording);
-    for (auto* b : { &cutButton, &deleteButton, &cropButton, &silenceButton, &fadeInButton, &fadeOutButton })
+    for (auto* b : { &cutButton, &deleteButton, &cropButton, &silenceButton })
         b->setEnabled (selected && ! recording);
     pasteButton.setEnabled (processor.clipboard.getNumSamples() > 0 && ! recording);
     openButton.setEnabled (! recording);
+    effects.setApplyText (selected ? "Apply to selection" : "Apply to whole sound");
 
     playButton.setButtonText (processor.isPlaying() ? "Stop" : "Play");
     saveButton.setButtonText (document.hasAudio() && document.hasUnsavedChanges() ? "Save to library *" : "Save to library");
@@ -336,7 +380,18 @@ void EditorView::timerCallback()
             toggleRecording();
     }
 
-    wave.setPlayhead (processor.getPlayPosition());
+    if (playingPreview && processor.isPlaying())
+    {
+        const double f = processor.getPlayFraction();
+        wave.setPlayhead (f < 0 ? -1 : previewRange.getStart() + juce::jmin ((int) (f * previewRange.getLength()), previewRange.getLength()));
+    }
+    else
+    {
+        wave.setPlayhead (processor.getPlayPosition());
+    }
+
+    if (previewDueAt > 0 && juce::Time::getMillisecondCounterHiRes() >= previewDueAt)
+        requestPreview (false);
     const bool playing = processor.isPlaying();
     if (playButton.getButtonText() != (playing ? "Stop" : "Play"))
         playButton.setButtonText (playing ? "Stop" : "Play");
@@ -420,14 +475,28 @@ void EditorView::performAction (const juce::String& action)
         edit ("Silence", [] (const Buffer& b, juce::Range<int> r) { return Edits::silence (b, r); }, true, true);
     else if (action == "trimSilence")
         edit ("Trim quiet ends", [] (const Buffer& b, juce::Range<int>) { return Edits::trimSilence (b); }, false, false);
-    else if (action == "fadeIn")
-        edit ("Fade in", [curve] (const Buffer& b, juce::Range<int> r) { return Edits::fade (b, r, true, curve); }, true, false);
-    else if (action == "fadeOut")
-        edit ("Fade out", [curve] (const Buffer& b, juce::Range<int> r) { return Edits::fade (b, r, false, curve); }, true, false);
+    else if (action == "fadeIn" || action == "fadeOut")
+    {
+        const bool in = action == "fadeIn";
+        const int length = crate::samples (fadeLength.getValue() / 1000.0);
+        const float amount = (float) fadeAmount.getValue() / 100.0f;
+        edit (in ? "Fade in" : "Fade out", [=] (const Buffer& b, juce::Range<int> r)
+        {
+            // nothing selected: fade the start (or end) of the sound over the set length
+            const int n = b.getNumSamples();
+            if (r.isEmpty())
+                r = in ? juce::Range<int> (0, juce::jmin (n, length)) : juce::Range<int> (juce::jmax (0, n - length), n);
+            auto result = Edits::fade (b, r, in, curve, amount);
+            result.selection = {};
+            return result;
+        }, false, false);
+    }
     else if (action == "reverse")
         edit ("Reverse", [] (const Buffer& b, juce::Range<int> r) { return Edits::reverse (b, r); }, false, true);
     else if (action == "normalize")
         edit ("Normalize", [] (const Buffer& b, juce::Range<int> r) { return Edits::normalize (b, r); }, false, false);
+    else if (action == "applyEffects")
+        applyEffects();
     else if (action == "gain")
     {
         const float db = (float) gainSlider.getValue();
@@ -498,22 +567,101 @@ void EditorView::toggleRecording()
                    "Recording " + juce::Time::getCurrentTime().formatted ("%H.%M.%S"), "Record");
 }
 
+juce::Range<int> EditorView::playRange() const
+{
+    const int n = document.getAudio()->getNumSamples();
+    auto sel = wave.getSelection();
+    if (sel.isEmpty())
+        sel = { sel.getStart() >= n - 1 ? 0 : sel.getStart(), n };
+    return sel;
+}
+
 void EditorView::togglePlay()
 {
     if (processor.isPlaying())
     {
         processor.stop();
+        playingPreview = false;
         return;
     }
     if (! document.hasAudio())
         return;
 
-    auto sel = wave.getSelection();
-    if (sel.isEmpty())
-        sel = { sel.getStart() >= document.getAudio()->getNumSamples() - 1 ? 0 : sel.getStart(),
-                document.getAudio()->getNumSamples() };
-    processor.play (document.getAudio(), sel, loopButton.getToggleState());
+    if (effects.isPreviewOn() && effects.hasEffects())
+        return requestPreview (true);
+
+    playingPreview = false;
+    processor.play (document.getAudio(), playRange(), loopButton.getToggleState());
     playButton.setButtonText ("Stop");
+}
+
+void EditorView::requestPreview (bool startPlaying)
+{
+    previewDueAt = 0;
+    if (! document.hasAudio())
+        return;
+
+    const auto source = document.getAudio();
+    const auto range = playRange();
+    const auto settings = effects.getSettings();
+    const int generation = ++previewGeneration;
+    previewRange = range;
+
+    if (startPlaying)
+        say ("Getting the effects ready...");
+
+    juce::Component::SafePointer<EditorView> safe (this);
+    renderPool.addJob ([safe, source, range, settings, generation, startPlaying, this]
+    {
+        // a newer request will replace this one: don't bother
+        if (generation != previewGeneration.load())
+            return;
+        auto part = Edits::crop (*source, range).audio;
+        auto processed = crate::share (crate::SoundFx::apply (part, settings));
+        juce::MessageManager::callAsync ([safe, processed, generation, startPlaying]
+        {
+            if (safe != nullptr)
+                safe->previewReady (processed, generation, startPlaying);
+        });
+    });
+}
+
+void EditorView::previewReady (crate::SharedAudio processed, int generation, bool startPlaying)
+{
+    if (generation != previewGeneration.load() || processed == nullptr)
+        return;
+
+    if (startPlaying)
+    {
+        processor.play (processed, { 0, processed->getNumSamples() }, loopButton.getToggleState());
+        playingPreview = true;
+        playButton.setButtonText ("Stop");
+        say ("Playing with effects. Change the controls while it plays, then Apply when it sounds right.");
+    }
+    else if (playingPreview && processor.isPlaying())
+    {
+        processor.swapAudio (processed);
+    }
+}
+
+void EditorView::applyEffects()
+{
+    if (! effects.hasEffects())
+        return say ("Switch on an effect first, or pick a preset.", true);
+
+    const auto settings = effects.getSettings();
+    const bool whole = ! wave.hasSelection();
+    edit ("Effects", [settings, whole] (const Buffer& b, juce::Range<int> r)
+    {
+        if (whole)
+            return Edits::Result { crate::SoundFx::apply (b, settings), {} };
+        auto processed = crate::SoundFx::apply (Edits::crop (b, r).audio, settings);
+        return Edits::paste (b, r, processed);
+    }, false, false);
+
+    playingPreview = false;
+    effects.reset();
+    say ("Effects applied" + juce::String (whole ? "" : " to the selection") + ". Undo with Cmd+Z.");
 }
 
 void EditorView::openFile (const juce::File& file)

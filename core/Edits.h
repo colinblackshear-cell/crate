@@ -35,7 +35,8 @@ namespace crate::Edits
     Result paste (const juce::AudioBuffer<float>&, juce::Range<int>, const juce::AudioBuffer<float>& clip);
     juce::AudioBuffer<float> copy (const juce::AudioBuffer<float>&, juce::Range<int>);
 
-    Result fade (const juce::AudioBuffer<float>&, juce::Range<int>, bool fadeIn, FadeCurve);
+    // `amount` is how far the level drops: 1 = all the way to silence, 0.5 = to half volume.
+    Result fade (const juce::AudioBuffer<float>&, juce::Range<int>, bool fadeIn, FadeCurve, float amount = 1.0f);
     Result reverse (const juce::AudioBuffer<float>&, juce::Range<int>);
     Result gain (const juce::AudioBuffer<float>&, juce::Range<int>, float decibels);
     // Raises (or lowers) the level so the loudest peak sits at `peakDecibels`.

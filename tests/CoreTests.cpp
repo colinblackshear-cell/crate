@@ -85,6 +85,19 @@ struct EditsTests : juce::UnitTest
             expect (out.getMagnitude (0, 2000) > 0.49f, "before the fade is untouched");
         }
 
+        beginTest ("a partial fade only drops the level part of the way");
+        {
+            juce::AudioBuffer<float> flat (1, 1000);
+            flat.clear();
+            for (int i = 0; i < 1000; ++i)
+                flat.setSample (0, i, 0.8f);
+            auto half = Edits::fade (flat, { 0, 1000 }, false, Edits::FadeCurve::linear, 0.5f).audio;
+            expectWithinAbsoluteError (half.getSample (0, 0), 0.8f, 1.0e-4f);
+            expectWithinAbsoluteError (half.getSample (0, 999), 0.4f, 1.0e-3f);
+            auto full = Edits::fade (flat, { 0, 1000 }, false, Edits::FadeCurve::linear).audio;
+            expectWithinAbsoluteError (full.getSample (0, 999), 0.0f, 1.0e-4f);
+        }
+
         beginTest ("reverse");
         {
             auto whole = Edits::reverse (src, {});
@@ -274,6 +287,21 @@ struct FxTests : juce::UnitTest
         auto out = SoundFx::apply (s, settings);
         expect (out.getNumSamples() >= 44100);
         expect (out.getMagnitude (0, out.getNumSamples()) <= 1.0f);
+
+        beginTest ("compressor, chorus and phaser change the sound and stay in range");
+        for (int which = 0; which < 3; ++which)
+        {
+            SoundFx::Settings fx;
+            (which == 0 ? fx.compress : which == 1 ? fx.chorusMix : fx.phaserMix) = 0.8f;
+            expect (! fx.isNeutral());
+            auto result = SoundFx::apply (s, fx);
+            expectEquals (result.getNumSamples(), s.getNumSamples());
+            expect (result.getMagnitude (0, result.getNumSamples()) <= 1.0f);
+            double difference = 0;
+            for (int i = 0; i < s.getNumSamples(); ++i)
+                difference += std::abs (result.getSample (0, i) - s.getSample (0, i));
+            expect (difference > 1.0, "the effect did something");
+        }
     }
 };
 
