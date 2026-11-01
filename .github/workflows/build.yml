@@ -1,0 +1,64 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release -- -quiet
+
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Sign for local use
+        run: |
+          cd "build/tools/editor/SampleEditor_artefacts/Release"
+          codesign --force --deep -s - "AU/Sample Editor.component"
+          codesign --force --deep -s - "VST3/Sample Editor.vst3"
+          codesign --force --deep -s - "Standalone/Sample Editor.app"
+
+      - name: Validate the Audio Unit (what Logic checks)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "build/tools/editor/SampleEditor_artefacts/Release/AU/Sample Editor.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 5
+          auval -v aumf CSed Cblk
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cd "build/tools/editor/SampleEditor_artefacts/Release"
+          ditto -c -k --keepParent "Standalone/Sample Editor.app" "$GITHUB_WORKSPACE/dist/Sample-Editor-App.zip"
+          ditto -c -k --keepParent "AU/Sample Editor.component" "$GITHUB_WORKSPACE/dist/Sample-Editor-AU.zip"
+          ditto -c -k --keepParent "VST3/Sample Editor.vst3" "$GITHUB_WORKSPACE/dist/Sample-Editor-VST3.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sample-Editor-mac
+          path: dist/*.zip
+
+  # The same tests on Linux, which is quicker to start than a Mac runner.
+  linux-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libraries JUCE needs
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libasound2-dev libfreetype-dev libfontconfig1-dev libx11-dev \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libgl1-mesa-dev ninja-build
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --target CrateTests
+      - run: ctest --test-dir build --output-on-failure
