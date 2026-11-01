@@ -29,6 +29,33 @@ In Logic, insert the Sample Editor as an Audio Unit effect on an audio track (it
 Colin Blackshear). It records the track's input, plays your sound through the track, and saves
 the sound with your project.
 
+### MPC Bank Builder
+
+Build kits for the Akai MPC2000XL and play them: a 4x4 pad grid laid out like the MPC, four
+banks (A to D) of 16 pads, as many kits as you like, and export straight to the MPC's card.
+It's the start of a virtual MPC; a sequencer comes next.
+
+- **Fill pads:** drag WAV, AIFF, MP3, FLAC or MPC `.SND` files (or a whole folder) onto a pad, or
+  click or drag sounds from the shared library. Several files fill the pads in order.
+- **Chop:** **Chop across pads...** cuts a pad's sound at each hit, or into 2 to 16 equal slices,
+  and puts each piece on its own pad from that one.
+- **Play:** click a pad, or play a MIDI keyboard: pads use the same notes as on the MPC (A01 is
+  note 37). Set each pad's volume, pan, tune and how it plays: **One shot** plays to the end,
+  **Mono** cuts off the last hit, **Note off** stops when you let go.
+- **Keep in time:** give the kit a BPM and turn on **Keep in time** to stretch every loop (keeping
+  its pitch) to a whole number of beats at that tempo. Short hits aren't stretched, and any pad can
+  be set to **Play normal**.
+- **Export to card...** writes each kit as a folder (`BREAKS/BREAKS.PGM` plus its `.SND` files,
+  8.3 names) to the MPC's SD card. On the MPC, go to **LOAD**, open the folder and load the
+  `.PGM`. **Open kit...** opens a `.PGM` from the card again.
+
+The memory readout shows how much of the MPC's sample memory a kit takes; pick your MPC's RAM next
+to it. **Save as mono** halves a pad's size.
+
+In Logic, add MPC Bank Builder as an instrument (AU Instruments > Colin Blackshear) on a software
+instrument track. The track's MIDI plays the pads, and your kits and their sounds are saved with
+the Logic project.
+
 ## The shared sound library
 
 `~/Music/Crate/Sounds` is a plain folder of WAV files, so you can also manage it in Finder or drag
@@ -38,24 +65,26 @@ survives renames:
 - tempo, length in beats and root note go in the standard ACID chunk, which Logic reads
 - tags and the name of the tool that made the sound go in the INFO chunk
 
-Every tool works at 44.1 kHz, the MPC2000XL's sample rate, so sounds move to the MPC bank builder
+Every tool works at 44.1 kHz, the MPC2000XL's sample rate, so sounds move to the MPC Bank Builder
 without resampling.
 
 ## Installing a build
 
-Each GitHub build has a **Sample-Editor-mac** download with three zips: the app, the AU and the VST3.
+Each GitHub build has a download per tool, **Sample-Editor-mac** and **MPC-Bank-Builder-mac**, each
+with three zips: the app, the AU and the VST3.
 
-1. Unzip them. Put `Sample Editor.app` in Applications, `Sample Editor.component` in
-   `~/Library/Audio/Plug-Ins/Components`, and `Sample Editor.vst3` in `~/Library/Audio/Plug-Ins/VST3`.
+1. Unzip them. Put the `.app` in Applications, the `.component` in
+   `~/Library/Audio/Plug-Ins/Components`, and the `.vst3` in `~/Library/Audio/Plug-Ins/VST3`.
 2. Apple hasn't signed the builds, so macOS blocks them the first time. Either open
    **System Settings > Privacy & Security** and click **Open Anyway**, or run:
 
    ```
    sudo xattr -cr "/Applications/Sample Editor.app" ~/Library/Audio/Plug-Ins/Components/"Sample Editor.component"
+   sudo xattr -cr "/Applications/MPC Bank Builder.app" ~/Library/Audio/Plug-Ins/Components/"MPC Bank Builder.component"
    killall -9 AudioComponentRegistrar
    ```
-3. The first time you press Record, macOS asks for microphone access. In the app, choose your input
-   under **Options > Audio/MIDI Settings**.
+3. The first time you press Record, macOS asks for microphone access. In the apps, choose your
+   audio devices under **Options > Audio/MIDI Settings**.
 
 ## Building
 
@@ -68,12 +97,16 @@ cmake --build build --config Release
 ctest --test-dir build -C Release
 ```
 
+Set `MPC_FIXTURES` to a folder of files saved by an MPC2000XL to also check that each one reads
+and writes back byte for byte (CI uses the demo kits from [vMPC2000XL](https://github.com/izzyreal/mpc)).
+
 ## Layout
 
 ```
 core/          shared by every tool: sound files, edits, effects, the sound library, common UI
 tools/editor/  the Sample Editor (app + AU + VST3)
-tests/         headless tests for the core and the editor
+tools/mpc/     the MPC Bank Builder (app + AU instrument + VST3); mpc/ reads and writes .SND and .PGM
+tests/         headless tests for the core and the tools, and the MPC file format tests
 ```
 
 A new tool goes in `tools/<name>/` with its own `CMakeLists.txt`. It links `crate_core` and uses
