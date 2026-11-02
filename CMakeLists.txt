@@ -59,4 +59,5 @@ target_link_libraries(crate_core INTERFACE
     juce::juce_dsp)
 
 add_subdirectory(tools/editor)
+add_subdirectory(tools/mpc)
 add_subdirectory(tests)
