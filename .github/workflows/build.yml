@@ -40,6 +40,9 @@ jobs:
           codesign --force --deep -s - "AU/Sample Editor.component"
           codesign --force --deep -s - "VST3/Sample Editor.vst3"
           codesign --force --deep -s - "Standalone/Sample Editor.app"
+          cd "$GITHUB_WORKSPACE/build/tools/editor/SampleInstrument_artefacts/Release"
+          codesign --force --deep -s - "AU/Sample Editor Instrument.component"
+          codesign --force --deep -s - "VST3/Sample Editor Instrument.vst3"
           cd "$GITHUB_WORKSPACE/build/tools/mpc/MpcBankBuilder_artefacts/Release"
           codesign --force --deep -s - "AU/MPC Bank Builder.component"
           codesign --force --deep -s - "VST3/MPC Bank Builder.vst3"
@@ -49,12 +52,14 @@ jobs:
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           cp -R "build/tools/editor/SampleEditor_artefacts/Release/AU/Sample Editor.component" ~/Library/Audio/Plug-Ins/Components/
+          cp -R "build/tools/editor/SampleInstrument_artefacts/Release/AU/Sample Editor Instrument.component" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           sleep 5
           cp -R "build/tools/mpc/MpcBankBuilder_artefacts/Release/AU/MPC Bank Builder.component" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           sleep 5
           auval -v aumf CSed Cblk
+          auval -v aumu CSei Cblk
           auval -v aumu CMbb Cblk
 
       - name: Package
@@ -64,6 +69,9 @@ jobs:
           ditto -c -k --keepParent "Standalone/Sample Editor.app" "$GITHUB_WORKSPACE/dist/Sample-Editor-App.zip"
           ditto -c -k --keepParent "AU/Sample Editor.component" "$GITHUB_WORKSPACE/dist/Sample-Editor-AU.zip"
           ditto -c -k --keepParent "VST3/Sample Editor.vst3" "$GITHUB_WORKSPACE/dist/Sample-Editor-VST3.zip"
+          cd "$GITHUB_WORKSPACE/build/tools/editor/SampleInstrument_artefacts/Release"
+          ditto -c -k --keepParent "AU/Sample Editor Instrument.component" "$GITHUB_WORKSPACE/dist/Sample-Editor-Instrument-AU.zip"
+          ditto -c -k --keepParent "VST3/Sample Editor Instrument.vst3" "$GITHUB_WORKSPACE/dist/Sample-Editor-Instrument-VST3.zip"
           mkdir -p "$GITHUB_WORKSPACE/dist-mpc"
           cd "$GITHUB_WORKSPACE/build/tools/mpc/MpcBankBuilder_artefacts/Release"
           ditto -c -k --keepParent "Standalone/MPC Bank Builder.app" "$GITHUB_WORKSPACE/dist-mpc/MPC-Bank-Builder-App.zip"

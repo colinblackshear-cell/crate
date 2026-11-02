@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>
 
 #include "EditorProcessor.h"
 #include "core/ui/EffectsPanel.h"
@@ -19,6 +20,22 @@ private:
     float level = 0;
 };
 
+// The on-screen keys, with the root note (where the sound plays as recorded) marked.
+class KeysView : public juce::MidiKeyboardComponent
+{
+public:
+    explicit KeysView (juce::MidiKeyboardState& s) : MidiKeyboardComponent (s, horizontalKeyboard) {}
+    void setRootNote (int note) { if (note != rootNote) { rootNote = note; repaint(); } }
+
+    void drawWhiteNote (int note, juce::Graphics&, juce::Rectangle<float> area, bool isDown, bool isOver,
+                        juce::Colour lineColour, juce::Colour textColour) override;
+    void drawBlackNote (int note, juce::Graphics&, juce::Rectangle<float> area, bool isDown, bool isOver,
+                        juce::Colour fillColour) override;
+
+private:
+    int rootNote = 60;
+};
+
 // The Sample Editor window: library on the left, the waveform in the middle, recording and
 // files along the top, and the editing tools underneath.
 class EditorView : public juce::AudioProcessorEditor,
@@ -35,6 +52,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
 
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
@@ -47,10 +65,16 @@ public:
     juce::Slider& getFadeLengthSlider() { return fadeLength; }
     juce::Slider& getFadeAmountSlider() { return fadeAmount; }
     void runEdit (const juce::String& action) { performAction (action); }
+    juce::ComboBox& getRootBox() { return rootBox; }
+    juce::ComboBox& getKeyModeBox() { return keyModeBox; }
+    juce::ToggleButton& getComputerKeysToggle() { return computerKeys; }
+    KeysView& getKeysView() { return keyboard; }
 
 private:
     static constexpr int kEffectsWidth = 330;
     static constexpr int kToolsHeight = 126;
+    static constexpr int kKeysHeight = 118;
+    static constexpr int kLowestKey = 24, kHighestKey = 96;   // C0 to C5, as Logic names them (middle C is C3)
 
     using Buffer = juce::AudioBuffer<float>;
     using EditFn = std::function<crate::Edits::Result (const Buffer&, juce::Range<int>)>;
@@ -75,6 +99,8 @@ private:
     void chooseFile();
     void saveToLibrary();
     void exportFile();
+    void setRootNote (int note);
+    void openMidiInputs();
 
     EditorProcessor& processor;
     EditDocument& document;
@@ -114,6 +140,18 @@ private:
     juce::TextButton reverseButton { "Reverse" }, normalizeButton { "Normalize" };
     juce::Slider gainSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::TextButton gainButton { "Apply gain" };
+
+    // keys
+    juce::Label keysHeading { {}, "KEYS" }, rootLabel { {}, "Root" }, keyModeLabel { {}, "Plays" };
+    juce::Label attackLabel { {}, "Attack" }, releaseLabel { {}, "Release" };
+    juce::ComboBox rootBox, keyModeBox;
+    juce::Slider attackSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
+    juce::Slider releaseSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
+    juce::ToggleButton computerKeys { "Play with computer keys" };
+    KeysView keyboard { processor.keyboardState };
+    juce::Rectangle<int> toolsArea, keysArea;
+    double nextMidiScan = 0;
+    int keysOctave = 5;
 
     juce::Label message;
 

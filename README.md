@@ -25,6 +25,13 @@ Record from a mic or open a sound file, edit it, and save it to the shared libra
   sampler, Old radio, Dub echo and Big hall. Moving a control switches that effect on. Turn on
   **Hear effects** and press Play to listen while you adjust, then **Apply** the effects to the
   selection or to the whole sound.
+- **Play it from the keys:** a MIDI keyboard, the keys along the bottom of the window, or your
+  computer's letter keys (switch on **Play with computer keys**: A to L are the white keys,
+  W E T Y U O P the black ones, Z and X change octave) play the sound across the keyboard. The
+  **Root** key plays it as recorded; higher keys play it higher and faster. With a selection, the
+  keys play just that part. **Plays** sets what a key does: *While held*, *Loop while held*, or
+  *To the end* (like drum pads). **Attack** and **Release** fade each note in and out. The root
+  note is saved with the sound in the library.
 - **Undo everything:** every edit, recording and opened file can be undone, up to 200 steps.
 - **Save:** **Save to library** writes a WAV to `~/Music/Crate/Sounds`. **Export** saves a WAV or
   AIFF anywhere.
@@ -33,9 +40,15 @@ Keys: Space play/stop, R record, L loop, T trim to selection, I fade in, O fade 
 Delete delete, Cmd+Z / Cmd+Shift+Z undo/redo, Cmd+X/C/V cut/copy/paste, Cmd+A select all,
 Cmd+O open, Cmd+S save to library, + / - zoom, F show all, Esc deselect.
 
-In Logic, insert the Sample Editor as an Audio Unit effect on an audio track (it's listed under
-Colin Blackshear). It records the track's input, plays your sound through the track, and saves
-the sound with your project.
+In Logic there are two versions, both listed under Colin Blackshear and both saving the sound with
+your project:
+
+- **Sample Editor Instrument** (AU Instruments): put it on a software instrument track to play
+  your sound from Logic's keys, regions and Musical Typing. It has no audio input, so open a sound
+  or pick one from the library rather than recording.
+- **Sample Editor** (Audio Units effects): put it on an audio track to record the track's input.
+
+In the app, MIDI keyboards are switched on automatically as soon as they're plugged in.
 
 ### MPC Bank Builder
 
@@ -106,7 +119,8 @@ without resampling.
 ## Installing a build
 
 Each GitHub build has a download per tool, **Sample-Editor-mac** and **MPC-Bank-Builder-mac**, each
-with three zips: the app, the AU and the VST3.
+with the app, the AU and the VST3. Sample-Editor-mac also has the instrument version
+(**Sample-Editor-Instrument-AU** and **-VST3**).
 
 1. Unzip them. Put the `.app` in Applications, the `.component` in
    `~/Library/Audio/Plug-Ins/Components`, and the `.vst3` in `~/Library/Audio/Plug-Ins/VST3`.
@@ -115,6 +129,7 @@ with three zips: the app, the AU and the VST3.
 
    ```
    sudo xattr -cr "/Applications/Sample Editor.app" ~/Library/Audio/Plug-Ins/Components/"Sample Editor.component"
+   sudo xattr -cr ~/Library/Audio/Plug-Ins/Components/"Sample Editor Instrument.component"
    sudo xattr -cr "/Applications/MPC Bank Builder.app" ~/Library/Audio/Plug-Ins/Components/"MPC Bank Builder.component"
    killall -9 AudioComponentRegistrar
    ```
@@ -139,7 +154,7 @@ and writes back byte for byte (CI uses the demo kits from [vMPC2000XL](https://g
 
 ```
 core/          shared by every tool: sound files, edits, effects, the sound library, common UI
-tools/editor/  the Sample Editor (app + AU + VST3)
+tools/editor/  the Sample Editor (app + AU + VST3, plus an AU/VST3 instrument version)
 tools/mpc/     the MPC Bank Builder (app + AU instrument + VST3); mpc/ reads and writes .SND and .PGM
 tools/phone/   Crate on your phone: a web app (plain JavaScript, no build step), published to GitHub Pages
 tests/         headless tests for the core and the tools, the MPC file format tests, and

@@ -43,6 +43,7 @@ target_include_directories(crate_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(crate_core INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/core/AudioFiles.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/Edits.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/KeyboardSampler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/SoundFx.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/SoundLibrary.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/ui/EffectsPanel.cpp

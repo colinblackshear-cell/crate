@@ -32,6 +32,29 @@ void LevelMeter::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+void KeysView::drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
+                              juce::Colour lineColour, juce::Colour textColour)
+{
+    MidiKeyboardComponent::drawWhiteNote (note, g, area, isDown, isOver, lineColour, textColour);
+    if (note == rootNote)
+    {
+        g.setColour (crate::Theme::accent);
+        g.fillRect (area.reduced (2.0f, 0).removeFromBottom (5.0f).translated (0, -2.0f));
+    }
+}
+
+void KeysView::drawBlackNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
+                              juce::Colour fillColour)
+{
+    MidiKeyboardComponent::drawBlackNote (note, g, area, isDown, isOver, fillColour);
+    if (note == rootNote)
+    {
+        g.setColour (crate::Theme::accent);
+        g.fillRect (area.reduced (2.0f, 0).removeFromBottom (5.0f).translated (0, -2.0f));
+    }
+}
+
+//==============================================================================
 EditorView::EditorView (EditorProcessor& p)
     : AudioProcessorEditor (p), processor (p), document (p.getDocument()), libraryList (p.getLibrary())
 {
@@ -72,6 +95,7 @@ EditorView::EditorView (EditorProcessor& p)
     wave.onSelectionChange = [this]
     {
         grabKeyboardFocus();
+        processor.getKeys().setRange (wave.getSelection());
         refresh();
     };
 
@@ -166,7 +190,53 @@ EditorView::EditorView (EditorProcessor& p)
     };
     effects.onApply = [this] { applyEffects(); };
 
+    // keys
+    for (int n = kLowestKey; n <= kHighestKey; ++n)
+        rootBox.addItem (juce::MidiMessage::getMidiNoteName (n, true, true, 3), n + 1);
+    rootBox.setTooltip ("The key that plays the sound as recorded. Keys above play it higher and faster, keys below lower and slower.");
+    rootBox.onChange = [this] { setRootNote (rootBox.getSelectedId() - 1); };
+    keyModeBox.addItem ("While held", 1);
+    keyModeBox.addItem ("Loop while held", 2);
+    keyModeBox.addItem ("To the end", 3);
+    keyModeBox.setTooltip ("While held: the sound stops when you let go of the key. Loop while held: it repeats until you let go. "
+                           "To the end: every key plays the whole sound (or selection), like drum pads.");
+    keyModeBox.onChange = [this] { processor.getKeys().setMode ((crate::KeyboardSampler::Mode) (keyModeBox.getSelectedId() - 1)); };
+    for (auto* sl : { &attackSlider, &releaseSlider })
+    {
+        sl->setTextValueSuffix (" ms");
+        sl->setNumDecimalPlacesToDisplay (0);
+        sl->setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 20);
+    }
+    attackSlider.setRange (0.0, 2000.0, 1.0);
+    attackSlider.setSkewFactorFromMidPoint (150.0);
+    attackSlider.setTooltip ("How long each note takes to fade in. 0 starts it straight away.");
+    attackSlider.onValueChange = [this] { processor.getKeys().setAttack ((float) attackSlider.getValue() / 1000.0f); };
+    releaseSlider.setRange (5.0, 5000.0, 1.0);
+    releaseSlider.setSkewFactorFromMidPoint (300.0);
+    releaseSlider.setTooltip ("How long a note takes to fade out after you let go of the key.");
+    releaseSlider.onValueChange = [this] { processor.getKeys().setRelease ((float) releaseSlider.getValue() / 1000.0f); };
+    computerKeys.setTooltip ("Play notes with the letter keys: A S D F G H J K L are the white keys, W E T Y U O P the black ones. "
+                             "Z and X move down or up an octave. Editing shortcuts that use plain letters are off while this is on.");
+    computerKeys.onClick = [this]
+    {
+        keyboard.focusLost (juce::Component::focusChangedDirectly);   // lets go of any held notes
+        grabKeyboardFocus();
+        say (computerKeys.getToggleState()
+                 ? "Computer keys are on: A to L play the white keys, W E T Y U O P the black keys, Z and X change octave."
+                 : "Computer keys are off. Letter shortcuts (R, T, I, O, L, F) work again.");
+    };
+    keyboard.setAvailableRange (kLowestKey, kHighestKey);
+    keyboard.setScrollButtonsVisible (false);
+    keyboard.setWantsKeyboardFocus (false);   // the window forwards the letter keys when they're switched on
+    keyboard.setKeyPressBaseOctave (keysOctave);   // A plays C3 (middle C)
+    keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, crate::Theme::accent.withAlpha (0.7f));
+    keyboard.setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, crate::Theme::accent.withAlpha (0.25f));
+    for (auto* l : { &keysHeading })
+        l->setColour (juce::Label::textColourId, crate::Theme::textDim);
+
     for (auto* c : std::initializer_list<juce::Component*> {
+             &keysHeading, &rootLabel, &keyModeLabel, &attackLabel, &releaseLabel, &rootBox, &keyModeBox,
+             &attackSlider, &releaseSlider, &computerKeys, &keyboard,
              &recordButton, &meter, &recordTime, &openButton, &saveButton, &exportButton, &nameLabel, &nameEditor,
              &libraryList, &wave, &playButton, &loopButton, &zoomOutButton, &zoomInButton, &fitButton, &zoomSelButton,
              &infoLabel, &editHeading, &undoButton, &redoButton, &cutButton, &copyButton, &pasteButton,
@@ -178,12 +248,22 @@ EditorView::EditorView (EditorProcessor& p)
     document.addChangeListener (this);
     setWantsKeyboardFocus (true);
     setResizable (true, true);
-    setResizeLimits (1100, 680, 2600, 1700);
-    setSize (1440, 800);
+    setResizeLimits (1100, 780, 2600, 1700);
+    setSize (1440, 880);
+
+    // show the keys' settings (saved with the plugin)
+    auto& keys = processor.getKeys();
+    rootBox.setSelectedId (keys.getRootNote() + 1, juce::dontSendNotification);
+    keyboard.setRootNote (keys.getRootNote());
+    keyModeBox.setSelectedId ((int) keys.getMode() + 1, juce::dontSendNotification);
+    attackSlider.setValue (keys.getAttack() * 1000.0, juce::dontSendNotification);
+    releaseSlider.setValue (keys.getRelease() * 1000.0, juce::dontSendNotification);
+    openMidiInputs();
 
     changeListenerCallback (&document);   // show the sound that's already open (window reopened)
-    say (processor.hasInput() ? "Press Record, open a file, or pick a sound from the library."
-                              : "Open a file or pick a sound from the library. (No audio input is connected, so recording is off.)");
+    say (processor.isInstrument() ? "Open a file or pick a sound from the library, then play it from your keyboard or the keys below."
+         : processor.hasInput()  ? "Press Record, open a file, or pick a sound from the library."
+                                 : "Open a file or pick a sound from the library. (No audio input is connected, so recording is off.)");
     refresh();
     startTimerHz (30);
 }
@@ -200,13 +280,10 @@ void EditorView::paint (juce::Graphics& g)
 {
     g.fillAll (crate::Theme::background);
 
-    // the tools panel under the waveform
-    auto tools = getLocalBounds().reduced (12);
-    tools.removeFromLeft (252);
-    tools.removeFromRight (kEffectsWidth + 12);
-    tools = tools.removeFromBottom (kToolsHeight + 26).withTrimmedBottom (26);
+    // the tools panel under the waveform, and the keys along the bottom
     g.setColour (crate::Theme::panel);
-    g.fillRoundedRectangle (tools.toFloat(), 6.0f);
+    g.fillRoundedRectangle (toolsArea.toFloat(), 6.0f);
+    g.fillRoundedRectangle (keysArea.toFloat(), 6.0f);
 }
 
 void EditorView::resized()
@@ -230,6 +307,36 @@ void EditorView::resized()
     nameEditor.setBounds (top.withSizeKeepingCentre (top.getWidth(), 28));
 
     r.removeFromTop (12);
+
+    // keys, across the whole window
+    keysArea = r.removeFromBottom (kKeysHeight);
+    r.removeFromBottom (12);
+    {
+        auto k = keysArea.reduced (10, 6);
+        auto row = k.removeFromTop (32).reduced (0, 4);
+        keysHeading.setBounds (row.removeFromLeft (52));
+        rootLabel.setBounds (row.removeFromLeft (40));
+        rootBox.setBounds (row.removeFromLeft (76));
+        row.removeFromLeft (16);
+        keyModeLabel.setBounds (row.removeFromLeft (44));
+        keyModeBox.setBounds (row.removeFromLeft (140));
+        row.removeFromLeft (16);
+        attackLabel.setBounds (row.removeFromLeft (52));
+        attackSlider.setBounds (row.removeFromLeft (190));
+        row.removeFromLeft (12);
+        releaseLabel.setBounds (row.removeFromLeft (60));
+        releaseSlider.setBounds (row.removeFromLeft (190));
+        row.removeFromLeft (16);
+        computerKeys.setBounds (row.removeFromLeft (juce::jmin (200, row.getWidth())));
+
+        k.removeFromTop (4);
+        keyboard.setBounds (k);
+        int whiteKeys = 0;
+        for (int n = kLowestKey; n <= kHighestKey; ++n)
+            whiteKeys += juce::MidiMessage::isMidiNoteBlack (n) ? 0 : 1;
+        keyboard.setKeyWidth ((float) k.getWidth() / (float) whiteKeys);
+    }
+
     libraryList.setBounds (r.removeFromLeft (240));
     r.removeFromLeft (12);
     effects.setBounds (r.removeFromRight (kEffectsWidth));
@@ -238,7 +345,8 @@ void EditorView::resized()
     // tools and message at the bottom
     message.setBounds (r.removeFromBottom (22));
     r.removeFromBottom (4);
-    auto tools = r.removeFromBottom (kToolsHeight).reduced (10, 6);
+    toolsArea = r.removeFromBottom (kToolsHeight);
+    auto tools = toolsArea.reduced (10, 6);
     r.removeFromBottom (10);
 
     auto row1 = tools.removeFromTop (38).reduced (0, 4);
@@ -316,6 +424,7 @@ void EditorView::changeListenerCallback (juce::ChangeBroadcaster*)
         shownAudio = document.getAudio().get();
         wave.setAudio (document.getAudio(), ! resetViewOnNextChange);
         wave.setSelection (document.getSelection());
+        processor.getKeys().setRange (wave.getSelection());
         resetViewOnNextChange = false;
     }
 
@@ -389,6 +498,10 @@ void EditorView::timerCallback()
     {
         wave.setPlayhead (processor.getPlayPosition());
     }
+
+    // keyboards plugged in while the app is open
+    if (juce::Time::getMillisecondCounterHiRes() >= nextMidiScan)
+        openMidiInputs();
 
     if (previewDueAt > 0 && juce::Time::getMillisecondCounterHiRes() >= previewDueAt)
         requestPreview (false);
@@ -505,10 +618,33 @@ void EditorView::performAction (const juce::String& action)
     }
 }
 
+bool EditorView::keyStateChanged (bool)
+{
+    return computerKeys.getToggleState() && keyboard.keyStateChanged (true);
+}
+
 bool EditorView::keyPressed (const juce::KeyPress& key)
 {
     const auto cmd = juce::ModifierKeys::commandModifier;
     const auto shift = juce::ModifierKeys::shiftModifier;
+
+    if (computerKeys.getToggleState() && ! key.getModifiers().isCommandDown())
+    {
+        if (keyboard.keyPressed (key))
+            return true;
+        const auto c = juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) key.getKeyCode());
+        if (c == 'z' || c == 'x')
+        {
+            keyboard.focusLost (juce::Component::focusChangedDirectly);
+            const int octave = keysOctave = juce::jlimit (2, 8, keysOctave + (c == 'z' ? -1 : 1));
+            keyboard.setKeyPressBaseOctave (octave);
+            say ("The A key now plays " + juce::MidiMessage::getMidiNoteName (octave * 12, true, true, 3) + ".");
+            return true;
+        }
+        // plain letters belong to the keys while they're on
+        if (juce::CharacterFunctions::isLetter (c))
+            return true;
+    }
 
     if (key == juce::KeyPress::spaceKey)                                  togglePlay();
     else if (key == juce::KeyPress ('z', cmd, 0))                         performAction ("undo");
@@ -673,8 +809,35 @@ void EditorView::openFile (const juce::File& file)
 
     resetViewOnNextChange = true;
     const bool inLibrary = file.isAChildOf (processor.getLibrary().getFolder());
+    for (const auto& entry : processor.getLibrary().getEntries())
+        if (entry.file == file && entry.info.rootNote >= 0)
+            setRootNote (entry.info.rootNote);
     document.load (std::move (audio), file.getFileNameWithoutExtension(), "Open " + file.getFileName(), file, inLibrary);
     say ("Opened " + file.getFileName() + ".");
+}
+
+void EditorView::setRootNote (int note)
+{
+    note = juce::jlimit (0, 127, note);
+    processor.getKeys().setRootNote (note);
+    keyboard.setRootNote (note);
+    if (rootBox.getSelectedId() != note + 1)
+        rootBox.setSelectedId (note + 1, juce::dontSendNotification);
+}
+
+void EditorView::openMidiInputs()
+{
+    nextMidiScan = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+
+   #if JucePlugin_Build_Standalone
+    // The Mac app doesn't listen to MIDI keyboards until you switch them on in its settings.
+    // Switch them all on, so a keyboard just works.
+    if (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+        if (auto* holder = juce::StandalonePluginHolder::getInstance())
+            for (const auto& device : juce::MidiInput::getAvailableDevices())
+                if (! holder->deviceManager.isMidiInputDeviceEnabled (device.identifier))
+                    holder->deviceManager.setMidiInputDeviceEnabled (device.identifier, true);
+   #endif
 }
 
 void EditorView::chooseFile()
@@ -713,6 +876,7 @@ void EditorView::saveToLibrary()
         info.tags.trim();
         info.tags.removeEmptyStrings();
         info.tool = "Sample Editor";
+        info.rootNote = processor.getKeys().getRootNote();
 
         const auto file = processor.getLibrary().save (*document.getAudio(), info);
         if (file == juce::File())

@@ -3,6 +3,7 @@ juce_add_console_app(CrateTests PRODUCT_NAME "CrateTests")
 target_sources(CrateTests PRIVATE
     CoreTests.cpp
     EditorTests.cpp
+    KeysTests.cpp
     MpcTests.cpp
     TestMain.cpp
     ${MPC_SOURCES}
