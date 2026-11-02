@@ -80,7 +80,8 @@ juce::AudioBuffer<float> stretch (const juce::AudioBuffer<float>& in, int newLen
 bool Settings::isNeutral() const
 {
     return std::abs (pitch) < 0.01f && std::abs (speed - 1.0f) < 0.001f && lowCut <= 20.0f && highCut >= 20000.0f
-        && bits >= 16 && sampleRate >= 44100.0f && drive <= 0.0f && delayMix <= 0.0f && reverbMix <= 0.0f;
+        && bits >= 16 && sampleRate >= 44100.0f && drive <= 0.0f && delayMix <= 0.0f && reverbMix <= 0.0f
+        && compress <= 0.0f && chorusMix <= 0.0f && phaserMix <= 0.0f;
 }
 
 juce::AudioBuffer<float> apply (const juce::AudioBuffer<float>& in, const Settings& s)
@@ -124,6 +125,25 @@ juce::AudioBuffer<float> apply (const juce::AudioBuffer<float>& in, const Settin
         filter.process (juce::dsp::ProcessContextReplacing<float> (block));
     }
 
+    // compressor: evens out the level; more amount = lower threshold, higher ratio
+    if (s.compress > 0.0f)
+    {
+        const float amount = juce::jlimit (0.0f, 1.0f, s.compress);
+        juce::dsp::Compressor<float> comp;
+        comp.prepare (spec);
+        comp.setThreshold (-36.0f * amount);
+        comp.setRatio (1.0f + 7.0f * amount);
+        comp.setAttack (5.0f);
+        comp.setRelease (120.0f);
+        const float peakBefore = out.getMagnitude (0, n);
+        juce::dsp::AudioBlock<float> block (out);
+        comp.process (juce::dsp::ProcessContextReplacing<float> (block));
+        // bring the level back up to where it was, so "more" means denser, not quieter
+        const float peakAfter = out.getMagnitude (0, n);
+        if (peakAfter > 1.0e-6f)
+            out.applyGain (peakBefore / peakAfter);
+    }
+
     // 3. drive: soft clipping with make-up gain so louder settings don't just get louder
     if (s.drive > 0.0f)
     {
@@ -157,6 +177,34 @@ juce::AudioBuffer<float> apply (const juce::AudioBuffer<float>& in, const Settin
                 d[i] = held;
             }
         }
+    }
+
+    // chorus: a few slightly delayed, wobbling copies, for width and shimmer
+    if (s.chorusMix > 0.0f)
+    {
+        juce::dsp::Chorus<float> chorus;
+        chorus.prepare (spec);
+        chorus.setRate (juce::jlimit (0.05f, 10.0f, s.chorusRate));
+        chorus.setDepth (juce::jlimit (0.0f, 1.0f, s.chorusDepth));
+        chorus.setCentreDelay (8.0f);
+        chorus.setFeedback (0.1f);
+        chorus.setMix (juce::jlimit (0.0f, 1.0f, s.chorusMix));
+        juce::dsp::AudioBlock<float> block (out);
+        chorus.process (juce::dsp::ProcessContextReplacing<float> (block));
+    }
+
+    // phaser: a sweeping, swooshing notch
+    if (s.phaserMix > 0.0f)
+    {
+        juce::dsp::Phaser<float> phaser;
+        phaser.prepare (spec);
+        phaser.setRate (juce::jlimit (0.02f, 10.0f, s.phaserRate));
+        phaser.setDepth (juce::jlimit (0.0f, 1.0f, s.phaserDepth));
+        phaser.setCentreFrequency (900.0f);
+        phaser.setFeedback (0.5f);
+        phaser.setMix (juce::jlimit (0.0f, 1.0f, s.phaserMix));
+        juce::dsp::AudioBlock<float> block (out);
+        phaser.process (juce::dsp::ProcessContextReplacing<float> (block));
     }
 
     // 5. delay, with the repeats ping-ponging between channels on stereo sounds

@@ -16,7 +16,15 @@ Record from a mic or open a sound file, edit it, and save it to the shared libra
   shift-click to extend it, or double-click to select everything. Then cut, copy, paste, delete,
   trim to selection, silence, or trim quiet ends. **Snap to zero** moves cut points to where the
   wave crosses zero, so cuts don't click.
-- **Shape:** fade in and out with four curves, reverse, normalize and gain.
+- **Fades:** fade in and out with four curve shapes. With nothing selected, a fade covers the
+  set **Length** at the start or end of the sound. **Amount** sets how far the level drops
+  (100% fades to silence, 50% only to half volume).
+- **Level:** reverse, normalize and gain.
+- **Effects panel:** pitch and speed, filter (low cut, high cut, resonance), compressor, drive,
+  lo-fi (bits and sample rate), chorus, phaser, delay and reverb, plus presets such as Lo-fi
+  sampler, Old radio, Dub echo and Big hall. Moving a control switches that effect on. Turn on
+  **Hear effects** and press Play to listen while you adjust, then **Apply** the effects to the
+  selection or to the whole sound.
 - **Undo everything:** every edit, recording and opened file can be undone, up to 200 steps.
 - **Save:** **Save to library** writes a WAV to `~/Music/Crate/Sounds`. **Export** saves a WAV or
   AIFF anywhere.
