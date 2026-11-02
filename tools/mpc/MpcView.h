@@ -6,11 +6,12 @@
 #include "PadEditor.h"
 #include "PadGrid.h"
 #include "PadSoundEditor.h"
+#include "SequencerView.h"
 #include "core/ui/LibraryList.h"
 #include "core/ui/Theme.h"
 
 // The MPC tool's window: kits, the shared sound library, the pad grid, pad settings, tempo,
-// and export to the MPC's card.
+// the sequencer, and export to the MPC's card.
 class MpcView : public juce::AudioProcessorEditor,
                 public juce::DragAndDropContainer,
                 private juce::ChangeListener,
@@ -28,6 +29,11 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
+
+    // Shows the pads or the sequencer's step grid in the middle of the window.
+    void showSequencer (bool);
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -75,6 +81,13 @@ private:
     PadGrid grid { project };
     PadEditor editor { project };
     PadSoundEditor soundEditor { processor };
+    TransportBar transport { processor };
+    SequencerView sequencer { processor };
+    juce::TextButton padsTab { "Pads" }, sequenceTab { "Steps" };
+    // Computer keys play the 16 pads on screen, laid out like the MPC's pads (bottom row first).
+    static constexpr const char* kPadKeys = "zxcvasdfqwer1234";
+    std::array<bool, 16> keyDown {};
+    std::array<int, 16> keyPad {};
     juce::Label status;
 
     std::unique_ptr<juce::FileChooser> chooser;

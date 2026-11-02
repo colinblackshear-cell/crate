@@ -5,6 +5,7 @@
 
 #include "core/Audio.h"
 #include "mpc/MpcFiles.h"
+#include "Sequence.h"
 
 #include <array>
 #include <memory>
@@ -93,6 +94,17 @@ public:
     // Call after changing anything, so the views refresh.
     void changed() { sendChangeMessage(); }
 
+    // The sequencer's sequences; they play the current kit.
+    std::vector<seq::Sequence>& getSequences() { return sequences; }
+    seq::Sequence& currentSequence() { return sequences[(size_t) currentSeq]; }
+    int getCurrentSequenceIndex() const { return currentSeq; }
+    void setCurrentSequence (int index);
+    int addSequence (const juce::String& name = {});
+    void removeSequence (int index);
+    // Call after changing a sequence (not the kit), so the sequencer and views pick it up.
+    void sequenceChanged() { sequenceEdits.sendChangeMessage(); }
+    juce::ChangeBroadcaster sequenceEdits;
+
     int ramMegabytes = 32;          // the MPC's memory; 2 MB stock, up to 32 MB
 
     // Every kit with its sounds (as WAV data), for saving inside a Logic project. Pads whose
@@ -103,4 +115,6 @@ public:
 private:
     std::vector<Bank> banks;
     int current = 0;
+    std::vector<seq::Sequence> sequences;
+    int currentSeq = 0;
 };

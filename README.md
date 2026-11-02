@@ -54,7 +54,7 @@ In the app, MIDI keyboards are switched on automatically as soon as they're plug
 
 Build kits for the Akai MPC2000XL and play them: a 4x4 pad grid laid out like the MPC, four
 banks (A to D) of 16 pads, as many kits as you like, and export straight to the MPC's card.
-It's the start of a virtual MPC; a sequencer comes next.
+It's a virtual MPC: kits, pads and a sequencer.
 
 - **Fill pads:** drag WAV, AIFF, MP3, FLAC or MPC `.SND` files (or a whole folder) onto a pad, or
   click or drag sounds from the shared library. Several files fill the pads in order.
@@ -75,6 +75,31 @@ It's the start of a virtual MPC; a sequencer comes next.
 - **Export to card...** writes each kit as a folder (`BREAKS/BREAKS.PGM` plus its `.SND` files,
   8.3 names) to the MPC's SD card. On the MPC, go to **LOAD**, open the folder and load the
   `.PGM`. **Open kit...** opens a `.PGM` from the card again.
+
+#### The sequencer
+
+The bar under the kit name is the transport, like the MPC's: pick a **sequence** (each has its
+own tempo, length and up to 64 tracks), then **|<** (play from the start), **Play**, **Stop** and
+**Rec**. Space plays and stops. The display reads bar.beat.tick, with 96 ticks a beat like the
+MPC2000XL.
+
+- **Record:** press **Rec** and play the pads: click them, play a MIDI keyboard, or use the
+  computer keys (Z X C V, A S D F, Q W E R, 1 2 3 4 are the 16 pads on screen, bottom row first,
+  like the MPC). From stop it counts in a bar with the metronome; while playing, **Rec** punches
+  in and out. It records onto the selected track and adds to what's there (overdub).
+- **Timing** corrects what you record to 1/8, 1/16, 1/32 or triplets, with **Swing** (50% is
+  straight, 66% is a triplet feel). **Fix timing** snaps a track you already recorded.
+- **Note repeat:** hold a pad while it plays and it repeats on every step of the timing grid.
+- **Steps:** shows the sequence as a grid for the 16 pads of the bank you're on. Click or drag
+  across steps to add or remove hits; right-click a step for soft or hard hits. The selected
+  track is bright and the others are faint. Click a pad's name to play it.
+- **Tracks** can be named, muted and added (up to 64). **Undo** and **Redo** cover edits and
+  recordings.
+- **Save MIDI** writes the sequence as a MIDI file on the MPC's own pad notes (A01 is 37), at 96
+  ticks a beat, so the MPC2000XL loads it into a sequence. **Open MIDI** brings a MIDI file in as
+  a new sequence.
+- **In Logic**, the sequence plays along when Logic plays, at Logic's tempo and position (turn off
+  **Play with Logic** to stop that). Sequences are saved with the Logic project.
 
 The memory readout shows how much of the MPC's sample memory a kit takes; pick your MPC's RAM next
 to it. **Save as mono** halves a pad's size.
