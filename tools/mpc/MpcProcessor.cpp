@@ -19,15 +19,97 @@ MpcProcessor::MpcProcessor()
         padForNoteNumber[(size_t) noteForPad (pad)] = pad;
 
     clicks.reset (44100.0);
+    sequenced.ensureSize (8192);
     project.addChangeListener (this);
+    project.sequenceEdits.addChangeListener (this);
     rebuildKit();
-    startTimerHz (4);
+    rebuildSequence();
+    startTimerHz (30);
 }
 
 MpcProcessor::~MpcProcessor()
 {
     stopTimer();
     project.removeChangeListener (this);
+    project.sequenceEdits.removeChangeListener (this);
+}
+
+void MpcProcessor::changeListenerCallback (juce::ChangeBroadcaster* source)
+{
+    if (source == &project)
+        rebuildKit();
+    rebuildSequence();
+}
+
+void MpcProcessor::rebuildSequence()
+{
+    sequencer.setSnapshot (SequencerEngine::makeSnapshot (project.currentSequence()));
+}
+
+void MpcProcessor::toggleRecord()
+{
+    if (! sequencer.isRecording())
+        beginEdit();
+    sequencer.record();
+}
+
+void MpcProcessor::beginEdit()
+{
+    if (undoSequence != project.getCurrentSequenceIndex())
+    {
+        undoStack.clear();
+        redoStack.clear();
+        undoSequence = project.getCurrentSequenceIndex();
+    }
+    undoStack.push_back (project.currentSequence());
+    if ((int) undoStack.size() > kMaxUndo)
+        undoStack.erase (undoStack.begin());
+    redoStack.clear();
+}
+
+bool MpcProcessor::undoEdit()
+{
+    if (! canUndo())
+        return false;
+    redoStack.push_back (std::exchange (project.currentSequence(), std::move (undoStack.back())));
+    undoStack.pop_back();
+    rebuildSequence();
+    project.sequenceChanged();
+    return true;
+}
+
+bool MpcProcessor::redoEdit()
+{
+    if (! canRedo())
+        return false;
+    undoStack.push_back (std::exchange (project.currentSequence(), std::move (redoStack.back())));
+    redoStack.pop_back();
+    rebuildSequence();
+    project.sequenceChanged();
+    return true;
+}
+
+int MpcProcessor::collectRecorded()
+{
+    std::array<SequencerEngine::Recorded, 256> notes;
+    int total = 0;
+    for (int n; (n = sequencer.takeRecorded (notes.data(), (int) notes.size())) > 0; total += n)
+    {
+        auto& sq = project.currentSequence();
+        auto& track = sq.tracks[(size_t) juce::jlimit (0, (int) sq.tracks.size() - 1, recordTrack)];
+        for (int i = 0; i < n; ++i)
+        {
+            const auto& r = notes[(size_t) i];
+            if (juce::isPositiveAndBelow (r.tick, sq.lengthTicks()))
+                track.add ({ r.tick, r.pad, r.velocity, r.length });
+        }
+    }
+    if (total > 0)
+    {
+        rebuildSequence();
+        project.sequenceChanged();
+    }
+    return total;
 }
 
 void MpcProcessor::rebuildKit()
@@ -77,6 +159,8 @@ void MpcProcessor::timerCallback()
     // again, so once we hold the only reference it's safe to let it go.
     retired.erase (std::remove_if (retired.begin(), retired.end(), [] (const auto& k) { return k.use_count() == 1; }),
                    retired.end());
+    sequencer.freeUnusedSnapshots();
+    collectRecorded();
 }
 
 void MpcProcessor::playPad (int pad, float velocity)
@@ -161,6 +245,7 @@ void MpcProcessor::prepareToPlay (double sampleRate, int)
 {
     hostRate = sampleRate > 0 ? sampleRate : 44100.0;
     clicks.reset (hostRate);
+    sequencer.prepare (hostRate);
 }
 
 bool MpcProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -291,6 +376,30 @@ void MpcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
 
     clicks.removeNextBlockOfMessages (midi, buffer.getNumSamples());
 
+    // The sequencer adds its notes to what you played, so both go down the same path.
+    SequencerEngine::Host host;
+    bool hasHost = false;
+    if (wrapperType != wrapperType_Standalone && sequencer.followHost.load())
+        if (auto* playHead = getPlayHead())
+            if (const auto info = playHead->getPosition())
+            {
+                hasHost = true;
+                host.playing = info->getIsPlaying();
+                host.ppq = info->getPpqPosition().orFallback (0.0);
+                host.bpm = info->getBpm().orFallback (120.0);
+            }
+    int numClicks = 0;
+    sequenced.clear();
+    sequencer.process (buffer.getNumSamples(), hasHost ? &host : nullptr, midi, sequenced, newClicks, numClicks);
+    midi.addEvents (sequenced, 0, buffer.getNumSamples(), 0);
+    for (int i = 0; i < numClicks; ++i)
+        for (auto& c : clickVoices)
+            if (! c.active)
+            {
+                c = { -newClicks[(size_t) i].offset, newClicks[(size_t) i].accent, true };
+                break;
+            }
+
     int position = 0;
     for (const auto metadata : midi)
     {
@@ -301,8 +410,37 @@ void MpcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
     }
     render (buffer, position, buffer.getNumSamples() - position);
     renderPreview (buffer);
+    renderClicks (buffer);
 
     midi.clear();
+}
+
+void MpcProcessor::renderClicks (juce::AudioBuffer<float>& buffer)
+{
+    // A short sine blip: higher on the first beat of the bar.
+    const int length = (int) (0.03 * hostRate);
+    for (auto& c : clickVoices)
+    {
+        if (! c.active)
+            continue;
+        const double freq = c.accent ? 1600.0 : 1100.0;
+        const float gain = c.accent ? 0.45f : 0.3f;
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            const int a = c.age + i;
+            if (a < 0)
+                continue;
+            if (a >= length)
+            {
+                c.active = false;
+                break;
+            }
+            const float v = gain * (float) (std::sin (juce::MathConstants<double>::twoPi * freq * a / hostRate) * std::exp (-a / (0.006 * hostRate)));
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                buffer.addSample (ch, i, v);
+        }
+        c.age += buffer.getNumSamples();
+    }
 }
 
 juce::AudioProcessorEditor* MpcProcessor::createEditor()

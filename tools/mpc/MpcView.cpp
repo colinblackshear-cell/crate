@@ -139,13 +139,35 @@ MpcView::MpcView (MpcProcessor& p)
 
     project.addChangeListener (this);
 
+    addAndMakeVisible (transport);
+    addChildComponent (sequencer);
+    transport.onStatus = sequencer.onStatus = [this] (const juce::String& text, bool warning) { setStatus (text, warning); };
+    for (auto* tab : { &padsTab, &sequenceTab })
+    {
+        tab->setClickingTogglesState (true);
+        tab->setRadioGroupId (2);
+        tab->setWantsKeyboardFocus (false);
+        tab->setColour (juce::TextButton::buttonOnColourId, Theme::accent);
+        tab->setColour (juce::TextButton::textColourOnId, Theme::background);
+        addAndMakeVisible (tab);
+    }
+    padsTab.setToggleState (true, juce::dontSendNotification);
+    padsTab.setTooltip ("The pads");
+    sequenceTab.setTooltip ("The sequence as steps for the 16 pads on screen: click to add or remove hits");
+    padsTab.onClick = [this] { showSequencer (false); };
+    sequenceTab.onClick = [this] { showSequencer (true); };
+    for (auto& tab : bankTabs)
+        tab.setWantsKeyboardFocus (false);
+    setWantsKeyboardFocus (true);
+    keyPad.fill (-1);
+
     setStatus ("Drop samples, a folder, or sounds from the library on the pads. Click a pad or play your MIDI keyboard to hear it.");
     refresh();
     startTimerHz (30);
 
-    setResizeLimits (1000, 640, 2400, 1600);
+    setResizeLimits (1100, 700, 2400, 1600);
     setResizable (true, true);
-    setSize (1180, 740);
+    setSize (1280, 800);
 }
 
 MpcView::~MpcView()
@@ -168,6 +190,57 @@ void MpcView::showPadBank (int padBank)
 {
     bankTabs[(size_t) padBank].setToggleState (true, juce::dontSendNotification);
     grid.setPadBank (padBank);
+    sequencer.setPadBank (padBank);
+}
+
+void MpcView::showSequencer (bool show)
+{
+    sequenceTab.setToggleState (show, juce::dontSendNotification);
+    padsTab.setToggleState (! show, juce::dontSendNotification);
+    sequencer.setVisible (show);
+    grid.setVisible (! show);
+    if (show)
+        setStatus ("Click steps to add hits, or press Rec and play pads (keys Z-V, A-F, Q-R, 1-4 play the 16 pads). Space plays and stops.");
+}
+
+bool MpcView::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::spaceKey)
+    {
+        auto& engine = processor.getSequencer();
+        engine.isPlaying() ? engine.stop() : engine.play (false);
+        return true;
+    }
+    // Pad keys are handled as they go down and up, in keyStateChanged.
+    const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+    return c != 0 && juce::String (kPadKeys).containsChar (c) && ! key.getModifiers().isCommandDown();
+}
+
+bool MpcView::keyStateChanged (bool)
+{
+    if (juce::ModifierKeys::currentModifiers.isCommandDown())
+        return false;
+
+    bool used = false;
+    for (int i = 0; i < 16; ++i)
+    {
+        const bool down = juce::KeyPress::isKeyCurrentlyDown (kPadKeys[i]);
+        if (down == keyDown[(size_t) i])
+            continue;
+        keyDown[(size_t) i] = down;
+        used = true;
+        if (down)
+        {
+            keyPad[(size_t) i] = grid.getPadBank() * kPadsPerBank + i;
+            processor.playPad (keyPad[(size_t) i], 100 / 127.0f);
+        }
+        else if (keyPad[(size_t) i] >= 0)
+        {
+            processor.releasePad (keyPad[(size_t) i]);
+            keyPad[(size_t) i] = -1;
+        }
+    }
+    return used;
 }
 
 void MpcView::paint (juce::Graphics& g)
@@ -195,7 +268,9 @@ void MpcView::resized()
     header.removeFromLeft (10);
     keepInTime.setBounds (header.removeFromLeft (150));
 
-    r.removeFromTop (12);
+    r.removeFromTop (10);
+    transport.setBounds (r.removeFromTop (42));
+    r.removeFromTop (10);
     status.setBounds (r.removeFromBottom (24));
     r.removeFromBottom (8);
 
@@ -221,9 +296,13 @@ void MpcView::resized()
         tab.setBounds (top.removeFromLeft (40));
         top.removeFromLeft (4);
     }
+    sequenceTab.setBounds (top.removeFromRight (70));
+    top.removeFromRight (4);
+    padsTab.setBounds (top.removeFromRight (70));
 
     r.removeFromTop (12);
     grid.setBounds (r);
+    sequencer.setBounds (r);
     soundEditor.setBounds (editorArea);
 }
 

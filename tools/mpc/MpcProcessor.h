@@ -4,6 +4,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 
 #include "BankModel.h"
+#include "SequencerEngine.h"
 #include "core/SoundLibrary.h"
 
 #include <array>
@@ -38,6 +39,25 @@ public:
     void preview (SharedAudio, juce::Range<int>);
     void stopPreview();
     int getPreviewPosition() const { return previewPosition.load(); }   // -1 when not playing
+
+    //==========================================================================
+    // The sequencer. It plays the current sequence on the current kit.
+    SequencerEngine& getSequencer() { return sequencer; }
+    // Starts or stops recording; saves an undo step first.
+    void toggleRecord();
+    // The track recorded notes go on (of the current sequence).
+    int recordTrack = 0;
+
+    // Undo for sequence edits: call beginEdit() before changing the current sequence.
+    void beginEdit();
+    bool undoEdit();
+    bool redoEdit();
+    bool canUndo() const { return ! undoStack.empty() && undoSequence == project.getCurrentSequenceIndex(); }
+    bool canRedo() const { return ! redoStack.empty() && undoSequence == project.getCurrentSequenceIndex(); }
+    static constexpr int kMaxUndo = 50;
+
+    // Adds the notes recorded since the last call to the sequence. Runs on a timer; tests call it.
+    int collectRecorded();
 
     // Pads played since the last call (bit n = pad n), from MIDI or clicks, to light them.
     juce::uint64 takePlayedPads() { return playedPads.exchange (0); }
@@ -93,7 +113,9 @@ private:
         bool releasing = false;
     };
 
-    void changeListenerCallback (juce::ChangeBroadcaster*) override { rebuildKit(); }
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void rebuildSequence();
+    void renderClicks (juce::AudioBuffer<float>&);
     void timerCallback() override;
     void rebuildKit();
 
@@ -126,6 +148,15 @@ private:
     std::atomic<int> previewPosition { -1 };
     void renderPreview (juce::AudioBuffer<float>&);
     std::array<int, 128> padForNoteNumber {};
+
+    SequencerEngine sequencer;
+    juce::MidiBuffer sequenced;
+    std::array<SequencerEngine::Click, 16> newClicks {};
+    struct ClickVoice { int age = 0; bool accent = false; bool active = false; };
+    std::array<ClickVoice, 8> clickVoices {};
+
+    std::vector<seq::Sequence> undoStack, redoStack;
+    int undoSequence = -1;
     std::atomic<juce::uint64> playedPads { 0 };
     std::atomic<bool> stopRequested { false };
     double hostRate = 44100.0;

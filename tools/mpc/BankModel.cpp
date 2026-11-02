@@ -86,6 +86,7 @@ int padForNote (int note)
 Project::Project()
 {
     addBank();
+    addSequence();
 }
 
 void Project::setCurrent (int index)
@@ -102,6 +103,38 @@ int Project::addBank (const juce::String& name)
     current = (int) banks.size() - 1;
     changed();
     return current;
+}
+
+void Project::setCurrentSequence (int index)
+{
+    if (juce::isPositiveAndBelow (index, (int) sequences.size()) && index != currentSeq)
+    {
+        currentSeq = index;
+        sequenceChanged();
+    }
+}
+
+int Project::addSequence (const juce::String& name)
+{
+    seq::Sequence s;
+    s.name = name.isNotEmpty() ? name : "Sequence " + juce::String ((int) sequences.size() + 1);
+    if (! banks.empty())
+        s.bpm = currentBank().bpm;
+    sequences.push_back (std::move (s));
+    currentSeq = (int) sequences.size() - 1;
+    sequenceChanged();
+    return currentSeq;
+}
+
+void Project::removeSequence (int index)
+{
+    if (! juce::isPositiveAndBelow (index, (int) sequences.size()))
+        return;
+    sequences.erase (sequences.begin() + index);
+    if (sequences.empty())
+        addSequence();
+    currentSeq = juce::jlimit (0, (int) sequences.size() - 1, currentSeq);
+    sequenceChanged();
 }
 
 void Project::removeBank (int index)
@@ -170,6 +203,12 @@ juce::MemoryBlock Project::save() const
 
     root.appendChild (sounds, nullptr);
 
+    juce::ValueTree seqs ("Sequences");
+    seqs.setProperty ("current", currentSeq, nullptr);
+    for (const auto& sq : sequences)
+        seqs.appendChild (sq.toValueTree(), nullptr);
+    root.appendChild (seqs, nullptr);
+
     juce::MemoryOutputStream out;
     root.writeToStream (out);
     return out.getMemoryBlock();
@@ -228,6 +267,19 @@ bool Project::load (const void* data, size_t size)
 
     banks = std::move (loaded);
     current = juce::jlimit (0, (int) banks.size() - 1, (int) root["current"]);
+
+    sequences.clear();
+    const auto seqs = root.getChildWithName ("Sequences");
+    for (const auto& sq : seqs)
+        if (sq.hasType ("Sequence"))
+            sequences.push_back (seq::Sequence::fromValueTree (sq));
+    if (sequences.empty())
+    {
+        sequences.emplace_back();
+        sequences.back().name = "Sequence 1";
+        sequences.back().bpm = banks[(size_t) current].bpm;
+    }
+    currentSeq = juce::jlimit (0, (int) sequences.size() - 1, (int) seqs["current"]);
     ramMegabytes = juce::jlimit (2, 32, (int) root.getProperty ("ram", 32));
     changed();
     return true;

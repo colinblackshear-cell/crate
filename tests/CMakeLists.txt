@@ -5,6 +5,7 @@ target_sources(CrateTests PRIVATE
     EditorTests.cpp
     KeysTests.cpp
     MpcTests.cpp
+    SequencerTests.cpp
     TestMain.cpp
     ${MPC_SOURCES}
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
