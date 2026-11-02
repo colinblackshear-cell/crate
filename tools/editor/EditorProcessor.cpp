@@ -3,15 +3,35 @@
 #include "EditorView.h"
 #include "core/AudioFiles.h"
 
-EditorProcessor::EditorProcessor()
-    : AudioProcessor (BusesProperties()
-                          .withInput ("Input", juce::AudioChannelSet::stereo(), true)
-                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      library ((formats.registerBasicFormats(), formats))
+juce::AudioProcessor::BusesProperties EditorProcessor::makeBuses()
 {
+    auto buses = BusesProperties();
+    if (! isInstrument())
+        buses = buses.withInput ("Input", juce::AudioChannelSet::stereo(), true);
+    return buses.withOutput ("Output", juce::AudioChannelSet::stereo(), true);
 }
 
-EditorProcessor::~EditorProcessor() = default;
+EditorProcessor::EditorProcessor()
+    : AudioProcessor (makeBuses()),
+      library ((formats.registerBasicFormats(), formats))
+{
+    document.addChangeListener (this);
+}
+
+EditorProcessor::~EditorProcessor()
+{
+    document.removeChangeListener (this);
+}
+
+void EditorProcessor::changeListenerCallback (juce::ChangeBroadcaster*)
+{
+    // the keys always play the latest version of the sound
+    if (document.getAudio().get() != keysAudio)
+    {
+        keysAudio = document.getAudio().get();
+        keys.setSound (document.getAudio());
+    }
+}
 
 bool EditorProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -19,12 +39,15 @@ bool EditorProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
     const auto in = layouts.getMainInputChannelSet();
     if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
         return false;
+    if (isInstrument())
+        return in.isDisabled();
     return in.isDisabled() || in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo();
 }
 
 void EditorProcessor::prepareToPlay (double sampleRate, int)
 {
     hostRate = sampleRate > 0 ? sampleRate : 44100.0;
+    keys.prepare (hostRate);
 }
 
 //==============================================================================
@@ -146,7 +169,7 @@ juce::AudioBuffer<float> EditorProcessor::stopRecording()
 }
 
 //==============================================================================
-void EditorProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void EditorProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
@@ -180,7 +203,16 @@ void EditorProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     // Output: the sound being played, nothing else (the input isn't passed through, so a mic
     // and speakers can't feed back).
     buffer.clear();
+    renderPlayback (buffer);
 
+    // Notes from the host or a keyboard, plus the on-screen keys, play the sound across the keys.
+    keyboardState.processNextMidiBuffer (midi, 0, numSamples, true);
+    keys.render (buffer, midi);
+}
+
+void EditorProcessor::renderPlayback (juce::AudioBuffer<float>& buffer)
+{
+    const int numSamples = buffer.getNumSamples();
     const juce::SpinLock::ScopedTryLockType sl (lock);
     if (! sl.isLocked() || ! playing.load() || playAudio == nullptr)
         return;
@@ -235,6 +267,10 @@ void EditorProcessor::getStateInformation (juce::MemoryBlock& dest)
     juce::ValueTree state ("SampleEditor");
     state.setProperty ("name", document.getName(), nullptr);
     state.setProperty ("source", document.getSourceFile().getFullPathName(), nullptr);
+    state.setProperty ("rootNote", keys.getRootNote(), nullptr);
+    state.setProperty ("keyMode", (int) keys.getMode(), nullptr);
+    state.setProperty ("attack", keys.getAttack(), nullptr);
+    state.setProperty ("release", keys.getRelease(), nullptr);
 
     if (const auto& audio = document.getAudio();
         audio != nullptr && audio->getNumSamples() > 0 && crate::seconds (audio->getNumSamples()) <= kMaxSavedSeconds)
@@ -249,6 +285,11 @@ void EditorProcessor::setStateInformation (const void* data, int size)
     const auto state = juce::ValueTree::readFromData (data, (size_t) size);
     if (! state.hasType ("SampleEditor"))
         return;
+
+    keys.setRootNote (state.getProperty ("rootNote", 60));
+    keys.setMode ((crate::KeyboardSampler::Mode) juce::jlimit (0, 2, (int) state.getProperty ("keyMode", 0)));
+    keys.setAttack ((float) state.getProperty ("attack", 0.002));
+    keys.setRelease ((float) state.getProperty ("release", 0.15));
 
     const auto* wav = state["wav"].getBinaryData();
     if (wav == nullptr || wav->getSize() == 0)

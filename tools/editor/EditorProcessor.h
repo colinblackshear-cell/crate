@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "EditDocument.h"
+#include "core/KeyboardSampler.h"
 #include "core/SoundLibrary.h"
 
 #include <array>
@@ -14,7 +15,14 @@
 // the sound you're editing, when you press play. The sound itself lives here rather than in
 // the window, so closing and reopening the plugin window keeps your work, and Logic saves the
 // sound with your project.
-class EditorProcessor : public juce::AudioProcessor
+//
+// It's also a sampler: MIDI notes (from a keyboard, Logic, or the on-screen keys) play the
+// sound, or the selected part of it, across the keys from a root note.
+//
+// Built with CRATE_INSTRUMENT=1 it's the instrument version for Logic: no audio input (so no
+// recording), shown under Instruments rather than Audio Units effects.
+class EditorProcessor : public juce::AudioProcessor,
+                        private juce::ChangeListener
 {
 public:
     EditorProcessor();
@@ -41,6 +49,20 @@ public:
     int getPlayPosition() const { return playPosition.load(); }   // -1 when stopped
 
     //==========================================================================
+    // Playing the sound from the keys. The on-screen keyboard feeds `keyboardState`; MIDI from
+    // the host or a keyboard comes in through processBlock.
+    crate::KeyboardSampler& getKeys() { return keys; }
+    juce::MidiKeyboardState keyboardState;
+    static constexpr bool isInstrument()
+    {
+       #if CRATE_INSTRUMENT
+        return true;
+       #else
+        return false;
+       #endif
+    }
+
+    //==========================================================================
     // Recording from the audio input.
     void startRecording();
     // Ends the recording and returns it at 44.1 kHz, mono unless the input really was stereo.
@@ -62,11 +84,11 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "Sample Editor"; }
+    const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override { return keys.getRelease(); }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -82,9 +104,15 @@ public:
     static constexpr double kMaxSavedSeconds = 10.0 * 60.0;
 
 private:
+    static BusesProperties makeBuses();
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void renderPlayback (juce::AudioBuffer<float>&);
+
     juce::AudioFormatManager formats;
     SoundLibrary library;
     EditDocument document;
+    crate::KeyboardSampler keys;
+    const void* keysAudio = nullptr;
 
     // Playback state, shared with the audio thread under `lock`.
     juce::SpinLock lock;
