@@ -98,6 +98,65 @@ void MpcProcessor::stopAll()
     stopRequested = true;
 }
 
+void MpcProcessor::preview (SharedAudio audio, juce::Range<int> range)
+{
+    SharedAudio old;
+    {
+        const juce::SpinLock::ScopedLockType sl (previewLock);
+        old = std::exchange (previewAudio, std::move (audio));
+        if (previewAudio != nullptr)
+            range = range.getIntersectionWith ({ 0, previewAudio->getNumSamples() });
+        previewRange = range.isEmpty() && previewAudio != nullptr ? juce::Range<int> (0, previewAudio->getNumSamples()) : range;
+        previewPos = previewRange.getStart();
+        previewFade = 1;
+        previewStopping = false;
+        previewDone = previewAudio == nullptr;
+    }
+    previewPosition = previewAudio != nullptr ? previewRange.getStart() : -1;
+}
+
+void MpcProcessor::stopPreview()
+{
+    const juce::SpinLock::ScopedLockType sl (previewLock);
+    previewStopping = true;
+}
+
+void MpcProcessor::renderPreview (juce::AudioBuffer<float>& buffer)
+{
+    const juce::SpinLock::ScopedTryLockType sl (previewLock);
+    if (! sl.isLocked() || previewAudio == nullptr || previewDone)
+        return;
+
+    const auto& audio = *previewAudio;
+    const float* l = audio.getReadPointer (0);
+    const float* r = audio.getReadPointer (audio.getNumChannels() > 1 ? 1 : 0);
+    float* outL = buffer.getWritePointer (0);
+    float* outR = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
+    const double step = kMpcSampleRate / hostRate;
+
+    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    {
+        const int index = (int) previewPos;
+        if (index >= previewRange.getEnd() || previewFade <= 0.0f)
+        {
+            // Keep the sound: letting go of it here could free it on the audio thread.
+            previewDone = true;
+            previewPosition = -1;
+            return;
+        }
+        const float frac = (float) (previewPos - index);
+        const int next = juce::jmin (index + 1, audio.getNumSamples() - 1);
+        const float sl0 = (l[index] + (l[next] - l[index]) * frac) * previewFade;
+        const float sr0 = (r[index] + (r[next] - r[index]) * frac) * previewFade;
+        if (outR != nullptr) { outL[i] += sl0; outR[i] += sr0; }
+        else outL[i] += 0.5f * (sl0 + sr0);
+        previewPos += step;
+        if (previewStopping)
+            previewFade -= kReleaseStep;
+    }
+    previewPosition = (int) previewPos;
+}
+
 void MpcProcessor::prepareToPlay (double sampleRate, int)
 {
     hostRate = sampleRate > 0 ? sampleRate : 44100.0;
@@ -241,6 +300,7 @@ void MpcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
         handleMidi (metadata.getMessage(), current);
     }
     render (buffer, position, buffer.getNumSamples() - position);
+    renderPreview (buffer);
 
     midi.clear();
 }

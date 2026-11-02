@@ -5,6 +5,7 @@
 #include "MpcProcessor.h"
 #include "PadEditor.h"
 #include "PadGrid.h"
+#include "PadSoundEditor.h"
 #include "core/ui/LibraryList.h"
 #include "core/ui/Theme.h"
 
@@ -41,6 +42,7 @@ private:
     void loadFilesIntoPads (int firstPad, const juce::Array<juce::File>& files);
     void chooseFileForPad();
     void chopSelectedPad (int slices);
+    void openSoundEditor (bool open);
     void openKit();
     void exportToCard();
     void writeBanks (const juce::File& destination);
@@ -72,6 +74,7 @@ private:
     std::array<juce::TextButton, 4> bankTabs;
     PadGrid grid { project };
     PadEditor editor { project };
+    PadSoundEditor soundEditor { processor };
     juce::Label status;
 
     std::unique_ptr<juce::FileChooser> chooser;

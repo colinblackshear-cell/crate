@@ -26,10 +26,12 @@ public:
     std::function<void (int pad)> onPadReleased;
     std::function<void (int pad, const juce::StringArray& files)> onFilesDropped;
     std::function<void (int pad)> onClearPad;
+    std::function<void (int pad)> onPadDoubleClicked;
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     bool isInterestedInFileDrag (const juce::StringArray&) override { return true; }
     void fileDragEnter (const juce::StringArray&, int x, int y) override { fileDragMove ({}, x, y); }

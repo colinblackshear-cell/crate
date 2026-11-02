@@ -32,10 +32,12 @@ set(MPC_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/MpcView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PadEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PadGrid.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/PadSoundEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SampleTools.cpp
     PARENT_SCOPE)
 
-target_sources(MpcBankBuilder PRIVATE PluginEntry.cpp BankModel.cpp MpcProcessor.cpp MpcView.cpp PadEditor.cpp PadGrid.cpp SampleTools.cpp)
+target_sources(MpcBankBuilder PRIVATE PluginEntry.cpp BankModel.cpp MpcProcessor.cpp MpcView.cpp PadEditor.cpp PadGrid.cpp
+    PadSoundEditor.cpp SampleTools.cpp)
 target_include_directories(MpcBankBuilder PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(MpcBankBuilder

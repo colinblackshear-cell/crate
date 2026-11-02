@@ -130,6 +130,12 @@ MpcView::MpcView (MpcProcessor& p)
     editor.onLoadFile = [this] { chooseFileForPad(); };
 
     editor.onChop = [this] (int slices) { chopSelectedPad (slices); };
+    editor.onEditSound = [this] { openSoundEditor (true); };
+    grid.onPadDoubleClicked = [this] (int pad) { selectPad (pad); openSoundEditor (true); };
+
+    addChildComponent (soundEditor);
+    soundEditor.onClose = [this] { openSoundEditor (false); };
+    soundEditor.onStatus = [this] (const juce::String& text, bool warning) { setStatus (text, warning); };
 
     project.addChangeListener (this);
 
@@ -205,6 +211,7 @@ void MpcView::resized()
     libraryList.setBounds (left);
 
     r.removeFromLeft (16);
+    const auto editorArea = r;
     editor.setBounds (r.removeFromRight (340));
     r.removeFromRight (16);
 
@@ -217,6 +224,27 @@ void MpcView::resized()
 
     r.removeFromTop (12);
     grid.setBounds (r);
+    soundEditor.setBounds (editorArea);
+}
+
+void MpcView::openSoundEditor (bool open)
+{
+    if (open)
+    {
+        const int pad = grid.getSelectedPad();
+        if (project.currentBank().pads[(size_t) pad].isEmpty())
+            return setStatus ("Pad " + padLabel (pad) + " is empty. Put a sound on it first.", true);
+        soundEditor.open (pad);
+        soundEditor.setVisible (true);
+        soundEditor.toFront (true);
+        setStatus ("Drag across the waveform to pick a part, then trim, fade, or put effects on it. Space plays, Esc goes back.");
+    }
+    else
+    {
+        soundEditor.close();
+        soundEditor.setVisible (false);
+        grid.repaint();
+    }
 }
 
 void MpcView::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -243,6 +271,8 @@ void MpcView::refresh()
     removeKit.setEnabled (project.getBanks().size() > 1 || bank.usedPads() > 0);
 
     editor.refresh();
+    if (soundEditor.isVisible())
+        soundEditor.sync();
     grid.repaint();
 }
 
