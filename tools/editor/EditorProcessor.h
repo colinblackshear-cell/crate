@@ -32,6 +32,11 @@ public:
     void play (crate::SharedAudio, juce::Range<int> range, bool loop);
     void stop();
     void setLooping (bool);
+    // Switches what's playing to another version of the sound (e.g. with effects), carrying on
+    // from the same point. Plays all of `audio`.
+    void swapAudio (crate::SharedAudio audio);
+    // Where playback is as a share (0..1) of the range being played; -1 when stopped.
+    double getPlayFraction() const;
     bool isPlaying() const { return playing.load(); }
     int getPlayPosition() const { return playPosition.load(); }   // -1 when stopped
 
@@ -91,6 +96,7 @@ private:
     bool stopping = false;
     std::atomic<bool> playing { false };
     std::atomic<int> playPosition { -1 };
+    std::atomic<double> playFraction { 0.0 };
     double hostRate = 44100.0;
 
     // Recording: the audio thread writes into a ring buffer; collectRecording() empties it.

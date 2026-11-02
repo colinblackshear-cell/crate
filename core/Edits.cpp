@@ -135,9 +135,10 @@ Result paste (const juce::AudioBuffer<float>& b, juce::Range<int> r, const juce:
     return insert (removed.audio, r.getStart(), clipIn);
 }
 
-Result fade (const juce::AudioBuffer<float>& b, juce::Range<int> r, bool fadeIn, FadeCurve curve)
+Result fade (const juce::AudioBuffer<float>& b, juce::Range<int> r, bool fadeIn, FadeCurve curve, float amount)
 {
     r = clip (b, r);
+    amount = juce::jlimit (0.0f, 1.0f, amount);
     juce::AudioBuffer<float> out (b);
     const int n = r.getLength();
     if (n > 0)
@@ -148,7 +149,8 @@ Result fade (const juce::AudioBuffer<float>& b, juce::Range<int> r, bool fadeIn,
             for (int i = 0; i < n; ++i)
             {
                 const float t = n > 1 ? (float) i / (float) (n - 1) : 1.0f;
-                d[i] *= fadeIn ? fadeShape (curve, t) : fadeShape (curve, 1.0f - t);
+                const float shape = fadeIn ? fadeShape (curve, t) : fadeShape (curve, 1.0f - t);
+                d[i] *= 1.0f - amount * (1.0f - shape);
             }
         }
     }

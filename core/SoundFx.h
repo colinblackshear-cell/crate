@@ -21,17 +21,25 @@ namespace crate::SoundFx
         float resonance = 0.0f;      // 0..1
         int bits = 16;               // 2..16, bit crusher
         float sampleRate = 44100.0f; // 1000..44100, sample rate reducer
+        float compress = 0.0f;       // 0..1: lower threshold and higher ratio, level kept up
         float drive = 0.0f;          // 0..1
         float delayTime = 0.25f;     // seconds
         float delayFeedback = 0.4f;  // 0..0.95
         float delayMix = 0.0f;       // 0..1
         float reverbSize = 0.5f;     // 0..1
         float reverbMix = 0.0f;      // 0..1
+        float chorusRate = 0.8f;     // Hz
+        float chorusDepth = 0.4f;    // 0..1
+        float chorusMix = 0.0f;      // 0..1
+        float phaserRate = 0.4f;     // Hz
+        float phaserDepth = 0.7f;    // 0..1
+        float phaserMix = 0.0f;      // 0..1
 
         bool isNeutral() const;
     };
 
-    // Applies every effect in a fixed order: pitch/speed, filters, drive, crush, delay, reverb.
+    // Applies every effect in a fixed order: pitch/speed, filters, compressor, drive, crush,
+    // chorus, phaser, delay, reverb.
     // Delay and reverb tails make the result longer, up to 4 seconds; silence at the end is cut.
     juce::AudioBuffer<float> apply (const juce::AudioBuffer<float>&, const Settings&);
 

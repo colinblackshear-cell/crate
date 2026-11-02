@@ -61,6 +61,29 @@ void EditorProcessor::stop()
         stopping = true;   // the audio thread fades out quickly, then stops
 }
 
+void EditorProcessor::swapAudio (crate::SharedAudio audio)
+{
+    if (audio == nullptr || audio->getNumSamples() < 2)
+        return;
+
+    crate::SharedAudio old;
+    {
+        const juce::SpinLock::ScopedLockType sl (lock);
+        if (! playing.load() || stopping)
+            return;
+        const double fraction = playRange.getLength() > 0 ? (playPos - playRange.getStart()) / playRange.getLength() : 0.0;
+        old = std::move (playAudio);
+        playAudio = std::move (audio);
+        playRange = { 0, playAudio->getNumSamples() };
+        playPos = juce::jlimit (0.0, (double) playRange.getEnd() - 2, fraction * playRange.getLength());
+    }
+}
+
+double EditorProcessor::getPlayFraction() const
+{
+    return playing.load() ? playFraction.load() : -1.0;
+}
+
 void EditorProcessor::setLooping (bool shouldLoop)
 {
     const juce::SpinLock::ScopedLockType sl (lock);
@@ -203,6 +226,7 @@ void EditorProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     }
 
     playPosition = playing.load() ? (int) playPos : -1;
+    playFraction = playRange.getLength() > 0 ? (playPos - playRange.getStart()) / playRange.getLength() : 0.0;
 }
 
 //==============================================================================

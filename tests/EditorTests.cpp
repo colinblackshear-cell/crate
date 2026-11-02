@@ -173,11 +173,54 @@ struct ProcessorTests : juce::UnitTest
                 if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_SNAPSHOT", {}); path.isNotEmpty())
                 {
                     view->getWaveView().setSelection ({ 800, 2400 });
+                    view->getEffectsPanel().loadPreset ("Dub echo");
                     view->runEdit ("refresh");
                     auto image = view->createComponentSnapshot (view->getLocalBounds(), true, 1.0f);
                     juce::File (path).deleteFile();
                     juce::FileOutputStream out { juce::File (path) };
                     juce::PNGImageFormat().writeImageToStream (image, out);
+                    view->getEffectsPanel().reset();
+                }
+
+                // fades with nothing selected use the Length setting; Amount sets how far they drop
+                {
+                    p.getDocument().load (share (sine (44100)), "fade test", "Open");
+                    view->getWaveView().setSelection ({ 0, 0 });
+                    view->getFadeLengthSlider().setValue (100.0);   // ms
+                    view->getFadeAmountSlider().setValue (50.0);    // %
+                    view->runEdit ("fadeOut");
+                    const auto& faded = *doc.getAudio();
+                    expectEquals (faded.getNumSamples(), 44100);
+                    expect (faded.getMagnitude (0, 40000) > 0.49f, "only the last 100 ms is faded");
+                    const float endLevel = faded.getMagnitude (44100 - 200, 200);
+                    expect (endLevel > 0.2f && endLevel < 0.3f, "half way down, not silent: " + juce::String (endLevel));
+                }
+
+                // effects: a preset, then apply to the whole sound; the panel resets afterwards
+                {
+                    auto& fx = view->getEffectsPanel();
+                    expect (! fx.hasEffects());
+                    for (const auto& name : crate::EffectsPanel::presetNames())
+                    {
+                        expect (fx.loadPreset (name), name);
+                        expect (fx.hasEffects(), name);
+                    }
+                    expect (fx.loadPreset ("Chipmunk"));
+                    expectWithinAbsoluteError (fx.getSettings().pitch, 12.0f, 0.01f);
+                    const int undoBefore = doc.canUndo() ? 1 : 0;
+                    view->runEdit ("applyEffects");
+                    expect (doc.canUndo() && undoBefore == 1);
+                    expectEquals (doc.getUndoName(), juce::String ("Effects"));
+                    expect (! fx.hasEffects(), "panel resets after applying");
+
+                    // effects on part of the sound
+                    expect (fx.loadPreset ("Crushed"));
+                    const int len = doc.getAudio()->getNumSamples();
+                    view->getWaveView().setSelection ({ 1000, 5000 });
+                    view->runEdit ("applyEffects");
+                    expectEquals (doc.getAudio()->getNumSamples(), len, "no tail on a crush");
+                    fx.reset();
+                    expect (! fx.hasEffects());
                 }
 
                 // a move that needs a selection does nothing without one

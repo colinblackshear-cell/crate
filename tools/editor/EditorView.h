@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "EditorProcessor.h"
+#include "core/ui/EffectsPanel.h"
 #include "core/ui/LibraryList.h"
 #include "core/ui/Theme.h"
 #include "core/ui/WaveView.h"
@@ -42,9 +43,15 @@ public:
 
     // Used by the tests to drive the window without a mouse.
     crate::WaveView& getWaveView() { return wave; }
+    crate::EffectsPanel& getEffectsPanel() { return effects; }
+    juce::Slider& getFadeLengthSlider() { return fadeLength; }
+    juce::Slider& getFadeAmountSlider() { return fadeAmount; }
     void runEdit (const juce::String& action) { performAction (action); }
 
 private:
+    static constexpr int kEffectsWidth = 330;
+    static constexpr int kToolsHeight = 126;
+
     using Buffer = juce::AudioBuffer<float>;
     using EditFn = std::function<crate::Edits::Result (const Buffer&, juce::Range<int>)>;
 
@@ -55,6 +62,12 @@ private:
     void say (const juce::String& message, bool problem = false);
     void edit (const juce::String& action, EditFn, bool needsSelection, bool snap);
     void performAction (const juce::String& action);
+
+    void applyEffects();
+    // Effects preview: renders the sound with the panel's effects in the background, then plays it.
+    void requestPreview (bool startPlaying);
+    void previewReady (crate::SharedAudio, int generation, bool startPlaying);
+    juce::Range<int> playRange() const;
 
     void toggleRecording();
     void togglePlay();
@@ -78,6 +91,7 @@ private:
 
     crate::LibraryList libraryList;
     crate::WaveView wave;
+    crate::EffectsPanel effects;
 
     // transport
     juce::TextButton playButton { "Play" }, loopButton { "Loop" };
@@ -85,7 +99,7 @@ private:
     juce::Label infoLabel;
 
     // edits
-    juce::Label editHeading { {}, "EDIT" }, shapeHeading { "", "SHAPE" };
+    juce::Label editHeading { {}, "EDIT" }, fadeHeading { {}, "FADE" }, levelHeading { {}, "LEVEL" };
     juce::TextButton undoButton { "Undo" }, redoButton { "Redo" };
     juce::TextButton cutButton { "Cut" }, copyButton { "Copy" }, pasteButton { "Paste" };
     juce::TextButton deleteButton { "Delete" }, cropButton { "Trim to selection" }, silenceButton { "Silence" };
@@ -94,6 +108,9 @@ private:
 
     juce::TextButton fadeInButton { "Fade in" }, fadeOutButton { "Fade out" };
     juce::ComboBox curveBox;
+    juce::Label fadeLengthLabel { {}, "Length" }, fadeAmountLabel { {}, "Amount" };
+    juce::Slider fadeLength { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
+    juce::Slider fadeAmount { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::TextButton reverseButton { "Reverse" }, normalizeButton { "Normalize" };
     juce::Slider gainSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::TextButton gainButton { "Apply gain" };
@@ -103,7 +120,13 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
     bool resetViewOnNextChange = true;
     const void* shownAudio = nullptr;
-    bool playingSelectionOnly = false;
+
+    // effects preview
+    juce::ThreadPool renderPool { juce::ThreadPoolOptions{}.withNumberOfThreads (1) };
+    std::atomic<int> previewGeneration { 0 };
+    bool playingPreview = false;
+    juce::Range<int> previewRange;        // the part of the sound the preview was made from
+    double previewDueAt = 0;              // when to render after the controls stop moving (ms)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditorView)
 };
