@@ -15,7 +15,7 @@ PadEditor::PadEditor (Project& p) : project (p)
     for (auto* c : std::initializer_list<juce::Component*> { &title, &info, &nameLabel, &name, &volumeLabel, &volume,
                                                              &panLabel, &pan, &tuneLabel, &tune, &modeLabel, &mode,
                                                              &timingLabel, &timing, &timingInfo, &mono, &reverse, &normalize,
-                                                             &load, &clear, &chop })
+                                                             &load, &clear, &chop, &editSound })
         addAndMakeVisible (c);
 
     timingInfo.setColour (juce::Label::textColourId, Theme::textDim);
@@ -76,6 +76,11 @@ PadEditor::PadEditor (Project& p) : project (p)
 
     load.onClick = [this] { if (onLoadFile) onLoadFile(); };
     clear.onClick = [this] { if (onClear) onClear(); };
+
+    editSound.setTooltip ("Trim the sound, fade it, and put effects on it (double-click a pad too)");
+    editSound.setColour (juce::TextButton::buttonColourId, Theme::accent);
+    editSound.setColour (juce::TextButton::textColourOffId, Theme::background);
+    editSound.onClick = [this] { if (onEditSound) onEditSound(); };
 
     chop.setTooltip ("Cut this sound into pieces, one per pad, starting here");
     chop.onClick = [this]
@@ -169,7 +174,7 @@ void PadEditor::refresh()
     reverse.setToggleState (p.reverse, juce::dontSendNotification);
     normalize.setToggleState (p.normalize, juce::dontSendNotification);
 
-    for (auto* c : std::initializer_list<juce::Component*> { &name, &volume, &pan, &tune, &mode, &timing, &reverse, &normalize, &clear, &chop })
+    for (auto* c : std::initializer_list<juce::Component*> { &name, &volume, &pan, &tune, &mode, &timing, &reverse, &normalize, &clear, &chop, &editSound })
         c->setEnabled (has);
 }
 
@@ -211,6 +216,8 @@ void PadEditor::resized()
     load.setBounds (buttons.removeFromLeft (buttons.getWidth() / 2 - 4));
     buttons.removeFromLeft (8);
     clear.setBounds (buttons);
+    r.removeFromTop (8);
+    editSound.setBounds (r.removeFromTop (30));
     r.removeFromTop (8);
     chop.setBounds (r.removeFromTop (30));
 }

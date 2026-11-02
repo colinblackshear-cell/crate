@@ -1,6 +1,7 @@
 #include "TestHelpers.h"
 
 #include "MpcProcessor.h"
+#include "PadSoundEditor.h"
 #include "MpcView.h"
 #include "SampleTools.h"
 #include "core/AudioFiles.h"
@@ -225,6 +226,104 @@ struct ProcessorTests : juce::UnitTest
         expect (saved.pads[5].mode == PadMode::noteOff);
         expect (saved.pads[0].audio == saved.pads[9].audio);
         expect (near (saved.pads[0].audio->getSample (0, 1000), toneSample, 1.0e-5));
+
+        beginTest ("hear a sound before it's on a pad");
+        processor.stopAll();
+        for (int i = 0; i < 4; ++i)
+            processor.processBlock (out, midi);
+        expect (processor.getPreviewPosition() < 0);
+        processor.preview (share (sine (44100, 1, 0.5f)), { 1000, 2000 });
+        processor.processBlock (out, midi);
+        expect (peakOf (out) > 0.3f, "the preview plays");
+        expectEquals (processor.getPreviewPosition(), 1512);
+        processor.processBlock (out, midi);
+        processor.processBlock (out, midi);
+        expect (processor.getPreviewPosition() < 0, "and stops at the end of the selection");
+        processor.processBlock (out, midi);
+        expect (peakOf (out) < 1.0e-6f);
+        processor.preview (share (sine (44100, 1, 0.5f)), {});
+        processor.processBlock (out, midi);
+        processor.stopPreview();
+        for (int i = 0; i < 4; ++i)
+            processor.processBlock (out, midi);
+        expect (peakOf (out) < 1.0e-6f, "Stop stops it");
+
+        beginTest ("trim and put effects on a pad's sound");
+        {
+            auto& pads = processor.getProject().currentBank().pads;
+            pads[2].audio = share (sine (44100, 1, 0.5f));
+            const auto original = pads[2].audio;
+            PadSoundEditor soundEditor (processor);
+            soundEditor.setSize (912, 650);
+            soundEditor.open (2);
+
+            auto findButton = [&soundEditor] (const juce::String& text) -> juce::Button&
+            {
+                for (auto* c : soundEditor.getChildren())
+                    if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText() == text)
+                        return *b;
+                for (auto* c : soundEditor.getChildren())
+                    for (auto* inner : c->getChildren())
+                        if (auto* b = dynamic_cast<juce::TextButton*> (inner); b != nullptr && b->getButtonText() == text)
+                            return *b;
+                jassertfalse;
+                return *static_cast<juce::Button*> (nullptr);
+            };
+            crate::WaveView* wave = nullptr;
+            crate::EffectsPanel* fx = nullptr;
+            for (auto* c : soundEditor.getChildren())
+            {
+                if (auto* w = dynamic_cast<crate::WaveView*> (c)) wave = w;
+                if (auto* e = dynamic_cast<crate::EffectsPanel*> (c)) fx = e;
+            }
+            expect (wave != nullptr && fx != nullptr);
+
+            wave->setSelection ({ 11025, 22050 });
+            findButton ("Trim").onClick();
+            expectEquals (pads[2].audio->getNumSamples(), 11025);
+            expect (near (pads[2].audio->getSample (0, 0), original->getSample (0, 11025), 1.0e-6));
+
+            findButton ("Undo").onClick();
+            expect (pads[2].audio == original, "undo brings the whole sound back");
+            findButton ("Redo").onClick();
+            expectEquals (pads[2].audio->getNumSamples(), 11025);
+
+            wave->setSelection ({});
+            findButton ("Fade out").onClick();
+            const auto* faded = pads[2].audio->getReadPointer (0);
+            expect (std::abs (faded[11024]) < 0.01f, "the fade ends silent");
+            expect (std::abs (faded[1000]) > 0.0f);
+
+            wave->setSelection ({});   // a fade selects what it faded
+            findButton ("Reverse").onClick();
+            expect (std::abs (pads[2].audio->getSample (0, 0)) < 0.01f, "the faded end is now at the start");
+
+            expect (fx->loadPreset ("Punchy"), "a preset switches effects on");
+            const auto before = pads[2].audio;
+            findButton ("Undo").onClick();
+            findButton ("Redo").onClick();
+            wave->selectAll();
+            fx->onApply();
+            expect (pads[2].audio != before, "effects are written into the pad");
+            expect (! fx->hasEffects(), "and the panel resets after");
+
+            if (auto* path = std::getenv ("CRATE_PAD_EDITOR_SNAPSHOT"))
+            {
+                wave->setSelection ({ 2000, 6000 });
+                fx->loadPreset ("Dub echo");
+                auto image = soundEditor.createComponentSnapshot (soundEditor.getLocalBounds());
+                juce::File file { juce::String { path } };
+                file.deleteFile();
+                juce::FileOutputStream stream { file };
+                juce::PNGImageFormat().writeImageToStream (image, stream);
+            }
+
+            processor.getProject().dispatchPendingMessages();
+            pads[2] = {};   // cleared from outside the editor
+            soundEditor.sync();
+            findButton ("Undo").onClick();
+            expect (pads[2].isEmpty(), "undo doesn't bring back a sound that was cleared elsewhere");
+        }
 
         beginTest ("the window opens");
         std::unique_ptr<juce::AudioProcessorEditor> view (processor.createEditor());

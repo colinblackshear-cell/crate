@@ -45,6 +45,12 @@ It's the start of a virtual MPC; a sequencer comes next.
 
 - **Fill pads:** drag WAV, AIFF, MP3, FLAC or MPC `.SND` files (or a whole folder) onto a pad, or
   click or drag sounds from the shared library. Several files fill the pads in order.
+- **Trim and effects:** double-click a pad (or press **Trim and effects...**) to edit its sound.
+  Drag across the waveform to pick a part, then trim to it, delete it, trim the quiet ends, fade
+  in or out (four fade shapes), normalize or reverse. The effects are the Sample Editor's: pitch
+  and speed, filter, compressor, drive, lo-fi, chorus, phaser, delay and reverb, with presets.
+  Turn on **Hear effects** and press **Play** (or Space) to try them before **Apply** writes them
+  into the pad, or into just the selected part. Undo and redo (Cmd+Z) work until you press Done.
 - **Chop:** **Chop across pads...** cuts a pad's sound at each hit, or into 2 to 16 equal slices,
   and puts each piece on its own pad from that one.
 - **Play:** click a pad, or play a MIDI keyboard: pads use the same notes as on the MPC (A01 is

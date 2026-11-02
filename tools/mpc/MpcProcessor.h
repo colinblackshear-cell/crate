@@ -34,6 +34,11 @@ public:
     void releasePad (int pad);
     void stopAll();
 
+    // Plays part of any sound (the pad sound editor's Play button), and reports where it is.
+    void preview (SharedAudio, juce::Range<int>);
+    void stopPreview();
+    int getPreviewPosition() const { return previewPosition.load(); }   // -1 when not playing
+
     // Pads played since the last call (bit n = pad n), from MIDI or clicks, to light them.
     juce::uint64 takePlayedPads() { return playedPads.exchange (0); }
 
@@ -109,6 +114,17 @@ private:
     juce::MidiMessageCollector clicks;
 
     std::vector<Voice> voices;              // audio thread only
+
+    // The preview, swapped under `previewLock` on the message thread, so its sound is only ever
+    // freed there.
+    juce::SpinLock previewLock;
+    SharedAudio previewAudio;
+    juce::Range<int> previewRange;
+    double previewPos = 0;
+    float previewFade = 1;
+    bool previewStopping = false, previewDone = true;
+    std::atomic<int> previewPosition { -1 };
+    void renderPreview (juce::AudioBuffer<float>&);
     std::array<int, 128> padForNoteNumber {};
     std::atomic<juce::uint64> playedPads { 0 };
     std::atomic<bool> stopRequested { false };

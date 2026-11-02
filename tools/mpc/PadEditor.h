@@ -17,6 +17,8 @@ public:
     std::function<void()> onLoadFile;
     // Cuts the pad's sound onto this pad and the ones after it: at its hits (0) or in equal slices.
     std::function<void (int slices)> onChop;
+    // Opens the sound editor for the pad: trim, fades and effects.
+    std::function<void()> onEditSound;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -48,6 +50,7 @@ private:
     juce::TextButton load { "Load sound..." };
     juce::TextButton clear { "Clear pad" };
     juce::TextButton chop { "Chop across pads..." };
+    juce::TextButton editSound { "Trim and effects..." };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PadEditor)
 };
