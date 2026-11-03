@@ -61,4 +61,5 @@ target_link_libraries(crate_core INTERFACE
 
 add_subdirectory(tools/editor)
 add_subdirectory(tools/mpc)
+add_subdirectory(tools/rig)
 add_subdirectory(tests)

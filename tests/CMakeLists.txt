@@ -5,13 +5,15 @@ target_sources(CrateTests PRIVATE
     EditorTests.cpp
     KeysTests.cpp
     MpcTests.cpp
+    RigTests.cpp
     SequencerTests.cpp
     TestMain.cpp
     ${MPC_SOURCES}
+    ${RIG_SOURCES}
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
-target_include_directories(CrateTests PRIVATE ${PROJECT_SOURCE_DIR}/tools/editor ${PROJECT_SOURCE_DIR}/tools/mpc)
+target_include_directories(CrateTests PRIVATE ${PROJECT_SOURCE_DIR}/tools/editor ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/rig)
 target_compile_definitions(CrateTests PRIVATE
     JucePlugin_Name="Sample Editor"
     JUCE_APPLICATION_NAME_STRING="CrateTests"
