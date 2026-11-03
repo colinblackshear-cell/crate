@@ -14,6 +14,9 @@ juce::String RigRouting::controlName (int c)
         case play:         return "Play";
         case stop:         return "Stop";
         case metronome:    return "Metronome";
+        case vocoderLevel: return "Vocoder level";
+        case vocoderMute:  return "Vocoder mute";
+        case vocoderOn:    return "Vocoder on/off";
         default:           return {};
     }
 }
@@ -95,7 +98,8 @@ void RigRouting::handleController (int channel, int cc, int value, Result& resul
     }
 }
 
-void RigRouting::route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juce::MidiBuffer& toSampler, Result& result)
+void RigRouting::route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juce::MidiBuffer& toSampler,
+                        juce::MidiBuffer& toVocoder, Result& result)
 {
     result.values.fill (-1.0f);
     result.presses.fill (0);
@@ -115,6 +119,7 @@ void RigRouting::route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juc
             {
                 toMpc.addEvent (m, at);
                 toSampler.addEvent (m, at);
+                toVocoder.addEvent (m, at);
                 continue;
             }
             handleController (m.getChannel(), m.getControllerNumber(), m.getControllerValue(), result);
@@ -133,7 +138,9 @@ void RigRouting::route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juc
 
         if (isNote || m.isPitchWheel() || m.isChannelPressure())
         {
-            if (keys == Dest::sampler)
+            if (keys == Dest::vocoder)
+                toVocoder.addEvent (m, at);
+            else if (keys == Dest::sampler)
                 toSampler.addEvent (m, at);
             else if (keys == Dest::mpc)
                 toMpc.addEvent (m, at);

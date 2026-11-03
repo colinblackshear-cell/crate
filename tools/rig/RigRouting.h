@@ -10,8 +10,8 @@
 // - Drum pads (MIDI channel 10, the Launchkey's drum mode) play the MPC's pads. The 16 pads
 //   send notes 36-51 from the bottom left, and play pads 1-16 of the chosen pad bank (A-D),
 //   laid out like the MPC's 4x4 grid.
-// - The keys (any other channel) play the instrument picked in "Keys play" (the sampler by
-//   default, or the MPC's pads note for note).
+// - The keys (any other channel) play the instrument picked in "Keys play": the vocoder (by
+//   default), the sampler, or the MPC's pads note for note.
 // - Knobs, faders and buttons do whatever you teach them: press Learn next to a fader or
 //   button in the Rig, then move the control. Learned controls are saved with the show.
 //
@@ -19,7 +19,7 @@
 class RigRouting
 {
 public:
-    enum class Dest { off, mpc, sampler };
+    enum class Dest { off, mpc, sampler, vocoder };
 
     // Things a knob, fader or button can control.
     enum Control
@@ -27,10 +27,12 @@ public:
         mpcLevel, samplerLevel, masterLevel,       // faders and knobs
         mpcMute, samplerMute,                      // buttons: each press toggles
         play, stop, metronome,                     // buttons
+        vocoderLevel,                              // a fader (added later, so saved shows keep their numbers)
+        vocoderMute, vocoderOn,                    // buttons
         numControls
     };
     static juce::String controlName (int control);
-    static bool isFader (int control) { return control <= masterLevel; }
+    static bool isFader (int control) { return control <= masterLevel || control == vocoderLevel; }
 
     // What a block of incoming MIDI turned into.
     struct Result
@@ -45,7 +47,7 @@ public:
 
     std::atomic<int> padChannel { 10 };              // 1-16; 0 = the pads don't play the MPC
     std::atomic<int> padBank { 0 };                  // 0-3 = A-D
-    std::atomic<int> keysTo { (int) Dest::sampler };
+    std::atomic<int> keysTo { (int) Dest::vocoder };
 
     // Teaching a control: the next knob, fader or button that moves gets `control`.
     void learn (int control) { learning = control; }
@@ -60,7 +62,8 @@ public:
     static constexpr int kFirstPadNote = 36;
 
     // Audio thread: splits `in` into what each tool plays, and returns control moves.
-    void route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juce::MidiBuffer& toSampler, Result&);
+    void route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juce::MidiBuffer& toSampler,
+                juce::MidiBuffer& toVocoder, Result&);
 
     // The MPC note a drum pad note plays (-1 if it's not one of the 16 pads).
     int mpcNoteForPad (int padNote) const;

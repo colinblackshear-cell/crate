@@ -4,11 +4,18 @@ namespace Theme = crate::Theme;
 
 namespace
 {
-const juce::Colour mpcColour { 0xffff8a3d }, samplerColour { 0xff8fd3c8 }, masterColour { 0xffeeeeee };
+constexpr int kBottomHeight = 112;
+const juce::Colour mpcColour { 0xffff8a3d }, samplerColour { 0xff8fd3c8 }, vocoderColour { 0xffb48cff }, masterColour { 0xffeeeeee };
 
 juce::Colour stripColour (int strip)
 {
-    return strip == RigEngine::mpcStrip ? mpcColour : strip == RigEngine::samplerStrip ? samplerColour : masterColour;
+    switch (strip)
+    {
+        case RigEngine::mpcStrip:     return mpcColour;
+        case RigEngine::samplerStrip: return samplerColour;
+        case RigEngine::vocoderStrip: return vocoderColour;
+        default:                      return masterColour;
+    }
 }
 
 juce::File showsFolder()
@@ -18,9 +25,17 @@ juce::File showsFolder()
 }
 
 //==============================================================================
-RigView::StripView::StripView (RigEngine& e, int s, int fader, int muteC)
-    : engine (e), strip (s), faderControl (fader), muteControl (muteC)
+RigView::StripView::StripView (RigEngine& e, int s, int fader, int muteC, bool hasOnSwitch)
+    : engine (e), strip (s), faderControl (fader), muteControl (muteC), hasOn (hasOnSwitch)
 {
+    if (hasOn)
+    {
+        addAndMakeVisible (on);
+        on.setClickingTogglesState (true);
+        on.setColour (juce::TextButton::buttonOnColourId, stripColour (strip));
+        on.setTooltip ("Turns the vocoder on or off. Off, it's silent and uses no processor time.");
+        on.onClick = [this] { engine.vocoderOn = on.getToggleState(); };
+    }
     addAndMakeVisible (level);
     addAndMakeVisible (mute);
     addAndMakeVisible (learn);
@@ -41,6 +56,11 @@ void RigView::StripView::refresh()
 {
     level.setValue (engine.getStrip (strip).level.load(), juce::dontSendNotification);
     mute.setToggleState (engine.getStrip (strip).mute.load(), juce::dontSendNotification);
+    if (hasOn)
+    {
+        on.setToggleState (engine.vocoderOn.load(), juce::dontSendNotification);
+        on.setButtonText (engine.vocoderOn.load() ? "On" : "Off");
+    }
 }
 
 void RigView::StripView::tick()
@@ -78,6 +98,11 @@ void RigView::StripView::resized()
     learn.setBounds (top.removeFromRight (58));
     top.removeFromRight (6);
     mute.setBounds (top.removeFromRight (52));
+    if (hasOn)
+    {
+        top.removeFromRight (6);
+        on.setBounds (top.removeFromRight (44));
+    }
     area.removeFromTop (4);
     level.setBounds (area.removeFromTop (26));
 }
@@ -90,9 +115,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     setWantsKeyboardFocus (true);
 
     for (auto* c : std::initializer_list<juce::Component*> { &playButton, &stopButton, &clickButton, &learnPlay, &learnStop,
-                                                             &tempoLabel, &tempo, &tapButton, &position, &midiLight,
+                                                             &tempoLabel, &tempo, &tapButton, &sampleButton, &position, &midiLight,
                                                              &audioButton, &saveButton, &openButton, &tabs,
-                                                             &padsLabel, &padBank, &keysLabel, &keysTo })
+                                                             &padsLabel, &padBank, &keysLabel, &keysTo,
+                                                             &sourceLabel, &sampleSource })
         addAndMakeVisible (c);
 
     auto& transport = engine.getTransport();
@@ -131,6 +157,11 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
         }
     };
 
+    sampleButton.setColour (juce::TextButton::buttonOnColourId, Theme::record);
+    sampleButton.setTooltip ("Records what the Sampler hears (pick it in Sampler records: the mic, the vocoder, or the Rig mix) "
+                             "straight into the Sampler. Press again to stop; then play it from the keys or edit it in the Sampler tab.");
+    sampleButton.onClick = [this] { toggleSampling(); };
+
     position.setFont (juce::FontOptions (22.0f, juce::Font::bold));
     position.setJustificationType (juce::Justification::centred);
     position.setColour (juce::Label::backgroundColourId, Theme::background);
@@ -145,26 +176,34 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     tabs.setTabBarDepth (34);
     tabs.setOutline (0);
     tabs.addTab ("MPC", Theme::panel, engine.getMpc().createEditorAndMakeActive(), true);
+    tabs.addTab ("Vocoder", Theme::panel, engine.getVocoder().createEditorAndMakeActive(), true);
     tabs.addTab ("Sampler", Theme::panel, engine.getSampler().createEditorAndMakeActive(), true);
     tabs.getTabbedButtonBar().setTabBackgroundColour (0, mpcColour.withAlpha (0.25f));
-    tabs.getTabbedButtonBar().setTabBackgroundColour (1, samplerColour.withAlpha (0.25f));
+    tabs.getTabbedButtonBar().setTabBackgroundColour (1, vocoderColour.withAlpha (0.25f));
+    tabs.getTabbedButtonBar().setTabBackgroundColour (2, samplerColour.withAlpha (0.25f));
 
     // Routing.
-    for (auto* l : { &padsLabel, &keysLabel })
+    for (auto* l : { &padsLabel, &keysLabel, &sourceLabel })
         l->setColour (juce::Label::textColourId, Theme::textDim);
     padBank.addItemList ({ "A", "B", "C", "D" }, 1);
     padBank.onChange = [this] { engine.getRouting().padBank = padBank.getSelectedItemIndex(); };
     padBank.setTooltip ("Your keyboard's 16 drum pads (MIDI channel 10) play these MPC pads.");
+    keysTo.addItem ("Vocoder", 1 + (int) RigRouting::Dest::vocoder);
     keysTo.addItem ("Sampler", 1 + (int) RigRouting::Dest::sampler);
     keysTo.addItem ("MPC pads", 1 + (int) RigRouting::Dest::mpc);
     keysTo.addItem ("Nothing", 1 + (int) RigRouting::Dest::off);
     keysTo.onChange = [this] { engine.getRouting().keysTo = keysTo.getSelectedId() - 1; };
     keysTo.setTooltip ("What your keyboard's keys play.");
+    for (int i = 0; i < 3; ++i)
+        sampleSource.addItem (RigEngine::sampleSourceName (i), i + 1);
+    sampleSource.onChange = [this] { engine.sampleSource = sampleSource.getSelectedId() - 1; };
+    sampleSource.setTooltip ("What the Sampler records: your mic, the vocoder, or the Rig mix (the MPC and the vocoder as you hear them).");
 
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::mpcStrip, RigRouting::mpcLevel, RigRouting::mpcMute));
+    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::vocoderStrip, RigRouting::vocoderLevel, RigRouting::vocoderMute, true));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::samplerStrip, RigRouting::samplerLevel, RigRouting::samplerMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::masterStrip, RigRouting::masterLevel, -1));
-    const int faders[] = { RigRouting::mpcLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
+    const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
     {
         auto* s = stripViews[i].get();
@@ -191,6 +230,7 @@ void RigView::refresh()
     clickButton.setToggleState (transport.metronome.load(), juce::dontSendNotification);
     padBank.setSelectedItemIndex (engine.getRouting().padBank.load(), juce::dontSendNotification);
     keysTo.setSelectedId (engine.getRouting().keysTo.load() + 1, juce::dontSendNotification);
+    sampleSource.setSelectedId (engine.sampleSource.load() + 1, juce::dontSendNotification);
     for (auto& s : stripViews)
         s->refresh();
     updateLearnButtons();
@@ -237,7 +277,7 @@ void RigView::updateLearnButtons()
     };
     show (learnPlay, RigRouting::play);
     show (learnStop, RigRouting::stop);
-    const int faders[] = { RigRouting::mpcLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
+    const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
         show (stripViews[i]->learn, faders[i]);
 }
@@ -255,6 +295,18 @@ void RigView::timerCallback()
     const int beat = (int) std::floor (std::fmod (beats, (double) beatsPerBar)) + 1;
     position.setText (juce::String (bar) + " . " + juce::String (beat), juce::dontSendNotification);
 
+    auto& sampler = engine.getSampler();
+    if (sampler.isRecording())
+    {
+        sampler.collectRecording();
+        const int seconds = (int) sampler.getRecordedSeconds();
+        sampleButton.setButtonText ("Stop " + juce::String (seconds / 60) + ":" + juce::String (seconds % 60).paddedLeft ('0', 2));
+    }
+    else if (sampleButton.getToggleState())
+    {
+        toggleSampling();   // the Sampler hit its length limit, or stopped in its own tab
+    }
+
     if (engine.controlsMoved.exchange (false))
         refresh();
     else
@@ -268,6 +320,34 @@ void RigView::timerCallback()
 
     if (++ticks % 60 == 0)
         openMidiInputs();
+}
+
+void RigView::toggleSampling()
+{
+    auto& sampler = engine.getSampler();
+    if (! sampleButton.getToggleState())
+    {
+        sampler.stop();
+        sampler.startRecording();
+        sampleButton.setToggleState (true, juce::dontSendNotification);
+        sampleButton.setButtonText ("Stop 0:00");
+        return;
+    }
+
+    sampleButton.setToggleState (false, juce::dontSendNotification);
+    sampleButton.setButtonText ("Sample");
+    if (! sampler.isRecording())
+        return;   // already stopped (and loaded) in the Sampler tab
+
+    auto take = sampler.stopRecording();
+    if (take.getNumSamples() < crate::samples (0.05))
+        return;
+
+    // Into the Sampler, ready to play from the keys or edit (and undoable there).
+    sampler.getDocument().load (crate::share (std::move (take)),
+                                engine.sampleSourceName (engine.sampleSource.load()) + " "
+                                    + juce::Time::getCurrentTime().formatted ("%H.%M.%S"),
+                                "Sample");
 }
 
 void RigView::openMidiInputs()
@@ -355,7 +435,7 @@ void RigView::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
     g.drawText ("Rig", bar.reduced (14, 0).removeFromLeft (60), juce::Justification::centredLeft);
 
-    auto bottom = getLocalBounds().removeFromBottom (96);
+    auto bottom = getLocalBounds().removeFromBottom (kBottomHeight);
     g.setColour (Theme::panel);
     g.fillRect (bottom);
 }
@@ -382,6 +462,8 @@ void RigView::resized()
     tapButton.setBounds (bar.removeFromLeft (52));
     bar.removeFromLeft (6);
     clickButton.setBounds (bar.removeFromLeft (64));
+    bar.removeFromLeft (6);
+    sampleButton.setBounds (bar.removeFromLeft (96));
 
     openButton.setBounds (bar.removeFromRight (100));
     bar.removeFromRight (6);
@@ -391,18 +473,22 @@ void RigView::resized()
     bar.removeFromRight (10);
     midiLight.setBounds (bar.reduced (6, 0));
 
-    auto bottom = area.removeFromBottom (96).reduced (10, 10);
-    auto routing = bottom.removeFromLeft (300);
-    auto row1 = routing.removeFromTop (34);
-    padsLabel.setBounds (row1.removeFromLeft (160));
-    padBank.setBounds (row1.removeFromLeft (70).reduced (0, 3));
-    routing.removeFromTop (8);
-    auto row2 = routing.removeFromTop (34);
-    keysLabel.setBounds (row2.removeFromLeft (160));
-    keysTo.setBounds (row2.removeFromLeft (130).reduced (0, 3));
+    auto bottom = area.removeFromBottom (kBottomHeight).reduced (10, 8);
+    auto routing = bottom.removeFromLeft (290);
+    const std::pair<juce::Label*, juce::ComboBox*> rows[] = { { &padsLabel, &padBank }, { &keysLabel, &keysTo },
+                                                              { &sourceLabel, &sampleSource } };
+    for (auto [label, box] : rows)
+    {
+        auto row = routing.removeFromTop (30);
+        label->setBounds (row.removeFromLeft (140));
+        box->setBounds (row.removeFromLeft (box == &padBank ? 70 : 130).reduced (0, 2));
+        routing.removeFromTop (2);
+    }
 
     bottom.removeFromLeft (10);
-    const int w = (bottom.getWidth() - 20) / 3;
+    bottom = bottom.withSizeKeepingCentre (bottom.getWidth(), 70);
+    const int count = (int) stripViews.size();
+    const int w = (bottom.getWidth() - 10 * (count - 1)) / count;
     for (auto& s : stripViews)
     {
         s->setBounds (bottom.removeFromLeft (w));

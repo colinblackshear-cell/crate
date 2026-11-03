@@ -5,8 +5,8 @@
 #include "RigEngine.h"
 #include "core/ui/Theme.h"
 
-// The Rig's window: one transport across the top, the tools in tabs, and a mixer with the
-// keyboard routing along the bottom.
+// The Rig's window: one transport across the top, the tools in tabs (MPC, Vocoder, Sampler),
+// and a mixer with the keyboard routing along the bottom.
 class RigView : public juce::Component,
                 private juce::Timer
 {
@@ -32,18 +32,19 @@ private:
     class StripView : public juce::Component
     {
     public:
-        StripView (RigEngine&, int strip, int faderControl, int muteControl);
+        StripView (RigEngine&, int strip, int faderControl, int muteControl, bool hasOnSwitch = false);
         void paint (juce::Graphics&) override;
         void resized() override;
         void refresh();
         void tick();
 
         juce::Slider level { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
-        juce::TextButton mute { "Mute" }, learn { "Learn" };
+        juce::TextButton mute { "Mute" }, learn { "Learn" }, on { "On" };
 
     private:
         RigEngine& engine;
         int strip, faderControl, muteControl;
+        bool hasOn;
         float meter = 0;
     };
 
@@ -51,6 +52,7 @@ private:
     void showAudioSettings();
     void startLearning (int control, juce::Button&);
     void updateLearnButtons();
+    void toggleSampling();
 
     RigEngine& engine;
     juce::AudioDeviceManager& devices;
@@ -61,15 +63,15 @@ private:
     juce::TextButton learnPlay { "Learn" }, learnStop { "Learn" };
     juce::Label tempoLabel { {}, "Tempo" };
     juce::Slider tempo { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
-    juce::TextButton tapButton { "Tap" };
+    juce::TextButton tapButton { "Tap" }, sampleButton { "Sample" };
     juce::Label position, midiLight;
     juce::TextButton audioButton { "Audio + MIDI" }, saveButton { "Save show" }, openButton { "Open show" };
 
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
     // Routing.
-    juce::Label padsLabel { {}, "Pads play MPC bank" }, keysLabel { {}, "Keys play" };
-    juce::ComboBox padBank, keysTo;
+    juce::Label padsLabel { {}, "Pads play MPC bank" }, keysLabel { {}, "Keys play" }, sourceLabel { {}, "Sampler records" };
+    juce::ComboBox padBank, keysTo, sampleSource;
 
     std::vector<std::unique_ptr<StripView>> stripViews;
 

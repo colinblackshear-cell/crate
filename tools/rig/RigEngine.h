@@ -5,6 +5,7 @@
 
 #include "EditorProcessor.h"
 #include "MpcProcessor.h"
+#include "PluginProcessor.h"   // the vocoder
 #include "RigRouting.h"
 #include "RigTransport.h"
 
@@ -12,9 +13,10 @@
 
 // The Rig's sound: the tools it plays live, run side by side in one program on one clock.
 //
-// Your audio interface's input goes to the sampler (so you can sample the mic live); each
-// tool plays into its own channel strip (level, mute, meter), and the strips are summed to
-// the output. MIDI from every connected keyboard is split between the tools by RigRouting.
+// Your audio interface's input is the vocoder's voice. The sampler records from the mic, the
+// vocoder, or the Rig's mix (pick with setSampleSource), so you can sample what you're
+// playing straight into it. Each tool plays into its own channel strip (level, mute, meter),
+// and the strips are summed to the output. MIDI from every connected keyboard is split between the tools by RigRouting.
 //
 // The tools are the same code as their own apps and Logic plugins: the Rig is their host, and
 // they follow its clock the way they follow Logic's.
@@ -27,10 +29,12 @@ public:
 
     MpcProcessor& getMpc() { return mpc; }
     EditorProcessor& getSampler() { return sampler; }
+    VocoderProcessor& getVocoder() { return vocoder; }
     RigTransport& getTransport() { return transport; }
     RigRouting& getRouting() { return routing; }
 
-    enum StripId { mpcStrip, samplerStrip, masterStrip, numStrips };
+    // (The vocoder came later, so it's last: saved shows keep their strip order.)
+    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, numStrips };
     struct Strip
     {
         std::atomic<float> level { 0.8f };   // fader position 0..1
@@ -41,6 +45,14 @@ public:
     static juce::String stripName (int id);
     // Fader position to gain: 0.8 is unity, the top is about +6 dB.
     static float faderGain (float level);
+
+    // The vocoder runs only while it's on (it uses the most processor time).
+    std::atomic<bool> vocoderOn { true };
+
+    // What the sampler hears when you record in it.
+    enum class SampleSource { mic, vocoder, mix };
+    std::atomic<int> sampleSource { (int) SampleSource::mic };
+    static juce::String sampleSourceName (int);
 
     // Something on the audio thread changed a strip or the transport (a learned fader or
     // button), so the window should refresh. Reset by the window.
@@ -76,8 +88,11 @@ private:
     void processChunk (const float* const* inputs, int numInputs, int offset, int numSamples);
     void applyControls (const RigRouting::Result&);
 
+    void applyStrip (int id, juce::AudioBuffer<float>&);
+
     MpcProcessor mpc;
     EditorProcessor sampler;
+    VocoderProcessor vocoder;
     RigTransport transport;
     RigRouting routing;
     std::array<Strip, numStrips> strips;
@@ -88,8 +103,8 @@ private:
     juce::MidiBuffer nowMidi;          // addMidiNow, under nowLock
 
     // Audio-thread buffers, sized in prepare().
-    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, mixBuffer;
-    juce::MidiBuffer midiIn, mpcMidi, samplerMidi;
+    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, mixBuffer;
+    juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi;
     double sampleRate = 0;
     int maxBlock = 0;
     bool prepared = false;

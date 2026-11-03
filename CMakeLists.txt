@@ -10,6 +10,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 # instead of downloading them.
 set(CRATE_JUCE_DIR "" CACHE PATH "Local JUCE checkout (optional)")
 set(CRATE_STRETCH_DIR "" CACHE PATH "Local signalsmith-stretch checkout (optional)")
+set(CRATE_VOCODER_DIR "" CACHE PATH "Local checkout of the vocoder repo (optional)")
 
 include(FetchContent)
 
@@ -33,6 +34,30 @@ else()
         GIT_SHALLOW ON)
     FetchContent_MakeAvailable(signalsmith-stretch)
 endif()
+
+# The vocoder lives in its own repo (colinblackshear-cell/vocoder); the Rig builds its code in.
+# Only its sources are used, not its own build. Bump the commit to pick up vocoder changes.
+if(CRATE_VOCODER_DIR)
+    set(vocoder_SOURCE_DIR ${CRATE_VOCODER_DIR})
+else()
+    FetchContent_Declare(vocoder
+        GIT_REPOSITORY https://github.com/colinblackshear-cell/vocoder.git
+        GIT_TAG 4d02733a2676f6251b6ae9a092e1b8a15d31f616
+        SOURCE_SUBDIR not-a-folder)
+    FetchContent_MakeAvailable(vocoder)
+endif()
+set(VOCODER_INCLUDE ${vocoder_SOURCE_DIR}/Source)
+set(VOCODER_SOURCES
+    ${vocoder_SOURCE_DIR}/Source/PluginProcessor.cpp
+    ${vocoder_SOURCE_DIR}/Source/PluginEditor.cpp
+    ${vocoder_SOURCE_DIR}/Source/MainPanel.cpp
+    ${vocoder_SOURCE_DIR}/Source/EasyPanel.cpp)
+# Each tool defines the plugin wrappers' createPluginFilter(); in the Rig they're built together,
+# so the vocoder's copy gets another name. Call this in each folder that builds the vocoder's code.
+macro(crate_rename_vocoder_entry)
+    set_source_files_properties(${vocoder_SOURCE_DIR}/Source/PluginProcessor.cpp
+        PROPERTIES COMPILE_DEFINITIONS createPluginFilter=createVocoderPluginFilter)
+endmacro()
 
 enable_testing()
 

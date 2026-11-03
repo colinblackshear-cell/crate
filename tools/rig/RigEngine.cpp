@@ -7,7 +7,19 @@ juce::String RigEngine::stripName (int id)
         case mpcStrip:     return "MPC";
         case samplerStrip: return "Sampler";
         case masterStrip:  return "Master";
+        case vocoderStrip: return "Vocoder";
         default:           return {};
+    }
+}
+
+juce::String RigEngine::sampleSourceName (int source)
+{
+    switch ((SampleSource) source)
+    {
+        case SampleSource::mic:     return "Mic";
+        case SampleSource::vocoder: return "Vocoder";
+        case SampleSource::mix:     return "Rig mix";
+        default:                    return {};
     }
 }
 
@@ -28,6 +40,7 @@ RigEngine::RigEngine()
     // The Rig is the host, so the tools follow its clock the way they follow Logic's.
     mpc.setPlayHead (&transport);
     sampler.setPlayHead (&transport);
+    vocoder.setPlayHead (&transport);
     transport.setBpm (mpc.getProject().currentSequence().bpm);
 }
 
@@ -35,6 +48,7 @@ RigEngine::~RigEngine()
 {
     mpc.setPlayHead (nullptr);
     sampler.setPlayHead (nullptr);
+    vocoder.setPlayHead (nullptr);
 }
 
 void RigEngine::addMidi (const juce::MidiMessage& m)
@@ -55,7 +69,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     sampleRate = rate > 0 ? rate : 44100.0;
     maxBlock = juce::jmax (16, maximumBlockSize);
 
-    for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler })
+    for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder })
     {
         p->setRateAndBufferSizeDetails (sampleRate, maxBlock);
         p->prepareToPlay (sampleRate, maxBlock);
@@ -65,8 +79,9 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
 
     mpcBuffer.setSize (2, maxBlock);
     samplerBuffer.setSize (2, maxBlock);
+    vocoderBuffer.setSize (2, maxBlock);
     mixBuffer.setSize (2, maxBlock);
-    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi })
+    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi })
         m->ensureSize (4096);
 
     for (int s = 0; s < numStrips; ++s)
@@ -114,7 +129,8 @@ void RigEngine::applyControls (const RigRouting::Result& r)
     bool moved = false;
     const std::pair<int, int> faders[] = { { RigRouting::mpcLevel, mpcStrip },
                                            { RigRouting::samplerLevel, samplerStrip },
-                                           { RigRouting::masterLevel, masterStrip } };
+                                           { RigRouting::masterLevel, masterStrip },
+                                           { RigRouting::vocoderLevel, vocoderStrip } };
     for (auto [control, strip] : faders)
         if (r.values[(size_t) control] >= 0.0f)
         {
@@ -130,6 +146,16 @@ void RigEngine::applyControls (const RigRouting::Result& r)
     if (r.presses[RigRouting::samplerMute] % 2 == 1)
     {
         strips[samplerStrip].mute = ! strips[samplerStrip].mute.load();
+        moved = true;
+    }
+    if (r.presses[RigRouting::vocoderMute] % 2 == 1)
+    {
+        strips[vocoderStrip].mute = ! strips[vocoderStrip].mute.load();
+        moved = true;
+    }
+    if (r.presses[RigRouting::vocoderOn] % 2 == 1)
+    {
+        vocoderOn = ! vocoderOn.load();
         moved = true;
     }
     if (r.presses[RigRouting::metronome] % 2 == 1)
@@ -169,8 +195,9 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     mpcMidi.clear();
     samplerMidi.clear();
+    vocoderMidi.clear();
     RigRouting::Result controls;
-    routing.route (midiIn, mpcMidi, samplerMidi, controls);
+    routing.route (midiIn, mpcMidi, samplerMidi, vocoderMidi, controls);
     applyControls (controls);
 
     // Play and stop land here, at the start of the block, for every tool at once.
@@ -178,48 +205,58 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     juce::AudioBuffer<float> mpcBlock (mpcBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> samplerBlock (samplerBuffer.getArrayOfWritePointers(), 2, n);
+    juce::AudioBuffer<float> vocoderBlock (vocoderBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> mix (mixBuffer.getArrayOfWritePointers(), 2, n);
+
+    // The audio input, on both sides (a mono mic plays in the middle).
+    auto copyInput = [&] (juce::AudioBuffer<float>& dest)
+    {
+        dest.clear();
+        for (int ch = 0; ch < 2 && numInputs > 0; ++ch)
+            if (const auto* in = inputs[juce::jmin (ch, numInputs - 1)])
+                dest.copyFrom (ch, 0, in + offset, n);
+    };
 
     mpcBlock.clear();
     mpc.processBlock (mpcBlock, mpcMidi);
 
-    // The sampler hears the audio input, so it can record from the mic.
-    samplerBlock.clear();
-    for (int ch = 0; ch < 2 && numInputs > 0; ++ch)
+    // The vocoder shapes its synth with your voice from the input.
+    if (vocoderOn.load())
     {
-        const auto* in = inputs[juce::jmin (ch, numInputs - 1)];
-        if (in != nullptr)
-            samplerBlock.copyFrom (ch, 0, in + offset, n);
+        copyInput (vocoderBlock);
+        vocoder.processBlock (vocoderBlock, vocoderMidi);
     }
-    sampler.processBlock (samplerBlock, samplerMidi);
-
-    // The mixer.
-    mix.clear();
-    const std::pair<int, juce::AudioBuffer<float>*> tools[] = { { mpcStrip, &mpcBlock }, { samplerStrip, &samplerBlock } };
-    for (auto [id, buffer] : tools)
+    else
     {
-        auto& strip = strips[(size_t) id];
-        auto& gain = gains[(size_t) id];
-        gain.setTargetValue (strip.mute.load() ? 0.0f : faderGain (strip.level.load()));
-        if (gain.isSmoothing())
+        vocoderBlock.clear();
+    }
+
+    // What the sampler hears (and records): the mic, the vocoder as it sounds before its
+    // fader, or the MPC and the vocoder as you hear them. Never the sampler itself.
+    const auto source = (SampleSource) sampleSource.load();
+    if (source == SampleSource::vocoder)
+        for (int ch = 0; ch < 2; ++ch)
+            samplerBlock.copyFrom (ch, 0, vocoderBlock, ch, 0, n);
+    else if (source == SampleSource::mic)
+        copyInput (samplerBlock);
+
+    applyStrip (mpcStrip, mpcBlock);
+    applyStrip (vocoderStrip, vocoderBlock);
+
+    if (source == SampleSource::mix)
+        for (int ch = 0; ch < 2; ++ch)
         {
-            for (int i = 0; i < n; ++i)
-            {
-                const float g = gain.getNextValue();
-                for (int ch = 0; ch < 2; ++ch)
-                    buffer->setSample (ch, i, buffer->getSample (ch, i) * g);
-            }
+            samplerBlock.copyFrom (ch, 0, mpcBlock, ch, 0, n);
+            samplerBlock.addFrom (ch, 0, vocoderBlock, ch, 0, n);
         }
-        else
-        {
-            buffer->applyGain (gain.getTargetValue());
-        }
-        const float peak = juce::jmax (buffer->getMagnitude (0, 0, n), buffer->getMagnitude (1, 0, n));
-        if (peak > strip.peak.load())
-            strip.peak = peak;
+
+    sampler.processBlock (samplerBlock, samplerMidi);
+    applyStrip (samplerStrip, samplerBlock);
+
+    mix.clear();
+    for (auto* buffer : { &mpcBlock, &vocoderBlock, &samplerBlock })
         for (int ch = 0; ch < 2; ++ch)
             mix.addFrom (ch, 0, *buffer, ch, 0, n);
-    }
 
     // The metronome goes straight to the mix, under the master fader.
     transport.endBlock (n, &mix);
@@ -236,6 +273,30 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     const float peak = juce::jmax (mix.getMagnitude (0, 0, n), mix.getMagnitude (1, 0, n));
     if (peak > master.peak.load())
         master.peak = peak;
+}
+
+void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
+{
+    auto& strip = strips[(size_t) id];
+    auto& gain = gains[(size_t) id];
+    const int n = buffer.getNumSamples();
+    gain.setTargetValue (strip.mute.load() ? 0.0f : faderGain (strip.level.load()));
+    if (gain.isSmoothing())
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const float g = gain.getNextValue();
+            for (int ch = 0; ch < 2; ++ch)
+                buffer.setSample (ch, i, buffer.getSample (ch, i) * g);
+        }
+    }
+    else
+    {
+        buffer.applyGain (gain.getTargetValue());
+    }
+    const float peak = juce::jmax (buffer.getMagnitude (0, 0, n), buffer.getMagnitude (1, 0, n));
+    if (peak > strip.peak.load())
+        strip.peak = peak;
 }
 
 void RigEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
@@ -255,6 +316,7 @@ void RigEngine::audioDeviceStopped()
     prepared = false;
     mpc.releaseResources();
     sampler.releaseResources();
+    vocoder.releaseResources();
 }
 
 void RigEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
@@ -272,6 +334,8 @@ juce::ValueTree RigEngine::saveShow() const
     show.setProperty ("padChannel", routing.padChannel.load(), nullptr);
     show.setProperty ("padBank", routing.padBank.load(), nullptr);
     show.setProperty ("keysTo", routing.keysTo.load(), nullptr);
+    show.setProperty ("vocoderOn", vocoderOn.load(), nullptr);
+    show.setProperty ("sampleSource", sampleSource.load(), nullptr);
 
     for (int s = 0; s < numStrips; ++s)
     {
@@ -296,7 +360,8 @@ juce::ValueTree RigEngine::saveShow() const
 
     // The tools save themselves the way they do inside a Logic project.
     auto& self = const_cast<RigEngine&> (*this);
-    const std::pair<const char*, juce::AudioProcessor*> tools[] = { { "MPC", &self.mpc }, { "Sampler", &self.sampler } };
+    const std::pair<const char*, juce::AudioProcessor*> tools[] = { { "MPC", &self.mpc }, { "Sampler", &self.sampler },
+                                                                    { "Vocoder", &self.vocoder } };
     for (auto [name, tool] : tools)
     {
         juce::MemoryBlock state;
@@ -319,7 +384,9 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     transport.metronome = (bool) show.getProperty ("metronome", false);
     routing.padChannel = juce::jlimit (0, 16, (int) show.getProperty ("padChannel", 10));
     routing.padBank = juce::jlimit (0, 3, (int) show.getProperty ("padBank", 0));
-    routing.keysTo = juce::jlimit (0, 2, (int) show.getProperty ("keysTo", (int) RigRouting::Dest::sampler));
+    routing.keysTo = juce::jlimit (0, 3, (int) show.getProperty ("keysTo", (int) RigRouting::Dest::vocoder));
+    vocoderOn = (bool) show.getProperty ("vocoderOn", true);
+    sampleSource = juce::jlimit (0, 2, (int) show.getProperty ("sampleSource", 0));
 
     for (int c = 0; c < RigRouting::numControls; ++c)
         routing.forget (c);
@@ -347,6 +414,8 @@ void RigEngine::loadShow (const juce::ValueTree& show)
                 mpc.setStateInformation (state.getData(), (int) state.getSize());
             else if (name == "Sampler")
                 sampler.setStateInformation (state.getData(), (int) state.getSize());
+            else if (name == "Vocoder")
+                vocoder.setStateInformation (state.getData(), (int) state.getSize());
         }
     }
     controlsMoved = true;

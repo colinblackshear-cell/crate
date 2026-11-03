@@ -117,20 +117,26 @@ in Logic, use each tool's own plugin.
   together, **Stop** stops and goes back to the start. Set the **Tempo** with the buttons or tap
   it with **Tap**; **Click** turns the metronome on. The MPC follows the Rig's tempo the way it
   follows Logic's.
-- **The tools in tabs:** the **MPC** and **Sampler** tabs are the full tools, the same as their
-  own apps.
+- **The tools in tabs:** the **MPC**, **Vocoder** and **Sampler** tabs are the full tools, the
+  same as their own apps. The vocoder's code comes from the
+  [vocoder repo](https://github.com/colinblackshear-cell/vocoder) at the commit pinned in
+  `CMakeLists.txt`; bump it to pick up vocoder changes.
 - **Your keyboard (e.g. a Launchkey 61):** every MIDI keyboard is switched on as soon as it's
   plugged in. The drum pads (MIDI channel 10, the Launchkey's drum mode) play the MPC's pads:
   the 16 pads play pads 1-16 of the bank picked in **Pads play MPC bank**. The keys play what's
-  picked in **Keys play**: the Sampler (the sound in the Sampler tab, across the keys), the MPC's
-  pads note for note, or nothing.
-- **Mixer:** a level, mute and meter for the MPC, the Sampler and the master. Double-click a
+  picked in **Keys play**: the Vocoder, the Sampler (the sound in the Sampler tab, across the
+  keys), the MPC's pads note for note, or nothing.
+- **Vocoder:** your audio input is its voice. **On** in its mixer strip turns it on and off.
+- **Mixer:** a level, mute and meter for the MPC, the Vocoder, the Sampler and the master. Double-click a
   level to put it back to 0 dB.
 - **Learn:** press **Learn** next to a level, Play or Stop, then move a fader or knob or press
   a button on your keyboard. From then on it controls that. Press Learn again while it's waiting
   to forget the control.
-- **Sample live:** your audio interface's input goes to the Sampler (not to the speakers), so
-  you can record a sound in the Sampler tab mid-set and play it from the keys.
+- **Sample live:** press **Sample** in the top bar to record straight into the Sampler, and
+  again to stop; then play it from the keys or shape it in the Sampler tab. **Sampler records**
+  picks what it hears: the **Mic**, the **Vocoder** (as it sounds before its level and mute), or
+  the **Rig mix** (the MPC and the vocoder as you hear them). The sampler never hears itself,
+  and the mic never goes straight to the speakers.
 - **Shows:** **Save show** saves everything (both tools' sounds and settings, the mixer, tempo,
   routing and learned controls) to `~/Music/Crate/Rig`; **Open show** brings one back. The Rig
   also saves where you left off when you quit and opens it again next time.
