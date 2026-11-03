@@ -1,0 +1,37 @@
+set(SYNTH_FORMATS VST3 Standalone)
+if(APPLE)
+    list(APPEND SYNTH_FORMATS AU)
+endif()
+
+juce_add_plugin(CrateSynth
+    COMPANY_NAME "Colin Blackshear"
+    BUNDLE_ID "com.colinblackshear.crate.synth"
+    PLUGIN_MANUFACTURER_CODE Cblk
+    PLUGIN_CODE CSyn
+    FORMATS ${SYNTH_FORMATS}
+    PRODUCT_NAME "Crate Synth"
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    VST3_CATEGORIES Instrument Synth
+    AU_MAIN_TYPE kAudioUnitType_MusicDevice
+    COPY_PLUGIN_AFTER_BUILD FALSE)
+
+# The app, plugin, Rig and tests all compile this list.
+set(SYNTH_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/SynthEngine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/SynthProcessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/SynthView.cpp
+    PARENT_SCOPE)
+
+target_sources(CrateSynth PRIVATE PluginEntry.cpp SynthEngine.cpp SynthProcessor.cpp SynthView.cpp)
+target_include_directories(CrateSynth PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(CrateSynth
+    PRIVATE
+        crate_core
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)

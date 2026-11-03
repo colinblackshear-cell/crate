@@ -118,14 +118,26 @@ struct RigRoutingTests : juce::UnitTest
 
     void runTest() override
     {
-        beginTest ("drum pads play the MPC's pads, keys play the sampler");
+        beginTest ("drum pads play the MPC's pads, keys play the vocoder or the sampler");
         RigRouting r;
-        juce::MidiBuffer in, mpc, sampler;
+        expect (r.keysTo.load() == (int) RigRouting::Dest::vocoder, "the keys play the vocoder to start with");
+        {
+            juce::MidiBuffer keysIn, m, smp, voc, b, sy;
+            std::array<juce::MidiBuffer*, RigRouting::kNumDests> dests { nullptr, &m, &smp, &voc, &b, &sy };
+            keysIn.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+            RigRouting::Result res;
+            r.route (keysIn, dests, res);
+            expect (voc.getNumEvents() == 1 && smp.getNumEvents() == 0 && m.getNumEvents() == 0);
+        }
+        r.keysTo = (int) RigRouting::Dest::sampler;
+        juce::MidiBuffer in, mpc, sampler, vocoder;
+        juce::MidiBuffer unusedBass, unusedSynth;
+        std::array<juce::MidiBuffer*, RigRouting::kNumDests> to { nullptr, &mpc, &sampler, &vocoder, &unusedBass, &unusedSynth };
         in.addEvent (juce::MidiMessage::noteOn (10, 36, 1.0f), 0);   // bottom-left pad
         in.addEvent (juce::MidiMessage::noteOn (10, 51, 1.0f), 1);   // top-right pad
         in.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 2);    // middle C
         RigRouting::Result result;
-        r.route (in, mpc, sampler, result);
+        r.route (in, to, result);
 
         std::vector<int> mpcNotes, samplerNotes;
         for (const auto m : mpc)
@@ -144,19 +156,19 @@ struct RigRoutingTests : juce::UnitTest
         r.keysTo = (int) RigRouting::Dest::mpc;
         in.clear(); mpc.clear(); sampler.clear();
         in.addEvent (juce::MidiMessage::noteOn (1, noteForPad (3), 1.0f), 0);
-        r.route (in, mpc, sampler, result);
+        r.route (in, to, result);
         expectEquals (mpc.getNumEvents(), 1);
         expectEquals (sampler.getNumEvents(), 0);
         r.keysTo = (int) RigRouting::Dest::off;
         mpc.clear();
-        r.route (in, mpc, sampler, result);
+        r.route (in, to, result);
         expectEquals (mpc.getNumEvents() + sampler.getNumEvents(), 0);
 
         beginTest ("learn a fader, then it moves the level");
         r.learn (RigRouting::mpcLevel);
         in.clear(); mpc.clear(); sampler.clear();
         in.addEvent (juce::MidiMessage::controllerEvent (1, 53, 40), 0);
-        r.route (in, mpc, sampler, result);
+        r.route (in, to, result);
         expectEquals (r.getLearning(), -1);
         expect (r.getAssignment (RigRouting::mpcLevel) == std::pair<int, int> { 1, 53 });
         expect (result.values[RigRouting::mpcLevel] < 0.0f, "the learning move itself changes nothing");
@@ -164,7 +176,7 @@ struct RigRoutingTests : juce::UnitTest
 
         in.clear();
         in.addEvent (juce::MidiMessage::controllerEvent (1, 53, 127), 0);
-        r.route (in, mpc, sampler, result);
+        r.route (in, to, result);
         expectWithinAbsoluteError (result.values[RigRouting::mpcLevel], 1.0f, 1.0e-6f);
 
         beginTest ("learn a button: presses count, releases don't");
@@ -173,14 +185,14 @@ struct RigRoutingTests : juce::UnitTest
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 0), 0);    // a release first: ignored
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 127), 1);  // learned on the press
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 0), 2);
-        r.route (in, mpc, sampler, result);
+        r.route (in, to, result);
         expect (r.getAssignment (RigRouting::play) == std::pair<int, int> { 1, 115 });
         expectEquals (result.presses[RigRouting::play], 0);
         in.clear();
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 127), 0);
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 0), 10);
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 127), 20);
-        r.route (in, mpc, sampler, result);
+        r.route (in, to, result);
         expectEquals (result.presses[RigRouting::play], 2);
 
         beginTest ("one knob controls one thing");
@@ -264,6 +276,7 @@ struct RigEngineTests : juce::UnitTest
         beginTest ("the keys play the sampler, and blocks bigger than prepared are split");
         {
             RigEngine engine;
+            engine.getRouting().keysTo = (int) RigRouting::Dest::sampler;
             engine.prepare (44100.0, 256);
             engine.getSampler().getDocument().load (share (sine (44100)), "tone", "Open");
             engine.getSampler().getDocument().dispatchPendingMessages();
@@ -275,10 +288,68 @@ struct RigEngineTests : juce::UnitTest
         beginTest ("the mic reaches the sampler, not the speakers");
         {
             RigEngine engine;
+            engine.vocoderOn = false;   // (the vocoder's dry mix would pass some voice)
             engine.prepare (44100.0, 512);
             auto mic = sine (512, 1, 0.5f);
             expect (runEngine (engine, 4, 512, &mic) < 1.0e-6f, "no feedback through the speakers");
             expect (engine.getSampler().takeInputLevel() > 0.4f, "the sampler hears it");
+        }
+
+        beginTest ("the keys play the vocoder with the mic as its voice");
+        {
+            RigEngine engine;
+            engine.prepare (44100.0, 512);
+            auto voice = sine (512, 1, 0.5f, 220.0);
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 48, 1.0f));
+            runEngine (engine, 20, 512, &voice);
+            expect (runEngine (engine, 20, 512, &voice) > 0.01f, "the vocoder sings");
+            expect (engine.getStrip (RigEngine::vocoderStrip).peak.load() > 0.01f, "on its own strip");
+
+            beginTest ("off, the vocoder is silent");
+            engine.vocoderOn = false;
+            runEngine (engine, 4, 512, &voice);
+            engine.getStrip (RigEngine::vocoderStrip).peak = 0.0f;
+            runEngine (engine, 10, 512, &voice);
+            expect (engine.getStrip (RigEngine::vocoderStrip).peak.load() < 1.0e-6f);
+        }
+
+        beginTest ("sample the vocoder straight into the sampler");
+        {
+            RigEngine engine;
+            engine.prepare (44100.0, 512);
+            engine.sampleSource = (int) RigEngine::SampleSource::vocoder;
+            engine.getStrip (RigEngine::vocoderStrip).mute = true;   // recorded before its fader
+            auto voice = sine (512, 1, 0.5f, 220.0);
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 48, 1.0f));
+            runEngine (engine, 10, 512, &voice);
+
+            auto& sampler = engine.getSampler();
+            sampler.startRecording();
+            for (int b = 0; b < 40; ++b)
+            {
+                runEngine (engine, 1, 512, &voice);
+                sampler.collectRecording();
+            }
+            auto take = sampler.stopRecording();
+            expect (take.getNumSamples() > 15000, "about half a second recorded");
+            expect (take.getMagnitude (0, take.getNumSamples()) > 0.01f, "with the vocoder in it");
+
+            beginTest ("or the Rig mix: the MPC as you hear it");
+            RigEngine mixEngine;
+            mixEngine.prepare (44100.0, 512);
+            mixEngine.vocoderOn = false;
+            mixEngine.sampleSource = (int) RigEngine::SampleSource::mix;
+            loadPadTone (mixEngine, 0);
+            auto& mixSampler = mixEngine.getSampler();
+            mixSampler.startRecording();
+            mixEngine.addMidiNow (juce::MidiMessage::noteOn (10, 36, 1.0f));
+            for (int b = 0; b < 20; ++b)
+            {
+                runEngine (mixEngine, 1);
+                mixSampler.collectRecording();
+            }
+            auto mixTake = mixSampler.stopRecording();
+            expect (mixTake.getMagnitude (0, mixTake.getNumSamples()) > 0.2f, "the pad is in the recording");
         }
 
         beginTest ("a show saves and opens again");
@@ -293,6 +364,9 @@ struct RigEngineTests : juce::UnitTest
             engine.getRouting().setAssignment (RigRouting::masterLevel, 1, 61);
             engine.getStrip (RigEngine::samplerStrip).level = 0.3f;
             engine.getStrip (RigEngine::mpcStrip).mute = true;
+            engine.vocoderOn = false;
+            engine.sampleSource = (int) RigEngine::SampleSource::mix;
+            engine.getRouting().setAssignment (RigRouting::vocoderLevel, 1, 55);
             const auto show = engine.saveShow();
 
             // Through XML, as it's saved on disk.
@@ -307,6 +381,9 @@ struct RigEngineTests : juce::UnitTest
             expect (other.getRouting().getAssignment (RigRouting::masterLevel) == std::pair<int, int> { 1, 61 });
             expectWithinAbsoluteError (other.getStrip (RigEngine::samplerStrip).level.load(), 0.3f, 1.0e-6f);
             expect (other.getStrip (RigEngine::mpcStrip).mute.load());
+            expect (! other.vocoderOn.load());
+            expectEquals (other.sampleSource.load(), (int) RigEngine::SampleSource::mix);
+            expect (other.getRouting().getAssignment (RigRouting::vocoderLevel) == std::pair<int, int> { 1, 55 });
             const auto& pad = other.getMpc().getProject().currentBank().pads[4];
             expect (pad.audio != nullptr && pad.audio->getNumSamples() == 44100, "the MPC's sounds come back");
         }

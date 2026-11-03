@@ -117,22 +117,41 @@ in Logic, use each tool's own plugin.
   together, **Stop** stops and goes back to the start. Set the **Tempo** with the buttons or tap
   it with **Tap**; **Click** turns the metronome on. The MPC follows the Rig's tempo the way it
   follows Logic's.
-- **The tools in tabs:** the **MPC** and **Sampler** tabs are the full tools, the same as their
-  own apps.
+- **The tools in tabs:** the **MPC**, **Vocoder**, **Bass**, **Synth** and **Sampler** tabs are the full tools, the
+  same as their own apps. The vocoder's code comes from the
+  [vocoder repo](https://github.com/colinblackshear-cell/vocoder) at the commit pinned in
+  `CMakeLists.txt`; bump it to pick up vocoder changes.
 - **Your keyboard (e.g. a Launchkey 61):** every MIDI keyboard is switched on as soon as it's
   plugged in. The drum pads (MIDI channel 10, the Launchkey's drum mode) play the MPC's pads:
   the 16 pads play pads 1-16 of the bank picked in **Pads play MPC bank**. The keys play what's
-  picked in **Keys play**: the Sampler (the sound in the Sampler tab, across the keys), the MPC's
-  pads note for note, or nothing.
-- **Mixer:** a level, mute and meter for the MPC, the Sampler and the master. Double-click a
+  picked in **Keys play**: the Vocoder, the Sampler (the sound in the Sampler tab, across the
+  keys), the Bass, the Synth, the MPC's pads note for note, or nothing. **Split, below** splits
+  the keys: notes below the split note play the second pick (the Bass, say) and the rest play
+  **Keys play**, so your left hand plays bass while your right plays chords.
+- **Bass:** a deep mono bass synth with a 16-step sequencer (8 patterns). Click a step to put a
+  note on it; the **Accent** and **Slide** rows make the acid squelch and glide. It runs on the
+  Rig's clock and a new pattern starts at the next bar. While it runs, the keys move the pattern
+  up and down; while it's stopped they play the bass directly. **Random** writes a pattern for you.
+- **Synth:** an 8-voice synth (saw, square, triangle, supersaw) with filter, envelopes, an LFO
+  synced to the tempo, and an **arpeggiator** (up, down, up-down, random, as played; rate,
+  octaves, gate, latch) with a 16-step rhythm row: light a step to play it, the lower row
+  accents it.
+- **Vocoder:** your audio input is its voice. **On** in its mixer strip turns it on and off.
+- **Mixer:** a level, mute and meter for the MPC, the Vocoder, the Bass, the Synth, the Sampler and the master. Double-click a
   level to put it back to 0 dB.
 - **Learn:** press **Learn** next to a level, Play or Stop, then move a fader or knob or press
   a button on your keyboard. From then on it controls that. Press Learn again while it's waiting
   to forget the control.
-- **Sample live:** your audio interface's input goes to the Sampler (not to the speakers), so
-  you can record a sound in the Sampler tab mid-set and play it from the keys.
-- **Shows:** **Save show** saves everything (both tools' sounds and settings, the mixer, tempo,
-  routing and learned controls) to `~/Music/Crate/Rig`; **Open show** brings one back. The Rig
+- **Knobs:** to put a keyboard knob on any control in any tool (the bass cutoff, the synth's LFO
+  depth...), press **Knobs** > **Learn a knob**, touch the control on screen, then turn the knob.
+  The same menu lists your knobs so you can forget one, or all of them.
+- **Sample live:** press **Sample** in the top bar to record straight into the Sampler, and
+  again to stop; then play it from the keys or shape it in the Sampler tab. **Sampler records**
+  picks what it hears: the **Mic**, the **Vocoder** (as it sounds before its level and mute), or
+  the **Rig mix** (the MPC, vocoder, bass and synth as you hear them). The sampler never hears itself,
+  and the mic never goes straight to the speakers.
+- **Shows:** **Save show** saves everything (every tool's sounds, patterns and settings, the mixer, tempo,
+  routing, learned controls and knobs) to `~/Music/Crate/Rig`; **Open show** brings one back. The Rig
   also saves where you left off when you quit and opens it again next time.
 - **Audio + MIDI:** pick your audio interface and buffer size. A buffer of 128 samples or less
   keeps the delay from key to sound under about 3 ms.

@@ -47,6 +47,12 @@ jobs:
           codesign --force --deep -s - "AU/MPC Bank Builder.component"
           codesign --force --deep -s - "VST3/MPC Bank Builder.vst3"
           codesign --force --deep -s - "Standalone/MPC Bank Builder.app"
+          for t in Bass Synth; do
+            cd "$GITHUB_WORKSPACE/build/tools/$(echo $t | tr A-Z a-z)/Crate${t}_artefacts/Release"
+            codesign --force --deep -s - "AU/Crate $t.component"
+            codesign --force --deep -s - "VST3/Crate $t.vst3"
+            codesign --force --deep -s - "Standalone/Crate $t.app"
+          done
           cd "$GITHUB_WORKSPACE/build/tools/rig/CrateRig_artefacts/Release"
           codesign --force --deep -s - "Crate Rig.app"
 
@@ -63,6 +69,12 @@ jobs:
           auval -v aumf CSed Cblk
           auval -v aumu CSei Cblk
           auval -v aumu CMbb Cblk
+          cp -R "build/tools/bass/CrateBass_artefacts/Release/AU/Crate Bass.component" ~/Library/Audio/Plug-Ins/Components/
+          cp -R "build/tools/synth/CrateSynth_artefacts/Release/AU/Crate Synth.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 5
+          auval -v aumu CBas Cblk
+          auval -v aumu CSyn Cblk
 
       - name: Package
         run: |
@@ -82,6 +94,12 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/dist-rig"
           cd "$GITHUB_WORKSPACE/build/tools/rig/CrateRig_artefacts/Release"
           ditto -c -k --keepParent "Crate Rig.app" "$GITHUB_WORKSPACE/dist-rig/Crate-Rig-App.zip"
+          for t in Bass Synth; do
+            cd "$GITHUB_WORKSPACE/build/tools/$(echo $t | tr A-Z a-z)/Crate${t}_artefacts/Release"
+            ditto -c -k --keepParent "Standalone/Crate $t.app" "$GITHUB_WORKSPACE/dist-rig/Crate-$t-App.zip"
+            ditto -c -k --keepParent "AU/Crate $t.component" "$GITHUB_WORKSPACE/dist-rig/Crate-$t-AU.zip"
+            ditto -c -k --keepParent "VST3/Crate $t.vst3" "$GITHUB_WORKSPACE/dist-rig/Crate-$t-VST3.zip"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
