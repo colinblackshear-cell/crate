@@ -137,18 +137,29 @@ in Logic, use each tool's own plugin.
   octaves, gate, latch) with a 16-step rhythm row: light a step to play it, the lower row
   accents it.
 - **Vocoder:** your audio input is its voice. **On** in its mixer strip turns it on and off.
-- **Mixer:** a level, mute and meter for the MPC, the Vocoder, the Bass, the Synth, the Sampler and the master. Double-click a
+- **Mixer:** a level, mute and meter for the MPC, the Vocoder, the Bass, the Synth, the Input, the Sampler and the master. Double-click a
   level to put it back to 0 dB.
 - **Learn:** press **Learn** next to a level, Play or Stop, then move a fader or knob or press
   a button on your keyboard. From then on it controls that. Press Learn again while it's waiting
   to forget the control.
+- **Effects on every strip:** press **FX** on a strip to open its effects under the tabs. Each
+  strip, the master too, has a **Filter** (one knob: turn left for a low-pass that closes down,
+  right for a high-pass that thins it out; the middle is off), **Resonance**, **Drive**, **Crush**,
+  a **Delay** in time with the tempo (ping-pong; the Delay knob is how much goes in, so pull it
+  down and the echoes ring out), **Reverb**, and **Repeat**, a beat repeat that loops the next
+  1/4, 1/8, 1/16 or 1/32 until you click it again. **FX** lights up while any effect is on;
+  **Reset** turns them all off. Put any of them on a Launchkey knob with **Knobs**.
+- **Input:** plays an instrument or mic from your audio interface (a guitar, a second mic, a
+  drum machine) through its own strip and effects. It's off until you press **On**, so a mic
+  doesn't feed back; pick **1+2**, **In 1** or **In 2** for which input it listens to (say the
+  vocoder's mic on 1 and a guitar on 2).
 - **Knobs:** to put a keyboard knob on any control in any tool (the bass cutoff, the synth's LFO
   depth...), press **Knobs** > **Learn a knob**, touch the control on screen, then turn the knob.
   The same menu lists your knobs so you can forget one, or all of them.
 - **Sample live:** press **Sample** in the top bar to record straight into the Sampler, and
   again to stop; then play it from the keys or shape it in the Sampler tab. **Sampler records**
   picks what it hears: the **Mic**, the **Vocoder** (as it sounds before its level and mute), or
-  the **Rig mix** (the MPC, vocoder, bass and synth as you hear them). The sampler never hears itself,
+  the **Rig mix** (everything but the sampler, as you hear it). The sampler never hears itself,
   and the mic never goes straight to the speakers.
 - **Shows:** **Save show** saves everything (every tool's sounds, patterns and settings, the mixer, tempo,
   routing, learned controls and knobs) to `~/Music/Crate/Rig`; **Open show** brings one back. The Rig

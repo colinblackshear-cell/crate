@@ -10,6 +10,7 @@
 #include "SynthProcessor.h"
 #include "RigRouting.h"
 #include "RigTransport.h"
+#include "StripFx.h"
 
 #include <array>
 
@@ -36,14 +37,17 @@ public:
     SynthProcessor& getSynth() { return synthTool; }
 
     // Every tool, by the number knob Learn and shows use for it.
-    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, numTools };
+    // Each mixer strip's effects rack is a tool too (fxTool + the strip's StripId), so its knobs
+    // can be learned and it's saved with the show.
+    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, fxTool, numTools = fxTool + 7 };
     juce::AudioProcessor& getTool (int id);
     static juce::String toolName (int id);
     RigTransport& getTransport() { return transport; }
     RigRouting& getRouting() { return routing; }
 
     // (The vocoder came later, so it's last: saved shows keep their strip order.)
-    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, numStrips };
+    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, numStrips };
+    static_assert (numTools == fxTool + numStrips);
     struct Strip
     {
         std::atomic<float> level { 0.8f };   // fader position 0..1
@@ -51,12 +55,22 @@ public:
         std::atomic<float> peak { 0.0f };    // since the window last looked
     };
     Strip& getStrip (int id) { return strips[(size_t) id]; }
+    // The strip's effects (filter, drive, crush, delay, reverb, repeat), before its fader.
+    StripFx& getFx (int strip) { return fx[(size_t) strip]; }
     static juce::String stripName (int id);
     // Fader position to gain: 0.8 is unity, the top is about +6 dB.
     static float faderGain (float level);
 
     // The vocoder runs only while it's on (it uses the most processor time).
     std::atomic<bool> vocoderOn { true };
+
+    // The Input strip: an instrument or mic from your audio interface (a guitar, a second
+    // mic, a drum machine), through its own effects to the speakers. Off until you turn it on,
+    // so a mic doesn't feed back. It listens to inputs 1 and 2, or to just one of them.
+    std::atomic<bool> inputOn { false };
+    enum class InputJack { both, first, second };
+    std::atomic<int> inputJack { (int) InputJack::both };
+    static juce::String inputJackName (int);
 
     // What the sampler hears when you record in it.
     enum class SampleSource { mic, vocoder, mix };
@@ -107,6 +121,8 @@ private:
     RigTransport transport;
     RigRouting routing;
     std::array<Strip, numStrips> strips;
+    std::array<StripFx, numStrips> fx;
+    juce::MidiBuffer noMidi;
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;
 
     juce::MidiMessageCollector incoming;
@@ -114,7 +130,7 @@ private:
     juce::MidiBuffer nowMidi;          // addMidiNow, under nowLock
 
     // Audio-thread buffers, sized in prepare().
-    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, mixBuffer;
+    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, inputBuffer, mixBuffer;
     juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi;
     double sampleRate = 0;
     int maxBlock = 0;

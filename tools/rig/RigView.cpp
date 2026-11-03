@@ -6,7 +6,7 @@ namespace
 {
 constexpr int kBottomHeight = 132;
 const juce::Colour mpcColour { 0xffff8a3d }, samplerColour { 0xff8fd3c8 }, vocoderColour { 0xffb48cff }, masterColour { 0xffeeeeee },
-                   bassColour { 0xff4fc3f7 }, synthColour { 0xfff06292 };
+                   bassColour { 0xff4fc3f7 }, synthColour { 0xfff06292 }, inputColour { 0xffffd54f };
 
 juce::Colour stripColour (int strip)
 {
@@ -17,6 +17,7 @@ juce::Colour stripColour (int strip)
         case RigEngine::vocoderStrip: return vocoderColour;
         case RigEngine::bassStrip:    return bassColour;
         case RigEngine::synthStrip:   return synthColour;
+        case RigEngine::inputStrip:   return inputColour;
         default:                      return masterColour;
     }
 }
@@ -28,16 +29,31 @@ juce::File showsFolder()
 }
 
 //==============================================================================
-RigView::StripView::StripView (RigEngine& e, int s, int fader, int muteC, bool hasOnSwitch)
-    : engine (e), strip (s), faderControl (fader), muteControl (muteC), hasOn (hasOnSwitch)
+RigView::StripView::StripView (RigEngine& e, int s, int fader, int muteC, std::atomic<bool>* onSwitch)
+    : strip (s), engine (e), faderControl (fader), muteControl (muteC), onFlag (onSwitch)
 {
-    if (hasOn)
+    addAndMakeVisible (fxButton);
+    fxButton.setColour (juce::TextButton::buttonOnColourId, stripColour (strip).withAlpha (0.8f));
+    fxButton.setTooltip ("Effects on this strip: filter sweep, drive, crush, delay, reverb and beat repeat. Lit when any are on.");
+    if (onFlag != nullptr)
     {
         addAndMakeVisible (on);
         on.setClickingTogglesState (true);
         on.setColour (juce::TextButton::buttonOnColourId, stripColour (strip));
-        on.setTooltip ("Turns the vocoder on or off. Off, it's silent and uses no processor time.");
-        on.onClick = [this] { engine.vocoderOn = on.getToggleState(); };
+        on.setTooltip (strip == RigEngine::inputStrip
+                           ? "Plays your audio input (a guitar, another mic) through this strip and its effects. "
+                             "Off until you turn it on, so a mic doesn't feed back."
+                           : "Turns the vocoder on or off. Off, it's silent and uses no processor time.");
+        on.onClick = [this] { *onFlag = on.getToggleState(); refresh(); };
+    }
+    if (strip == RigEngine::inputStrip)
+    {
+        addAndMakeVisible (jack);
+        for (int i = 0; i < 3; ++i)
+            jack.addItem (RigEngine::inputJackName (i), i + 1);
+        jack.onChange = [this] { engine.inputJack = jack.getSelectedId() - 1; };
+        jack.setTooltip ("Which input of your audio interface this strip plays: both, or just input 1 or 2 "
+                         "(e.g. the mic on 1 for the vocoder and a guitar on 2).");
     }
     addAndMakeVisible (level);
     addAndMakeVisible (mute);
@@ -59,15 +75,18 @@ void RigView::StripView::refresh()
 {
     level.setValue (engine.getStrip (strip).level.load(), juce::dontSendNotification);
     mute.setToggleState (engine.getStrip (strip).mute.load(), juce::dontSendNotification);
-    if (hasOn)
+    if (onFlag != nullptr)
     {
-        on.setToggleState (engine.vocoderOn.load(), juce::dontSendNotification);
-        on.setButtonText (engine.vocoderOn.load() ? "On" : "Off");
+        on.setToggleState (onFlag->load(), juce::dontSendNotification);
+        on.setButtonText (onFlag->load() ? "On" : "Off");
     }
+    if (strip == RigEngine::inputStrip)
+        jack.setSelectedId (engine.inputJack.load() + 1, juce::dontSendNotification);
 }
 
 void RigView::StripView::tick()
 {
+    fxButton.setToggleState (engine.getFx (strip).isActive(), juce::dontSendNotification);
     const float peak = engine.getStrip (strip).peak.exchange (0.0f);
     meter = juce::jmax (peak, meter * 0.85f);
     repaint();
@@ -79,13 +98,13 @@ void RigView::StripView::paint (juce::Graphics& g)
     g.setColour (Theme::raised);
     g.fillRoundedRectangle (area, 6.0f);
 
-    auto top = getLocalBounds().reduced (10, 6).removeFromTop (20);
+    auto top = getLocalBounds().reduced (8, 6).removeFromTop (20);
     g.setColour (stripColour (strip));
     g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
     g.drawText (RigEngine::stripName (strip), top, juce::Justification::centredLeft);
 
     // The meter, under the fader.
-    auto meterArea = getLocalBounds().reduced (10, 0).withTop (level.getBottom()).withHeight (6).toFloat();
+    auto meterArea = getLocalBounds().reduced (8, 0).withTop (level.getBottom()).withHeight (6).toFloat();
     g.setColour (Theme::background);
     g.fillRoundedRectangle (meterArea, 3.0f);
     const float db = juce::Decibels::gainToDecibels (meter, -60.0f);
@@ -96,16 +115,144 @@ void RigView::StripView::paint (juce::Graphics& g)
 
 void RigView::StripView::resized()
 {
-    auto area = getLocalBounds().reduced (10, 6);
+    // Name, On and the input's jack / Mute, Learn, FX / the fader and meter.
+    auto area = getLocalBounds().reduced (8, 6);
     auto top = area.removeFromTop (20);
-    learn.setBounds (top.removeFromRight (48));
-    top.removeFromRight (4);
-    mute.setBounds (top.removeFromRight (42));
+    if (jack.isVisible())
+        jack.setBounds (top.removeFromRight (58));
+    if (on.isVisible())
+    {
+        top.removeFromRight (4);
+        on.setBounds (top.removeFromRight (34));
+    }
     area.removeFromTop (4);
-    auto row = area.removeFromTop (26);
-    if (hasOn)
-        on.setBounds (row.removeFromLeft (36).reduced (0, 2));
-    level.setBounds (row);
+    auto buttons = area.removeFromTop (22);
+    std::vector<juce::Button*> row;
+    for (auto* b : std::initializer_list<juce::Button*> { &mute, &learn, &fxButton })
+        if (b->isVisible())
+            row.push_back (b);
+    const int w = (buttons.getWidth() - 3 * ((int) row.size() - 1)) / (int) row.size();
+    for (auto* b : row)
+    {
+        b->setBounds (buttons.removeFromLeft (w));
+        buttons.removeFromLeft (3);
+    }
+    area.removeFromTop (2);
+    level.setBounds (area.removeFromTop (24));
+}
+
+//==============================================================================
+RigView::FxPanel::FxPanel (RigEngine& e, int s)
+    : strip (s), engine (e)
+{
+    auto& state = engine.getFx (strip).params;
+    const auto colour = stripColour (strip);
+    const std::pair<const char*, const char*> list[] = { { "filter", "Filter" }, { "resonance", "Resonance" }, { "drive", "Drive" },
+                                                         { "crush", "Crush" }, { "delayMix", "Delay" }, { "feedback", "Feedback" },
+                                                         { "reverbMix", "Reverb" }, { "reverbSize", "Room size" } };
+    for (auto [id, name] : list)
+    {
+        auto knob = std::make_unique<crate::ParamKnob> (state, id, name, colour);
+        addAndMakeVisible (*knob);
+        knobs.push_back (std::move (knob));
+    }
+    knobs[0]->slider.setTooltip ("Turn left to close a low-pass filter, right to open a high-pass. The middle is off. "
+                                 "Double-click to put it back in the middle.");
+    knobs[4]->slider.setTooltip ("How much goes into the delay. Pull it down and the echoes ring out.");
+    delayTime = std::make_unique<crate::ParamChoice> (state, "delayTime", "Delay time");
+    addAndMakeVisible (*delayTime);
+
+    const auto& names = StripFx::repeatNames();
+    for (int i = 0; i < names.size(); ++i)
+    {
+        auto* b = repeatButtons.add (new juce::TextButton (names[i]));
+        b->setClickingTogglesState (false);
+        b->setColour (juce::TextButton::buttonOnColourId, colour);
+        b->setTooltip ("Beat repeat: loops the next slice of this length over and over. Click it again (or Off) to let go.");
+        b->onClick = [this, i] { setRepeat (i); };
+        addAndMakeVisible (b);
+    }
+    addAndMakeVisible (resetButton);
+    addAndMakeVisible (closeButton);
+    resetButton.setTooltip ("Turns every effect on this strip off.");
+    resetButton.onClick = [this] { engine.getFx (strip).reset(); };
+    tick();
+}
+
+void RigView::FxPanel::setRepeat (int choice)
+{
+    auto* p = engine.getFx (strip).params.getParameter ("repeat");
+    const int current = juce::roundToInt (p->convertFrom0to1 (p->getValue()));
+    if (choice == current)
+        choice = 0;
+    p->beginChangeGesture();
+    p->setValueNotifyingHost (p->convertTo0to1 ((float) choice));
+    p->endChangeGesture();
+}
+
+void RigView::FxPanel::tick()
+{
+    const int current = (int) engine.getFx (strip).params.getRawParameterValue ("repeat")->load();
+    for (int i = 0; i < repeatButtons.size(); ++i)
+        repeatButtons[i]->setToggleState (i == current && i > 0, juce::dontSendNotification);
+}
+
+void RigView::FxPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (Theme::raised);
+    g.setColour (stripColour (strip));
+    g.fillRect (getLocalBounds().removeFromTop (2));
+    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+    g.drawText (RigEngine::stripName (strip) + " effects", getLocalBounds().reduced (14, 8).removeFromTop (20),
+                juce::Justification::centredLeft);
+    g.setColour (Theme::textDim);
+    g.setFont (juce::FontOptions (13.0f));
+    auto area = getLocalBounds().reduced (14, 8);
+    area.removeFromTop (24);
+    g.drawText ("Repeat", area.removeFromTop (16).removeFromLeft (150), juce::Justification::centredLeft);
+}
+
+void RigView::FxPanel::resized()
+{
+    auto area = getLocalBounds().reduced (14, 8);
+    auto top = area.removeFromTop (20);
+    closeButton.setBounds (top.removeFromRight (70));
+    top.removeFromRight (6);
+    resetButton.setBounds (top.removeFromRight (70));
+
+    area.removeFromTop (4);
+    auto repeatArea = area.removeFromLeft (200);
+    repeatArea.removeFromTop (18);
+    auto row = repeatArea.removeFromTop (30);
+    const int w = row.getWidth() / juce::jmax (1, repeatButtons.size());
+    for (auto* b : repeatButtons)
+        b->setBounds (row.removeFromLeft (w).reduced (1, 0));
+
+    area.removeFromLeft (16);
+    const int count = (int) knobs.size() + 1;
+    const int kw = juce::jmin (100, area.getWidth() / count);
+    for (size_t i = 0; i < knobs.size(); ++i)
+    {
+        knobs[i]->setBounds (area.removeFromLeft (kw));
+        if (i == 5)
+        {
+            delayTime->setBounds (area.removeFromLeft (kw + 10).reduced (4, 10));
+        }
+    }
+}
+
+void RigView::showFx (int strip)
+{
+    if (fxPanel != nullptr && fxPanel->strip == strip)
+        fxPanel.reset();
+    else
+    {
+        fxPanel = std::make_unique<FxPanel> (engine, strip);
+        fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
+                                                                                 { if (safe != nullptr) { safe->fxPanel.reset(); safe->resized(); } }); };
+        addAndMakeVisible (*fxPanel);
+    }
+    resized();
 }
 
 //==============================================================================
@@ -223,22 +370,24 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     for (int i = 0; i < 3; ++i)
         sampleSource.addItem (RigEngine::sampleSourceName (i), i + 1);
     sampleSource.onChange = [this] { engine.sampleSource = sampleSource.getSelectedId() - 1; };
-    sampleSource.setTooltip ("What the Sampler records: your mic, the vocoder, or the Rig mix (the MPC and the vocoder as you hear them).");
+    sampleSource.setTooltip ("What the Sampler records: your mic, the vocoder, or the Rig mix (everything but the sampler, as you hear it).");
 
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::mpcStrip, RigRouting::mpcLevel, RigRouting::mpcMute));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::vocoderStrip, RigRouting::vocoderLevel, RigRouting::vocoderMute, true));
+    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::vocoderStrip, RigRouting::vocoderLevel, RigRouting::vocoderMute, &engine.vocoderOn));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::bassStrip, RigRouting::bassLevel, RigRouting::bassMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::synthStrip, RigRouting::synthLevel, RigRouting::synthMute));
+    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::inputStrip, RigRouting::inputLevel, RigRouting::inputMute, &engine.inputOn));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::samplerStrip, RigRouting::samplerLevel, RigRouting::samplerMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::masterStrip, RigRouting::masterLevel, -1));
     const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
-                           RigRouting::samplerLevel, RigRouting::masterLevel };
+                           RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
     {
         auto* s = stripViews[i].get();
         addAndMakeVisible (s);
         const int control = faders[i];
         s->learn.onClick = [this, s, control] { startLearning (control, s->learn); };
+        s->fxButton.onClick = [this, s] { showFx (s->strip); };
     }
 
     openMidiInputs();
@@ -250,6 +399,7 @@ RigView::~RigView()
 {
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).removeListener (this);
+    fxPanel.reset();
     tabs.clearTabs();
     setLookAndFeel (nullptr);
 }
@@ -313,7 +463,7 @@ void RigView::updateLearnButtons()
     show (learnPlay, RigRouting::play);
     show (learnStop, RigRouting::stop);
     const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
-                           RigRouting::samplerLevel, RigRouting::masterLevel };
+                           RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
         show (stripViews[i]->learn, faders[i]);
 }
@@ -342,6 +492,9 @@ void RigView::timerCallback()
     {
         toggleSampling();   // the Sampler hit its length limit, or stopped in its own tab
     }
+
+    if (fxPanel != nullptr)
+        fxPanel->tick();
 
     if (learningKnob)
     {
@@ -646,15 +799,17 @@ void RigView::resized()
     }
 
     bottom.removeFromLeft (10);
-    bottom = bottom.withSizeKeepingCentre (bottom.getWidth(), 70);
+    bottom = bottom.withSizeKeepingCentre (bottom.getWidth(), 92);
     const int count = (int) stripViews.size();
-    const int w = (bottom.getWidth() - 10 * (count - 1)) / count;
+    const int w = (bottom.getWidth() - 6 * (count - 1)) / count;
     for (auto& s : stripViews)
     {
         s->setBounds (bottom.removeFromLeft (w));
-        bottom.removeFromLeft (10);
+        bottom.removeFromLeft (6);
     }
 
+    if (fxPanel != nullptr)
+        fxPanel->setBounds (area.removeFromBottom (130));
     tabs.setBounds (area);
     // Messages and the MIDI keyboards found, on the right of the tab bar.
     midiLight.setBounds (area.removeFromTop (34).removeFromRight (juce::jmax (200, area.getWidth() - 420)).reduced (8, 0));
