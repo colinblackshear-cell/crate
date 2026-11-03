@@ -75,8 +75,16 @@ struct KitExportTests : juce::UnitTest
             peak = std::max (peak, std::abs ((int) s));
         expectGreaterThan (peak, 31000);
 
+        bank.pads[1].muteGroup = bank.pads[17].muteGroup = 3;   // kick and snare cut each other
+        const auto forMpc = SampleTools::toMpcBank (bank);
+        for (const auto& p : forMpc.pads)
+        {
+            if (p.pad == 1) expect (p.muteNote1 == noteForPad (17) && p.muteNote2 == mpc::kNoteOff);
+            if (p.pad == 0) expect (p.muteNote1 == mpc::kNoteOff);
+        }
+
         std::vector<std::string> taken;
-        auto files = mpc::buildBank (SampleTools::toMpcBank (bank), taken);
+        auto files = mpc::buildBank (forMpc, taken);
         auto card = dir.getChildFile ("card");
         expect (mpc::writeBankFolder (card.getFullPathName().toStdString(), files).ok);
 
@@ -99,6 +107,9 @@ struct KitExportTests : juce::UnitTest
             expectEquals (opened->pads[1].audio->getNumChannels(), 1);
             expect (opened->pads[17].mode == PadMode::noteOff);
             expectEquals (opened->pads[17].audio->getNumSamples(), 1000);
+            expect (opened->pads[1].muteGroup > 0 && opened->pads[1].muteGroup == opened->pads[17].muteGroup,
+                    "mute groups come back from the MPC's PGM");
+            expectEquals (opened->pads[0].muteGroup, 0);
         }
 
         expect (padLabel (0) == "A01" && padLabel (17) == "B02" && padLabel (63) == "D16");
@@ -330,7 +341,7 @@ struct ProcessorTests : juce::UnitTest
         expect (view != nullptr && view->getWidth() > 0);
         if (auto* path = std::getenv ("CRATE_MPC_SNAPSHOT"))
         {
-            view->setSize (1180, 740);
+            view->setSize (1100, 780);
             auto image = view->createComponentSnapshot (view->getLocalBounds());
             juce::FileOutputStream stream { juce::File { juce::String { path } } };
             stream.setPosition (0);

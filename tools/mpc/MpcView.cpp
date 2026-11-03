@@ -140,8 +140,9 @@ MpcView::MpcView (MpcProcessor& p)
     project.addChangeListener (this);
 
     addAndMakeVisible (transport);
+    addAndMakeVisible (live);
     addChildComponent (sequencer);
-    transport.onStatus = sequencer.onStatus = [this] (const juce::String& text, bool warning) { setStatus (text, warning); };
+    transport.onStatus = sequencer.onStatus = live.onStatus = [this] (const juce::String& text, bool warning) { setStatus (text, warning); };
     for (auto* tab : { &padsTab, &sequenceTab })
     {
         tab->setClickingTogglesState (true);
@@ -165,9 +166,9 @@ MpcView::MpcView (MpcProcessor& p)
     refresh();
     startTimerHz (30);
 
-    setResizeLimits (1100, 700, 2400, 1600);
+    setResizeLimits (1100, 780, 2400, 1600);
     setResizable (true, true);
-    setSize (1280, 800);
+    setSize (1280, 860);
 }
 
 MpcView::~MpcView()
@@ -208,7 +209,12 @@ bool MpcView::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress::spaceKey)
     {
         auto& engine = processor.getSequencer();
-        engine.isPlaying() ? engine.stop() : engine.play (false);
+        engine.isPlaying() ? processor.stopTransport() : engine.play (false);
+        return true;
+    }
+    if (key.getTextCharacter() == 't' || key.getTextCharacter() == 'T')
+    {
+        live.tap();
         return true;
     }
     // Pad keys are handled as they go down and up, in keyStateChanged.
@@ -270,6 +276,8 @@ void MpcView::resized()
 
     r.removeFromTop (10);
     transport.setBounds (r.removeFromTop (42));
+    r.removeFromTop (6);
+    live.setBounds (r.removeFromTop (64));
     r.removeFromTop (10);
     status.setBounds (r.removeFromBottom (24));
     r.removeFromBottom (8);

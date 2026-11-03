@@ -404,7 +404,249 @@ struct SequencerProcessorTests : juce::UnitTest
     }
 };
 
+//==============================================================================
+struct PerformTests : juce::UnitTest
+{
+    PerformTests() : juce::UnitTest ("Playing live", "Sequencer") {}
+
+    static seq::Sequence hitsOn (int pad, int bars = 1)
+    {
+        auto s = oneBar();
+        s.bars = bars;
+        for (int b = 0; b < bars; ++b)
+            s.tracks[0].add ({ b * s.ticksPerBar(), pad + b, 100, 24 });
+        return s;
+    }
+
+    static int padAt (const Run& run, long long sample)
+    {
+        for (const auto& [at, pad] : run.hits)
+            if (std::abs (at - sample) <= 1)
+                return pad;
+        return -1;
+    }
+
+    void runTest() override
+    {
+        // 120 BPM at 48 kHz: a bar is 96000 samples.
+        beginTest ("a queued sequence waits for the end of the one playing");
+        {
+            Engine engine;
+            engine.prepare (48000.0);
+            engine.clickMode = (int) Engine::ClickMode::off;
+            engine.setSnapshot (Engine::makeSnapshot (hitsOn (0, 2), 0));
+            engine.play (true);
+            Run run { engine };
+            run.blocks (100);
+            engine.queue (Engine::makeSnapshot (hitsOn (10), 1), false);
+            run.blocks (100);
+            expect (engine.hasQueued());
+            expectEquals (engine.getPlayingId(), 0);
+            run.blocks (250);   // past the end of the two bars
+            expectEquals (padAt (run, 96000), 1, "the rest of the first sequence still plays");
+            expectEquals (padAt (run, 192000), 10, "then the queued one, right on time");
+            expectEquals (engine.getPlayingId(), 1);
+            expect (! engine.hasQueued());
+            expectEquals (engine.getPasses(), 1);
+            run.blocks (200);
+            expectEquals (padAt (run, 288000), 10, "and it loops");
+        }
+
+        beginTest ("or switches at the next bar line");
+        {
+            Engine engine;
+            engine.prepare (48000.0);
+            engine.clickMode = (int) Engine::ClickMode::off;
+            engine.setSnapshot (Engine::makeSnapshot (hitsOn (0, 4), 0));
+            engine.play (true);
+            Run run { engine };
+            run.blocks (100);   // half way through bar 1
+            engine.queue (Engine::makeSnapshot (hitsOn (20, 2), 1), true);
+            run.blocks (200);
+            expectEquals (padAt (run, 96000), 20, "the new one starts at bar 2, from its own start");
+            expectEquals (engine.getPlayingId(), 1);
+            expectEquals (padAt (run, 0), 0);
+        }
+
+        beginTest ("stops at the end when asked");
+        {
+            Engine engine;
+            engine.prepare (48000.0);
+            engine.clickMode = (int) Engine::ClickMode::off;
+            engine.setSnapshot (Engine::makeSnapshot (hitsOn (0), 0, true));
+            engine.play (true);
+            Run run { engine };
+            run.blocks (50);
+            engine.stopAtEnd = true;
+            run.blocks (300);
+            expect (! engine.isPlaying());
+            expectEquals ((int) run.hits.size(), 1);
+        }
+
+        beginTest ("solo plays only the soloed tracks");
+        {
+            auto s = oneBar();
+            s.tracks[0].add ({ 0, 0, 100, 24 });
+            s.tracks[1].add ({ 0, 1, 100, 24 });
+            s.tracks[2].add ({ 0, 2, 100, 24 });
+            s.tracks[2].mute = true;
+            expectEquals ((int) Engine::makeSnapshot (s)->notes.size(), 2);
+            s.tracks[1].solo = true;
+            const auto solo = Engine::makeSnapshot (s);
+            expectEquals ((int) solo->notes.size(), 1);
+            expectEquals (solo->notes[0].pad, 1);
+            s.tracks[2].solo = true;
+            expectEquals ((int) Engine::makeSnapshot (s)->notes.size(), 2, "solo wins over mute");
+            const auto back = seq::Sequence::fromValueTree (s.toValueTree());
+            expect (back.tracks[1].solo && ! back.tracks[0].solo);
+        }
+
+        beginTest ("songs play their steps in order, then stop");
+        {
+            MpcProcessor processor;
+            processor.setPlayConfigDetails (0, 2, 48000.0, 512);
+            processor.prepareToPlay (48000.0, 512);
+            auto& project = processor.getProject();
+            auto& engine = processor.getSequencer();
+            engine.clickMode = (int) SequencerEngine::ClickMode::off;
+
+            project.getSequences()[0] = hitsOn (0);
+            project.getSequences()[0].name = "Verse";
+            project.addSequence ("Chorus");
+            project.getSequences()[1] = hitsOn (5);
+            project.getSequences()[1].name = "Chorus";
+            auto& song = project.currentSong();
+            song.name = "Tune";
+            song.steps = { { 0, 2 }, { 1, 1 } };
+            expectEquals (song.totalBars (project.getSequences()), 3);
+            project.sequenceEdits.dispatchPendingMessages();
+
+            expect (processor.playSong (0));
+            expectEquals (project.getCurrentSequenceIndex(), 0);
+
+            std::vector<int> ids;
+            int stoppedAt = -1;
+            juce::AudioBuffer<float> out (2, 512);
+            for (int b = 0; b < 1200; ++b)
+            {
+                juce::MidiBuffer midi;
+                processor.processBlock (out, midi);
+                processor.followTransport();
+                if (ids.empty() || ids.back() != engine.getPlayingId())
+                    ids.push_back (engine.getPlayingId());
+                if (b == 300)
+                {
+                    expectEquals (processor.getSongStep(), 0);
+                    expectEquals (processor.getSongRepeat(), 1, "second time round the verse");
+                }
+                if (! engine.isPlaying())
+                {
+                    stoppedAt = b;
+                    break;
+                }
+            }
+            expect (ids == std::vector<int> ({ 0, 1 }), "verse, then chorus");
+            expect (stoppedAt >= 3 * 96000 / 512 - 1 && stoppedAt <= 3 * 96000 / 512 + 1, "stops after three bars: " + juce::String (stoppedAt));
+            expectEquals (project.getCurrentSequenceIndex(), 1);
+            expect (! processor.isSongPlaying());
+
+            beginTest ("songs are saved with the project");
+            song.loop = true;
+            juce::MemoryBlock state;
+            processor.getStateInformation (state);
+            MpcProcessor other;
+            other.setStateInformation (state.getData(), (int) state.getSize());
+            const auto& s2 = other.getProject().currentSong();
+            expectEquals (s2.name, juce::String ("Tune"));
+            expectEquals ((int) s2.steps.size(), 2);
+            expect (s2.loop && s2.steps[0].repeats == 2 && s2.steps[1].sequence == 1);
+
+            beginTest ("deleting a sequence takes it out of songs");
+            project.removeSequence (0);
+            expectEquals ((int) project.currentSong().steps.size(), 1);
+            expectEquals (project.currentSong().steps[0].sequence, 0);
+        }
+
+        beginTest ("picking a sequence while playing queues it");
+        {
+            MpcProcessor processor;
+            processor.setPlayConfigDetails (0, 2, 48000.0, 512);
+            processor.prepareToPlay (48000.0, 512);
+            auto& project = processor.getProject();
+            auto& engine = processor.getSequencer();
+            engine.clickMode = (int) SequencerEngine::ClickMode::off;
+            project.getSequences()[0] = hitsOn (0);
+            project.addSequence ("B");
+            project.getSequences()[1] = hitsOn (7);
+            project.setCurrentSequence (0);
+            project.sequenceEdits.dispatchPendingMessages();
+
+            juce::AudioBuffer<float> out (2, 512);
+            juce::MidiBuffer midi;
+            engine.play (true);
+            processor.processBlock (out, midi);
+            processor.selectSequence (1);
+            expectEquals (processor.getQueuedSequence(), 1);
+            expectEquals (project.getCurrentSequenceIndex(), 0, "the one playing stays on screen");
+            for (int b = 0; b < 200; ++b)
+            {
+                processor.processBlock (out, midi);
+                processor.followTransport();
+            }
+            expectEquals (project.getCurrentSequenceIndex(), 1, "it switched at the end");
+            expectEquals (processor.getQueuedSequence(), -1);
+
+            processor.stopTransport();
+            processor.processBlock (out, midi);
+            processor.selectSequence (0);
+            expectEquals (project.getCurrentSequenceIndex(), 0, "stopped, it switches straight away");
+        }
+
+        beginTest ("pads in a mute group cut each other off");
+        {
+            MpcProcessor processor;
+            processor.setPlayConfigDetails (0, 2, 44100.0, 512);
+            processor.prepareToPlay (44100.0, 512);
+            auto& project = processor.getProject();
+            auto& bank = project.currentBank();
+            bank.pads[0].audio = crate::share (sine (44100, 1, 0.5f));
+            bank.pads[0].mode = PadMode::oneShot;
+            bank.pads[1].audio = crate::share (sine (44100, 1, 0.0f));   // silent, so only pad 1 is heard
+            bank.pads[1].mode = PadMode::oneShot;
+            project.changed();
+            project.dispatchPendingMessages();
+
+            juce::AudioBuffer<float> out (2, 512);
+            auto hit = [&] (int pad)
+            {
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::noteOn (1, noteForPad (pad), 1.0f), 0);
+                processor.processBlock (out, midi);
+            };
+            auto ringsOn = [&]
+            {
+                juce::MidiBuffer midi;
+                for (int i = 0; i < 20; ++i)
+                    processor.processBlock (out, midi);
+                return out.getMagnitude (0, 512) > 0.1f;
+            };
+
+            hit (0);
+            hit (1);
+            expect (ringsOn(), "with no group, pads play over each other");
+
+            bank.pads[0].muteGroup = bank.pads[1].muteGroup = 1;
+            project.changed();
+            project.dispatchPendingMessages();
+            hit (0);
+            hit (1);
+            expect (! ringsOn(), "in the same group, the second cuts the first");
+        }
+    }
+};
+
 SequenceTests sequenceTests;
 EngineTests engineTests;
 SequencerProcessorTests sequencerProcessorTests;
+PerformTests performTests;
 }

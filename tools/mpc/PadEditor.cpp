@@ -13,7 +13,7 @@ PadEditor::PadEditor (Project& p) : project (p)
     info.setColour (juce::Label::textColourId, Theme::textDim);
 
     for (auto* c : std::initializer_list<juce::Component*> { &title, &info, &nameLabel, &name, &volumeLabel, &volume,
-                                                             &panLabel, &pan, &tuneLabel, &tune, &modeLabel, &mode,
+                                                             &panLabel, &pan, &tuneLabel, &tune, &modeLabel, &mode, &groupLabel, &group,
                                                              &timingLabel, &timing, &timingInfo, &mono, &reverse, &normalize,
                                                              &load, &clear, &chop, &editSound })
         addAndMakeVisible (c);
@@ -54,6 +54,12 @@ PadEditor::PadEditor (Project& p) : project (p)
     mode.addItem ("Mono (a new hit cuts the last)", 2);
     mode.addItem ("Note off (stops when released)", 3);
     mode.onChange = [this] { pad().mode = (PadMode) (mode.getSelectedId() - 1); edited(); };
+
+    group.addItem ("Nothing (plays over other pads)", 1);
+    for (int g = 1; g <= 8; ++g)
+        group.addItem ("Other pads in mute group " + juce::String (g), g + 1);
+    group.setTooltip ("Pads in the same mute group cut each other off, like an open and closed hi-hat. Saved to the MPC too.");
+    group.onChange = [this] { pad().muteGroup = group.getSelectedId() - 1; edited(); };
 
     // How long the pad lasts when the kit keeps everything in time.
     timing.addItem ("Auto length", kTimingAuto);
@@ -144,6 +150,7 @@ void PadEditor::refresh()
     pan.setValue (p.pan, juce::dontSendNotification);
     tune.setValue (p.tune / 10.0, juce::dontSendNotification);
     mode.setSelectedId ((int) p.mode + 1, juce::dontSendNotification);
+    group.setSelectedId (juce::jlimit (0, 8, p.muteGroup) + 1, juce::dontSendNotification);
     mono.setToggleState (p.mono || (has && p.audio->getNumChannels() == 1), juce::dontSendNotification);
     mono.setEnabled (has && p.audio->getNumChannels() > 1);
     timing.setSelectedId (p.playNormal ? kTimingNormal : kTimingAuto, juce::dontSendNotification);
@@ -174,7 +181,7 @@ void PadEditor::refresh()
     reverse.setToggleState (p.reverse, juce::dontSendNotification);
     normalize.setToggleState (p.normalize, juce::dontSendNotification);
 
-    for (auto* c : std::initializer_list<juce::Component*> { &name, &volume, &pan, &tune, &mode, &timing, &reverse, &normalize, &clear, &chop, &editSound })
+    for (auto* c : std::initializer_list<juce::Component*> { &name, &volume, &pan, &tune, &mode, &group, &timing, &reverse, &normalize, &clear, &chop, &editSound })
         c->setEnabled (has);
 }
 
@@ -204,6 +211,7 @@ void PadEditor::resized()
     row (panLabel, pan);
     row (tuneLabel, tune);
     row (modeLabel, mode);
+    row (groupLabel, group);
     row (timingLabel, timing);
     timingInfo.setBounds (r.removeFromTop (34).withTrimmedLeft (64));
     r.removeFromTop (4);

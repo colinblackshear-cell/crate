@@ -35,6 +35,7 @@ struct Pad
     bool mono = false;              // save as mono to use half the MPC's memory
     bool reverse = false;
     bool normalize = false;
+    int muteGroup = 0;              // 0 = none; pads in the same group cut each other off (open/closed hats)
 
     // Tempo: with the kit's "keep in time" on, the pad is stretched to last `beats` at the
     // kit's BPM, unless `playNormal` is set. beats = 0 means "guess from the length".
@@ -101,6 +102,14 @@ public:
     void setCurrentSequence (int index);
     int addSequence (const juce::String& name = {});
     void removeSequence (int index);
+
+    // Songs: sequences in order, each repeated a number of times (MPC song mode).
+    std::vector<seq::Song>& getSongs() { return songs; }
+    seq::Song& currentSong() { return songs[(size_t) currentSongIndex]; }
+    int getCurrentSongIndex() const { return currentSongIndex; }
+    void setCurrentSong (int index);
+    int addSong (const juce::String& name = {});
+    void removeSong (int index);
     // Call after changing a sequence (not the kit), so the sequencer and views pick it up.
     void sequenceChanged() { sequenceEdits.sendChangeMessage(); }
     juce::ChangeBroadcaster sequenceEdits;
@@ -117,4 +126,6 @@ private:
     int current = 0;
     std::vector<seq::Sequence> sequences;
     int currentSeq = 0;
+    std::vector<seq::Song> songs;
+    int currentSongIndex = 0;
 };

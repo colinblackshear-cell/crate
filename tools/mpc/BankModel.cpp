@@ -87,6 +87,37 @@ Project::Project()
 {
     addBank();
     addSequence();
+    addSong();
+}
+
+void Project::setCurrentSong (int index)
+{
+    if (juce::isPositiveAndBelow (index, (int) songs.size()))
+    {
+        currentSongIndex = index;
+        sequenceChanged();
+    }
+}
+
+int Project::addSong (const juce::String& name)
+{
+    seq::Song s;
+    s.name = name.isNotEmpty() ? name : "Song " + juce::String ((int) songs.size() + 1);
+    songs.push_back (std::move (s));
+    currentSongIndex = (int) songs.size() - 1;
+    sequenceChanged();
+    return currentSongIndex;
+}
+
+void Project::removeSong (int index)
+{
+    if (! juce::isPositiveAndBelow (index, (int) songs.size()))
+        return;
+    songs.erase (songs.begin() + index);
+    if (songs.empty())
+        addSong();
+    currentSongIndex = juce::jlimit (0, (int) songs.size() - 1, currentSongIndex);
+    sequenceChanged();
 }
 
 void Project::setCurrent (int index)
@@ -131,6 +162,8 @@ void Project::removeSequence (int index)
     if (! juce::isPositiveAndBelow (index, (int) sequences.size()))
         return;
     sequences.erase (sequences.begin() + index);
+    for (auto& song : songs)
+        song.sequenceRemoved (index);
     if (sequences.empty())
         addSequence();
     currentSeq = juce::jlimit (0, (int) sequences.size() - 1, currentSeq);
@@ -195,6 +228,7 @@ juce::MemoryBlock Project::save() const
             p.setProperty ("normalize", pad.normalize, nullptr);
             p.setProperty ("beats", pad.beats, nullptr);
             p.setProperty ("playNormal", pad.playNormal, nullptr);
+            p.setProperty ("muteGroup", pad.muteGroup, nullptr);
             b.appendChild (p, nullptr);
         }
 
@@ -208,6 +242,12 @@ juce::MemoryBlock Project::save() const
     for (const auto& sq : sequences)
         seqs.appendChild (sq.toValueTree(), nullptr);
     root.appendChild (seqs, nullptr);
+
+    juce::ValueTree songTree ("Songs");
+    songTree.setProperty ("current", currentSongIndex, nullptr);
+    for (const auto& song : songs)
+        songTree.appendChild (song.toValueTree(), nullptr);
+    root.appendChild (songTree, nullptr);
 
     juce::MemoryOutputStream out;
     root.writeToStream (out);
@@ -257,6 +297,7 @@ bool Project::load (const void* data, size_t size)
             pad.normalize = p["normalize"];
             pad.beats = p["beats"];
             pad.playNormal = p["playNormal"];
+            pad.muteGroup = juce::jlimit (0, 32, (int) p["muteGroup"]);
         }
 
         loaded.push_back (std::move (bank));
@@ -280,6 +321,18 @@ bool Project::load (const void* data, size_t size)
         sequences.back().bpm = banks[(size_t) current].bpm;
     }
     currentSeq = juce::jlimit (0, (int) sequences.size() - 1, (int) seqs["current"]);
+
+    songs.clear();
+    const auto songTree = root.getChildWithName ("Songs");
+    for (const auto& song : songTree)
+        if (song.hasType ("Song"))
+            songs.push_back (seq::Song::fromValueTree (song, (int) sequences.size()));
+    if (songs.empty())
+    {
+        songs.emplace_back();
+        songs.back().name = "Song 1";
+    }
+    currentSongIndex = juce::jlimit (0, (int) songs.size() - 1, (int) songTree["current"]);
     ramMegabytes = juce::jlimit (2, 32, (int) root.getProperty ("ram", 32));
     changed();
     return true;

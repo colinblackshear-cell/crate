@@ -38,12 +38,185 @@ void MpcProcessor::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
     if (source == &project)
         rebuildKit();
+    followTransport();
     rebuildSequence();
+
+    // An edit reaches the sequence waiting to play next too.
+    if (songPlaying)
+        queueForSong();
+    else if (queuedSequence >= 0)
+        sequencer.queue (SequencerEngine::makeSnapshot (project.getSequences()[(size_t) queuedSequence], queuedSequence), switchAtBar);
 }
 
 void MpcProcessor::rebuildSequence()
 {
-    sequencer.setSnapshot (SequencerEngine::makeSnapshot (project.currentSequence()));
+    // If the audio thread has just moved on to the next sequence, rebuilding the one it left
+    // would send it back there; the one playing is the one to rebuild.
+    const int id = sequencer.getPlayingId();
+    if (sequencer.isPlaying() && immediateSequence < 0 && id != project.getCurrentSequenceIndex()
+        && juce::isPositiveAndBelow (id, (int) project.getSequences().size()))
+        project.setCurrentSequence (id);
+    sequencer.setSnapshot (SequencerEngine::makeSnapshot (project.currentSequence(), project.getCurrentSequenceIndex(), songPlaying));
+}
+
+void MpcProcessor::selectSequence (int index)
+{
+    if (! juce::isPositiveAndBelow (index, (int) project.getSequences().size()))
+        return;
+
+    const bool leavingSong = songPlaying;
+    songPlaying = false;
+    sequencer.stopAtEnd = false;
+
+    if (sequencer.isPlaying() && ! sequencer.isFollowingHost() && index != project.getCurrentSequenceIndex())
+    {
+        sequencer.queue (SequencerEngine::makeSnapshot (project.getSequences()[(size_t) index], index), switchAtBar);
+        queuedSequence = index;
+        queuedAtPasses = sequencer.getPasses();
+        if (leavingSong)
+            rebuildSequence();
+    }
+    else
+    {
+        sequencer.queue (nullptr, false);
+        queuedSequence = -1;
+        if (sequencer.isPlaying())
+            immediateSequence = index;   // straight away (playing along with Logic)
+        project.setCurrentSequence (index);
+        rebuildSequence();
+    }
+    project.sequenceChanged();
+}
+
+bool MpcProcessor::playSong (int fromStep)
+{
+    const auto& song = project.currentSong();
+    if (! juce::isPositiveAndBelow (fromStep, (int) song.steps.size()))
+        return false;
+
+    songPlaying = true;
+    songStep = fromStep;
+    songRepeat = 0;
+    queuedSequence = -1;
+    const int index = song.steps[(size_t) fromStep].sequence;
+    if (sequencer.isPlaying())
+        immediateSequence = index;
+    project.setCurrentSequence (index);
+    rebuildSequence();
+    lastPasses = sequencer.getPasses();
+    queueForSong();
+    sequencer.play (true);
+    project.sequenceChanged();
+    return true;
+}
+
+void MpcProcessor::queueForSong()
+{
+    const auto& song = project.currentSong();
+    const auto& steps = song.steps;
+    if (! juce::isPositiveAndBelow (songStep, (int) steps.size()))
+        return;
+
+    sequencer.stopAtEnd = false;
+    if (songRepeat + 1 < steps[(size_t) songStep].repeats)
+    {
+        sequencer.queue (nullptr, false);   // this step goes round again
+        return;
+    }
+
+    int next = songStep + 1;
+    if (next >= (int) steps.size())
+    {
+        if (! song.loop)
+        {
+            sequencer.queue (nullptr, false);
+            sequencer.stopAtEnd = true;     // the end of the song
+            return;
+        }
+        next = 0;
+    }
+    const int index = steps[(size_t) next].sequence;
+    if (juce::isPositiveAndBelow (index, (int) project.getSequences().size()))
+        sequencer.queue (SequencerEngine::makeSnapshot (project.getSequences()[(size_t) index], index, true), false);
+}
+
+void MpcProcessor::advanceSong()
+{
+    const auto& song = project.currentSong();
+    if (song.steps.empty())
+        return stopTransport();
+
+    if (++songRepeat >= song.steps[(size_t) juce::jlimit (0, (int) song.steps.size() - 1, songStep)].repeats)
+    {
+        songRepeat = 0;
+        if (++songStep >= (int) song.steps.size())
+        {
+            if (! song.loop)
+            {
+                songPlaying = false;
+                songStep = 0;
+                return;
+            }
+            songStep = 0;
+        }
+    }
+    queueForSong();
+}
+
+void MpcProcessor::stopTransport()
+{
+    sequencer.stop();
+    sequencer.queue (nullptr, false);
+    sequencer.stopAtEnd = false;
+    queuedSequence = -1;
+    immediateSequence = -1;
+    if (std::exchange (songPlaying, false))
+        rebuildSequence();
+}
+
+void MpcProcessor::followTransport()
+{
+    const bool playing = sequencer.isPlaying();
+    const int id = sequencer.getPlayingId();
+    const int passes = sequencer.getPasses();
+
+    if (immediateSequence >= 0 && (! playing || id == immediateSequence))
+        immediateSequence = -1;
+    if (immediateSequence >= 0)
+    {
+        wasPlaying = playing;
+        return;
+    }
+
+    // The audio thread moved on to a queued sequence: it becomes the one on screen.
+    if (playing && id != project.getCurrentSequenceIndex() && juce::isPositiveAndBelow (id, (int) project.getSequences().size()))
+    {
+        project.setCurrentSequence (id);
+        rebuildSequence();
+    }
+    if (queuedSequence >= 0 && (! playing || (id == queuedSequence && passes != queuedAtPasses)))
+        queuedSequence = -1;
+
+    if (songPlaying)
+    {
+        if (! playing && wasPlaying)
+        {
+            songPlaying = false;
+            rebuildSequence();
+            project.sequenceChanged();
+        }
+        else if (playing && passes != lastPasses)
+        {
+            while (lastPasses != passes && songPlaying)
+            {
+                ++lastPasses;
+                advanceSong();
+            }
+            lastPasses = passes;
+            project.sequenceChanged();
+        }
+    }
+    wasPlaying = playing;
 }
 
 void MpcProcessor::toggleRecord()
@@ -127,6 +300,7 @@ void MpcProcessor::rebuildKit()
         s.audio = bank.audioToPlay (i);
         s.reverse = pad.reverse;
         s.mode = pad.mode;
+        s.muteGroup = pad.muteGroup;
         s.rate = std::pow (2.0, pad.tune / 120.0);
 
         float gain = (float) pad.volume / 100.0f;
@@ -161,6 +335,7 @@ void MpcProcessor::timerCallback()
                    retired.end());
     sequencer.freeUnusedSnapshots();
     collectRecorded();
+    followTransport();
 }
 
 void MpcProcessor::playPad (int pad, float velocity)
@@ -286,11 +461,12 @@ void MpcProcessor::handleMidi (const juce::MidiMessage& m, const std::shared_ptr
 
     playedPads.fetch_or ((juce::uint64) 1 << pad);
 
-    // Mono and note-off pads cut off their own earlier hits, like on the MPC.
-    if (sound.mode != PadMode::oneShot)
-        for (auto& v : voices)
-            if (v.pad == pad)
-                v.releasing = true;
+    // Mono and note-off pads cut off their own earlier hits, like on the MPC, and a pad cuts off
+    // the others in its mute group (a closed hat stops the open one).
+    for (auto& v : voices)
+        if ((v.pad == pad && sound.mode != PadMode::oneShot)
+            || (v.pad != pad && sound.muteGroup > 0 && (*current)[(size_t) v.pad].muteGroup == sound.muteGroup))
+            v.releasing = true;
 
     if ((int) voices.size() >= kMaxVoices)
         voices.erase (voices.begin());

@@ -28,6 +28,7 @@ namespace seq
     {
         juce::String name;
         bool mute = false;
+        bool solo = false;          // when any track is soloed, only soloed tracks play
         std::vector<Note> notes;    // kept sorted by tick
 
         void add (Note);
@@ -55,6 +56,28 @@ namespace seq
 
         juce::ValueTree toValueTree() const;
         static Sequence fromValueTree (const juce::ValueTree&);
+    };
+
+    // A song plays sequences in order, MPC style: each step is a sequence and how many times
+    // it repeats (verse x4, chorus x2...).
+    struct SongStep
+    {
+        int sequence = 0;
+        int repeats = 1;            // 1..99
+    };
+
+    struct Song
+    {
+        juce::String name;
+        std::vector<SongStep> steps;
+        bool loop = false;          // start again after the last step
+
+        int totalBars (const std::vector<Sequence>&) const;
+        // Removes steps that use sequence `index`, and renumbers those after it.
+        void sequenceRemoved (int index);
+
+        juce::ValueTree toValueTree() const;
+        static Song fromValueTree (const juce::ValueTree&, int numSequences);
     };
 
     //==========================================================================

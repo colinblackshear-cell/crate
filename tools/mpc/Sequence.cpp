@@ -55,6 +55,7 @@ juce::ValueTree Sequence::toValueTree() const
         juce::ValueTree tv ("Track");
         tv.setProperty ("name", t.name, nullptr);
         tv.setProperty ("mute", t.mute, nullptr);
+        tv.setProperty ("solo", t.solo, nullptr);
 
         // Four 32-bit numbers a note keeps the saved state small for long sequences.
         juce::MemoryOutputStream notes;
@@ -89,6 +90,7 @@ Sequence Sequence::fromValueTree (const juce::ValueTree& v)
         Track t;
         t.name = tv["name"].toString();
         t.mute = tv["mute"];
+        t.solo = tv["solo"];
         if (const auto* data = tv["notes"].getBinaryData())
         {
             juce::MemoryInputStream in (*data, false);
@@ -110,6 +112,54 @@ Sequence Sequence::fromValueTree (const juce::ValueTree& v)
     if (s.tracks.empty())
         s.tracks = Sequence().tracks;
     return s;
+}
+
+//==============================================================================
+int Song::totalBars (const std::vector<Sequence>& seqs) const
+{
+    int bars = 0;
+    for (const auto& s : steps)
+        if (juce::isPositiveAndBelow (s.sequence, (int) seqs.size()))
+            bars += seqs[(size_t) s.sequence].bars * s.repeats;
+    return bars;
+}
+
+void Song::sequenceRemoved (int index)
+{
+    steps.erase (std::remove_if (steps.begin(), steps.end(), [index] (const SongStep& s) { return s.sequence == index; }),
+                 steps.end());
+    for (auto& s : steps)
+        if (s.sequence > index)
+            --s.sequence;
+}
+
+juce::ValueTree Song::toValueTree() const
+{
+    juce::ValueTree v ("Song");
+    v.setProperty ("name", name, nullptr);
+    v.setProperty ("loop", loop, nullptr);
+    for (const auto& s : steps)
+    {
+        juce::ValueTree step ("Step");
+        step.setProperty ("sequence", s.sequence, nullptr);
+        step.setProperty ("repeats", s.repeats, nullptr);
+        v.appendChild (step, nullptr);
+    }
+    return v;
+}
+
+Song Song::fromValueTree (const juce::ValueTree& v, int numSequences)
+{
+    Song song;
+    song.name = v["name"].toString();
+    song.loop = v["loop"];
+    for (const auto& step : v)
+    {
+        const int index = step["sequence"];
+        if (step.hasType ("Step") && juce::isPositiveAndBelow (index, numSequences))
+            song.steps.push_back ({ index, juce::jlimit (1, 99, (int) step.getProperty ("repeats", 1)) });
+    }
+    return song;
 }
 
 //==============================================================================
@@ -308,7 +358,7 @@ bool fromMidiFile (const void* data, size_t size, Sequence& s, juce::String& err
 
     s.tracks = std::move (tracks);
     while ((int) s.tracks.size() < 8)
-        s.tracks.push_back ({ "Track " + juce::String ((int) s.tracks.size() + 1), false, {} });
+        s.tracks.push_back ({ "Track " + juce::String ((int) s.tracks.size() + 1), false, false, {} });
     s.bars = juce::jlimit (1, kMaxBars, lastTick / s.ticksPerBar() + 1);
     error = skipped > 0 ? juce::String (skipped) + " notes weren't on pad notes and were left out." : juce::String();
     return true;

@@ -37,6 +37,8 @@ private:
     juce::Label volumeLabel { {}, "Volume" }, panLabel { {}, "Pan" }, tuneLabel { {}, "Tune" }, modeLabel { {}, "Plays" };
     juce::Slider volume, pan, tune;
     juce::ComboBox mode;
+    juce::Label groupLabel { {}, "Cuts" };
+    juce::ComboBox group;
     juce::Label timingLabel { {}, "Length" };
     juce::ComboBox timing;
     juce::Label timingInfo;
