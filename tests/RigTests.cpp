@@ -122,19 +122,22 @@ struct RigRoutingTests : juce::UnitTest
         RigRouting r;
         expect (r.keysTo.load() == (int) RigRouting::Dest::vocoder, "the keys play the vocoder to start with");
         {
-            juce::MidiBuffer keysIn, m, smp, voc;
+            juce::MidiBuffer keysIn, m, smp, voc, b, sy;
+            std::array<juce::MidiBuffer*, RigRouting::kNumDests> dests { nullptr, &m, &smp, &voc, &b, &sy };
             keysIn.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
             RigRouting::Result res;
-            r.route (keysIn, m, smp, voc, res);
+            r.route (keysIn, dests, res);
             expect (voc.getNumEvents() == 1 && smp.getNumEvents() == 0 && m.getNumEvents() == 0);
         }
         r.keysTo = (int) RigRouting::Dest::sampler;
         juce::MidiBuffer in, mpc, sampler, vocoder;
+        juce::MidiBuffer unusedBass, unusedSynth;
+        std::array<juce::MidiBuffer*, RigRouting::kNumDests> to { nullptr, &mpc, &sampler, &vocoder, &unusedBass, &unusedSynth };
         in.addEvent (juce::MidiMessage::noteOn (10, 36, 1.0f), 0);   // bottom-left pad
         in.addEvent (juce::MidiMessage::noteOn (10, 51, 1.0f), 1);   // top-right pad
         in.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 2);    // middle C
         RigRouting::Result result;
-        r.route (in, mpc, sampler, vocoder, result);
+        r.route (in, to, result);
 
         std::vector<int> mpcNotes, samplerNotes;
         for (const auto m : mpc)
@@ -153,19 +156,19 @@ struct RigRoutingTests : juce::UnitTest
         r.keysTo = (int) RigRouting::Dest::mpc;
         in.clear(); mpc.clear(); sampler.clear();
         in.addEvent (juce::MidiMessage::noteOn (1, noteForPad (3), 1.0f), 0);
-        r.route (in, mpc, sampler, vocoder, result);
+        r.route (in, to, result);
         expectEquals (mpc.getNumEvents(), 1);
         expectEquals (sampler.getNumEvents(), 0);
         r.keysTo = (int) RigRouting::Dest::off;
         mpc.clear();
-        r.route (in, mpc, sampler, vocoder, result);
+        r.route (in, to, result);
         expectEquals (mpc.getNumEvents() + sampler.getNumEvents(), 0);
 
         beginTest ("learn a fader, then it moves the level");
         r.learn (RigRouting::mpcLevel);
         in.clear(); mpc.clear(); sampler.clear();
         in.addEvent (juce::MidiMessage::controllerEvent (1, 53, 40), 0);
-        r.route (in, mpc, sampler, vocoder, result);
+        r.route (in, to, result);
         expectEquals (r.getLearning(), -1);
         expect (r.getAssignment (RigRouting::mpcLevel) == std::pair<int, int> { 1, 53 });
         expect (result.values[RigRouting::mpcLevel] < 0.0f, "the learning move itself changes nothing");
@@ -173,7 +176,7 @@ struct RigRoutingTests : juce::UnitTest
 
         in.clear();
         in.addEvent (juce::MidiMessage::controllerEvent (1, 53, 127), 0);
-        r.route (in, mpc, sampler, vocoder, result);
+        r.route (in, to, result);
         expectWithinAbsoluteError (result.values[RigRouting::mpcLevel], 1.0f, 1.0e-6f);
 
         beginTest ("learn a button: presses count, releases don't");
@@ -182,14 +185,14 @@ struct RigRoutingTests : juce::UnitTest
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 0), 0);    // a release first: ignored
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 127), 1);  // learned on the press
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 0), 2);
-        r.route (in, mpc, sampler, vocoder, result);
+        r.route (in, to, result);
         expect (r.getAssignment (RigRouting::play) == std::pair<int, int> { 1, 115 });
         expectEquals (result.presses[RigRouting::play], 0);
         in.clear();
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 127), 0);
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 0), 10);
         in.addEvent (juce::MidiMessage::controllerEvent (1, 115, 127), 20);
-        r.route (in, mpc, sampler, vocoder, result);
+        r.route (in, to, result);
         expectEquals (result.presses[RigRouting::play], 2);
 
         beginTest ("one knob controls one thing");

@@ -6,6 +6,8 @@
 #include "EditorProcessor.h"
 #include "MpcProcessor.h"
 #include "PluginProcessor.h"   // the vocoder
+#include "BassProcessor.h"
+#include "SynthProcessor.h"
 #include "RigRouting.h"
 #include "RigTransport.h"
 
@@ -30,11 +32,18 @@ public:
     MpcProcessor& getMpc() { return mpc; }
     EditorProcessor& getSampler() { return sampler; }
     VocoderProcessor& getVocoder() { return vocoder; }
+    BassProcessor& getBass() { return bass; }
+    SynthProcessor& getSynth() { return synthTool; }
+
+    // Every tool, by the number knob Learn and shows use for it.
+    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, numTools };
+    juce::AudioProcessor& getTool (int id);
+    static juce::String toolName (int id);
     RigTransport& getTransport() { return transport; }
     RigRouting& getRouting() { return routing; }
 
     // (The vocoder came later, so it's last: saved shows keep their strip order.)
-    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, numStrips };
+    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, numStrips };
     struct Strip
     {
         std::atomic<float> level { 0.8f };   // fader position 0..1
@@ -93,6 +102,8 @@ private:
     MpcProcessor mpc;
     EditorProcessor sampler;
     VocoderProcessor vocoder;
+    BassProcessor bass;
+    SynthProcessor synthTool;
     RigTransport transport;
     RigRouting routing;
     std::array<Strip, numStrips> strips;
@@ -103,8 +114,8 @@ private:
     juce::MidiBuffer nowMidi;          // addMidiNow, under nowLock
 
     // Audio-thread buffers, sized in prepare().
-    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, mixBuffer;
-    juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi;
+    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, mixBuffer;
+    juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi;
     double sampleRate = 0;
     int maxBlock = 0;
     bool prepared = false;

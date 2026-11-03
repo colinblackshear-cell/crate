@@ -17,7 +17,25 @@ juce::String RigRouting::controlName (int c)
         case vocoderLevel: return "Vocoder level";
         case vocoderMute:  return "Vocoder mute";
         case vocoderOn:    return "Vocoder on/off";
+        case bassLevel:    return "Bass level";
+        case synthLevel:   return "Synth level";
+        case bassMute:     return "Bass mute";
+        case synthMute:    return "Synth mute";
         default:           return {};
+    }
+}
+
+juce::String RigRouting::destName (int d)
+{
+    switch ((Dest) d)
+    {
+        case Dest::off:     return "Nothing";
+        case Dest::mpc:     return "MPC pads";
+        case Dest::sampler: return "Sampler";
+        case Dest::vocoder: return "Vocoder";
+        case Dest::bass:    return "Bass";
+        case Dest::synth:   return "Synth";
+        default:            return {};
     }
 }
 
@@ -68,9 +86,69 @@ int RigRouting::mpcNoteForPad (int padNote) const
     return noteForPad (juce::jlimit (0, 3, padBank.load()) * 16 + i);
 }
 
+std::pair<int, int> RigRouting::takeCaughtKnob()
+{
+    const int c = caught.exchange (-1);
+    if (c < 0)
+        return { 0, -1 };
+    return { c / 128, c % 128 };
+}
+
+void RigRouting::addParameterKnob (int channel, int cc, int tool, int parameter)
+{
+    if (channel < 1 || channel > 16 || cc < 0 || cc > 127)
+        return;
+    const int packed = channel * 128 + cc;
+    // One knob, one setting: a knob learned again moves to the new setting.
+    for (auto& k : knobs)
+        if (k.packed.load() == packed)
+            k.packed = -1;
+    for (auto& k : knobs)
+        if (k.packed.load() < 0)
+        {
+            k.tool = tool;
+            k.parameter = parameter;
+            k.packed = packed;
+            return;
+        }
+}
+
+void RigRouting::removeParameterKnob (int index)
+{
+    int n = 0;
+    for (auto& k : knobs)
+        if (k.packed.load() >= 0 && n++ == index)
+        {
+            k.packed = -1;
+            return;
+        }
+}
+
+void RigRouting::clearParameterKnobs()
+{
+    for (auto& k : knobs)
+        k.packed = -1;
+}
+
+std::vector<RigRouting::ParameterKnob> RigRouting::getParameterKnobs() const
+{
+    std::vector<ParameterKnob> list;
+    for (const auto& k : knobs)
+        if (const int p = k.packed.load(); p >= 0)
+            list.push_back ({ p / 128, p % 128, k.tool.load(), k.parameter.load() });
+    return list;
+}
+
 void RigRouting::handleController (int channel, int cc, int value, Result& result)
 {
     const int packed = channel * 128 + cc;
+
+    if (catching.load())
+    {
+        caught = packed;
+        catching = false;
+        return;
+    }
 
     const int teach = learning.load();
     if (teach >= 0)
@@ -96,16 +174,35 @@ void RigRouting::handleController (int channel, int cc, int value, Result& resul
             ++result.presses[(size_t) c];
         lastValue[(size_t) c] = value;
     }
+
+    for (const auto& k : knobs)
+        if (k.packed.load() == packed && result.numParamMoves < (int) result.paramMoves.size())
+        {
+            // The latest value per knob wins within a block.
+            int slot = result.numParamMoves;
+            for (int i = 0; i < result.numParamMoves; ++i)
+                if (result.paramMoves[(size_t) i].tool == k.tool.load() && result.paramMoves[(size_t) i].parameter == k.parameter.load())
+                    slot = i;
+            result.paramMoves[(size_t) slot] = { k.tool.load(), k.parameter.load(), (float) value / 127.0f };
+            if (slot == result.numParamMoves)
+                ++result.numParamMoves;
+        }
 }
 
-void RigRouting::route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juce::MidiBuffer& toSampler,
-                        juce::MidiBuffer& toVocoder, Result& result)
+void RigRouting::route (const juce::MidiBuffer& in, std::array<juce::MidiBuffer*, kNumDests>& to, Result& result)
 {
     result.values.fill (-1.0f);
     result.presses.fill (0);
+    result.numParamMoves = 0;
 
     const int pads = padChannel.load();
-    const auto keys = (Dest) keysTo.load();
+    const int upper = keysTo.load(), lower = lowerKeysTo.load();
+    const int split = splitNote.load();
+    auto send = [&] (int dest, const juce::MidiMessage& m, int at)
+    {
+        if (dest > 0 && dest < kNumDests && to[(size_t) dest] != nullptr)
+            to[(size_t) dest]->addEvent (m, at);
+    };
 
     for (const auto metadata : in)
     {
@@ -114,12 +211,11 @@ void RigRouting::route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juc
 
         if (m.isController())
         {
-            // All notes off and the like go to both tools; the rest are knobs and faders.
+            // All notes off and the like go to every tool; the rest are knobs and faders.
             if (m.getControllerNumber() >= 120)
             {
-                toMpc.addEvent (m, at);
-                toSampler.addEvent (m, at);
-                toVocoder.addEvent (m, at);
+                for (int d = 1; d < kNumDests; ++d)
+                    send (d, m, at);
                 continue;
             }
             handleController (m.getChannel(), m.getControllerNumber(), m.getControllerValue(), result);
@@ -132,18 +228,17 @@ void RigRouting::route (const juce::MidiBuffer& in, juce::MidiBuffer& toMpc, juc
             const int note = mpcNoteForPad (m.getNoteNumber());
             if (note >= 0)
                 m.setNoteNumber (note);
-            toMpc.addEvent (m, at);
+            send ((int) Dest::mpc, m, at);
             continue;
         }
 
-        if (isNote || m.isPitchWheel() || m.isChannelPressure())
+        if (isNote)
+            send (split > 0 && m.getNoteNumber() < split ? lower : upper, m, at);
+        else if (m.isPitchWheel() || m.isChannelPressure())
         {
-            if (keys == Dest::vocoder)
-                toVocoder.addEvent (m, at);
-            else if (keys == Dest::sampler)
-                toSampler.addEvent (m, at);
-            else if (keys == Dest::mpc)
-                toMpc.addEvent (m, at);
+            send (upper, m, at);
+            if (split > 0 && lower != upper)
+                send (lower, m, at);
         }
     }
 }

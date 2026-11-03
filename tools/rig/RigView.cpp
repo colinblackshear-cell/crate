@@ -4,8 +4,9 @@ namespace Theme = crate::Theme;
 
 namespace
 {
-constexpr int kBottomHeight = 112;
-const juce::Colour mpcColour { 0xffff8a3d }, samplerColour { 0xff8fd3c8 }, vocoderColour { 0xffb48cff }, masterColour { 0xffeeeeee };
+constexpr int kBottomHeight = 132;
+const juce::Colour mpcColour { 0xffff8a3d }, samplerColour { 0xff8fd3c8 }, vocoderColour { 0xffb48cff }, masterColour { 0xffeeeeee },
+                   bassColour { 0xff4fc3f7 }, synthColour { 0xfff06292 };
 
 juce::Colour stripColour (int strip)
 {
@@ -14,6 +15,8 @@ juce::Colour stripColour (int strip)
         case RigEngine::mpcStrip:     return mpcColour;
         case RigEngine::samplerStrip: return samplerColour;
         case RigEngine::vocoderStrip: return vocoderColour;
+        case RigEngine::bassStrip:    return bassColour;
+        case RigEngine::synthStrip:   return synthColour;
         default:                      return masterColour;
     }
 }
@@ -78,7 +81,7 @@ void RigView::StripView::paint (juce::Graphics& g)
 
     auto top = getLocalBounds().reduced (10, 6).removeFromTop (20);
     g.setColour (stripColour (strip));
-    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+    g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
     g.drawText (RigEngine::stripName (strip), top, juce::Justification::centredLeft);
 
     // The meter, under the fader.
@@ -95,16 +98,14 @@ void RigView::StripView::resized()
 {
     auto area = getLocalBounds().reduced (10, 6);
     auto top = area.removeFromTop (20);
-    learn.setBounds (top.removeFromRight (58));
-    top.removeFromRight (6);
-    mute.setBounds (top.removeFromRight (52));
-    if (hasOn)
-    {
-        top.removeFromRight (6);
-        on.setBounds (top.removeFromRight (44));
-    }
+    learn.setBounds (top.removeFromRight (48));
+    top.removeFromRight (4);
+    mute.setBounds (top.removeFromRight (42));
     area.removeFromTop (4);
-    level.setBounds (area.removeFromTop (26));
+    auto row = area.removeFromTop (26);
+    if (hasOn)
+        on.setBounds (row.removeFromLeft (36).reduced (0, 2));
+    level.setBounds (row);
 }
 
 //==============================================================================
@@ -115,10 +116,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     setWantsKeyboardFocus (true);
 
     for (auto* c : std::initializer_list<juce::Component*> { &playButton, &stopButton, &clickButton, &learnPlay, &learnStop,
-                                                             &tempoLabel, &tempo, &tapButton, &sampleButton, &position, &midiLight,
+                                                             &tempoLabel, &tempo, &tapButton, &sampleButton, &knobButton, &position, &midiLight,
                                                              &audioButton, &saveButton, &openButton, &tabs,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
-                                                             &sourceLabel, &sampleSource })
+                                                             &sourceLabel, &sampleSource, &splitLabel, &splitNote, &lowerKeysTo })
         addAndMakeVisible (c);
 
     auto& transport = engine.getTransport();
@@ -162,6 +163,11 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
                              "straight into the Sampler. Press again to stop; then play it from the keys or edit it in the Sampler tab.");
     sampleButton.onClick = [this] { toggleSampling(); };
 
+    knobButton.setColour (juce::TextButton::buttonOnColourId, Theme::accent);
+    knobButton.setTooltip ("Put a knob of your keyboard on any setting: choose Learn a knob, touch the setting on screen "
+                           "(the bass's Cutoff, the synth's LFO depth...), then turn the knob.");
+    knobButton.onClick = [this] { showKnobMenu(); };
+
     position.setFont (juce::FontOptions (22.0f, juce::Font::bold));
     position.setJustificationType (juce::Justification::centred);
     position.setColour (juce::Label::backgroundColourId, Theme::background);
@@ -177,22 +183,42 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     tabs.setOutline (0);
     tabs.addTab ("MPC", Theme::panel, engine.getMpc().createEditorAndMakeActive(), true);
     tabs.addTab ("Vocoder", Theme::panel, engine.getVocoder().createEditorAndMakeActive(), true);
+    tabs.addTab ("Bass", Theme::panel, engine.getBass().createEditorAndMakeActive(), true);
+    tabs.addTab ("Synth", Theme::panel, engine.getSynth().createEditorAndMakeActive(), true);
     tabs.addTab ("Sampler", Theme::panel, engine.getSampler().createEditorAndMakeActive(), true);
-    tabs.getTabbedButtonBar().setTabBackgroundColour (0, mpcColour.withAlpha (0.25f));
-    tabs.getTabbedButtonBar().setTabBackgroundColour (1, vocoderColour.withAlpha (0.25f));
-    tabs.getTabbedButtonBar().setTabBackgroundColour (2, samplerColour.withAlpha (0.25f));
+    const juce::Colour tabColours[] = { mpcColour, vocoderColour, bassColour, synthColour, samplerColour };
+    for (int i = 0; i < 5; ++i)
+        tabs.getTabbedButtonBar().setTabBackgroundColour (i, tabColours[i].withAlpha (0.25f));
+
+    for (int t = 0; t < RigEngine::numTools; ++t)
+        engine.getTool (t).addListener (this);
 
     // Routing.
-    for (auto* l : { &padsLabel, &keysLabel, &sourceLabel })
+    for (auto* l : { &padsLabel, &keysLabel, &sourceLabel, &splitLabel })
         l->setColour (juce::Label::textColourId, Theme::textDim);
     padBank.addItemList ({ "A", "B", "C", "D" }, 1);
     padBank.onChange = [this] { engine.getRouting().padBank = padBank.getSelectedItemIndex(); };
     padBank.setTooltip ("Your keyboard's 16 drum pads (MIDI channel 10) play these MPC pads.");
-    keysTo.addItem ("Vocoder", 1 + (int) RigRouting::Dest::vocoder);
-    keysTo.addItem ("Sampler", 1 + (int) RigRouting::Dest::sampler);
-    keysTo.addItem ("MPC pads", 1 + (int) RigRouting::Dest::mpc);
-    keysTo.addItem ("Nothing", 1 + (int) RigRouting::Dest::off);
+    for (auto d : { RigRouting::Dest::vocoder, RigRouting::Dest::synth, RigRouting::Dest::bass, RigRouting::Dest::sampler,
+                    RigRouting::Dest::mpc, RigRouting::Dest::off })
+    {
+        keysTo.addItem (RigRouting::destName ((int) d), 1 + (int) d);
+        lowerKeysTo.addItem (RigRouting::destName ((int) d), 1 + (int) d);
+    }
     keysTo.onChange = [this] { engine.getRouting().keysTo = keysTo.getSelectedId() - 1; };
+    lowerKeysTo.onChange = [this] { engine.getRouting().lowerKeysTo = lowerKeysTo.getSelectedId() - 1; };
+    lowerKeysTo.setTooltip ("What the keys below the split play, e.g. the bass with your left hand.");
+    splitNote.addItem ("No split", 1);
+    for (int note = 36; note <= 72; note += 12)
+        for (int n : { note, note + 5, note + 7 })
+            if (n <= 72)
+                splitNote.addItem (juce::MidiMessage::getMidiNoteName (n, true, true, 3), n + 1);
+    splitNote.onChange = [this]
+    {
+        engine.getRouting().splitNote = splitNote.getSelectedId() <= 1 ? 0 : splitNote.getSelectedId() - 1;
+        lowerKeysTo.setEnabled (engine.getRouting().splitNote.load() > 0);
+    };
+    splitNote.setTooltip ("Split the keyboard: keys below this note play a second instrument.");
     keysTo.setTooltip ("What your keyboard's keys play.");
     for (int i = 0; i < 3; ++i)
         sampleSource.addItem (RigEngine::sampleSourceName (i), i + 1);
@@ -201,9 +227,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
 
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::mpcStrip, RigRouting::mpcLevel, RigRouting::mpcMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::vocoderStrip, RigRouting::vocoderLevel, RigRouting::vocoderMute, true));
+    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::bassStrip, RigRouting::bassLevel, RigRouting::bassMute));
+    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::synthStrip, RigRouting::synthLevel, RigRouting::synthMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::samplerStrip, RigRouting::samplerLevel, RigRouting::samplerMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::masterStrip, RigRouting::masterLevel, -1));
-    const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
+    const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
+                           RigRouting::samplerLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
     {
         auto* s = stripViews[i].get();
@@ -219,6 +248,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
 
 RigView::~RigView()
 {
+    for (int t = 0; t < RigEngine::numTools; ++t)
+        engine.getTool (t).removeListener (this);
     tabs.clearTabs();
     setLookAndFeel (nullptr);
 }
@@ -231,6 +262,10 @@ void RigView::refresh()
     padBank.setSelectedItemIndex (engine.getRouting().padBank.load(), juce::dontSendNotification);
     keysTo.setSelectedId (engine.getRouting().keysTo.load() + 1, juce::dontSendNotification);
     sampleSource.setSelectedId (engine.sampleSource.load() + 1, juce::dontSendNotification);
+    lowerKeysTo.setSelectedId (engine.getRouting().lowerKeysTo.load() + 1, juce::dontSendNotification);
+    const int split = engine.getRouting().splitNote.load();
+    splitNote.setSelectedId (split > 0 ? split + 1 : 1, juce::dontSendNotification);
+    lowerKeysTo.setEnabled (split > 0);
     for (auto& s : stripViews)
         s->refresh();
     updateLearnButtons();
@@ -277,7 +312,8 @@ void RigView::updateLearnButtons()
     };
     show (learnPlay, RigRouting::play);
     show (learnStop, RigRouting::stop);
-    const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
+    const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
+                           RigRouting::samplerLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
         show (stripViews[i]->learn, faders[i]);
 }
@@ -305,6 +341,21 @@ void RigView::timerCallback()
     else if (sampleButton.getToggleState())
     {
         toggleSampling();   // the Sampler hit its length limit, or stopped in its own tab
+    }
+
+    if (learningKnob)
+    {
+        if (const auto knob = engine.getRouting().takeCaughtKnob(); knob.second >= 0)
+            caughtKnob = knob;
+        finishKnobLearn();
+    }
+    knobButton.setToggleState (learningKnob, juce::dontSendNotification);
+    if (sayUntil != 0 && juce::Time::getMillisecondCounter() > sayUntil)
+    {
+        sayUntil = 0;
+        knownInputs.clear();
+        midiLight.setText ({}, juce::dontSendNotification);
+        openMidiInputs();
     }
 
     if (engine.controlsMoved.exchange (false))
@@ -348,6 +399,113 @@ void RigView::toggleSampling()
                                 engine.sampleSourceName (engine.sampleSource.load()) + " "
                                     + juce::Time::getCurrentTime().formatted ("%H.%M.%S"),
                                 "Sample");
+}
+
+void RigView::say (const juce::String& text)
+{
+    midiLight.setText (text, juce::dontSendNotification);
+    sayUntil = juce::Time::getMillisecondCounter() + 5000;
+}
+
+void RigView::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor* tool, int parameterIndex)
+{
+    // Called when a control is touched on screen (on the message thread for the Rig's own windows).
+    if (! learningKnob)
+        return;
+    for (int t = 0; t < RigEngine::numTools; ++t)
+        if (&engine.getTool (t) == tool)
+        {
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this), t, parameterIndex]
+            {
+                if (safe != nullptr && safe->learningKnob)
+                {
+                    safe->touchedTool = t;
+                    safe->touchedParameter = parameterIndex;
+                }
+            });
+        }
+}
+
+void RigView::finishKnobLearn()
+{
+    if (touchedTool < 0 || caughtKnob.second < 0)
+    {
+        if (! learningKnob)
+            return;
+        if (touchedTool >= 0)
+            midiLight.setText ("Now turn a knob on your keyboard...", juce::dontSendNotification);
+        else if (caughtKnob.second >= 0)
+            midiLight.setText ("Got CC " + juce::String (caughtKnob.second) + ". Now touch a setting on screen...", juce::dontSendNotification);
+        return;
+    }
+
+    auto& routing = engine.getRouting();
+    routing.addParameterKnob (caughtKnob.first, caughtKnob.second, touchedTool, touchedParameter);
+    const auto& list = engine.getTool (touchedTool).getParameters();
+    const auto name = juce::isPositiveAndBelow (touchedParameter, list.size()) ? list[touchedParameter]->getName (40) : juce::String();
+    say ("CC " + juce::String (caughtKnob.second) + " now controls " + RigEngine::toolName (touchedTool) + " " + name + ".");
+
+    learningKnob = false;
+    routing.stopCatching();
+    touchedTool = touchedParameter = -1;
+    caughtKnob = { 0, -1 };
+}
+
+void RigView::showKnobMenu()
+{
+    auto& routing = engine.getRouting();
+    if (learningKnob)
+    {
+        learningKnob = false;
+        routing.stopCatching();
+        say ("Knob Learn cancelled.");
+        return;
+    }
+
+    juce::PopupMenu menu;
+    menu.addItem (1, "Learn a knob...");
+    const auto knobs = routing.getParameterKnobs();
+    if (! knobs.empty())
+    {
+        menu.addSeparator();
+        menu.addSectionHeader ("Click one to forget it");
+        for (size_t i = 0; i < knobs.size(); ++i)
+        {
+            const auto& k = knobs[i];
+            const auto& list = engine.getTool (k.tool).getParameters();
+            const auto name = juce::isPositiveAndBelow (k.parameter, list.size()) ? list[k.parameter]->getName (40) : juce::String ("?");
+            menu.addItem (100 + (int) i, "CC " + juce::String (k.cc) + "  >  " + RigEngine::toolName (k.tool) + " " + name);
+        }
+        menu.addSeparator();
+        menu.addItem (2, "Forget all knobs");
+    }
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (knobButton),
+                        [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+                        {
+                            if (safe == nullptr || result == 0)
+                                return;
+                            auto& r = safe->engine.getRouting();
+                            if (result == 1)
+                            {
+                                safe->learningKnob = true;
+                                safe->touchedTool = safe->touchedParameter = -1;
+                                safe->caughtKnob = { 0, -1 };
+                                r.catchNextKnob();
+                                safe->midiLight.setText ("Touch a setting on screen, then turn a knob...", juce::dontSendNotification);
+                                safe->sayUntil = juce::Time::getMillisecondCounter() + 60000;
+                            }
+                            else if (result == 2)
+                            {
+                                r.clearParameterKnobs();
+                                safe->say ("Forgot all learned knobs.");
+                            }
+                            else
+                            {
+                                r.removeParameterKnob (result - 100);
+                                safe->say ("Forgot that knob.");
+                            }
+                        });
 }
 
 void RigView::openMidiInputs()
@@ -464,25 +622,27 @@ void RigView::resized()
     clickButton.setBounds (bar.removeFromLeft (64));
     bar.removeFromLeft (6);
     sampleButton.setBounds (bar.removeFromLeft (96));
+    bar.removeFromLeft (6);
+    knobButton.setBounds (bar.removeFromLeft (70));
 
     openButton.setBounds (bar.removeFromRight (100));
     bar.removeFromRight (6);
     saveButton.setBounds (bar.removeFromRight (100));
     bar.removeFromRight (6);
     audioButton.setBounds (bar.removeFromRight (120));
-    bar.removeFromRight (10);
-    midiLight.setBounds (bar.reduced (6, 0));
 
     auto bottom = area.removeFromBottom (kBottomHeight).reduced (10, 8);
-    auto routing = bottom.removeFromLeft (290);
+    auto routing = bottom.removeFromLeft (320);
     const std::pair<juce::Label*, juce::ComboBox*> rows[] = { { &padsLabel, &padBank }, { &keysLabel, &keysTo },
-                                                              { &sourceLabel, &sampleSource } };
+                                                              { &splitLabel, &splitNote }, { &sourceLabel, &sampleSource } };
     for (auto [label, box] : rows)
     {
-        auto row = routing.removeFromTop (30);
-        label->setBounds (row.removeFromLeft (140));
-        box->setBounds (row.removeFromLeft (box == &padBank ? 70 : 130).reduced (0, 2));
-        routing.removeFromTop (2);
+        auto row = routing.removeFromTop (28);
+        label->setBounds (row.removeFromLeft (124));
+        box->setBounds (row.removeFromLeft (box == &padBank ? 70 : box == &splitNote ? 82 : 120).reduced (0, 2));
+        if (box == &splitNote)
+            lowerKeysTo.setBounds (row.removeFromLeft (100).reduced (4, 2));
+        routing.removeFromTop (1);
     }
 
     bottom.removeFromLeft (10);
@@ -496,4 +656,8 @@ void RigView::resized()
     }
 
     tabs.setBounds (area);
+    // Messages and the MIDI keyboards found, on the right of the tab bar.
+    midiLight.setBounds (area.removeFromTop (34).removeFromRight (juce::jmax (200, area.getWidth() - 420)).reduced (8, 0));
+    midiLight.setJustificationType (juce::Justification::centredRight);
+    midiLight.toFront (false);
 }
