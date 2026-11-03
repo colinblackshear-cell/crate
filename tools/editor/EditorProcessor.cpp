@@ -1,5 +1,7 @@
 #include "EditorProcessor.h"
 
+#include <algorithm>
+
 #include "EditorView.h"
 #include "core/AudioFiles.h"
 
@@ -25,12 +27,32 @@ EditorProcessor::~EditorProcessor()
 
 void EditorProcessor::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    syncToDocument();
+}
+
+void EditorProcessor::syncToDocument()
+{
     // the keys always play the latest version of the sound
-    if (document.getAudio().get() != keysAudio)
-    {
-        keysAudio = document.getAudio().get();
-        keys.setSound (document.getAudio());
-    }
+    if (document.getAudio().get() == keysAudio)
+        return;
+
+    keysAudio = document.getAudio().get();
+    const int length = document.getAudio() != nullptr ? document.getAudio()->getNumSamples() : 0;
+    if (length != keysLength && keysLength > 0)
+        setChops ({});   // the slices no longer line up with the sound
+    keysLength = length;
+    keys.setSound (document.getAudio());
+}
+
+void EditorProcessor::setChops (std::vector<int> markers)
+{
+    std::sort (markers.begin(), markers.end());
+    markers.erase (std::unique (markers.begin(), markers.end()), markers.end());
+    markers.erase (std::remove_if (markers.begin(), markers.end(), [] (int m) { return m <= 0; }), markers.end());
+    if ((int) markers.size() > crate::KeyboardSampler::kMaxSlices - 1)
+        markers.resize ((size_t) crate::KeyboardSampler::kMaxSlices - 1);
+    chops = std::move (markers);
+    keys.setSlices (chops);
 }
 
 bool EditorProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -269,6 +291,12 @@ void EditorProcessor::getStateInformation (juce::MemoryBlock& dest)
     state.setProperty ("source", document.getSourceFile().getFullPathName(), nullptr);
     state.setProperty ("rootNote", keys.getRootNote(), nullptr);
     state.setProperty ("keyMode", (int) keys.getMode(), nullptr);
+    {
+        juce::StringArray list;
+        for (int m : chops)
+            list.add (juce::String (m));
+        state.setProperty ("chops", list.joinIntoString (" "), nullptr);
+    }
     state.setProperty ("attack", keys.getAttack(), nullptr);
     state.setProperty ("release", keys.getRelease(), nullptr);
 
@@ -287,7 +315,15 @@ void EditorProcessor::setStateInformation (const void* data, int size)
         return;
 
     keys.setRootNote (state.getProperty ("rootNote", 60));
-    keys.setMode ((crate::KeyboardSampler::Mode) juce::jlimit (0, 2, (int) state.getProperty ("keyMode", 0)));
+    {
+        std::vector<int> restored;
+        for (const auto& token : juce::StringArray::fromTokens (state["chops"].toString(), " ", {}))
+            if (token.isNotEmpty())
+                restored.push_back (token.getIntValue());
+        setChops (std::move (restored));
+        keysLength = 0;   // the sound that arrives next is the one these chops belong to
+    }
+    keys.setMode ((crate::KeyboardSampler::Mode) juce::jlimit (0, 3, (int) state.getProperty ("keyMode", 0)));
     keys.setAttack ((float) state.getProperty ("attack", 0.002));
     keys.setRelease ((float) state.getProperty ("release", 0.15));
 

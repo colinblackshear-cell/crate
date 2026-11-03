@@ -234,6 +234,113 @@ struct KeysInEditorTests : juce::UnitTest
     }
 };
 
+// A drum-like loop: short decaying bursts at known places.
+juce::AudioBuffer<float> hitsAt (std::initializer_list<int> positions, int length)
+{
+    juce::AudioBuffer<float> b (1, length);
+    b.clear();
+    juce::Random random (7);
+    for (int p : positions)
+        for (int i = 0; i < 4000 && p + i < length; ++i)
+            b.setSample (0, p + i, (random.nextFloat() * 2.0f - 1.0f) * 0.8f * std::exp (-(float) i / 900.0f));
+    return b;
+}
+
+struct ChopTests : juce::UnitTest
+{
+    ChopTests() : juce::UnitTest ("Smart chop", "Keys") {}
+
+    void runTest() override
+    {
+        beginTest ("each key from C1 plays one slice at its own pitch");
+        {
+            KeyboardSampler keys;
+            keys.prepare (44100.0);
+            keys.setAttack (0);
+            keys.setMode (KeyboardSampler::Mode::slices);
+            auto sound = share (ramp (10000));
+            keys.setSound (sound);
+            keys.setSlices ({ 2000, 5000 });
+
+            auto out = run (keys, 8, notes ({ { 0, juce::MidiMessage::noteOn (1, KeyboardSampler::kFirstSliceNote + 1, 1.0f) } }));
+            expectWithinAbsoluteError (out[100], sound->getSample (0, 2100), 1.0e-4f, "slice 2 starts at its marker");
+            const int end = lastNonSilent (out);
+            expect (std::abs (end - 2999) < 3, "and ends at the next one: " + juce::String (end));
+
+            out = run (keys, 16, notes ({ { 0, juce::MidiMessage::noteOn (1, KeyboardSampler::kFirstSliceNote + 2, 1.0f),
+                                            /* let go straight away: slices play to the end */ } }));
+            expect (std::abs (lastNonSilent (out) - 4999) < 3, "the last slice runs to the end of the sound");
+
+            out = run (keys, 4, notes ({ { 0, juce::MidiMessage::noteOn (1, KeyboardSampler::kFirstSliceNote + 3, 1.0f) } }));
+            expectEquals (lastNonSilent (out), -1, "keys past the last slice are silent");
+            out = run (keys, 4, notes ({ { 0, juce::MidiMessage::noteOn (1, KeyboardSampler::kFirstSliceNote - 1, 1.0f) } }));
+            expectEquals (lastNonSilent (out), -1, "and so are keys below C1");
+        }
+
+        beginTest ("Find hits marks each hit, and the slices are saved with the project");
+        {
+            EditorProcessor p;
+            p.getDocument().load (share (hitsAt ({ 0, 11025, 22050, 33075 }, 44100)), "beat", "Open");
+            p.getDocument().dispatchPendingMessages();
+            std::unique_ptr<juce::AudioProcessorEditor> editor (p.createEditor());
+            auto* view = dynamic_cast<EditorView*> (editor.get());
+            expect (view != nullptr);
+            if (view == nullptr)
+                return;
+
+            view->runChop ("findHits");
+            const auto chops = p.getChops();
+            expectEquals ((int) chops.size(), 3, "three markers make four slices");
+            for (size_t i = 0; i < chops.size() && i < 3; ++i)
+                expect (std::abs (chops[i] - 11025 * (int) (i + 1)) < 300, "marker near the hit: " + juce::String (chops[i]));
+            expect (p.getKeys().getMode() == KeyboardSampler::Mode::slices, "the keys switch to slices");
+            expect (view->getWaveView().getMarkers() == chops, "the waveform shows them");
+
+            // double-click a slice to select it (here, straight from the waveform's helper)
+            expect (view->getWaveView().sliceAt (15000) == juce::Range<int> (chops[0], chops[1]));
+
+            // the keys play them
+            p.setRateAndBufferSizeDetails (44100.0, 512);
+            p.prepareToPlay (44100.0, 512);
+            juce::AudioBuffer<float> io (2, 512);
+            auto midi = notes ({ { 0, juce::MidiMessage::noteOn (1, KeyboardSampler::kFirstSliceNote + 2, 1.0f) } });
+            p.processBlock (io, midi);
+            expect (io.getMagnitude (0, 0, 512) > 0.2f, "slice 3 plays from its hit");
+
+            juce::MemoryBlock state;
+            p.getStateInformation (state);
+            EditorProcessor restored;
+            restored.setStateInformation (state.getData(), (int) state.getSize());
+            restored.getDocument().dispatchPendingMessages();
+            expect (restored.getChops() == chops, "chops come back with the project");
+            expect (restored.getKeys().getMode() == KeyboardSampler::Mode::slices);
+
+            // lower sensitivity finds fewer; an even split replaces them; an edit that changes
+            // the length clears them
+            view->getSensitivitySlider().setValue (0.0, juce::sendNotificationSync);
+            expect (p.getChops().size() <= chops.size());
+            view->runChop ("split8");
+            expectEquals ((int) p.getChops().size(), 7);
+            view->getWaveView().setSelection ({ 0, 1000 });
+            view->runEdit ("delete");
+            p.getDocument().dispatchPendingMessages();
+            expect (p.getChops().empty(), "a cut clears the slices");
+
+            if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_CHOP_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                view->runEdit ("undo");
+                view->runChop ("findHits");
+                view->getWaveView().setSelection (view->getWaveView().sliceAt (15000));
+                auto image = view->createComponentSnapshot (view->getLocalBounds(), true, 1.0f);
+                juce::File (path).deleteFile();
+                juce::FileOutputStream out { juce::File (path) };
+                juce::PNGImageFormat().writeImageToStream (image, out);
+            }
+        }
+    }
+};
+
 KeyboardSamplerTests keyboardSamplerTests;
+ChopTests chopTests;
 KeysInEditorTests keysInEditorTests;
 }

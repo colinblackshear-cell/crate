@@ -52,6 +52,14 @@ public:
     // Playing the sound from the keys. The on-screen keyboard feeds `keyboardState`; MIDI from
     // the host or a keyboard comes in through processBlock.
     crate::KeyboardSampler& getKeys() { return keys; }
+
+    // Chop markers (where slices start; 0 is implied), which the keys play in slices mode.
+    // They're cleared when an edit changes the sound's length.
+    void setChops (std::vector<int>);
+    const std::vector<int>& getChops() const { return chops; }
+    // Brings the keys and chops up to date with the document; runs on every document change,
+    // and the window calls it too so it never sees them out of date.
+    void syncToDocument();
     juce::MidiKeyboardState keyboardState;
     static constexpr bool isInstrument()
     {
@@ -113,6 +121,8 @@ private:
     EditDocument document;
     crate::KeyboardSampler keys;
     const void* keysAudio = nullptr;
+    int keysLength = 0;
+    std::vector<int> chops;
 
     // Playback state, shared with the audio thread under `lock`.
     juce::SpinLock lock;

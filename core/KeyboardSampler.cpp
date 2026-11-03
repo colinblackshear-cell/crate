@@ -54,6 +54,27 @@ namespace crate
         range = newRange;
     }
 
+    void KeyboardSampler::setSlices (const std::vector<int>& markers)
+    {
+        const juce::SpinLock::ScopedLockType sl (lock);
+        sliceEdges[0] = 0;
+        sliceCount = 0;
+        for (int m : markers)
+            if (m > sliceEdges[(size_t) sliceCount] && sliceCount < kMaxSlices - 1)
+                sliceEdges[(size_t) ++sliceCount] = m;
+        ++sliceCount;   // the last slice runs to the end of the sound
+    }
+
+    juce::Range<int> KeyboardSampler::sliceForNote (int note) const
+    {
+        const int index = note - kFirstSliceNote;
+        if (sound == nullptr || index < 0 || index >= sliceCount)
+            return {};
+        const int start = sliceEdges[(size_t) index];
+        const int end = index + 1 < sliceCount ? sliceEdges[(size_t) index + 1] : sound->getNumSamples();
+        return juce::Range<int> (start, end).getIntersectionWith ({ 0, sound->getNumSamples() });
+    }
+
     void KeyboardSampler::prepare (double sampleRate)
     {
         hostRate = sampleRate > 0 ? sampleRate : kSampleRate;
@@ -71,9 +92,18 @@ namespace crate
         if (sound == nullptr || sound->getNumSamples() < 2)
             return;
 
+        const bool slicing = (Mode) mode.load() == Mode::slices;
         auto r = range.getIntersectionWith ({ 0, sound->getNumSamples() });
-        if (r.getLength() < 2)
+        if (slicing)
+        {
+            r = sliceForNote (note);
+            if (r.getLength() < 2)
+                return;   // no slice on this key
+        }
+        else if (r.getLength() < 2)
+        {
             r = { 0, sound->getNumSamples() };
+        }
 
         // a free voice, or else the oldest one
         Voice* voice = nullptr;
@@ -97,7 +127,7 @@ namespace crate
         v.start = r.getStart();
         v.end = r.getEnd();
         v.pos = v.start;
-        v.step = std::pow (2.0, (note - rootNote.load()) / 12.0) * kSampleRate / hostRate;
+        v.step = (slicing ? 1.0 : std::pow (2.0, (note - rootNote.load()) / 12.0)) * kSampleRate / hostRate;
         v.gain = 0.15f + 0.85f * velocity * velocity;
         v.env = attackSeconds.load() <= 0.0005f ? 1.0f : 0.0f;
         v.age = ++noteCounter;
@@ -124,7 +154,7 @@ namespace crate
         for (int i = from; i < to; ++i)
         {
             // envelope
-            const bool release = v.quickFade || (m != Mode::oneShot && ! v.keyDown);
+            const bool release = v.quickFade || (m != Mode::oneShot && m != Mode::slices && ! v.keyDown);
             if (release)
             {
                 v.env -= v.quickFade ? quickStep : releaseStep;
@@ -152,7 +182,14 @@ namespace crate
 
             const int index = (int) v.pos;
             const float frac = (float) (v.pos - index);
-            const float g = v.gain * v.env;
+            float g = v.gain * v.env;
+            if (m == Mode::slices || m == Mode::oneShot)
+            {
+                // a short fade at the very end, so a slice cut mid-sound doesn't click
+                const double left = (v.end - 1 - v.pos) / v.step;
+                if (left < 64.0)
+                    g *= (float) (left / 64.0);
+            }
             for (int ch = 0; ch < outChannels; ++ch)
             {
                 const auto* d = src.getReadPointer (juce::jmin (ch, srcChannels - 1));

@@ -32,6 +32,12 @@ Record from a mic or open a sound file, edit it, and save it to the shared libra
   keys play just that part. **Plays** sets what a key does: *While held*, *Loop while held*, or
   *To the end* (like drum pads). **Attack** and **Release** fade each note in and out. The root
   note is saved with the sound in the library.
+- **Smart chop:** **Find hits** puts a slice marker at each drum hit, note or word; **Sensitivity**
+  finds more or fewer, and **Split evenly** spaces them equally instead. Drag a marker to move it,
+  click the ruler to add one, and Option-click (or drag it off the waveform) to remove one.
+  Double-click a slice to select it. The keys then play one slice each from C1 up (**Plays:
+  Slices from C1**), and **Save slices** puts each one in the library as its own sound, ready for
+  the MPC pads. The markers are saved with your project.
 - **Undo everything:** every edit, recording and opened file can be undone, up to 200 steps.
 - **Save:** **Save to library** writes a WAV to `~/Music/Crate/Sounds`. **Export** saves a WAV or
   AIFF anywhere.
