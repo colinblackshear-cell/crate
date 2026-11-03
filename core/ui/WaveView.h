@@ -11,6 +11,10 @@ namespace crate
 //  - click to put the cursor somewhere; drag to select; drag a selection's edge to adjust it
 //  - shift-click to extend the selection
 //  - scroll wheel or pinch to zoom, shift + wheel (or a sideways swipe) to scroll
+//
+// It can also show chop markers (where slices start). When they're editable: click the ruler to
+// add one, drag one to move it, and Option-click, right-click or drag it off the top or bottom
+// to remove it. Double-clicking inside a slice selects that slice.
 class WaveView : public juce::Component
 {
 public:
@@ -35,6 +39,14 @@ public:
 
     std::function<void()> onSelectionChange;
 
+    // Chop markers: sample positions where slices start (0 is implied), kept sorted.
+    void setMarkers (std::vector<int>);
+    const std::vector<int>& getMarkers() const { return markers; }
+    void setMarkersEditable (bool shouldBeEditable) { markersEditable = shouldBeEditable; }
+    // The slice (between markers) around a sample position.
+    juce::Range<int> sliceAt (int sample) const;
+    std::function<void()> onMarkersChange;   // after the user adds, moves or removes one
+
     void paint (juce::Graphics&) override;
     void resized() override { repaint(); }
     void mouseMove (const juce::MouseEvent&) override;
@@ -52,6 +64,7 @@ private:
     float xForSample (double sample) const;
     int sampleForX (float x) const;
     int edgeAt (float x) const;   // 0 = start, 1 = end, -1 = none
+    int markerAt (float x) const; // index, or -1
     void zoom (float factor, float aroundX);
     void clampView();
     void rebuildPeaks();
@@ -66,9 +79,14 @@ private:
     int playhead = -1;
     juce::String emptyText { "Record something, open a file, or pick a sound from the library" };
 
-    enum class Drag { none, select, startEdge, endEdge };
+    enum class Drag { none, select, startEdge, endEdge, marker };
     Drag drag = Drag::none;
     int dragAnchor = 0;
+
+    std::vector<int> markers;
+    bool markersEditable = false;
+    int dragMarker = -1;
+    bool dragMarkerOff = false;   // dragged off the top or bottom: removed on release
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveView)
 };

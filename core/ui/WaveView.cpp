@@ -2,6 +2,8 @@
 
 #include "Theme.h"
 
+#include <algorithm>
+
 namespace crate
 {
 
@@ -23,6 +25,7 @@ void WaveView::setAudio (SharedAudio a, bool keepView)
     }
     clampView();
     selection = selection.getIntersectionWith ({ 0, n });
+    markers.erase (std::remove_if (markers.begin(), markers.end(), [n] (int x) { return x >= n; }), markers.end());
     repaint();
 }
 
@@ -42,6 +45,52 @@ void WaveView::selectAll()
         selection = { 0, audio->getNumSamples() };
         changed();
     }
+}
+
+void WaveView::setMarkers (std::vector<int> m)
+{
+    const int n = audio != nullptr ? audio->getNumSamples() : 0;
+    std::sort (m.begin(), m.end());
+    m.erase (std::unique (m.begin(), m.end()), m.end());
+    m.erase (std::remove_if (m.begin(), m.end(), [n] (int x) { return x <= 0 || x >= n; }), m.end());
+    if (m != markers)
+    {
+        markers = std::move (m);
+        repaint();
+    }
+}
+
+juce::Range<int> WaveView::sliceAt (int sample) const
+{
+    const int n = audio != nullptr ? audio->getNumSamples() : 0;
+    int start = 0, end = n;
+    for (int m : markers)
+    {
+        if (m <= sample)
+            start = m;
+        else
+        {
+            end = m;
+            break;
+        }
+    }
+    return { start, end };
+}
+
+int WaveView::markerAt (float x) const
+{
+    int best = -1;
+    float bestDistance = 6.0f;
+    for (size_t i = 0; i < markers.size(); ++i)
+    {
+        const float d = std::abs (x - xForSample (markers[i]));
+        if (d < bestDistance)
+        {
+            bestDistance = d;
+            best = (int) i;
+        }
+    }
+    return best;
 }
 
 void WaveView::setPlayhead (int sample)
@@ -245,6 +294,31 @@ void WaveView::paint (juce::Graphics& g)
         }
     }
 
+    // chop markers, with slice numbers in the ruler
+    if (! markers.empty())
+    {
+        g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+        for (size_t i = 0; i <= markers.size(); ++i)
+        {
+            const int start = i == 0 ? 0 : markers[i - 1];
+            const float x = xForSample (start);
+            const bool removing = drag == Drag::marker && dragMarkerOff && (int) i - 1 == dragMarker;
+            if (i > 0)
+            {
+                g.setColour (removing ? Theme::record.withAlpha (0.5f) : Theme::text.withAlpha (0.8f));
+                g.drawLine (x, (float) ruler.getY() + 2, x, (float) wave.getBottom(), 1.2f);
+            }
+            if (x > -30 && x < (float) getWidth())
+            {
+                auto flag = juce::Rectangle<float> (x, (float) ruler.getY() + 2, 22.0f, (float) kRulerHeight - 4);
+                g.setColour (removing ? Theme::record : Theme::text);
+                g.fillRoundedRectangle (flag, 3.0f);
+                g.setColour (Theme::panel);
+                g.drawText (juce::String ((int) i + 1), flag, juce::Justification::centred);
+            }
+        }
+    }
+
     // cursor
     if (! hasSelection())
     {
@@ -285,7 +359,13 @@ int WaveView::edgeAt (float x) const
 
 void WaveView::mouseMove (const juce::MouseEvent& e)
 {
-    setMouseCursor (edgeAt (e.position.x) >= 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::IBeamCursor);
+    const bool inRuler = e.position.y < kRulerHeight;
+    if (edgeAt (e.position.x) >= 0 || (markersEditable && markerAt (e.position.x) >= 0))
+        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+    else if (markersEditable && inRuler)
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    else
+        setMouseCursor (juce::MouseCursor::IBeamCursor);
 }
 
 void WaveView::mouseDown (const juce::MouseEvent& e)
@@ -295,6 +375,37 @@ void WaveView::mouseDown (const juce::MouseEvent& e)
 
     const int s = sampleForX (e.position.x);
     const int edge = edgeAt (e.position.x);
+    const bool inRuler = e.position.y < kRulerHeight;
+
+    if (markersEditable)
+    {
+        const int marker = markerAt (e.position.x);
+        if (marker >= 0 && (e.mods.isAltDown() || e.mods.isPopupMenu()))
+        {
+            markers.erase (markers.begin() + marker);
+            repaint();
+            if (onMarkersChange)
+                onMarkersChange();
+            return;
+        }
+        if (marker >= 0 && (inRuler || edge < 0))
+        {
+            drag = Drag::marker;
+            dragMarker = marker;
+            dragMarkerOff = false;
+            return;
+        }
+        if (inRuler && s > 0 && s < audio->getNumSamples())
+        {
+            markers.push_back (s);
+            std::sort (markers.begin(), markers.end());
+            dragMarker = (int) (std::find (markers.begin(), markers.end(), s) - markers.begin());
+            dragMarkerOff = false;
+            drag = Drag::marker;
+            repaint();
+            return;
+        }
+    }
 
     if (edge == 0)
     {
@@ -329,6 +440,19 @@ void WaveView::mouseDrag (const juce::MouseEvent& e)
 
     const int s = sampleForX (e.position.x);
 
+    if (drag == Drag::marker)
+    {
+        if (dragMarker < 0 || dragMarker >= (int) markers.size())
+            return;
+        // stays between its neighbours
+        const int lo = dragMarker > 0 ? markers[(size_t) dragMarker - 1] + 1 : 1;
+        const int hi = dragMarker + 1 < (int) markers.size() ? markers[(size_t) dragMarker + 1] - 1 : audio->getNumSamples() - 1;
+        markers[(size_t) dragMarker] = juce::jlimit (lo, juce::jmax (lo, hi), s);
+        dragMarkerOff = e.position.y < -24 || e.position.y > getHeight() + 24;
+        repaint();
+        return;
+    }
+
     if (drag == Drag::startEdge)
         selection = { juce::jmin (s, selection.getEnd()), juce::jmax (s, selection.getEnd()) };
     else if (drag == Drag::endEdge)
@@ -348,11 +472,30 @@ void WaveView::mouseDrag (const juce::MouseEvent& e)
 
 void WaveView::mouseUp (const juce::MouseEvent&)
 {
+    if (drag == Drag::marker)
+    {
+        if (dragMarkerOff && dragMarker >= 0 && dragMarker < (int) markers.size())
+            markers.erase (markers.begin() + dragMarker);
+        drag = Drag::none;
+        dragMarker = -1;
+        dragMarkerOff = false;
+        repaint();
+        if (onMarkersChange)
+            onMarkersChange();
+        return;
+    }
     drag = Drag::none;
 }
 
-void WaveView::mouseDoubleClick (const juce::MouseEvent&)
+void WaveView::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    // with chop markers, a double-click selects the slice under the mouse
+    if (audio != nullptr && ! markers.empty() && e.position.y >= kRulerHeight)
+    {
+        selection = sliceAt (sampleForX (e.position.x));
+        changed();
+        return;
+    }
     selectAll();
 }
 

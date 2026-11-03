@@ -21,8 +21,12 @@ namespace crate
         {
             hold,      // plays while the key is down, fades out when you let go
             loop,      // like hold, but loops the sound (or selection) while the key is down
-            oneShot    // plays to the end every time, whatever the key does
+            oneShot,   // plays to the end every time, whatever the key does
+            slices     // each key plays one chopped slice, at its own pitch, from kFirstSliceNote up
         };
+
+        static constexpr int kFirstSliceNote = 36;   // C1, as Logic names it
+        static constexpr int kMaxSlices = 128;
 
         KeyboardSampler();
         ~KeyboardSampler();
@@ -31,6 +35,8 @@ namespace crate
         void setSound (SharedAudio);
         // The part of the sound the next notes play (e.g. the selection); empty plays it all.
         void setRange (juce::Range<int>);
+        // Where the chopped slices start (sample positions, sorted; 0 is implied), for Mode::slices.
+        void setSlices (const std::vector<int>& markers);
 
         void setRootNote (int note) { rootNote = juce::jlimit (0, 127, note); }
         int getRootNote() const { return rootNote.load(); }
@@ -65,6 +71,7 @@ namespace crate
 
         void noteOn (int note, float velocity);
         void noteOff (int note);
+        juce::Range<int> sliceForNote (int note) const;   // empty for a key with no slice
         void renderVoice (Voice&, juce::AudioBuffer<float>&, int from, int to);
         void freeUnusedSounds (std::vector<SharedAudio>& toFree);
 
@@ -72,6 +79,8 @@ namespace crate
         SharedAudio sound;
         std::vector<SharedAudio> retired;       // older sounds voices may still be reading
         juce::Range<int> range;
+        std::array<int, kMaxSlices + 1> sliceEdges {};   // slice i is [edges[i], edges[i + 1]); end = sound length
+        int sliceCount = 1;   // with no chops, C1 plays the whole sound
         std::array<Voice, kMaxVoices> voices;
         juce::uint32 noteCounter = 0;
         double hostRate = kSampleRate;

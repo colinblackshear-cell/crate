@@ -32,10 +32,17 @@ void LevelMeter::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-void KeysView::drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
-                              juce::Colour lineColour, juce::Colour textColour)
+void KeysView::mark (int note, juce::Graphics& g, juce::Rectangle<float> area)
 {
-    MidiKeyboardComponent::drawWhiteNote (note, g, area, isDown, isOver, lineColour, textColour);
+    if (sliceCount > 0)
+    {
+        if (note >= sliceFirst && note < sliceFirst + sliceCount)
+        {
+            g.setColour (crate::Theme::accent.withAlpha (0.28f));
+            g.fillRect (area.reduced (1.0f, 0));
+        }
+        return;
+    }
     if (note == rootNote)
     {
         g.setColour (crate::Theme::accent);
@@ -43,15 +50,18 @@ void KeysView::drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float
     }
 }
 
+void KeysView::drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
+                              juce::Colour lineColour, juce::Colour textColour)
+{
+    MidiKeyboardComponent::drawWhiteNote (note, g, area, isDown, isOver, lineColour, textColour);
+    mark (note, g, area);
+}
+
 void KeysView::drawBlackNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver,
                               juce::Colour fillColour)
 {
     MidiKeyboardComponent::drawBlackNote (note, g, area, isDown, isOver, fillColour);
-    if (note == rootNote)
-    {
-        g.setColour (crate::Theme::accent);
-        g.fillRect (area.reduced (2.0f, 0).removeFromBottom (5.0f).translated (0, -2.0f));
-    }
+    mark (note, g, area);
 }
 
 //==============================================================================
@@ -198,9 +208,15 @@ EditorView::EditorView (EditorProcessor& p)
     keyModeBox.addItem ("While held", 1);
     keyModeBox.addItem ("Loop while held", 2);
     keyModeBox.addItem ("To the end", 3);
+    keyModeBox.addItem ("Slices from C1", 4);
     keyModeBox.setTooltip ("While held: the sound stops when you let go of the key. Loop while held: it repeats until you let go. "
-                           "To the end: every key plays the whole sound (or selection), like drum pads.");
-    keyModeBox.onChange = [this] { processor.getKeys().setMode ((crate::KeyboardSampler::Mode) (keyModeBox.getSelectedId() - 1)); };
+                           "To the end: every key plays the whole sound (or selection), like drum pads. "
+                           "Slices from C1: after chopping, each key from C1 up plays one slice.");
+    keyModeBox.onChange = [this]
+    {
+        processor.getKeys().setMode ((crate::KeyboardSampler::Mode) (keyModeBox.getSelectedId() - 1));
+        showChops();
+    };
     for (auto* sl : { &attackSlider, &releaseSlider })
     {
         sl->setTextValueSuffix (" ms");
@@ -234,7 +250,53 @@ EditorView::EditorView (EditorProcessor& p)
     for (auto* l : { &keysHeading })
         l->setColour (juce::Label::textColourId, crate::Theme::textDim);
 
+    // chop
+    chopHeading.setColour (juce::Label::textColourId, crate::Theme::textDim);
+    chopInfo.setMinimumHorizontalScale (1.0f);
+    findHitsButton.setTooltip ("Finds each hit (drum, note, word) and puts a slice marker there. Adjust Sensitivity to find more or fewer.");
+    findHitsButton.onClick = [this] { findHits (true); };
+    sensitivitySlider.setRange (0.0, 100.0, 1.0);
+    sensitivitySlider.setValue (50.0, juce::dontSendNotification);
+    sensitivitySlider.setTextValueSuffix (" %");
+    sensitivitySlider.setNumDecimalPlacesToDisplay (0);
+    sensitivitySlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 56, 20);
+    sensitivitySlider.setTooltip ("Higher finds quieter hits too; lower keeps only the strongest.");
+    sensitivitySlider.onValueChange = [this] { if (chopsFromHits) findHits (false); };
+    splitBox.setTextWhenNothingSelected ("Split evenly");
+    for (int n : { 2, 4, 8, 16, 32 })
+        splitBox.addItem ("Into " + juce::String (n), n);
+    splitBox.setTooltip ("Puts markers at equal spacing instead, for loops that are already in time.");
+    splitBox.onChange = [this]
+    {
+        if (splitBox.getSelectedId() > 0)
+            splitEvenly (splitBox.getSelectedId());
+        splitBox.setSelectedId (0, juce::dontSendNotification);
+    };
+    clearChopsButton.setTooltip ("Removes every slice marker");
+    clearChopsButton.onClick = [this]
+    {
+        processor.setChops ({});
+        chopsFromHits = false;
+        showChops();
+        say ("Slice markers cleared.");
+    };
+    saveSlicesButton.setTooltip ("Saves each slice as its own sound in the library, ready for the MPC pads or any Crate tool");
+    saveSlicesButton.onClick = [this] { saveSlices(); };
+    chopInfo.setColour (juce::Label::textColourId, crate::Theme::textDim);
+    wave.setMarkersEditable (true);
+    wave.onMarkersChange = [this]
+    {
+        auto markers = wave.getMarkers();
+        if (snapToggle.getToggleState() && document.hasAudio())
+            markers = crate::SoundFx::snapToZeroCrossings (*document.getAudio(), markers);
+        processor.setChops (markers);
+        chopsFromHits = false;
+        showChops();
+    };
+
     for (auto* c : std::initializer_list<juce::Component*> {
+             &chopHeading, &findHitsButton, &sensitivityLabel, &sensitivitySlider, &splitBox, &clearChopsButton,
+             &chopInfo, &saveSlicesButton,
              &keysHeading, &rootLabel, &keyModeLabel, &attackLabel, &releaseLabel, &rootBox, &keyModeBox,
              &attackSlider, &releaseSlider, &computerKeys, &keyboard,
              &recordButton, &meter, &recordTime, &openButton, &saveButton, &exportButton, &nameLabel, &nameEditor,
@@ -248,8 +310,8 @@ EditorView::EditorView (EditorProcessor& p)
     document.addChangeListener (this);
     setWantsKeyboardFocus (true);
     setResizable (true, true);
-    setResizeLimits (1100, 780, 2600, 1700);
-    setSize (1440, 880);
+    setResizeLimits (1100, 800, 2600, 1700);
+    setSize (1440, 900);
 
     // show the keys' settings (saved with the plugin)
     auto& keys = processor.getKeys();
@@ -259,6 +321,7 @@ EditorView::EditorView (EditorProcessor& p)
     attackSlider.setValue (keys.getAttack() * 1000.0, juce::dontSendNotification);
     releaseSlider.setValue (keys.getRelease() * 1000.0, juce::dontSendNotification);
     openMidiInputs();
+    showChops();
 
     changeListenerCallback (&document);   // show the sound that's already open (window reopened)
     say (processor.isInstrument() ? "Open a file or pick a sound from the library, then play it from your keyboard or the keys below."
@@ -389,6 +452,21 @@ void EditorView::resized()
     row3.removeFromLeft (16);
     snapToggle.setBounds (row3.removeFromLeft (juce::jmin (130, row3.getWidth())));
 
+    auto row4 = tools.removeFromTop (38).reduced (0, 4);
+    chopHeading.setBounds (row4.removeFromLeft (52));
+    findHitsButton.setBounds (row4.removeFromLeft (84));
+    row4.removeFromLeft (12);
+    sensitivityLabel.setBounds (row4.removeFromLeft (76));
+    sensitivitySlider.setBounds (row4.removeFromLeft (150));
+    row4.removeFromLeft (12);
+    splitBox.setBounds (row4.removeFromLeft (112));
+    row4.removeFromLeft (4);
+    clearChopsButton.setBounds (row4.removeFromLeft (56));
+    row4.removeFromLeft (12);
+    saveSlicesButton.setBounds (row4.removeFromRight (juce::jmin (112, row4.getWidth())));
+    row4.removeFromRight (8);
+    chopInfo.setBounds (row4);
+
     // transport under the waveform
     auto transport = r.removeFromBottom (30);
     playButton.setBounds (transport.removeFromLeft (80));
@@ -417,6 +495,8 @@ void EditorView::say (const juce::String& text, bool problem)
 
 void EditorView::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    processor.syncToDocument();   // (clears chops an edit has made out of date)
+
     // the sound changed (edit, undo, redo, load): stop playing the old version
     if (document.getAudio().get() != shownAudio)
     {
@@ -426,6 +506,9 @@ void EditorView::changeListenerCallback (juce::ChangeBroadcaster*)
         wave.setSelection (document.getSelection());
         processor.getKeys().setRange (wave.getSelection());
         resetViewOnNextChange = false;
+        if (processor.getChops().empty())
+            chopsFromHits = false;
+        showChops();
     }
 
     if (! nameEditor.hasKeyboardFocus (true))
@@ -823,6 +906,118 @@ void EditorView::setRootNote (int note)
     keyboard.setRootNote (note);
     if (rootBox.getSelectedId() != note + 1)
         rootBox.setSelectedId (note + 1, juce::dontSendNotification);
+}
+
+//==============================================================================
+void EditorView::findHits (bool announce)
+{
+    if (! document.hasAudio())
+        return say ("There's no sound to chop yet.", true);
+
+    const auto& audio = *document.getAudio();
+    const float sensitivity = (float) sensitivitySlider.getValue() / 100.0f;
+    auto markers = crate::SoundFx::findHits (audio, sensitivity, crate::KeyboardSampler::kMaxSlices - 1);
+    markers = crate::SoundFx::snapToZeroCrossings (audio, markers);
+    processor.setChops (markers);
+    chopsFromHits = true;
+
+    // play them straight away
+    if (keyModeBox.getSelectedId() != 4)
+        keyModeBox.setSelectedId (4, juce::sendNotificationSync);
+    showChops();
+
+    if (announce)
+    {
+        const int slices = (int) processor.getChops().size() + 1;
+        say (slices == 1 ? "No separate hits found. Try a higher Sensitivity, or click the ruler to add markers yourself."
+                         : "Found " + juce::String (slices) + " slices: play them from C1 up. Drag a marker to move it, click the ruler "
+                           "to add one, Option-click to remove one, double-click a slice to select it.");
+    }
+}
+
+void EditorView::splitEvenly (int slices)
+{
+    if (! document.hasAudio())
+        return say ("There's no sound to chop yet.", true);
+    const auto& audio = *document.getAudio();
+    auto markers = crate::SoundFx::gridMarkers (audio.getNumSamples(), slices);
+    if (snapToggle.getToggleState())
+        markers = crate::SoundFx::snapToZeroCrossings (audio, markers);
+    processor.setChops (markers);
+    chopsFromHits = false;
+    if (keyModeBox.getSelectedId() != 4)
+        keyModeBox.setSelectedId (4, juce::sendNotificationSync);
+    showChops();
+    say ("Split into " + juce::String (slices) + " equal slices, on the keys from C1.");
+}
+
+void EditorView::showChops()
+{
+    const auto& chops = processor.getChops();
+    wave.setMarkers (chops);
+
+    const int slices = document.hasAudio() ? (int) chops.size() + 1 : 0;
+    const bool slicing = processor.getKeys().getMode() == crate::KeyboardSampler::Mode::slices;
+    keyboard.setSliceKeys (crate::KeyboardSampler::kFirstSliceNote, slicing ? slices : 0);
+
+    juce::String text;
+    if (chops.empty())
+        text = {};
+    else
+    {
+        const int last = crate::KeyboardSampler::kFirstSliceNote + slices - 1;
+        text = juce::String (slices) + " slices";
+        if (slicing)
+            text << ": C1-" << juce::MidiMessage::getMidiNoteName (last, true, true, 3);
+    }
+    chopInfo.setText (text, juce::dontSendNotification);
+    saveSlicesButton.setEnabled (! chops.empty() && ! processor.isRecording());
+    clearChopsButton.setEnabled (! chops.empty());
+}
+
+void EditorView::saveSlices()
+{
+    if (! document.hasAudio() || processor.getChops().empty())
+        return;
+
+    auto* window = new juce::AlertWindow ("Save slices to library",
+                                          "Saves each slice as its own WAV in your Crate sound library, numbered in order.",
+                                          juce::MessageBoxIconType::NoIcon, this);
+    window->addTextEditor ("name", document.getName().isNotEmpty() ? document.getName() : "Chop", "Name");
+    window->addTextEditor ("tags", "chop", "Tags (optional, comma separated)");
+    window->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    window->enterModalState (true, juce::ModalCallbackFunction::create ([this, window] (int result)
+    {
+        if (result != 1 || ! document.hasAudio())
+            return;
+
+        auto name = window->getTextEditorContents ("name").trim();
+        if (name.isEmpty())
+            name = "Chop";
+        juce::StringArray tags;
+        tags.addTokens (window->getTextEditorContents ("tags"), ",", {});
+        tags.trim();
+        tags.removeEmptyStrings();
+
+        const auto slices = crate::SoundFx::slice (*document.getAudio(), processor.getChops());
+        int saved = 0;
+        for (size_t i = 0; i < slices.size(); ++i)
+        {
+            SoundLibrary::Info info;
+            info.name = name + " " + juce::String ((int) i + 1).paddedLeft ('0', 2);
+            info.tags = tags;
+            info.tool = "Sample Editor";
+            if (processor.getLibrary().save (slices[i], info) != juce::File())
+                ++saved;
+        }
+        if (saved == (int) slices.size())
+            say ("Saved " + juce::String (saved) + " slices to the library as \"" + name + " 01\" and on.");
+        else
+            say ("Saved " + juce::String (saved) + " of " + juce::String ((int) slices.size()) + " slices. Couldn't write to "
+                 + processor.getLibrary().getFolder().getFullPathName() + ".", true);
+    }), true);
 }
 
 void EditorView::openMidiInputs()

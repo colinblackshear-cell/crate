@@ -20,12 +20,14 @@ private:
     float level = 0;
 };
 
-// The on-screen keys, with the root note (where the sound plays as recorded) marked.
+// The on-screen keys, with the root note (where the sound plays as recorded) marked, or, when
+// the keys play chopped slices, the keys that have a slice tinted.
 class KeysView : public juce::MidiKeyboardComponent
 {
 public:
     explicit KeysView (juce::MidiKeyboardState& s) : MidiKeyboardComponent (s, horizontalKeyboard) {}
     void setRootNote (int note) { if (note != rootNote) { rootNote = note; repaint(); } }
+    void setSliceKeys (int first, int count) { if (first != sliceFirst || count != sliceCount) { sliceFirst = first; sliceCount = count; repaint(); } }
 
     void drawWhiteNote (int note, juce::Graphics&, juce::Rectangle<float> area, bool isDown, bool isOver,
                         juce::Colour lineColour, juce::Colour textColour) override;
@@ -33,7 +35,9 @@ public:
                         juce::Colour fillColour) override;
 
 private:
+    void mark (int note, juce::Graphics&, juce::Rectangle<float> area);
     int rootNote = 60;
+    int sliceFirst = 0, sliceCount = 0;
 };
 
 // The Sample Editor window: library on the left, the waveform in the middle, recording and
@@ -68,13 +72,21 @@ public:
     juce::ComboBox& getRootBox() { return rootBox; }
     juce::ComboBox& getKeyModeBox() { return keyModeBox; }
     juce::ToggleButton& getComputerKeysToggle() { return computerKeys; }
+    juce::Slider& getSensitivitySlider() { return sensitivitySlider; }
+    // "findHits", "split<N>" or "clear"
+    void runChop (const juce::String& action)
+    {
+        if (action == "findHits")          findHits (true);
+        else if (action.startsWith ("split")) splitEvenly (action.substring (5).getIntValue());
+        else if (action == "clear")        clearChopsButton.triggerClick();
+    }
     KeysView& getKeysView() { return keyboard; }
 
 private:
     static constexpr int kEffectsWidth = 330;
-    static constexpr int kToolsHeight = 126;
-    static constexpr int kKeysHeight = 118;
-    static constexpr int kLowestKey = 24, kHighestKey = 96;   // C0 to C5, as Logic names them (middle C is C3)
+    static constexpr int kToolsHeight = 164;
+    static constexpr int kKeysHeight = 104;
+    static constexpr int kLowestKey = 24, kHighestKey = 96;   // C0 to C6, as Logic names them (middle C is C3)
 
     using Buffer = juce::AudioBuffer<float>;
     using EditFn = std::function<crate::Edits::Result (const Buffer&, juce::Range<int>)>;
@@ -100,6 +112,11 @@ private:
     void saveToLibrary();
     void exportFile();
     void setRootNote (int note);
+    // chopping
+    void findHits (bool announce);
+    void splitEvenly (int slices);
+    void showChops();          // markers, keys and the slice count, from the processor's chops
+    void saveSlices();
     void openMidiInputs();
 
     EditorProcessor& processor;
@@ -141,6 +158,11 @@ private:
     juce::Slider gainSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::TextButton gainButton { "Apply gain" };
 
+    juce::Label chopHeading { {}, "CHOP" }, sensitivityLabel { {}, "Sensitivity" }, chopInfo;
+    juce::TextButton findHitsButton { "Find hits" }, clearChopsButton { "Clear" }, saveSlicesButton { "Save slices..." };
+    juce::Slider sensitivitySlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
+    juce::ComboBox splitBox;
+    bool chopsFromHits = false;   // moving Sensitivity re-finds them
     // keys
     juce::Label keysHeading { {}, "KEYS" }, rootLabel { {}, "Root" }, keyModeLabel { {}, "Plays" };
     juce::Label attackLabel { {}, "Attack" }, releaseLabel { {}, "Release" };
