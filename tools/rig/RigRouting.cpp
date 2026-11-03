@@ -21,6 +21,9 @@ juce::String RigRouting::controlName (int c)
         case synthLevel:   return "Synth level";
         case bassMute:     return "Bass mute";
         case synthMute:    return "Synth mute";
+        case inputLevel:   return "Input level";
+        case inputMute:    return "Input mute";
+        case inputHear:    return "Input on/off";
         default:           return {};
     }
 }

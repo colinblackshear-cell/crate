@@ -36,10 +36,12 @@ public:
         vocoderMute, vocoderOn,                    // buttons
         bassLevel, synthLevel,                     // faders
         bassMute, synthMute,                       // buttons
+        inputLevel,                                // a fader
+        inputMute, inputHear,                      // buttons
         numControls
     };
     static juce::String controlName (int control);
-    static bool isFader (int control) { return control <= masterLevel || control == vocoderLevel || control == bassLevel || control == synthLevel; }
+    static bool isFader (int control) { return control <= masterLevel || control == vocoderLevel || control == bassLevel || control == synthLevel || control == inputLevel; }
 
     // What a block of incoming MIDI turned into.
     struct Result

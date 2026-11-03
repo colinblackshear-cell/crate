@@ -6,6 +6,7 @@ target_sources(CrateTests PRIVATE
     KeysTests.cpp
     MpcTests.cpp
     RigTests.cpp
+    RigFxTests.cpp
     SynthTests.cpp
     SequencerTests.cpp
     TestMain.cpp

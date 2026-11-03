@@ -4,6 +4,7 @@
 
 #include "RigEngine.h"
 #include "core/ui/Theme.h"
+#include "core/ui/ParamControls.h"
 
 // The Rig's window: one transport across the top, the tools in tabs (MPC, Vocoder, Sampler),
 // and a mixer with the keyboard routing along the bottom.
@@ -33,21 +34,47 @@ private:
     class StripView : public juce::Component
     {
     public:
-        StripView (RigEngine&, int strip, int faderControl, int muteControl, bool hasOnSwitch = false);
+        // `onSwitch`, if given, is an on/off switch on the strip (the vocoder's, the input's).
+        StripView (RigEngine&, int strip, int faderControl, int muteControl, std::atomic<bool>* onSwitch = nullptr);
         void paint (juce::Graphics&) override;
         void resized() override;
         void refresh();
         void tick();
 
         juce::Slider level { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
-        juce::TextButton mute { "Mute" }, learn { "Learn" }, on { "On" };
+        juce::TextButton mute { "Mute" }, learn { "Learn" }, on { "On" }, fxButton { "FX" };
+        juce::ComboBox jack;   // the Input strip's: which input it listens to
+        const int strip;
 
     private:
         RigEngine& engine;
-        int strip, faderControl, muteControl;
-        bool hasOn;
+        int faderControl, muteControl;
+        std::atomic<bool>* onFlag;
         float meter = 0;
     };
+
+    // One strip's effects, in a row above the mixer: knobs for the filter, drive, crush,
+    // delay and reverb, and the beat repeat's buttons.
+    class FxPanel : public juce::Component
+    {
+    public:
+        FxPanel (RigEngine&, int strip);
+        void paint (juce::Graphics&) override;
+        void resized() override;
+        void tick();
+
+        const int strip;
+        juce::TextButton resetButton { "Reset" }, closeButton { "Close" };
+
+    private:
+        void setRepeat (int choice);
+
+        RigEngine& engine;
+        std::vector<std::unique_ptr<crate::ParamKnob>> knobs;
+        std::unique_ptr<crate::ParamChoice> delayTime;
+        juce::OwnedArray<juce::TextButton> repeatButtons;
+    };
+    void showFx (int strip);
 
     void timerCallback() override;
     void showAudioSettings();
@@ -90,6 +117,7 @@ private:
     juce::uint32 sayUntil = 0;
 
     std::vector<std::unique_ptr<StripView>> stripViews;
+    std::unique_ptr<FxPanel> fxPanel;
 
     std::vector<double> taps;
     juce::uint32 lastTap = 0;
