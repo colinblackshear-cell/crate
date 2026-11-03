@@ -47,6 +47,8 @@ jobs:
           codesign --force --deep -s - "AU/MPC Bank Builder.component"
           codesign --force --deep -s - "VST3/MPC Bank Builder.vst3"
           codesign --force --deep -s - "Standalone/MPC Bank Builder.app"
+          cd "$GITHUB_WORKSPACE/build/tools/rig/CrateRig_artefacts/Release"
+          codesign --force --deep -s - "Crate Rig.app"
 
       - name: Validate the Audio Unit (what Logic checks)
         run: |
@@ -77,6 +79,9 @@ jobs:
           ditto -c -k --keepParent "Standalone/MPC Bank Builder.app" "$GITHUB_WORKSPACE/dist-mpc/MPC-Bank-Builder-App.zip"
           ditto -c -k --keepParent "AU/MPC Bank Builder.component" "$GITHUB_WORKSPACE/dist-mpc/MPC-Bank-Builder-AU.zip"
           ditto -c -k --keepParent "VST3/MPC Bank Builder.vst3" "$GITHUB_WORKSPACE/dist-mpc/MPC-Bank-Builder-VST3.zip"
+          mkdir -p "$GITHUB_WORKSPACE/dist-rig"
+          cd "$GITHUB_WORKSPACE/build/tools/rig/CrateRig_artefacts/Release"
+          ditto -c -k --keepParent "Crate Rig.app" "$GITHUB_WORKSPACE/dist-rig/Crate-Rig-App.zip"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -87,6 +92,11 @@ jobs:
         with:
           name: MPC-Bank-Builder-mac
           path: dist-mpc/*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Crate-Rig-mac
+          path: dist-rig/*.zip
 
   # The same tests on Linux, which is quicker to start than a Mac runner.
   linux-tests:

@@ -108,6 +108,35 @@ In Logic, add MPC Bank Builder as an instrument (AU Instruments > Colin Blackshe
 instrument track. The track's MIDI plays the pads, and your kits and their sounds are saved with
 the Logic project.
 
+### Crate Rig (for playing live)
+
+One window that plays the tools together, on one clock, for a live set. It's a Mac app only;
+in Logic, use each tool's own plugin.
+
+- **One transport:** **Play** (or the space bar) starts the MPC's sequencer and everything else
+  together, **Stop** stops and goes back to the start. Set the **Tempo** with the buttons or tap
+  it with **Tap**; **Click** turns the metronome on. The MPC follows the Rig's tempo the way it
+  follows Logic's.
+- **The tools in tabs:** the **MPC** and **Sampler** tabs are the full tools, the same as their
+  own apps.
+- **Your keyboard (e.g. a Launchkey 61):** every MIDI keyboard is switched on as soon as it's
+  plugged in. The drum pads (MIDI channel 10, the Launchkey's drum mode) play the MPC's pads:
+  the 16 pads play pads 1-16 of the bank picked in **Pads play MPC bank**. The keys play what's
+  picked in **Keys play**: the Sampler (the sound in the Sampler tab, across the keys), the MPC's
+  pads note for note, or nothing.
+- **Mixer:** a level, mute and meter for the MPC, the Sampler and the master. Double-click a
+  level to put it back to 0 dB.
+- **Learn:** press **Learn** next to a level, Play or Stop, then move a fader or knob or press
+  a button on your keyboard. From then on it controls that. Press Learn again while it's waiting
+  to forget the control.
+- **Sample live:** your audio interface's input goes to the Sampler (not to the speakers), so
+  you can record a sound in the Sampler tab mid-set and play it from the keys.
+- **Shows:** **Save show** saves everything (both tools' sounds and settings, the mixer, tempo,
+  routing and learned controls) to `~/Music/Crate/Rig`; **Open show** brings one back. The Rig
+  also saves where you left off when you quit and opens it again next time.
+- **Audio + MIDI:** pick your audio interface and buffer size. A buffer of 128 samples or less
+  keeps the delay from key to sound under about 3 ms.
+
 ### Crate on your phone
 
 A web app for recording on the go: open
@@ -144,7 +173,7 @@ without resampling.
 ## Installing a build
 
 Each GitHub build has a download per tool, **Sample-Editor-mac** and **MPC-Bank-Builder-mac**, each
-with the app, the AU and the VST3. Sample-Editor-mac also has the instrument version
+with the app, the AU and the VST3, and **Crate-Rig-mac** with the Rig app. Sample-Editor-mac also has the instrument version
 (**Sample-Editor-Instrument-AU** and **-VST3**).
 
 1. Unzip them. Put the `.app` in Applications, the `.component` in
@@ -156,6 +185,7 @@ with the app, the AU and the VST3. Sample-Editor-mac also has the instrument ver
    sudo xattr -cr "/Applications/Sample Editor.app" ~/Library/Audio/Plug-Ins/Components/"Sample Editor.component"
    sudo xattr -cr ~/Library/Audio/Plug-Ins/Components/"Sample Editor Instrument.component"
    sudo xattr -cr "/Applications/MPC Bank Builder.app" ~/Library/Audio/Plug-Ins/Components/"MPC Bank Builder.component"
+   sudo xattr -cr "/Applications/Crate Rig.app"
    killall -9 AudioComponentRegistrar
    ```
 3. The first time you press Record, macOS asks for microphone access. In the apps, choose your
@@ -181,6 +211,7 @@ and writes back byte for byte (CI uses the demo kits from [vMPC2000XL](https://g
 core/          shared by every tool: sound files, edits, effects, the sound library, common UI
 tools/editor/  the Sample Editor (app + AU + VST3, plus an AU/VST3 instrument version)
 tools/mpc/     the MPC Bank Builder (app + AU instrument + VST3); mpc/ reads and writes .SND and .PGM
+tools/rig/     Crate Rig: plays the tools together live, on one clock (app only)
 tools/phone/   Crate on your phone: a web app (plain JavaScript, no build step), published to GitHub Pages
 tests/         headless tests for the core and the tools, the MPC file format tests, and
                tests/phone (run with `node --test tests/phone/*.test.mjs`)
