@@ -1,4 +1,5 @@
 #include "RigView.h"
+#include "LooperView.h"
 
 namespace Theme = crate::Theme;
 
@@ -6,7 +7,8 @@ namespace
 {
 constexpr int kBottomHeight = 132;
 const juce::Colour mpcColour { 0xffff8a3d }, samplerColour { 0xff8fd3c8 }, vocoderColour { 0xffb48cff }, masterColour { 0xffeeeeee },
-                   bassColour { 0xff4fc3f7 }, synthColour { 0xfff06292 }, inputColour { 0xffffd54f };
+                   bassColour { 0xff4fc3f7 }, synthColour { 0xfff06292 }, inputColour { 0xffffd54f },
+                   loopsColour { 0xff81c784 };
 
 juce::Colour stripColour (int strip)
 {
@@ -18,6 +20,7 @@ juce::Colour stripColour (int strip)
         case RigEngine::bassStrip:    return bassColour;
         case RigEngine::synthStrip:   return synthColour;
         case RigEngine::inputStrip:   return inputColour;
+        case RigEngine::loopsStrip:   return loopsColour;
         default:                      return masterColour;
     }
 }
@@ -98,13 +101,13 @@ void RigView::StripView::paint (juce::Graphics& g)
     g.setColour (Theme::raised);
     g.fillRoundedRectangle (area, 6.0f);
 
-    auto top = getLocalBounds().reduced (8, 6).removeFromTop (20);
+    auto top = getLocalBounds().reduced (6, 6).removeFromTop (20);
     g.setColour (stripColour (strip));
-    g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
     g.drawText (RigEngine::stripName (strip), top, juce::Justification::centredLeft);
 
     // The meter, under the fader.
-    auto meterArea = getLocalBounds().reduced (8, 0).withTop (level.getBottom()).withHeight (6).toFloat();
+    auto meterArea = getLocalBounds().reduced (6, 0).withTop (level.getBottom()).withHeight (6).toFloat();
     g.setColour (Theme::background);
     g.fillRoundedRectangle (meterArea, 3.0f);
     const float db = juce::Decibels::gainToDecibels (meter, -60.0f);
@@ -116,14 +119,14 @@ void RigView::StripView::paint (juce::Graphics& g)
 void RigView::StripView::resized()
 {
     // Name, On and the input's jack / Mute, Learn, FX / the fader and meter.
-    auto area = getLocalBounds().reduced (8, 6);
+    auto area = getLocalBounds().reduced (6, 6);
     auto top = area.removeFromTop (20);
     if (jack.isVisible())
-        jack.setBounds (top.removeFromRight (58));
+        jack.setBounds (top.removeFromRight (48));
     if (on.isVisible())
     {
-        top.removeFromRight (4);
-        on.setBounds (top.removeFromRight (34));
+        top.removeFromRight (2);
+        on.setBounds (top.removeFromRight (32));
     }
     area.removeFromTop (4);
     auto buttons = area.removeFromTop (22);
@@ -333,8 +336,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     tabs.addTab ("Bass", Theme::panel, engine.getBass().createEditorAndMakeActive(), true);
     tabs.addTab ("Synth", Theme::panel, engine.getSynth().createEditorAndMakeActive(), true);
     tabs.addTab ("Sampler", Theme::panel, engine.getSampler().createEditorAndMakeActive(), true);
-    const juce::Colour tabColours[] = { mpcColour, vocoderColour, bassColour, synthColour, samplerColour };
-    for (int i = 0; i < 5; ++i)
+    auto* looperView = new LooperView (engine);
+    looperView->onSay = [this] (const juce::String& text) { say (text); };
+    looper = looperView;
+    tabs.addTab ("Looper", Theme::panel, looperView, true);
+    const juce::Colour tabColours[] = { mpcColour, vocoderColour, bassColour, synthColour, samplerColour, loopsColour };
+    for (int i = 0; i < 6; ++i)
         tabs.getTabbedButtonBar().setTabBackgroundColour (i, tabColours[i].withAlpha (0.25f));
 
     for (int t = 0; t < RigEngine::numTools; ++t)
@@ -378,9 +385,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::synthStrip, RigRouting::synthLevel, RigRouting::synthMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::inputStrip, RigRouting::inputLevel, RigRouting::inputMute, &engine.inputOn));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::samplerStrip, RigRouting::samplerLevel, RigRouting::samplerMute));
+    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::loopsStrip, RigRouting::loopsLevel, RigRouting::loopsMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::masterStrip, RigRouting::masterLevel, -1));
     const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
-                           RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
+                           RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::loopsLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
     {
         auto* s = stripViews[i].get();
@@ -418,6 +426,8 @@ void RigView::refresh()
     lowerKeysTo.setEnabled (split > 0);
     for (auto& s : stripViews)
         s->refresh();
+    if (looper != nullptr)
+        looper->refresh();
     updateLearnButtons();
 }
 
@@ -463,7 +473,7 @@ void RigView::updateLearnButtons()
     show (learnPlay, RigRouting::play);
     show (learnStop, RigRouting::stop);
     const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
-                           RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::masterLevel };
+                           RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::loopsLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
         show (stripViews[i]->learn, faders[i]);
 }
@@ -705,7 +715,8 @@ void RigView::saveShowAs()
                                   return;
                               file = file.withFileExtension ("crateshow");
                               if (auto xml = engine.saveShow().createXml())
-                                  xml->writeTo (file);
+                                  if (! xml->writeTo (file) || ! engine.writeLoopAudio (file))
+                                      say ("Couldn't save all of " + file.getFileName() + ".");
                           });
 }
 
@@ -721,6 +732,7 @@ void RigView::openShow()
                               if (auto xml = juce::parseXML (file))
                               {
                                   engine.loadShow (juce::ValueTree::fromXml (*xml));
+                                  engine.readLoopAudio (file);
                                   refresh();
                               }
                           });
@@ -731,6 +743,13 @@ bool RigView::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress::spaceKey)
     {
         engine.getTransport().togglePlay();
+        return true;
+    }
+    // 1-8 record, stop or overdub the looper's layers.
+    const auto c = key.getTextCharacter();
+    if (c >= '1' && c <= '8' && ! key.getModifiers().isAnyModifierKeyDown())
+    {
+        engine.getLooper().pressRecord ((int) (c - '1'));
         return true;
     }
     return false;

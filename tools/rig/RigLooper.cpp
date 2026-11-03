@@ -1,0 +1,360 @@
+#include "RigLooper.h"
+
+namespace
+{
+constexpr int kFade = 96;   // samples of fade at each end of a new loop, so it doesn't click
+}
+
+juce::String RigLooper::sourceName (int s)
+{
+    switch (s)
+    {
+        case input:   return "Mic / input";
+        case vocoder: return "Vocoder";
+        case bass:    return "Bass";
+        case synth:   return "Synth";
+        case mpc:     return "MPC";
+        case sampler: return "Sampler";
+        case mix:     return "Rig mix";
+        default:      return {};
+    }
+}
+
+const std::array<int, 6>& RigLooper::barChoices()
+{
+    static const std::array<int, 6> choices { 0, 1, 2, 4, 8, 16 };
+    return choices;
+}
+
+RigLooper::RigLooper() = default;
+
+void RigLooper::prepare (double rate)
+{
+    sampleRate = rate > 0 ? rate : 44100.0;
+    const int capacity = (int) (sampleRate * kMaxRecordSeconds);
+    for (auto& layer : layers)
+    {
+        const juce::SpinLock::ScopedLockType sl (layer.lock);
+        if (layer.audio.getNumSamples() < capacity && (State) layer.state.load() == State::empty)
+            layer.audio.setSize (2, capacity);
+    }
+    undoAudio.setSize (2, capacity);
+    undoLayer = -1;
+}
+
+void RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double beats)
+{
+    auto& layer = layers[(size_t) index];
+    if (audio.getNumSamples() == 0 || beats <= 0)
+        return;
+    if (audio.getNumChannels() == 1)
+    {
+        audio.setSize (2, audio.getNumSamples(), true);
+        audio.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
+    }
+    {
+        const juce::SpinLock::ScopedLockType sl (layer.lock);
+        std::swap (layer.audio, audio);
+        layer.length = layer.audio.getNumSamples();
+        layer.startBeat = 0;
+        layer.stopBeat = -1;
+        layer.lengthBeats = beats;
+        layer.state = (int) State::playing;
+        if (undoLayer == index)
+            undoLayer = -1;
+    }
+    ++layer.version;
+    // The old buffer is freed here, outside the lock.
+}
+
+juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index) const
+{
+    auto& layer = const_cast<Layer&> (layers[(size_t) index]);
+    const juce::SpinLock::ScopedLockType sl (layer.lock);
+    const auto state = (State) layer.state.load();
+    if (layer.length <= 0 || (state != State::playing && state != State::overdubbing))
+        return {};
+    juce::AudioBuffer<float> copy (2, layer.length);
+    for (int ch = 0; ch < 2; ++ch)
+        copy.copyFrom (ch, 0, layer.audio, ch, 0, layer.length);
+    return copy;
+}
+
+std::vector<float> RigLooper::readPeaks (int index, int count) const
+{
+    std::vector<float> peaks ((size_t) juce::jmax (1, count), 0.0f);
+    const auto& layer = layers[(size_t) index];
+    const auto state = (State) layer.state.load();
+    const int n = juce::jmin (layer.audio.getNumSamples(), state == State::recording ? layer.writeIndex : layer.length);
+    if (n <= 0 || state == State::empty || state == State::armed)
+        return peaks;
+    const float* l = layer.audio.getReadPointer (0);
+    const float* r = layer.audio.getReadPointer (1);
+    const int step = juce::jmax (1, n / (count * 32));
+    for (size_t p = 0; p < peaks.size(); ++p)
+    {
+        const int from = (int) ((double) p / peaks.size() * n);
+        const int to = juce::jmin (n, (int) ((double) (p + 1) / peaks.size() * n));
+        float m = 0;
+        for (int i = from; i < to; i += step)
+            m = juce::jmax (m, std::abs (l[i]), std::abs (r[i]));
+        peaks[p] = juce::jmin (1.0f, m);
+    }
+    return peaks;
+}
+
+void RigLooper::reset (int index)
+{
+    auto& layer = layers[(size_t) index];
+    {
+        const juce::SpinLock::ScopedLockType sl (layer.lock);
+        layer.presses = 0;
+        layer.clears = 0;
+        layer.undos = 0;
+        layer.state = (int) State::empty;
+        layer.length = 0;
+        layer.lengthBeats = 0;
+        layer.position = 0;
+        if (undoLayer == index)
+            undoLayer = -1;
+    }
+    ++layer.version;
+}
+
+void RigLooper::makeRoom (int index)
+{
+    auto& layer = layers[(size_t) index];
+    const int capacity = (int) (sampleRate * kMaxRecordSeconds);
+    if (layer.audio.getNumSamples() >= capacity || (State) layer.state.load() != State::empty)
+        return;
+    juce::AudioBuffer<float> room (2, capacity);
+    room.clear();
+    const juce::SpinLock::ScopedLockType sl (layer.lock);
+    if ((State) layer.state.load() == State::empty)
+        std::swap (layer.audio, room);
+}
+
+void RigLooper::finishRecording (Layer& layer)
+{
+    layer.length = juce::jmax (1, layer.writeIndex);
+    layer.lengthBeats = layer.stopBeat - layer.startBeat;
+    const int fade = juce::jmin (kFade, layer.length / 4);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        layer.audio.applyGainRamp (ch, 0, fade, 0.0f, 1.0f);
+        layer.audio.applyGainRamp (ch, layer.length - fade, fade, 1.0f, 0.0f);
+    }
+    layer.state = (int) State::playing;
+    ++layer.version;
+}
+
+void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, bool& wantsPlay)
+{
+    const int bpb = juce::jmax (1, clock.beatsPerBar);
+
+    if (layer.clears.exchange (0) > 0)
+    {
+        layer.state = (int) State::empty;
+        layer.length = 0;
+        layer.lengthBeats = 0;
+        layer.position = 0;
+        if (undoLayer == index)
+            undoLayer = -1;
+        ++layer.version;
+    }
+
+    if (layer.undos.exchange (0) > 0 && undoLayer == index)
+    {
+        const auto state = (State) layer.state.load();
+        if ((state == State::playing || state == State::overdubbing) && undoLength == layer.length)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                layer.audio.copyFrom (ch, 0, undoAudio, ch, 0, undoLength);
+            layer.state = (int) State::playing;
+            ++layer.version;
+        }
+        undoLayer = -1;
+    }
+
+    for (int p = layer.presses.exchange (0); p > 0; --p)
+    {
+        switch ((State) layer.state.load())
+        {
+            case State::empty:
+            {
+                if (layer.audio.getNumSamples() < 1024)
+                    break;
+                // The next bar line, or now if the clock is stopped (it starts with the layer).
+                layer.startBeat = clock.playing ? std::ceil (clock.beat / bpb - 1.0e-9) * bpb : clock.beat;
+                const int bars = layer.bars.load();
+                layer.stopBeat = bars > 0 ? layer.startBeat + bars * bpb : -1.0;
+                layer.writeIndex = 0;
+                layer.lengthBeats = 0;
+                layer.position = 0;
+                layer.state = (int) State::armed;
+                if (! clock.playing)
+                    wantsPlay = true;
+                break;
+            }
+            case State::armed:
+                layer.state = (int) State::empty;   // changed your mind
+                break;
+            case State::recording:
+            {
+                // Stop at the end of the bar you're in (at least one bar).
+                const double done = juce::jmax (0.0, clock.beat - layer.startBeat);
+                const double barsDone = juce::jmax (1.0, std::ceil (done / bpb - 1.0e-9));
+                const double stop = layer.startBeat + barsDone * bpb;
+                layer.stopBeat = layer.stopBeat < 0 ? stop : juce::jmin (layer.stopBeat, stop);
+                break;
+            }
+            case State::playing:
+                if (layer.length <= undoAudio.getNumSamples())
+                {
+                    for (int ch = 0; ch < 2; ++ch)
+                        undoAudio.copyFrom (ch, 0, layer.audio, ch, 0, layer.length);
+                    undoLayer = index;
+                    undoLength = layer.length;
+                }
+                layer.state = (int) State::overdubbing;
+                break;
+            case State::overdubbing:
+                layer.state = (int) State::playing;
+                break;
+        }
+    }
+}
+
+bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioBuffer<float>*, numSources>& sources,
+                         juce::AudioBuffer<float>& out)
+{
+    out.clear();
+    const int n = out.getNumSamples();
+    bool wantsPlay = false;
+    const double beatsPerSample = clock.bpm / (60.0 * sampleRate);
+    const float gainStep = 1.0f / (0.01f * (float) sampleRate);   // 10 ms to any level
+    auto* outL = out.getWritePointer (0);
+    auto* outR = out.getWritePointer (1);
+
+    for (int index = 0; index < kLayers; ++index)
+    {
+        auto& layer = layers[(size_t) index];
+        const juce::SpinLock::ScopedTryLockType sl (layer.lock);
+        if (! sl.isLocked())
+            continue;   // the window is swapping in a new sound; back next block
+
+        handleRequests (layer, index, clock, wantsPlay);
+
+        const auto* src = sources[(size_t) juce::jlimit (0, numSources - 1, layer.source.load())];
+        const float* srcL = src != nullptr ? src->getReadPointer (0) : nullptr;
+        const float* srcR = src != nullptr ? src->getReadPointer (juce::jmin (1, src->getNumChannels() - 1)) : nullptr;
+        auto* audioL = layer.audio.getWritePointer (0);
+        auto* audioR = layer.audio.getWritePointer (1);
+        const int capacity = layer.audio.getNumSamples();
+        const int bpb = juce::jmax (1, clock.beatsPerBar);
+        const float target = layer.mute.load() ? 0.0f : layer.level.load();
+        float peak = 0;
+        bool changed = false;
+
+        for (int i = 0; i < n; ++i)
+        {
+            const double beat = clock.beat + (clock.playing ? i * beatsPerSample : 0.0);
+            auto state = (State) layer.state.load (std::memory_order_relaxed);
+
+            if (state == State::armed)
+            {
+                if (! clock.playing || beat < layer.startBeat - 1.0e-9)
+                    continue;
+                layer.state = (int) (state = State::recording);
+                layer.writeIndex = 0;
+            }
+
+            if (state == State::recording)
+            {
+                if (! clock.playing)
+                {
+                    layer.state = (int) State::empty;   // the clock stopped before the loop was done
+                    break;
+                }
+                if (layer.stopBeat >= 0 && beat >= layer.stopBeat - 1.0e-9)
+                {
+                    finishRecording (layer);
+                    state = State::playing;
+                }
+                else if (layer.writeIndex < capacity)
+                {
+                    audioL[layer.writeIndex] = srcL != nullptr ? srcL[i] : 0.0f;
+                    audioR[layer.writeIndex] = srcR != nullptr ? srcR[i] : 0.0f;
+                    ++layer.writeIndex;
+                    changed = true;
+                    continue;
+                }
+                else
+                {
+                    // Full: keep the whole bars that fit.
+                    const double spb = sampleRate * 60.0 / clock.bpm;
+                    const double bars = std::floor (layer.writeIndex / spb / bpb);
+                    if (bars < 1)
+                    {
+                        layer.state = (int) State::empty;
+                        break;
+                    }
+                    layer.stopBeat = layer.startBeat + bars * bpb;
+                    layer.writeIndex = juce::jmin (capacity, (int) std::round (bars * bpb * spb));
+                    finishRecording (layer);
+                    state = State::playing;
+                }
+            }
+
+            if ((state == State::playing || state == State::overdubbing) && clock.playing && layer.length > 1)
+            {
+                const double lengthBeats = juce::jmax (1.0e-6, layer.lengthBeats.load (std::memory_order_relaxed));
+                double p = std::fmod (beat - layer.startBeat, lengthBeats);
+                if (p < 0)
+                    p += lengthBeats;
+                const double pos = p / lengthBeats * layer.length;
+                const int i0 = juce::jlimit (0, layer.length - 1, (int) pos);
+                const int i1 = (i0 + 1) % layer.length;
+                const float frac = (float) (pos - i0);
+                const float l = audioL[i0] + (audioL[i1] - audioL[i0]) * frac;
+                const float r = audioR[i0] + (audioR[i1] - audioR[i0]) * frac;
+
+                if (layer.gain < target)
+                    layer.gain = juce::jmin (target, layer.gain + gainStep);
+                else if (layer.gain > target)
+                    layer.gain = juce::jmax (target, layer.gain - gainStep);
+                outL[i] += l * layer.gain;
+                outR[i] += r * layer.gain;
+                peak = juce::jmax (peak, std::abs (l * layer.gain), std::abs (r * layer.gain));
+
+                if (state == State::overdubbing)
+                {
+                    if (srcL != nullptr)
+                        audioL[i0] += srcL[i];
+                    if (srcR != nullptr)
+                        audioR[i0] += srcR[i];
+                    changed = true;
+                }
+            }
+        }
+
+        // What the window shows.
+        const auto state = (State) layer.state.load();
+        if (state == State::recording)
+        {
+            const double done = juce::jmax (0.0, clock.beat - layer.startBeat);
+            layer.lengthBeats = done;
+            layer.position = layer.stopBeat > layer.startBeat ? done / (layer.stopBeat - layer.startBeat) : 0.0;
+        }
+        else if ((state == State::playing || state == State::overdubbing) && layer.lengthBeats.load() > 0)
+        {
+            double p = std::fmod (clock.beat - layer.startBeat, layer.lengthBeats.load());
+            layer.position = (p < 0 ? p + layer.lengthBeats.load() : p) / layer.lengthBeats.load();
+        }
+        if (peak > layer.peak.load())
+            layer.peak = peak;
+        if (changed)
+            ++layer.version;
+    }
+    return wantsPlay;
+}

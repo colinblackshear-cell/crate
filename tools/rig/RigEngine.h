@@ -11,6 +11,7 @@
 #include "RigRouting.h"
 #include "RigTransport.h"
 #include "StripFx.h"
+#include "RigLooper.h"
 
 #include <array>
 
@@ -39,14 +40,16 @@ public:
     // Every tool, by the number knob Learn and shows use for it.
     // Each mixer strip's effects rack is a tool too (fxTool + the strip's StripId), so its knobs
     // can be learned and it's saved with the show.
-    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, fxTool, numTools = fxTool + 7 };
+    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, fxTool, numTools = fxTool + 8 };
     juce::AudioProcessor& getTool (int id);
     static juce::String toolName (int id);
     RigTransport& getTransport() { return transport; }
+    RigLooper& getLooper() { return looper; }
+    double getSampleRate() const { return sampleRate; }
     RigRouting& getRouting() { return routing; }
 
     // (The vocoder came later, so it's last: saved shows keep their strip order.)
-    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, numStrips };
+    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, loopsStrip, numStrips };
     static_assert (numTools == fxTool + numStrips);
     struct Strip
     {
@@ -107,6 +110,12 @@ public:
     void loadShow (const juce::ValueTree&);
     static constexpr const char* kShowType = "CrateRigShow";
 
+    // The loops' sound is too big for the show file, so it goes in WAV files in a folder next
+    // to it ("My show loops"). Call after writing the show file, and after loading it.
+    static juce::File loopsFolder (const juce::File& showFile);
+    bool writeLoopAudio (const juce::File& showFile) const;
+    void readLoopAudio (const juce::File& showFile);
+
 private:
     void processChunk (const float* const* inputs, int numInputs, int offset, int numSamples);
     void applyControls (const RigRouting::Result&);
@@ -120,6 +129,8 @@ private:
     SynthProcessor synthTool;
     RigTransport transport;
     RigRouting routing;
+    RigLooper looper;
+    std::array<double, RigLooper::kLayers> loadedLoopBeats {};
     std::array<Strip, numStrips> strips;
     std::array<StripFx, numStrips> fx;
     juce::MidiBuffer noMidi;
@@ -130,7 +141,7 @@ private:
     juce::MidiBuffer nowMidi;          // addMidiNow, under nowLock
 
     // Audio-thread buffers, sized in prepare().
-    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, inputBuffer, mixBuffer;
+    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, inputBuffer, rawInputBuffer, loopsBuffer, mixBuffer;
     juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi;
     double sampleRate = 0;
     int maxBlock = 0;

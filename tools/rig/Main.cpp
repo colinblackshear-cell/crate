@@ -24,7 +24,10 @@ public:
 
         // Pick up where the last show left off.
         if (auto xml = juce::parseXML (lastShowFile()))
+        {
             engine->loadShow (juce::ValueTree::fromXml (*xml));
+            engine->readLoopAudio (lastShowFile());
+        }
 
         // Ask for the mic first (macOS shows its prompt), then open the audio device.
         juce::RuntimePermissions::request (juce::RuntimePermissions::recordAudio, [this] (bool granted)
@@ -69,7 +72,8 @@ private:
         const auto file = lastShowFile();
         file.getParentDirectory().createDirectory();
         if (auto xml = engine->saveShow().createXml())
-            xml->writeTo (file);
+            if (xml->writeTo (file))
+                engine->writeLoopAudio (file);
     }
 
     class Window : public juce::DocumentWindow

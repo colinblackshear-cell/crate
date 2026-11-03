@@ -38,10 +38,14 @@ public:
         bassMute, synthMute,                       // buttons
         inputLevel,                                // a fader
         inputMute, inputHear,                      // buttons
+        loopsLevel,                                // a fader
+        loopsMute,                                 // a button
+        loopRecord1, loopRecord8 = loopRecord1 + 7, // buttons: record / stop / overdub each layer
+        loopMute1, loopMute8 = loopMute1 + 7,       // buttons: mute each layer
         numControls
     };
     static juce::String controlName (int control);
-    static bool isFader (int control) { return control <= masterLevel || control == vocoderLevel || control == bassLevel || control == synthLevel || control == inputLevel; }
+    static bool isFader (int control) { return control <= masterLevel || control == vocoderLevel || control == bassLevel || control == synthLevel || control == inputLevel || control == loopsLevel; }
 
     // What a block of incoming MIDI turned into.
     struct Result

@@ -40,6 +40,9 @@ public:
     void endBlock (int numSamples, juce::AudioBuffer<float>* out = nullptr);
 
     juce::Optional<PositionInfo> getPosition() const override;
+    // Where this block starts, and whether it plays (between beginBlock and endBlock).
+    double getBlockPosition() const { return ppq; }
+    bool isPlayingThisBlock() const { return playing; }
 
 private:
     double sampleRate = 44100.0;

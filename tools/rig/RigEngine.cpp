@@ -11,6 +11,7 @@ juce::String RigEngine::stripName (int id)
         case bassStrip:    return "Bass";
         case synthStrip:   return "Synth";
         case inputStrip:   return "Input";
+        case loopsStrip:   return "Loops";
         default:           return {};
     }
 }
@@ -135,6 +136,9 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     bassBuffer.setSize (2, maxBlock);
     synthBuffer.setSize (2, maxBlock);
     inputBuffer.setSize (2, maxBlock);
+    rawInputBuffer.setSize (2, maxBlock);
+    loopsBuffer.setSize (2, maxBlock);
+    looper.prepare (sampleRate);
     mixBuffer.setSize (2, maxBlock);
     for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi })
         m->ensureSize (4096);
@@ -188,7 +192,8 @@ void RigEngine::applyControls (const RigRouting::Result& r)
                                            { RigRouting::vocoderLevel, vocoderStrip },
                                            { RigRouting::bassLevel, bassStrip },
                                            { RigRouting::synthLevel, synthStrip },
-                                           { RigRouting::inputLevel, inputStrip } };
+                                           { RigRouting::inputLevel, inputStrip },
+                                           { RigRouting::loopsLevel, loopsStrip } };
     for (auto [control, strip] : faders)
         if (r.values[(size_t) control] >= 0.0f)
         {
@@ -211,7 +216,7 @@ void RigEngine::applyControls (const RigRouting::Result& r)
         strips[vocoderStrip].mute = ! strips[vocoderStrip].mute.load();
         moved = true;
     }
-    for (auto [control, strip] : { std::pair<int, int> { RigRouting::bassMute, bassStrip }, { RigRouting::synthMute, synthStrip }, { RigRouting::inputMute, inputStrip } })
+    for (auto [control, strip] : { std::pair<int, int> { RigRouting::bassMute, bassStrip }, { RigRouting::synthMute, synthStrip }, { RigRouting::inputMute, inputStrip }, { RigRouting::loopsMute, loopsStrip } })
         if (r.presses[(size_t) control] % 2 == 1)
         {
             strips[(size_t) strip].mute = ! strips[(size_t) strip].mute.load();
@@ -230,6 +235,17 @@ void RigEngine::applyControls (const RigRouting::Result& r)
             list[move.parameter]->setValueNotifyingHost (move.value);
     }
 
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        for (int p = r.presses[(size_t) (RigRouting::loopRecord1 + i)]; p > 0; --p)
+            looper.pressRecord (i);
+        if (r.presses[(size_t) (RigRouting::loopMute1 + i)] % 2 == 1)
+        {
+            auto& layer = looper.getLayer (i);
+            layer.mute = ! layer.mute.load();
+            moved = true;
+        }
+    }
     if (r.presses[RigRouting::inputHear] % 2 == 1)
     {
         inputOn = ! inputOn.load();
@@ -374,6 +390,33 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         for (int ch = 0; ch < 2; ++ch)
             mix.addFrom (ch, 0, *buffer, ch, 0, n);
 
+    // The looper records from the input, a tool, or the mix so far (never itself), and plays
+    // its layers through the Loops strip.
+    juce::AudioBuffer<float> rawInput (rawInputBuffer.getArrayOfWritePointers(), 2, n);
+    copyInput (rawInput);
+    juce::AudioBuffer<float> loopsBlock (loopsBuffer.getArrayOfWritePointers(), 2, n);
+    RigLooper::Clock clock;
+    clock.beat = transport.getBlockPosition();
+    clock.bpm = transport.getBpm();
+    clock.beatsPerBar = transport.getBeatsPerBar();
+    clock.playing = transport.isPlayingThisBlock();
+    std::array<const juce::AudioBuffer<float>*, RigLooper::numSources> sources {};
+    sources[RigLooper::input] = &rawInput;
+    sources[RigLooper::vocoder] = &vocoderBlock;
+    sources[RigLooper::bass] = &bassBlock;
+    sources[RigLooper::synth] = &synthBlock;
+    sources[RigLooper::mpc] = &mpcBlock;
+    sources[RigLooper::sampler] = &samplerBlock;
+    sources[RigLooper::mix] = &mix;
+    if (looper.process (clock, sources, loopsBlock))
+    {
+        transport.play();
+        controlsMoved = true;
+    }
+    applyStrip (loopsStrip, loopsBlock);
+    for (int ch = 0; ch < 2; ++ch)
+        mix.addFrom (ch, 0, loopsBlock, ch, 0, n);
+
     // The metronome goes straight to the mix, under the master fader.
     transport.endBlock (n, &mix);
 
@@ -483,6 +526,21 @@ juce::ValueTree RigEngine::saveShow() const
         show.appendChild (control, nullptr);
     }
 
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto& layer = looper.getLayer (i);
+        juce::ValueTree loop ("Loop");
+        loop.setProperty ("index", i, nullptr);
+        loop.setProperty ("source", layer.source.load(), nullptr);
+        loop.setProperty ("bars", layer.bars.load(), nullptr);
+        loop.setProperty ("level", layer.level.load(), nullptr);
+        loop.setProperty ("mute", layer.mute.load(), nullptr);
+        const auto state = looper.getState (i);
+        if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
+            loop.setProperty ("beats", layer.lengthBeats.load(), nullptr);
+        show.appendChild (loop, nullptr);
+    }
+
     // Knobs on settings, by the setting's ID so they survive the tools changing.
     for (const auto& k : routing.getParameterKnobs())
     {
@@ -539,6 +597,11 @@ void RigEngine::loadShow (const juce::ValueTree& show)
 
     for (int c = 0; c < RigRouting::numControls; ++c)
         routing.forget (c);
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        looper.reset (i);
+        loadedLoopBeats[(size_t) i] = 0;
+    }
     // Shows from before the effects have none.
     for (auto& f : fx)
         f.reset();
@@ -569,6 +632,19 @@ void RigEngine::loadShow (const juce::ValueTree& show)
                                 routing.addParameterKnob (child.getProperty ("channel"), child.getProperty ("cc"), t, i);
                 }
         }
+        else if (child.hasType ("Loop"))
+        {
+            const int i = child.getProperty ("index", -1);
+            if (juce::isPositiveAndBelow (i, RigLooper::kLayers))
+            {
+                auto& layer = looper.getLayer (i);
+                layer.source = juce::jlimit (0, RigLooper::numSources - 1, (int) child.getProperty ("source", (int) RigLooper::mix));
+                layer.bars = (int) child.getProperty ("bars", 0);
+                layer.level = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("level", 0.8f));
+                layer.mute = (bool) child.getProperty ("mute", false);
+                loadedLoopBeats[(size_t) i] = (double) child.getProperty ("beats", 0.0);
+            }
+        }
         else if (child.hasType ("Control"))
         {
             routing.setAssignment (child.getProperty ("id", -1), child.getProperty ("channel", 0), child.getProperty ("cc", -1));
@@ -596,4 +672,65 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         }
     }
     controlsMoved = true;
+}
+
+//==============================================================================
+juce::File RigEngine::loopsFolder (const juce::File& showFile)
+{
+    return showFile.getSiblingFile (showFile.getFileNameWithoutExtension() + " loops");
+}
+
+bool RigEngine::writeLoopAudio (const juce::File& showFile) const
+{
+    const auto folder = loopsFolder (showFile);
+    folder.deleteRecursively();
+    bool ok = true, any = false;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto audio = looper.copyLayerAudio (i);
+        if (audio.getNumSamples() == 0)
+            continue;
+        if (! any)
+            folder.createDirectory();
+        any = true;
+        const auto file = folder.getChildFile ("Loop " + juce::String (i + 1) + ".wav");
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
+        if (stream == nullptr)
+        {
+            ok = false;
+            continue;
+        }
+        const double rate = sampleRate > 0 ? sampleRate : 44100.0;
+        auto options = juce::AudioFormatWriterOptions().withSampleRate (rate).withNumChannels (2).withBitsPerSample (24);
+        if (auto writer = wav.createWriterFor (stream, options))
+            ok = writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()) && ok;
+        else
+            ok = false;
+    }
+    return ok;
+}
+
+void RigEngine::readLoopAudio (const juce::File& showFile)
+{
+    const auto folder = loopsFolder (showFile);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const double beats = loadedLoopBeats[(size_t) i];
+        const auto file = folder.getChildFile ("Loop " + juce::String (i + 1) + ".wav");
+        if (beats <= 0 || ! file.existsAsFile())
+        {
+            looper.makeRoom (i);
+            continue;
+        }
+        // Loops play by the beat, so the file's sample rate doesn't matter.
+        if (std::unique_ptr<juce::AudioFormatReader> reader { formats.createReaderFor (file) })
+        {
+            juce::AudioBuffer<float> audio (2, (int) reader->lengthInSamples);
+            reader->read (&audio, 0, audio.getNumSamples(), 0, true, true);
+            looper.setLayerAudio (i, std::move (audio), beats);
+        }
+    }
 }
