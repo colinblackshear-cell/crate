@@ -159,6 +159,17 @@ in Logic, use each tool's own plugin.
   drum machine) through its own strip and effects. It's off until you press **On**, so a mic
   doesn't feed back; pick **1+2**, **In 1** or **In 2** for which input it listens to (say the
   vocoder's mic on 1 and a guitar on 2).
+- **Looper:** the **Looper** tab has eight loop layers that stay in time with the Rig. Pick what a
+  layer records (**Mic / input**, the Vocoder, Bass, Synth, MPC, Sampler, or the **Rig mix**) and
+  press **Rec** (or keys **1**-**8**): it starts at the next bar (if the Rig is stopped, it starts
+  with it) and stops at the end of the bar where you press again, so loops are always whole
+  bars. Pick **1**-**16 bars** first and it stops by itself. **Rec** on a playing loop overdubs
+  (**Dub**); **Undo** takes back the last overdub, **Clear** empties the layer, and each layer has a
+  mute and a level. Loops follow the tempo when you change it. The **...** menu imports a loop
+  (stretched to the Rig's tempo) or a whole song (setting the Rig's tempo to it), saves the
+  loop as a WAV, and puts the layer's record and mute on buttons of your keyboard. All the
+  layers play through the **Loops** strip, with its own effects. Loops are saved with the show,
+  as WAV files in a folder next to it (`My show loops`).
 - **Knobs:** to put a keyboard knob on any control in any tool (the bass cutoff, the synth's LFO
   depth...), press **Knobs** > **Learn a knob**, touch the control on screen, then turn the knob.
   The same menu lists your knobs so you can forget one, or all of them.
@@ -167,7 +178,7 @@ in Logic, use each tool's own plugin.
   picks what it hears: the **Mic**, the **Vocoder** (as it sounds before its level and mute), or
   the **Rig mix** (everything but the sampler, as you hear it). The sampler never hears itself,
   and the mic never goes straight to the speakers.
-- **Shows:** **Save show** saves everything (every tool's sounds, patterns and settings, the mixer, tempo,
+- **Shows:** **Save show** saves everything (every tool's sounds, patterns and settings, the loops, the mixer, tempo,
   routing, learned controls and knobs) to `~/Music/Crate/Rig`; **Open show** brings one back. The Rig
   also saves where you left off when you quit and opens it again next time.
 - **Audio + MIDI:** pick your audio interface and buffer size. A buffer of 128 samples or less
