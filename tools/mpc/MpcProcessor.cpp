@@ -1,5 +1,7 @@
 #include "MpcProcessor.h"
 
+#include "core/control/Launchkey.h"
+
 #include "MpcView.h"
 
 namespace
@@ -17,6 +19,9 @@ MpcProcessor::MpcProcessor()
     padForNoteNumber.fill (-1);
     for (int pad = 0; pad < mpc::kPadCount; ++pad)
         padForNoteNumber[(size_t) noteForPad (pad)] = pad;
+
+    // Inside the Rig (no plugin wrapper) the Rig maps the drum pads itself and sends MPC notes.
+    launchkeyPads = wrapperType != wrapperType_Undefined;
 
     clicks.reset (44100.0);
     sequenced.ensureSize (8192);
@@ -421,6 +426,30 @@ void MpcProcessor::prepareToPlay (double sampleRate, int)
     hostRate = sampleRate > 0 ? sampleRate : 44100.0;
     clicks.reset (hostRate);
     sequencer.prepare (hostRate);
+    remapped.ensureSize (8192);
+}
+
+void MpcProcessor::remapDrumPads (juce::MidiBuffer& midi)
+{
+    bool any = false;
+    for (const auto metadata : midi)
+        any |= crate::launchkey::drumPadForMessage (metadata.getMessage()) >= 0;
+    if (! any)
+        return;
+
+    const int bank = juce::jlimit (0, 3, padBankOnScreen.load());
+    remapped.clear();
+    for (const auto metadata : midi)
+    {
+        auto m = metadata.getMessage();
+        if (const int pad = crate::launchkey::drumPadForMessage (m); pad >= 0)
+        {
+            m.setNoteNumber (noteForPad (bank * kPadsPerBank + pad));
+            m.setChannel (1);
+        }
+        remapped.addEvent (m, metadata.samplePosition);
+    }
+    midi.swapWith (remapped);
 }
 
 bool MpcProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -550,6 +579,8 @@ void MpcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
         for (auto& v : voices)
             v.releasing = true;
 
+    if (launchkeyPads.load())
+        remapDrumPads (midi);
     clicks.removeNextBlockOfMessages (midi, buffer.getNumSamples());
 
     // The sequencer adds its notes to what you played, so both go down the same path.

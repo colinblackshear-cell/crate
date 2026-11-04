@@ -436,5 +436,6 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
     passesNow = passes;
     recordingNow = recording;
     followingNow = following;
+    hostBpmNow = following ? bpm : 0.0;
     positionNow = tick;
 }

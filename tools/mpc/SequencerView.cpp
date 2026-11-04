@@ -120,7 +120,12 @@ TransportBar::TransportBar (MpcProcessor& p) : processor (p), project (p.getProj
     for (auto* b : { &playStart, &play, &stop, &rec })
         b->setWantsKeyboardFocus (false);
     followHost.setToggleState (engine.followHost.load(), juce::dontSendNotification);
-    followHost.setTooltip ("When Logic plays, the sequence plays along at Logic's tempo and position");
+    // In Logic it's an Audio Unit; inside the Rig (or any other host) it follows that.
+    const bool inLogic = processor.wrapperType == juce::AudioProcessor::wrapperType_AudioUnit;
+    const bool inRig = processor.wrapperType == juce::AudioProcessor::wrapperType_Undefined;
+    const juce::String hostName = inLogic ? "Logic" : inRig ? "the Rig" : "the host";
+    followHost.setButtonText (inLogic ? "Play with Logic" : inRig ? "Follow the Rig" : "Follow host");
+    followHost.setTooltip ("When " + hostName + " plays, the sequence plays along at its tempo and position");
     followHost.onClick = [this, &engine] { engine.followHost = followHost.getToggleState(); };
     followHost.setVisible (processor.wrapperType != juce::AudioProcessor::wrapperType_Standalone);
     addChildComponent (followHost);
@@ -180,7 +185,13 @@ void TransportBar::timerCallback()
 
     const bool following = engine.isFollowingHost();
     tempo.setEnabled (! following);
-    tempo.setTooltip (following ? "Following Logic's tempo while Logic plays" : "The sequence's tempo");
+    tempo.setTooltip (following ? "Following the host's tempo while it plays" : "The sequence's tempo");
+    // While following, the box shows the tempo it's playing at; the sequence keeps its own.
+    if (following && engine.getHostBpm() > 0)
+        tempo.setValue (engine.getHostBpm(), juce::dontSendNotification);
+    else if (wasFollowing)
+        tempo.setValue (project.currentSequence().bpm, juce::dontSendNotification);
+    wasFollowing = following;
 }
 
 void TransportBar::paint (juce::Graphics& g)

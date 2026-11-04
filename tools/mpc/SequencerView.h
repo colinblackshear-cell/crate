@@ -38,6 +38,7 @@ private:
     juce::Slider tempo, bars;
     juce::ToggleButton loop { "Loop" }, countIn { "Count in" }, followHost { "Play with Logic" };
     juce::ComboBox click;
+    bool wasFollowing = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TransportBar)
 };

@@ -192,6 +192,7 @@ void MpcView::showPadBank (int padBank)
     bankTabs[(size_t) padBank].setToggleState (true, juce::dontSendNotification);
     grid.setPadBank (padBank);
     sequencer.setPadBank (padBank);
+    processor.padBankOnScreen = padBank;
 }
 
 void MpcView::showSequencer (bool show)
