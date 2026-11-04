@@ -238,7 +238,15 @@ LivePanel::LivePanel (MpcProcessor& p) : processor (p), project (p.getProject())
         project.sequenceChanged();
     };
 
-    for (auto* b : std::initializer_list<juce::Button*> { &editSteps, &playSong, &tapButton, &allOn })
+    launchkeyPads.setToggleState (processor.launchkeyPads.load(), juce::dontSendNotification);
+    launchkeyPads.setTooltip ("A Launchkey's 16 drum pads (Drum mode: channel 10, notes 36-51) play the 16 pads on screen, "
+                              "pad 1 bottom left like the MPC. Turn it off if a drum track sends General MIDI drums on channel 10.");
+    launchkeyPads.onClick = [this] { processor.launchkeyPads = launchkeyPads.getToggleState(); };
+    // Inside the Rig, the Rig maps the pads itself.
+    launchkeyPads.setVisible (processor.wrapperType != juce::AudioProcessor::wrapperType_Undefined);
+    addChildComponent (launchkeyPads);
+
+    for (auto* b : std::initializer_list<juce::Button*> { &editSteps, &playSong, &tapButton, &allOn, &launchkeyPads })
         b->setWantsKeyboardFocus (false);
     for (auto& b : tracks)
         b.setWantsKeyboardFocus (false);
@@ -441,6 +449,11 @@ void LivePanel::resized()
     r.removeFromTop (4);
     auto row2 = r.removeFromTop (24);
     tracksLabel.setBounds (row2.removeFromLeft (52));
+    if (launchkeyPads.isVisible())
+    {
+        launchkeyPads.setBounds (row2.removeFromRight (130));
+        row2.removeFromRight (8);
+    }
     allOn.setBounds (row2.removeFromRight (64));
     row2.removeFromRight (10);
     const int w = juce::jmin (64, (row2.getWidth() - (kTrackButtons - 1) * 4) / kTrackButtons);

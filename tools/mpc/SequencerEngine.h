@@ -88,6 +88,7 @@ public:
     bool isPlaying() const { return playingNow.load(); }
     bool isRecording() const { return recordingNow.load(); }
     bool isFollowingHost() const { return followingNow.load(); }
+    double getHostBpm() const { return hostBpmNow.load(); }   // the host's tempo while following it
     // Where the playhead is in the sequence, in ticks; below 0 while counting in.
     double getPosition() const { return positionNow.load(); }
 
@@ -157,6 +158,7 @@ private:
     std::array<Recorded, 1024> fifoData {};
 
     std::atomic<bool> playingNow { false }, recordingNow { false }, followingNow { false }, queuedNow { false };
+    std::atomic<double> hostBpmNow { 0.0 };
     std::atomic<int> playingIdNow { 0 }, passesNow { 0 };
     std::atomic<double> positionNow { 0 };
 };

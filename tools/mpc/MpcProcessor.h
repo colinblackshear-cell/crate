@@ -48,6 +48,11 @@ public:
     // The track recorded notes go on (of the current sequence).
     int recordTrack = 0;
 
+    // A Launchkey's drum pads (channel 10, notes 36-51) play the 16 pads of the bank on screen,
+    // instead of the MPC notes those numbers would be. Off inside the Rig, which maps them itself.
+    std::atomic<bool> launchkeyPads { true };
+    std::atomic<int> padBankOnScreen { 0 };
+
     // Undo for sequence edits: call beginEdit() before changing the current sequence.
     void beginEdit();
     bool undoEdit();
@@ -185,6 +190,8 @@ private:
     int queuedSequence = -1, queuedAtPasses = 0, immediateSequence = -1;
     std::atomic<juce::uint64> playedPads { 0 };
     std::atomic<bool> stopRequested { false };
+    juce::MidiBuffer remapped;
+    void remapDrumPads (juce::MidiBuffer&);
     double hostRate = 44100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MpcProcessor)

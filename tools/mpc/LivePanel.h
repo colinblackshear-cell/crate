@@ -70,6 +70,7 @@ private:
     juce::Label songLabel { {}, "Song" }, songStatus, nextLabel, tracksLabel { {}, "Tracks" };
     juce::ComboBox song, switchAt;
     juce::TextButton editSteps { "Steps..." }, playSong { "Play song" }, tapButton { "Tap" }, allOn { "All on" };
+    juce::ToggleButton launchkeyPads { "Launchkey pads" };
     std::array<juce::TextButton, kTrackButtons> tracks;
     std::vector<double> taps;
     juce::String lastStatus;

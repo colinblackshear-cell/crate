@@ -642,6 +642,43 @@ struct PerformTests : juce::UnitTest
             hit (1);
             expect (! ringsOn(), "in the same group, the second cuts the first");
         }
+
+        beginTest ("a Launchkey's drum pads play the pads on screen");
+        {
+            MpcProcessor processor;
+            processor.setPlayConfigDetails (0, 2, 44100.0, 512);
+            processor.prepareToPlay (44100.0, 512);
+            auto& project = processor.getProject();
+            project.currentBank().pads[16 + 2].audio = crate::share (sine (44100, 1, 0.5f));   // B03
+            project.changed();
+            project.dispatchPendingMessages();
+
+            expect (! processor.launchkeyPads.load(), "off inside the Rig, which maps the pads itself");
+            processor.launchkeyPads = true;
+            juce::AudioBuffer<float> out (2, 512);
+            auto drumPad = [&] (int channel, int note)
+            {
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::noteOn (channel, note, 1.0f), 0);
+                processor.processBlock (out, midi);
+                const bool heard = out.getMagnitude (0, 512) > 0.1f;
+                juce::MidiBuffer none;
+                for (int i = 0; i < 100; ++i)
+                    processor.processBlock (out, none);   // let it ring out
+                return heard;
+            };
+
+            processor.padBankOnScreen = 1;
+            expect (drumPad (10, 38), "the third drum pad plays B03 with bank B on screen");
+            expect (! drumPad (10, 39));
+            processor.padBankOnScreen = 0;
+            expect (! drumPad (10, 38), "with bank A on screen it plays A03, which is empty");
+            processor.padBankOnScreen = 1;
+            processor.launchkeyPads = false;
+            expect (! drumPad (10, 38), "off: note 38 is the MPC's A02 again");
+            expect (drumPad (10, noteForPad (18)));
+            expect (drumPad (1, noteForPad (18)), "other channels always play MPC notes");
+        }
     }
 };
 
