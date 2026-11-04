@@ -73,7 +73,9 @@ void MpcProcessor::selectSequence (int index)
     songPlaying = false;
     sequencer.stopAtEnd = false;
 
-    if (sequencer.isPlaying() && ! sequencer.isFollowingHost() && index != project.getCurrentSequenceIndex())
+    songStartQueued = false;
+    const bool canQueue = ! sequencer.isFollowingHost() || sequencer.switchWhileFollowing.load();
+    if (sequencer.isPlaying() && canQueue && index != project.getCurrentSequenceIndex())
     {
         sequencer.queue (SequencerEngine::makeSnapshot (project.getSequences()[(size_t) index], index), switchAtBar);
         queuedSequence = index;
@@ -103,7 +105,22 @@ bool MpcProcessor::playSong (int fromStep)
     songStep = fromStep;
     songRepeat = 0;
     queuedSequence = -1;
+    songStartQueued = false;
     const int index = song.steps[(size_t) fromStep].sequence;
+    if (! juce::isPositiveAndBelow (index, (int) project.getSequences().size()))
+        return songPlaying = false;
+
+    // In the Rig, a song started while the clock runs comes in on the next bar line, in time.
+    if (sequencer.isPlaying() && sequencer.isFollowingHost() && sequencer.switchWhileFollowing.load())
+    {
+        sequencer.stopAtEnd = false;
+        sequencer.queue (SequencerEngine::makeSnapshot (project.getSequences()[(size_t) index], index, true), true);
+        songStartQueued = true;
+        lastPasses = sequencer.getPasses();
+        project.sequenceChanged();
+        return true;
+    }
+
     if (sequencer.isPlaying())
         immediateSequence = index;
     project.setCurrentSequence (index);
@@ -175,6 +192,7 @@ void MpcProcessor::stopTransport()
     sequencer.stopAtEnd = false;
     queuedSequence = -1;
     immediateSequence = -1;
+    songStartQueued = false;
     if (std::exchange (songPlaying, false))
         rebuildSequence();
 }
@@ -202,7 +220,24 @@ void MpcProcessor::followTransport()
     if (queuedSequence >= 0 && (! playing || (id == queuedSequence && passes != queuedAtPasses)))
         queuedSequence = -1;
 
-    if (songPlaying)
+    if (songPlaying && songStartQueued)
+    {
+        // Waiting for the first step to take over at the bar; then the song runs as usual.
+        if (! playing)
+        {
+            songPlaying = songStartQueued = false;
+            sequencer.queue (nullptr, false);
+            project.sequenceChanged();
+        }
+        else if (passes != lastPasses)
+        {
+            songStartQueued = false;
+            lastPasses = passes;
+            queueForSong();
+            project.sequenceChanged();
+        }
+    }
+    else if (songPlaying)
     {
         if (! playing && wasPlaying)
         {

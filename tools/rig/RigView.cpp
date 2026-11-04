@@ -1,30 +1,18 @@
 #include "RigView.h"
 #include "LooperView.h"
 #include "SongView.h"
+#include "StageView.h"
+#include "RigColours.h"
 
 namespace Theme = crate::Theme;
 
 namespace
 {
 constexpr int kBottomHeight = 132;
-const juce::Colour mpcColour { 0xffff8a3d }, samplerColour { 0xff8fd3c8 }, vocoderColour { 0xffb48cff }, masterColour { 0xffeeeeee },
-                   bassColour { 0xff4fc3f7 }, synthColour { 0xfff06292 }, inputColour { 0xffffd54f },
-                   loopsColour { 0xff81c784 };
+const juce::Colour mpcColour = RigColours::mpc, samplerColour = RigColours::sampler, vocoderColour = RigColours::vocoder,
+                   bassColour = RigColours::bass, synthColour = RigColours::synth, loopsColour = RigColours::loops;
 
-juce::Colour stripColour (int strip)
-{
-    switch (strip)
-    {
-        case RigEngine::mpcStrip:     return mpcColour;
-        case RigEngine::samplerStrip: return samplerColour;
-        case RigEngine::vocoderStrip: return vocoderColour;
-        case RigEngine::bassStrip:    return bassColour;
-        case RigEngine::synthStrip:   return synthColour;
-        case RigEngine::inputStrip:   return inputColour;
-        case RigEngine::loopsStrip:   return loopsColour;
-        default:                      return masterColour;
-    }
-}
+juce::Colour stripColour (int strip) { return RigColours::forStrip (strip); }
 
 juce::File showsFolder()
 {
@@ -88,11 +76,10 @@ void RigView::StripView::refresh()
         jack.setSelectedId (engine.inputJack.load() + 1, juce::dontSendNotification);
 }
 
-void RigView::StripView::tick()
+void RigView::StripView::tick (float meterLevel)
 {
     fxButton.setToggleState (engine.getFx (strip).isActive(), juce::dontSendNotification);
-    const float peak = engine.getStrip (strip).peak.exchange (0.0f);
-    meter = juce::jmax (peak, meter * 0.85f);
+    meter = meterLevel;
     repaint();
 }
 
@@ -329,9 +316,16 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     saveButton.onClick = [this] { saveShowAs(); };
     openButton.onClick = [this] { openShow(); };
 
-    // The tools, as their own windows show them.
+    // The Stage first (every tool at once), then the tools, as their own windows show them.
     tabs.setTabBarDepth (34);
     tabs.setOutline (0);
+    auto* stageView = new StageView (engine);
+    stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
+    stageView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+    stageView->onSample = [this] { toggleSampling(); };
+    stageView->isSampling = [this] { return sampleButton.getToggleState(); };
+    stage = stageView;
+    tabs.addTab ("Stage", Theme::panel, stageView, true);
     tabs.addTab ("MPC", Theme::panel, engine.getMpc().createEditorAndMakeActive(), true);
     tabs.addTab ("Vocoder", Theme::panel, engine.getVocoder().createEditorAndMakeActive(), true);
     tabs.addTab ("Bass", Theme::panel, engine.getBass().createEditorAndMakeActive(), true);
@@ -345,9 +339,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     songView->onSay = [this] (const juce::String& text) { say (text); };
     song = songView;
     tabs.addTab ("Song", Theme::panel, songView, true);
-    const juce::Colour tabColours[] = { mpcColour, vocoderColour, bassColour, synthColour, samplerColour, loopsColour,
-                                        juce::Colour (0xffffb74d) };
-    for (int i = 0; i < 7; ++i)
+    const juce::Colour tabColours[] = { Theme::text, mpcColour, vocoderColour, bassColour, synthColour, samplerColour, loopsColour,
+                                        RigColours::song };
+    for (int i = 0; i < 8; ++i)
         tabs.getTabbedButtonBar().setTabBackgroundColour (i, tabColours[i].withAlpha (0.25f));
 
     for (int t = 0; t < RigEngine::numTools; ++t)
@@ -436,7 +430,16 @@ void RigView::refresh()
         looper->refresh();
     if (song != nullptr)
         song->refresh();
+    if (stage != nullptr)
+        stage->refresh();
     updateLearnButtons();
+}
+
+void RigView::showTab (const juce::String& name)
+{
+    const auto names = tabs.getTabNames();
+    if (const int i = names.indexOf (name); i >= 0)
+        tabs.setCurrentTabIndex (i);
 }
 
 void RigView::startLearning (int control, juce::Button& button)
@@ -535,8 +538,13 @@ void RigView::timerCallback()
     else
         updateLearnButtons();
 
+    for (int st = 0; st < RigEngine::numStrips; ++st)
+    {
+        const float peak = engine.getStrip (st).peak.exchange (0.0f);
+        meters[(size_t) st] = juce::jmax (peak, meters[(size_t) st] * 0.85f);
+    }
     for (auto& s : stripViews)
-        s->tick();
+        s->tick (meters[(size_t) s->strip]);
 
     const bool recent = juce::Time::getMillisecondCounter() - engine.lastMidiTime.load() < 150;
     midiLight.setColour (juce::Label::textColourId, recent ? Theme::accent : Theme::textDim);

@@ -54,6 +54,12 @@ public:
     RigScene::State captureScene();
     void tickScenes();
     double getSampleRate() const { return sampleRate; }
+
+    // The MPC, played live (message thread). A sequence picked while the clock runs comes in
+    // at the next bar. A song plays its sequences in order on the Rig's clock: started while
+    // playing it comes in at the next bar; stopped, it starts the clock from the top.
+    void playMpcSequence (int index);
+    bool playMpcSong (int song);
     RigRouting& getRouting() { return routing; }
 
     // (The vocoder came later, so it's last: saved shows keep their strip order.)

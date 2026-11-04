@@ -6,8 +6,8 @@
 #include "core/ui/Theme.h"
 #include "core/ui/ParamControls.h"
 
-// The Rig's window: one transport across the top, the tools in tabs (MPC, Vocoder, Sampler),
-// and a mixer with the keyboard routing along the bottom.
+// The Rig's window: one transport across the top, the tools in tabs (the Stage, with every tool
+// on one screen, then MPC, Vocoder, Bass...), and a mixer with the keyboard routing along the bottom.
 class RigView : public juce::Component,
                 private juce::Timer,
                 private juce::AudioProcessorListener
@@ -39,7 +39,7 @@ private:
         void paint (juce::Graphics&) override;
         void resized() override;
         void refresh();
-        void tick();
+        void tick (float meterLevel);
 
         juce::Slider level { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
         juce::TextButton mute { "Mute" }, learn { "Learn" }, on { "On" }, fxButton { "FX" };
@@ -120,6 +120,11 @@ private:
     std::unique_ptr<FxPanel> fxPanel;
     class LooperView* looper = nullptr;   // owned by the tabs
     class SongView* song = nullptr;
+    class StageView* stage = nullptr;
+    void showTab (const juce::String& name);
+
+    // Each strip's meter (0..1, falling slowly), shared by the mixer and the Stage.
+    std::array<float, RigEngine::numStrips> meters {};
 
     std::vector<double> taps;
     juce::uint32 lastTap = 0;

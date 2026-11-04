@@ -86,6 +86,28 @@ RigEngine::RigEngine()
     for (auto& f : fx)
         f.setPlayHead (&transport);
     transport.setBpm (mpc.getProject().currentSequence().bpm);
+    // The MPC changes sequence (and moves through its songs) on the Rig's bar lines.
+    mpc.getSequencer().switchWhileFollowing = true;
+    mpc.switchAtBar = true;
+}
+
+void RigEngine::playMpcSequence (int index)
+{
+    mpc.selectSequence (index);
+}
+
+bool RigEngine::playMpcSong (int song)
+{
+    auto& project = mpc.getProject();
+    if (! juce::isPositiveAndBelow (song, (int) project.getSongs().size()))
+        return false;
+    if (song != project.getCurrentSongIndex())
+        project.setCurrentSong (song);
+    if (! mpc.playSong (0))
+        return false;
+    if (! transport.isPlaying())
+        transport.play();   // stopped is always at the top
+    return true;
 }
 
 RigEngine::~RigEngine()
@@ -757,8 +779,14 @@ void RigEngine::tickScenes()
     // just before the bar has them play the new part from its first beat.
     const auto& s = scenes.getScenes()[(size_t) early].state;
     auto& project = mpc.getProject();
-    if (s.mpcSequence >= 0 && s.mpcSequence < (int) project.getSequences().size())
-        project.setCurrentSequence (s.mpcSequence);
+    if (s.mpcSequence >= 0 && s.mpcSequence < (int) project.getSequences().size()
+        && (s.mpcSequence != project.getCurrentSequenceIndex() || mpc.isSongPlaying()))
+    {
+        // At the MPC's next bar line, which is the Rig's (whatever the MPC's own switch setting).
+        const bool atBar = std::exchange (mpc.switchAtBar, true);
+        mpc.selectSequence (s.mpcSequence);
+        mpc.switchAtBar = atBar;
+    }
     if (s.bassPattern >= 0)
         setParameter (bass.params, "pattern", (float) s.bassPattern);
 }

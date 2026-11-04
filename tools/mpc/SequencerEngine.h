@@ -69,6 +69,11 @@ public:
     // Stop when the sequence playing reaches its end (the end of a song).
     std::atomic<bool> stopAtEnd { false };
 
+    // On in the Rig: a queued sequence (and so a song) still takes over while following the
+    // host's clock, starting from its top where it switches, so the MPC changes on the Rig's
+    // bar lines. Off (in Logic) a sequence just follows Logic's position, as before.
+    std::atomic<bool> switchWhileFollowing { false };
+
     int getPlayingId() const { return playingIdNow.load(); }   // the sequence playing (or last played)
     int getPasses() const { return passesNow.load(); }         // counts each time a sequence ends or switches
     bool hasQueued() const { return queuedNow.load(); }
@@ -142,6 +147,7 @@ private:
     // Audio-thread state.
     bool playing = false, recording = false, following = false;
     double tick = 0;                 // sequence position; negative while counting in
+    double anchor = 0;               // following: the host tick where the playing pass began
     long long sampleClock = 0;       // samples processed, to time note repeat after a press
 
     struct Held { bool down = false; int velocity = 100; long long pressedAt = 0; double startTick = 0; bool recording = false; int recordedTick = 0; };

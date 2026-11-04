@@ -17,9 +17,10 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/LooperView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigScenes.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SongView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/StageView.cpp
     PARENT_SCOPE)
 
-target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp
+target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
