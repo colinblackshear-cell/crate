@@ -21,6 +21,73 @@ juce::File showsFolder()
 }
 
 //==============================================================================
+// A tool in its own window. Closing it puts the tool back in its tab.
+class RigView::ToolWindow : public juce::DocumentWindow
+{
+public:
+    ToolWindow (RigView& v, int p, juce::Component& content)
+        : DocumentWindow ("Crate Rig - " + v.pages[(size_t) p].name, Theme::panel, DocumentWindow::closeButton | DocumentWindow::maximiseButton),
+          view (v), page (p)
+    {
+        setUsingNativeTitleBar (true);
+        setContentNonOwned (&content, false);
+        setResizable (true, false);
+        setResizeLimits (400, 300, 6000, 4000);
+    }
+
+    void closeButtonPressed() override
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (&view), p = page]
+                                         { if (safe != nullptr) safe->dockBack (p); });
+    }
+
+    // The space bar and the looper's keys work in every window.
+    bool keyPressed (const juce::KeyPress& key) override { return view.keyPressed (key); }
+
+    void moved() override { DocumentWindow::moved(); view.storeWindows(); }
+    void resized() override { DocumentWindow::resized(); view.storeWindows(); }
+
+private:
+    RigView& view;
+    const int page;
+};
+
+// What a tab shows while its tool is in its own window.
+class RigView::Placeholder : public juce::Component
+{
+public:
+    Placeholder (RigView& v, int p) : view (v), page (p)
+    {
+        for (auto* b : { &show, &back })
+            addAndMakeVisible (b);
+        show.onClick = [this] { if (auto& w = view.pages[(size_t) page].window) w->toFront (true); };
+        back.onClick = [this] { view.dockBack (page); };
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (Theme::panel);
+        g.setColour (Theme::textDim);
+        g.setFont (juce::FontOptions (16.0f));
+        g.drawText (view.pages[(size_t) page].name + " is in its own window.",
+                    getLocalBounds().withSizeKeepingCentre (600, 30).translated (0, -30), juce::Justification::centred);
+    }
+
+    void resized() override
+    {
+        auto row = getLocalBounds().withSizeKeepingCentre (280, 32).translated (0, 16);
+        show.setBounds (row.removeFromLeft (136));
+        row.removeFromLeft (8);
+        back.setBounds (row);
+    }
+
+private:
+    RigView& view;
+    const int page;
+    juce::TextButton show { "Show it" }, back { "Bring it back here" };
+};
+
+//==============================================================================
 RigView::StripView::StripView (RigEngine& e, int s, int fader, int muteC, std::atomic<bool>* onSwitch)
     : strip (s), engine (e), faderControl (fader), muteControl (muteC), onFlag (onSwitch)
 {
@@ -325,24 +392,35 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     stageView->onSample = [this] { toggleSampling(); };
     stageView->isSampling = [this] { return sampleButton.getToggleState(); };
     stage = stageView;
-    tabs.addTab ("Stage", Theme::panel, stageView, true);
-    tabs.addTab ("MPC", Theme::panel, engine.getMpc().createEditorAndMakeActive(), true);
-    tabs.addTab ("Vocoder", Theme::panel, engine.getVocoder().createEditorAndMakeActive(), true);
-    tabs.addTab ("Bass", Theme::panel, engine.getBass().createEditorAndMakeActive(), true);
-    tabs.addTab ("Synth", Theme::panel, engine.getSynth().createEditorAndMakeActive(), true);
-    tabs.addTab ("Sampler", Theme::panel, engine.getSampler().createEditorAndMakeActive(), true);
+    addPage ("Stage", Theme::text, stageView);
+    addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
+    addPage ("Vocoder", vocoderColour, engine.getVocoder().createEditorAndMakeActive());
+    addPage ("Bass", bassColour, engine.getBass().createEditorAndMakeActive());
+    addPage ("Synth", synthColour, engine.getSynth().createEditorAndMakeActive());
+    addPage ("Sampler", samplerColour, engine.getSampler().createEditorAndMakeActive());
     auto* looperView = new LooperView (engine);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looper = looperView;
-    tabs.addTab ("Looper", Theme::panel, looperView, true);
+    addPage ("Looper", loopsColour, looperView);
     auto* songView = new SongView (engine);
     songView->onSay = [this] (const juce::String& text) { say (text); };
     song = songView;
-    tabs.addTab ("Song", Theme::panel, songView, true);
-    const juce::Colour tabColours[] = { Theme::text, mpcColour, vocoderColour, bassColour, synthColour, samplerColour, loopsColour,
-                                        RigColours::song };
-    for (int i = 0; i < 8; ++i)
-        tabs.getTabbedButtonBar().setTabBackgroundColour (i, tabColours[i].withAlpha (0.25f));
+    addPage ("Song", RigColours::song, songView);
+
+    addAndMakeVisible (popOutButton);
+    popOutButton.setTooltip ("Opens this tab in its own window, to put it on a second screen (the Stage on one, "
+                             "the MPC on the other, say). Close the window to bring it back. Windows are saved with the show.");
+    popOutButton.onClick = [this]
+    {
+        const int i = tabs.getCurrentTabIndex();
+        if (juce::isPositiveAndBelow (i, (int) pages.size()))
+        {
+            if (pages[(size_t) i].window != nullptr)
+                pages[(size_t) i].window->toFront (true);
+            else
+                popOut (i);
+        }
+    };
 
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).addListener (this);
@@ -401,6 +479,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     openMidiInputs();
     refresh();
     startTimerHz (30);
+    // Put popped-out tools back on their screens, once this window is up.
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
+                                     { if (safe != nullptr) safe->restoreWindows(); });
 }
 
 RigView::~RigView()
@@ -408,7 +489,10 @@ RigView::~RigView()
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).removeListener (this);
     fxPanel.reset();
+    for (auto& p : pages)
+        p.window.reset();   // they only show the pages
     tabs.clearTabs();
+    pages.clear();
     setLookAndFeel (nullptr);
 }
 
@@ -437,9 +521,150 @@ void RigView::refresh()
 
 void RigView::showTab (const juce::String& name)
 {
-    const auto names = tabs.getTabNames();
-    if (const int i = names.indexOf (name); i >= 0)
+    const int i = pageIndex (name);
+    if (i < 0)
+        return;
+    if (pages[(size_t) i].window != nullptr)
+        pages[(size_t) i].window->toFront (true);
+    else
         tabs.setCurrentTabIndex (i);
+}
+
+void RigView::popOutTab (const juce::String& tab)
+{
+    if (const int i = pageIndex (tab); i >= 0)
+        popOut (i);
+}
+
+void RigView::bringBack (const juce::String& tab)
+{
+    if (const int i = pageIndex (tab); i >= 0)
+        dockBack (i);
+}
+
+bool RigView::isInOwnWindow (const juce::String& tab) const
+{
+    const int i = pageIndex (tab);
+    return i >= 0 && pages[(size_t) i].window != nullptr;
+}
+
+void RigView::addPage (const juce::String& name, juce::Colour colour, juce::Component* content)
+{
+    Page p;
+    p.name = name;
+    p.colour = colour;
+    p.content.reset (content);
+    pages.push_back (std::move (p));
+    const int i = (int) pages.size() - 1;
+    tabs.addTab (name, Theme::panel, content, false);
+    tabs.getTabbedButtonBar().setTabBackgroundColour (i, colour.withAlpha (0.25f));
+}
+
+int RigView::pageIndex (const juce::String& name) const
+{
+    for (size_t i = 0; i < pages.size(); ++i)
+        if (pages[i].name == name)
+            return (int) i;
+    return -1;
+}
+
+void RigView::popOut (int index, juce::Rectangle<int> bounds)
+{
+    auto& page = pages[(size_t) index];
+    if (page.window != nullptr)
+        return;
+
+    // The tab keeps its place, showing where the tool went.
+    const int current = tabs.getCurrentTabIndex();
+    const auto size = tabs.getLocalBounds().withTrimmedTop (tabs.getTabBarDepth());
+    page.placeholder = std::make_unique<Placeholder> (*this, index);
+    tabs.removeTab (index);
+    tabs.addTab (page.name, Theme::panel, page.placeholder.get(), false, index);
+    tabs.getTabbedButtonBar().setTabBackgroundColour (index, page.colour.withAlpha (0.25f));
+    tabs.setCurrentTabIndex (current);
+
+    page.window = std::make_unique<ToolWindow> (*this, index, *page.content);
+    page.content->setVisible (true);
+
+    // Where it goes: where it was last time, else onto a second screen if there is one, else
+    // over this window.
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    auto onScreen = [&displays] (juce::Rectangle<int> r)
+    {
+        const auto* d = displays.getDisplayForRect (r);
+        return d != nullptr && d->userBounds.toNearestInt().getIntersection (r).getWidth() >= 100;
+    };
+    if (bounds.isEmpty() || ! onScreen (bounds))
+    {
+        bounds = {};
+        const auto here = getScreenBounds();
+        for (const auto& d : displays.displays)
+            if (! d.userBounds.toNearestInt().intersects (here))
+            {
+                bounds = d.userBounds.toNearestInt().reduced (20);
+                break;
+            }
+        if (bounds.isEmpty())
+        {
+            bounds = juce::Rectangle<int> (juce::jmax (800, size.getWidth() - 120), juce::jmax (560, size.getHeight()))
+                         .withPosition (here.getPosition() + juce::Point<int> (60, 60));
+            if (const auto* d = displays.getDisplayForRect (here))
+                bounds = bounds.constrainedWithin (d->userBounds.toNearestInt());
+        }
+    }
+    page.window->setBounds (bounds);
+    page.window->setVisible (true);
+    resized();
+    storeWindows();
+}
+
+void RigView::dockBack (int index)
+{
+    auto& page = pages[(size_t) index];
+    if (page.window == nullptr)
+        return;
+    page.window->clearContentComponent();
+    page.window.reset();
+
+    const int current = tabs.getCurrentTabIndex();
+    tabs.removeTab (index);
+    tabs.addTab (page.name, Theme::panel, page.content.get(), false, index);
+    tabs.getTabbedButtonBar().setTabBackgroundColour (index, page.colour.withAlpha (0.25f));
+    tabs.setCurrentTabIndex (current);
+    page.placeholder.reset();
+    resized();
+    storeWindows();
+}
+
+void RigView::storeWindows()
+{
+    auto& screens = engine.screens;
+    screens.removeAllChildren (nullptr);
+    for (const auto& p : pages)
+        if (p.window != nullptr)
+        {
+            juce::ValueTree w ("Window");
+            w.setProperty ("tab", p.name, nullptr);
+            w.setProperty ("bounds", p.window->getBounds().toString(), nullptr);
+            screens.appendChild (w, nullptr);
+        }
+}
+
+void RigView::restoreWindows()
+{
+    const auto wanted = engine.screens.createCopy();
+    for (int i = 0; i < (int) pages.size(); ++i)
+        if (! wanted.getChildWithProperty ("tab", pages[(size_t) i].name).isValid())
+            dockBack (i);
+    for (const auto& w : wanted)
+        if (const int i = pageIndex (w.getProperty ("tab").toString()); i >= 0)
+        {
+            const auto bounds = juce::Rectangle<int>::fromString (w.getProperty ("bounds").toString());
+            if (pages[(size_t) i].window != nullptr)
+                pages[(size_t) i].window->setBounds (bounds);
+            else
+                popOut (i, bounds);
+        }
 }
 
 void RigView::startLearning (int control, juce::Button& button)
@@ -751,6 +976,7 @@ void RigView::openShow()
                                   engine.loadShow (juce::ValueTree::fromXml (*xml));
                                   engine.readLoopAudio (file);
                                   refresh();
+                                  restoreWindows();
                               }
                           });
 }
@@ -847,8 +1073,14 @@ void RigView::resized()
     if (fxPanel != nullptr)
         fxPanel->setBounds (area.removeFromBottom (130));
     tabs.setBounds (area);
-    // Messages and the MIDI keyboards found, on the right of the tab bar.
-    midiLight.setBounds (area.removeFromTop (34).removeFromRight (juce::jmax (200, area.getWidth() - 420)).reduced (8, 0));
+    // Pop out, then messages and the MIDI keyboards found, on the right of the tab bar.
+    auto tabRow = area.removeFromTop (34);
+    const int tabsWidth = tabs.getTabbedButtonBar().getNumTabs() > 0
+                              ? tabs.getTabbedButtonBar().getTabButton (tabs.getTabbedButtonBar().getNumTabs() - 1)->getRight() : 0;
+    tabRow.removeFromLeft (tabsWidth + 8);
+    popOutButton.setBounds (tabRow.removeFromLeft (84).reduced (0, 5));
+    popOutButton.toFront (false);
+    midiLight.setBounds (tabRow.reduced (8, 0));
     midiLight.setJustificationType (juce::Justification::centredRight);
     midiLight.toFront (false);
 }

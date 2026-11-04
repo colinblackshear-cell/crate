@@ -132,6 +132,11 @@ in Logic, use each tool's own plugin.
   eight layers going round (click one to record, stop or overdub it); and the **Vocoder**,
   **Input** and **Sampler**. Everything you start there comes in on the next bar. Click
   anywhere else on a tile to go into that tool's tab.
+- **Two screens:** **Pop out** (next to the tabs) opens the tab you're on in its own window. Drag
+  it to a second screen (with one plugged in, it goes there by itself): the Stage on one screen
+  and the MPC on the other, say. Its tab says where it went; close the window (or **Bring it back
+  here**) to put it back. Which tools are out, and where, is saved with the show, so they open on
+  the same screens next time.
 - **The MPC in time:** a sequence picked while the Rig plays (on the Stage, in the MPC, or by a
   song part) comes in at the next bar, from its top. **Play song** plays the MPC song on the
   Rig's clock: playing, it comes in at the next bar; stopped, it starts everything from the top.

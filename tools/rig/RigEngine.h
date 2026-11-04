@@ -124,6 +124,10 @@ public:
     void loadShow (const juce::ValueTree&);
     static constexpr const char* kShowType = "CrateRigShow";
 
+    // Which tools are in their own windows (on a second screen, say) and where, kept by the
+    // window and saved with the show (message thread).
+    juce::ValueTree screens { "Screens" };
+
     // The loops' sound is too big for the show file, so it goes in WAV files in a folder next
     // to it ("My show loops"). Call after writing the show file, and after loading it.
     static juce::File loopsFolder (const juce::File& showFile);

@@ -2,6 +2,7 @@
 
 #include "RigEngine.h"
 #include "StageView.h"
+#include "RigView.h"
 
 namespace
 {
@@ -183,6 +184,41 @@ struct RigSceneTests : juce::UnitTest
                                           juce::Time::getCurrentTime(), 1, false);
             mpcTile->mouseUp (click);
             expect (opened.contains ("MPC"));
+        }
+
+        beginTest ("a tab pops out into its own window, is saved with the show, and comes back");
+        // Windows need an app with a screen; the test runner is a console program.
+        if (juce::JUCEApplicationBase::getInstance() == nullptr || juce::Desktop::getInstance().getDisplays().displays.isEmpty())
+        {
+            logMessage ("(no screen here: skipped)");
+            expect (true);
+        }
+        else
+        {
+            RigEngine engine;
+            engine.prepare (kSceneRate, kSceneBlock);
+            juce::AudioDeviceManager devices;
+            juce::ValueTree saved;
+            {
+                RigView view (engine, devices);
+                view.setSize (1400, 900);
+                view.popOutTab ("MPC");
+                expect (view.isInOwnWindow ("MPC"));
+                expect (engine.getMpc().getActiveEditor() != nullptr && engine.getMpc().getActiveEditor()->isShowing(),
+                        "the MPC shows in its window");
+                expectEquals (engine.screens.getNumChildren(), 1);
+                saved = engine.saveShow();
+                view.bringBack ("MPC");
+                expect (! view.isInOwnWindow ("MPC"));
+                expectEquals (engine.screens.getNumChildren(), 0);
+                view.popOutTab ("Stage");
+            }   // closing the Rig with a window open is fine
+
+            engine.loadShow (saved);
+            expectEquals (engine.screens.getNumChildren(), 1, "loaded with the show");
+            RigView view (engine, devices);
+            view.restoreWindows();
+            expect (view.isInOwnWindow ("MPC") && ! view.isInOwnWindow ("Stage"));
         }
 
         beginTest ("song mode: a part with a length moves on by itself");

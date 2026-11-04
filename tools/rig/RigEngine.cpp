@@ -540,6 +540,9 @@ juce::ValueTree RigEngine::saveShow() const
     show.setProperty ("inputOn", inputOn.load(), nullptr);
     show.setProperty ("inputJack", inputJack.load(), nullptr);
 
+    if (screens.getNumChildren() > 0)
+        show.appendChild (screens.createCopy(), nullptr);
+
     for (int s = 0; s < numStrips; ++s)
     {
         juce::ValueTree strip ("Strip");
@@ -638,6 +641,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         routing.forget (c);
     scenes.clear();
     scenes.songMode = (bool) show.getProperty ("songMode", false);
+    screens = show.getChildWithName ("Screens").isValid() ? show.getChildWithName ("Screens").createCopy() : juce::ValueTree ("Screens");
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
         looper.reset (i);
