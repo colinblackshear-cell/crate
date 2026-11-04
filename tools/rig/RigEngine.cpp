@@ -1,5 +1,8 @@
 #include "RigEngine.h"
 
+#include "core/AudioFiles.h"
+#include "core/Edits.h"
+
 juce::String RigEngine::stripName (int id)
 {
     switch (id)
@@ -162,6 +165,8 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     loopsBuffer.setSize (2, maxBlock);
     looper.prepare (sampleRate);
     mixBuffer.setSize (2, maxBlock);
+    clickBuffer.setSize (2, maxBlock);
+    capture.prepare (sampleRate);
     for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi })
         m->ensureSize (4096);
 
@@ -339,6 +344,23 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         }
     }
 
+    // Recording the set: what's played, by tool, before the tools see it.
+    RigRecorder::Clock recClock;
+    recClock.beat = transport.getBlockPosition();
+    recClock.bpm = transport.getBpm();
+    recClock.sampleRate = sampleRate;
+    recClock.beatsPerBar = transport.getBeatsPerBar();
+    recClock.playing = transport.isPlayingThisBlock();
+    {
+        int track = 0;
+        for (auto* buffer : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi })
+        {
+            for (const auto m : *buffer)
+                recorder.addMidi (track, m.getMessage(), m.samplePosition, recClock);
+            ++track;
+        }
+    }
+
     juce::AudioBuffer<float> mpcBlock (mpcBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> samplerBlock (samplerBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> vocoderBlock (vocoderBuffer.getArrayOfWritePointers(), 2, n);
@@ -452,8 +474,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     for (int ch = 0; ch < 2; ++ch)
         mix.addFrom (ch, 0, loopsBlock, ch, 0, n);
 
-    // The metronome goes straight to the mix, under the master fader.
-    transport.endBlock (n, &mix);
+    // The metronome: heard (under the master fader), but kept out of recordings.
+    juce::AudioBuffer<float> click (clickBuffer.getArrayOfWritePointers(), 2, n);
+    click.clear();
+    transport.endBlock (n, &click);
 
     fx[masterStrip].processBlock (mix, noMidi);
 
@@ -466,9 +490,66 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         for (int ch = 0; ch < 2; ++ch)
             mix.setSample (ch, i, juce::jlimit (-1.0f, 1.0f, mix.getSample (ch, i) * g));
     }
+
+    recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix }, n);
+    capture.process (recClock, { &rawInput, &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix }, n);
+
+    const float clickGain = masterGain.getTargetValue();
+    for (int ch = 0; ch < 2; ++ch)
+        mix.addFrom (ch, 0, click, ch, 0, n, clickGain);
+
     const float peak = juce::jmax (mix.getMagnitude (0, 0, n), mix.getMagnitude (1, 0, n));
     if (peak > master.peak.load())
         master.peak = peak;
+}
+
+juce::String RigEngine::serviceCapture()
+{
+    if (capture.getState() != RigCapture::State::done)
+        return {};
+    double rate = 0, beats = 0;
+    const int source = capture.getSource(), bars = capture.getBars();
+    auto taken = capture.take (rate, beats);   // sets the rate, so first
+    auto audio = crate::Edits::collapseFakeStereo (crate::AudioFiles::resample (taken, rate));
+    if (audio.getNumSamples() < crate::samples (0.02) || audio.getMagnitude (0, audio.getNumSamples()) < 1.0e-4f)
+        return "Nothing came from " + RigCapture::sourceName (source) + ", so nothing was recorded.";
+
+    const auto name = RigCapture::sourceName (source).upToFirstOccurrenceOf (" /", false, false)
+                      + (bars > 0 ? " " + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String());
+    if (captureDest == RigCapture::toMpcPad)
+    {
+        // The first empty pad in the bank your keyboard's pads play, else anywhere in the kit.
+        auto& project = mpc.getProject();
+        auto& kit = project.currentBank();
+        const int first = juce::jlimit (0, 3, routing.padBank.load()) * 16;
+        int pad = -1;
+        for (int i = 0; i < mpc::kPadCount && pad < 0; ++i)
+            if (kit.pads[(size_t) ((first + i) % mpc::kPadCount)].isEmpty())
+                pad = (first + i) % mpc::kPadCount;
+        if (pad < 0)
+            return "Every MPC pad in this kit has a sound: clear one and record again.";
+        auto& p = kit.pads[(size_t) pad];
+        p.audio = crate::share (std::move (audio));
+        p.name = name.substring (0, 16);
+        p.beats = bars > 0 ? beats : 0;
+        project.changed();
+        const auto padName = juce::String::charToString ((juce::juce_wchar) ('A' + pad / 16)) + juce::String (pad % 16 + 1);
+        return "Recorded " + RigCapture::sourceName (source) + " onto MPC pad " + padName + ".";
+    }
+
+    sampler.getDocument().load (crate::share (std::move (audio)), name, "Sample");
+    return "Recorded " + RigCapture::sourceName (source) + " into the Sampler: play it from the keys or edit it in its tab.";
+}
+
+juce::File RigEngine::recordingsFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Crate").getChildFile ("Rig").getChildFile ("Recordings");
+}
+
+bool RigEngine::startRecording (const juce::File& folder)
+{
+    return recorder.start (folder, { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops", "Mix" },
+                           { "MPC pads", "Sampler", "Vocoder", "Bass", "Synth" }, sampleRate > 0 ? sampleRate : 44100.0);
 }
 
 void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
@@ -537,6 +618,9 @@ juce::ValueTree RigEngine::saveShow() const
     show.setProperty ("splitNote", routing.splitNote.load(), nullptr);
     show.setProperty ("lowerKeysTo", routing.lowerKeysTo.load(), nullptr);
     show.setProperty ("sampleSource", sampleSource.load(), nullptr);
+    show.setProperty ("captureSource", captureSource, nullptr);
+    show.setProperty ("captureDest", captureDest, nullptr);
+    show.setProperty ("captureBars", captureBars, nullptr);
     show.setProperty ("inputOn", inputOn.load(), nullptr);
     show.setProperty ("inputJack", inputJack.load(), nullptr);
 
@@ -641,6 +725,14 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         routing.forget (c);
     scenes.clear();
     scenes.songMode = (bool) show.getProperty ("songMode", false);
+    {
+        // Older shows only had what the Sampler records.
+        const int older = (int) show.getProperty ("sampleSource", 0);
+        const int fallback = older == (int) SampleSource::vocoder ? RigCapture::vocoder : older == (int) SampleSource::mix ? RigCapture::mix : RigCapture::mic;
+        captureSource = juce::jlimit (0, RigCapture::numSources - 1, (int) show.getProperty ("captureSource", fallback));
+    }
+    captureDest = juce::jlimit (0, RigCapture::numDests - 1, (int) show.getProperty ("captureDest", (int) RigCapture::toSampler));
+    captureBars = juce::jlimit (0, 16, (int) show.getProperty ("captureBars", 0));
     screens = show.getChildWithName ("Screens").isValid() ? show.getChildWithName ("Screens").createCopy() : juce::ValueTree ("Screens");
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {

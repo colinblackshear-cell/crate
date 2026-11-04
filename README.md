@@ -199,11 +199,19 @@ in Logic, use each tool's own plugin.
 - **Knobs:** to put a keyboard knob on any control in any tool (the bass cutoff, the synth's LFO
   depth...), press **Knobs** > **Learn a knob**, touch the control on screen, then turn the knob.
   The same menu lists your knobs so you can forget one, or all of them.
-- **Sample live:** press **Sample** in the top bar to record straight into the Sampler, and
-  again to stop; then play it from the keys or shape it in the Sampler tab. **Sampler records**
-  picks what it hears: the **Mic**, the **Vocoder** (as it sounds before its level and mute), or
-  the **Rig mix** (everything but the sampler, as you hear it). The sampler never hears itself,
-  and the mic never goes straight to the speakers.
+- **Sample any tool into another:** the **Sample** row (bottom left) picks what to record (the
+  **Mic / input**, the MPC, Vocoder, Bass, Synth, Input strip, Sampler, Loops, or the whole **Rig
+  mix**, each as you hear it), where it goes (**into Sampler**, or **onto MPC pad**: the next empty
+  pad of the bank your keyboard's pads play), and how long (**1**-**16 bars**, or **Free**). Press
+  **Sample** at the top (or on the Stage): it starts at the next bar (straight away if the Rig is
+  stopped) and stops by itself after the bars, so the bass line lands on a pad as a perfect loop,
+  in time (set to its length in beats for the MPC's keep in time). With Free, press again to stop.
+- **Record set (for Logic):** press **Record set** and from the next bar (or when you press Play)
+  the Rig records every tool as its own WAV (as you hear it, after its effects and level), the
+  mix, and what you play on the keys and pads as a MIDI file with a track for each tool. Press
+  again to stop, or stop the Rig. Each take goes in its own folder in `~/Music/Crate/Rig/Recordings`;
+  set Logic to the tempo it says in `Open in Logic.txt` and drag everything in at bar 1: it all
+  lines up. Silent strips are left out, and the metronome is never recorded.
 - **Shows:** **Save show** saves everything (every tool's sounds, patterns and settings, the loops, the mixer, tempo,
   routing, learned controls and knobs) to `~/Music/Crate/Rig`; **Open show** brings one back. The Rig
   also saves where you left off when you quit and opens it again next time.

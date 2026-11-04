@@ -106,16 +106,19 @@ private:
     juce::TextButton learnPlay { "Learn" }, learnStop { "Learn" };
     juce::Label tempoLabel { {}, "Tempo" };
     juce::Slider tempo { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
-    juce::TextButton tapButton { "Tap" }, sampleButton { "Sample" }, knobButton { "Knobs" };
+    juce::TextButton tapButton { "Tap" }, sampleButton { "Sample" }, knobButton { "Knobs" }, recordButton { "Record set" };
+    void toggleRecordSet();
+    void updateRecordButton();
     juce::Label position, midiLight;
     juce::TextButton audioButton { "Audio + MIDI" }, saveButton { "Save show" }, openButton { "Open show" };
 
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
     // Routing.
-    juce::Label padsLabel { {}, "Pads play MPC bank" }, keysLabel { {}, "Keys play" }, sourceLabel { {}, "Sampler records" },
+    juce::Label padsLabel { {}, "Pads play MPC bank" }, keysLabel { {}, "Keys play" }, sourceLabel { {}, "Sample" },
                 splitLabel { {}, "Split, below" };
-    juce::ComboBox padBank, keysTo, sampleSource, splitNote, lowerKeysTo;
+    juce::ComboBox padBank, keysTo, sampleSource, splitNote, lowerKeysTo, sampleDest, sampleBars;
+    void updateSampleButton();
 
     // Knob Learn: waiting for a setting to be touched and a knob to be turned.
     bool learningKnob = false;
