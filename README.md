@@ -170,6 +170,15 @@ in Logic, use each tool's own plugin.
   loop as a WAV, and puts the layer's record and mute on buttons of your keyboard. All the
   layers play through the **Loops** strip, with its own effects. Loops are saved with the show,
   as WAV files in a folder next to it (`My show loops`).
+- **Song:** the **Song** tab builds a song from parts (scenes). Get something going (an MPC
+  sequence, a bass pattern, the arp, loops, some tracks muted), then press **+ Add scene**: it
+  keeps the MPC's sequence, the bass pattern and sequencer, the synth's arp, which strips and
+  loop layers are muted, and whether the vocoder and the input are on. Press a part's **Play**
+  and it takes over at the next bar (straight away if the Rig is stopped). **Update** keeps
+  what's playing now in that part instead. With **Song mode** on, a part with a length (1-32
+  bars) plays that long and then the next part starts by itself; **Stay** waits for you.
+  **< Back** and **Next >** step through the parts; **Keyboard...** puts them on buttons of your
+  keyboard (the Launchkey's scene arrows, say). Parts are saved with the show.
 - **Knobs:** to put a keyboard knob on any control in any tool (the bass cutoff, the synth's LFO
   depth...), press **Knobs** > **Learn a knob**, touch the control on screen, then turn the knob.
   The same menu lists your knobs so you can forget one, or all of them.

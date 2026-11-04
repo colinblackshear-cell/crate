@@ -12,6 +12,7 @@
 #include "RigTransport.h"
 #include "StripFx.h"
 #include "RigLooper.h"
+#include "RigScenes.h"
 
 #include <array>
 
@@ -45,6 +46,13 @@ public:
     static juce::String toolName (int id);
     RigTransport& getTransport() { return transport; }
     RigLooper& getLooper() { return looper; }
+    RigScenes& getScenes() { return scenes; }
+
+    // Scenes (message thread): what's playing now, as a scene; and the regular check that
+    // moves song mode on and gets the MPC and bass ready for a scene about to start. The
+    // window calls tickScenes often (tests call it directly).
+    RigScene::State captureScene();
+    void tickScenes();
     double getSampleRate() const { return sampleRate; }
     RigRouting& getRouting() { return routing; }
 
@@ -130,6 +138,8 @@ private:
     RigTransport transport;
     RigRouting routing;
     RigLooper looper;
+    RigScenes scenes;
+    void applyScene (const RigScene::State&);   // audio thread, at the bar
     std::array<double, RigLooper::kLayers> loadedLoopBeats {};
     std::array<Strip, numStrips> strips;
     std::array<StripFx, numStrips> fx;

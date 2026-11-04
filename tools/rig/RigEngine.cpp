@@ -246,6 +246,8 @@ void RigEngine::applyControls (const RigRouting::Result& r)
             moved = true;
         }
     }
+    scenes.nextPresses += r.presses[RigRouting::nextScene];
+    scenes.backPresses += r.presses[RigRouting::previousScene];
     if (r.presses[RigRouting::inputHear] % 2 == 1)
     {
         inputOn = ! inputOn.load();
@@ -303,6 +305,17 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     // Play and stop land here, at the start of the block, for every tool at once.
     transport.beginBlock();
+
+    // A scene whose bar has come.
+    {
+        RigScene::State scene;
+        double firedBeat = 0;
+        if (scenes.takeDue (transport.getBlockPosition(), transport.isPlayingThisBlock(), scene, firedBeat))
+        {
+            applyScene (scene);
+            controlsMoved = true;
+        }
+    }
 
     juce::AudioBuffer<float> mpcBlock (mpcBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> samplerBlock (samplerBuffer.getArrayOfWritePointers(), 2, n);
@@ -541,6 +554,10 @@ juce::ValueTree RigEngine::saveShow() const
         show.appendChild (loop, nullptr);
     }
 
+    show.setProperty ("songMode", scenes.songMode, nullptr);
+    for (const auto& scene : scenes.getScenes())
+        show.appendChild (scene.toTree(), nullptr);
+
     // Knobs on settings, by the setting's ID so they survive the tools changing.
     for (const auto& k : routing.getParameterKnobs())
     {
@@ -597,6 +614,8 @@ void RigEngine::loadShow (const juce::ValueTree& show)
 
     for (int c = 0; c < RigRouting::numControls; ++c)
         routing.forget (c);
+    scenes.clear();
+    scenes.songMode = (bool) show.getProperty ("songMode", false);
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
         looper.reset (i);
@@ -631,6 +650,11 @@ void RigEngine::loadShow (const juce::ValueTree& show)
                             if (p->paramID == child.getProperty ("parameter").toString())
                                 routing.addParameterKnob (child.getProperty ("channel"), child.getProperty ("cc"), t, i);
                 }
+        }
+        else if (child.hasType ("Scene"))
+        {
+            if ((int) scenes.getScenes().size() < RigScenes::kMaxScenes)
+                scenes.getScenes().push_back (RigScene::fromTree (child));
         }
         else if (child.hasType ("Loop"))
         {
@@ -672,6 +696,71 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         }
     }
     controlsMoved = true;
+}
+
+//==============================================================================
+namespace
+{
+void setParameter (juce::AudioProcessorValueTreeState& state, const char* id, float plainValue)
+{
+    if (auto* p = state.getParameter (id))
+        p->setValueNotifyingHost (p->convertTo0to1 (plainValue));
+}
+
+float getParameter (juce::AudioProcessorValueTreeState& state, const char* id)
+{
+    auto* v = state.getRawParameterValue (id);
+    return v != nullptr ? v->load() : 0.0f;
+}
+}
+
+RigScene::State RigEngine::captureScene()
+{
+    RigScene::State s;
+    s.mpcSequence = mpc.getProject().getCurrentSequenceIndex();
+    s.bassPattern = juce::roundToInt (getParameter (bass.params, "pattern"));
+    s.bassSequencer = getParameter (bass.params, "sequencer") > 0.5f ? 1 : 0;
+    s.arp = getParameter (synthTool.params, "arpOn") > 0.5f ? 1 : 0;
+    s.vocoderOn = vocoderOn.load() ? 1 : 0;
+    s.inputOn = inputOn.load() ? 1 : 0;
+    for (int st = 0; st < numStrips && st < RigScene::kMaxStrips; ++st)
+        s.stripMutes[(size_t) st] = st == masterStrip ? -1 : (strips[(size_t) st].mute.load() ? 1 : 0);
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+        s.loopMutes[(size_t) l] = looper.getLayer (l).mute.load() ? 1 : 0;
+    return s;
+}
+
+void RigEngine::applyScene (const RigScene::State& s)
+{
+    for (int st = 0; st < numStrips && st < RigScene::kMaxStrips; ++st)
+        if (s.stripMutes[(size_t) st] >= 0)
+            strips[(size_t) st].mute = s.stripMutes[(size_t) st] == 1;
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+        if (s.loopMutes[(size_t) l] >= 0)
+            looper.getLayer (l).mute = s.loopMutes[(size_t) l] == 1;
+    if (s.vocoderOn >= 0)
+        vocoderOn = s.vocoderOn == 1;
+    if (s.inputOn >= 0)
+        inputOn = s.inputOn == 1;
+    if (s.bassSequencer >= 0)
+        setParameter (bass.params, "sequencer", (float) s.bassSequencer);
+    if (s.arp >= 0)
+        setParameter (synthTool.params, "arpOn", (float) s.arp);
+}
+
+void RigEngine::tickScenes()
+{
+    const int early = scenes.tick (transport.getPositionInBeats(), transport.isPlaying(), transport.getBeatsPerBar());
+    if (! juce::isPositiveAndBelow (early, (int) scenes.getScenes().size()))
+        return;
+    // The MPC's sequence and the bass pattern follow the clock's position, so changing them
+    // just before the bar has them play the new part from its first beat.
+    const auto& s = scenes.getScenes()[(size_t) early].state;
+    auto& project = mpc.getProject();
+    if (s.mpcSequence >= 0 && s.mpcSequence < (int) project.getSequences().size())
+        project.setCurrentSequence (s.mpcSequence);
+    if (s.bassPattern >= 0)
+        setParameter (bass.params, "pattern", (float) s.bassPattern);
 }
 
 //==============================================================================

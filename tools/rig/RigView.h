@@ -119,6 +119,7 @@ private:
     std::vector<std::unique_ptr<StripView>> stripViews;
     std::unique_ptr<FxPanel> fxPanel;
     class LooperView* looper = nullptr;   // owned by the tabs
+    class SongView* song = nullptr;
 
     std::vector<double> taps;
     juce::uint32 lastTap = 0;
