@@ -123,6 +123,23 @@ in Logic, use each tool's own plugin.
   together, **Stop** stops and goes back to the start. Set the **Tempo** with the buttons or tap
   it with **Tap**; **Click** turns the metronome on. The MPC follows the Rig's tempo the way it
   follows Logic's.
+- **The Stage:** the first tab shows every tool on one screen while you play. Along the top is
+  the song: the part playing, what's next and when, a button for each part, **< Back**,
+  **Next >** and **Song mode**. Below, each tool has a tile showing what it's doing right now,
+  with its mute and meter: the **MPC**'s sequence and where it is in it, a button per sequence
+  and **Play song** for the song you built in the MPC; the **Bass** line with its step lit as it
+  plays, its 8 patterns and the sequencer; the **Synth**'s arp stepping along; the **Looper**'s
+  eight layers going round (click one to record, stop or overdub it); and the **Vocoder**,
+  **Input** and **Sampler**. Everything you start there comes in on the next bar. Click
+  anywhere else on a tile to go into that tool's tab.
+- **Two screens:** **Pop out** (next to the tabs) opens the tab you're on in its own window. Drag
+  it to a second screen (with one plugged in, it goes there by itself): the Stage on one screen
+  and the MPC on the other, say. Its tab says where it went; close the window (or **Bring it back
+  here**) to put it back. Which tools are out, and where, is saved with the show, so they open on
+  the same screens next time.
+- **The MPC in time:** a sequence picked while the Rig plays (on the Stage, in the MPC, or by a
+  song part) comes in at the next bar, from its top. **Play song** plays the MPC song on the
+  Rig's clock: playing, it comes in at the next bar; stopped, it starts everything from the top.
 - **The tools in tabs:** the **MPC**, **Vocoder**, **Bass**, **Synth** and **Sampler** tabs are the full tools, the
   same as their own apps. The vocoder's code comes from the
   [vocoder repo](https://github.com/colinblackshear-cell/vocoder) at the commit pinned in

@@ -6,8 +6,8 @@
 #include "core/ui/Theme.h"
 #include "core/ui/ParamControls.h"
 
-// The Rig's window: one transport across the top, the tools in tabs (MPC, Vocoder, Sampler),
-// and a mixer with the keyboard routing along the bottom.
+// The Rig's window: one transport across the top, the tools in tabs (the Stage, with every tool
+// on one screen, then MPC, Vocoder, Bass...), and a mixer with the keyboard routing along the bottom.
 class RigView : public juce::Component,
                 private juce::Timer,
                 private juce::AudioProcessorListener
@@ -29,6 +29,13 @@ public:
     // Re-reads everything from the engine (after loading a show).
     void refresh();
 
+    // A tab in its own window (for a second screen), and back again; the windows a loaded
+    // show had (in the engine's screens) are put back by restoreWindows.
+    void popOutTab (const juce::String& tab);
+    void bringBack (const juce::String& tab);
+    bool isInOwnWindow (const juce::String& tab) const;
+    void restoreWindows();
+
 private:
     // One mixer channel: name, level fader, mute, meter, and Learn for its fader.
     class StripView : public juce::Component
@@ -39,7 +46,7 @@ private:
         void paint (juce::Graphics&) override;
         void resized() override;
         void refresh();
-        void tick();
+        void tick (float meterLevel);
 
         juce::Slider level { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
         juce::TextButton mute { "Mute" }, learn { "Learn" }, on { "On" }, fxButton { "FX" };
@@ -120,6 +127,33 @@ private:
     std::unique_ptr<FxPanel> fxPanel;
     class LooperView* looper = nullptr;   // owned by the tabs
     class SongView* song = nullptr;
+    class StageView* stage = nullptr;
+    void showTab (const juce::String& name);
+
+    // Each tab's page. A page can pop out into its own window (to put it on a second screen);
+    // its tab then holds a note saying where it went, and closing the window brings it back.
+    class ToolWindow;
+    class Placeholder;
+    struct Page
+    {
+        juce::String name;
+        juce::Colour colour;
+        std::unique_ptr<juce::Component> content;
+        std::unique_ptr<Placeholder> placeholder;
+        std::unique_ptr<ToolWindow> window;
+    };
+    std::vector<Page> pages;
+    void addPage (const juce::String& name, juce::Colour, juce::Component*);
+    int pageIndex (const juce::String& name) const;
+    void popOut (int page, juce::Rectangle<int> bounds = {});
+    void dockBack (int page);
+    // Keeps the engine's list of popped-out windows up to date (it's saved with the show), and
+    // puts the windows back as a loaded show had them.
+    void storeWindows();
+    juce::TextButton popOutButton { "Pop out" };
+
+    // Each strip's meter (0..1, falling slowly), shared by the mixer and the Stage.
+    std::array<float, RigEngine::numStrips> meters {};
 
     std::vector<double> taps;
     juce::uint32 lastTap = 0;

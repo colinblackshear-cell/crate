@@ -306,12 +306,23 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
     }
 
     double bpm = snap.bpm;
+    const bool switching = switchWhileFollowing.load();
+    double hostT = 0;   // following: the host's position, in ticks, as `t` moves through the block
     if (host != nullptr && host->playing)
     {
+        const bool wasFollowing = following;
+        const double lastTick = tick;
         following = playing = true;
         bpm = host->bpm > 0 ? host->bpm : bpm;
-        const double hostTick = host->ppq * seq::kTicksPerBeat;
-        tick = snap.loop ? wrap (hostTick, snap.length) : hostTick;
+        hostT = host->ppq * seq::kTicksPerBeat;
+        if (! wasFollowing || ! switching)
+            anchor = 0;
+        const double rel = hostT - anchor;
+        tick = snap.loop ? wrap (rel, snap.length) : rel;
+        // The pass ended exactly between two blocks: let the end of the sequence happen first (a
+        // queued sequence or the next song step takes over there), so nothing on its first tick is lost.
+        if (switching && wasFollowing && snap.loop && tick < 1.0 && lastTick > snap.length - 1.0)
+            tick = snap.length;
     }
     else if (following)
     {
@@ -360,9 +371,11 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
             const Snapshot* now = playingSnapshot.get();
             if (t >= now->length)
             {
-                if (queuedSnapshot != nullptr && ! following)
+                if (queuedSnapshot != nullptr && (! following || switching))
                 {
+                    const double over = following ? t - now->length : 0.0;
                     switchToQueued();
+                    anchor = hostT - over;
                     t = 0;
                     continue;
                 }
@@ -388,7 +401,7 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
 
             // A sequence queued for the next bar takes over at the bar line.
             bool barSwitch = false;
-            if (queuedSnapshot != nullptr && queuedAtBar && ! following && t >= 0)
+            if (queuedSnapshot != nullptr && queuedAtBar && (! following || switching) && t >= 0)
             {
                 const double nextBar = (std::floor (t / now->ticksPerBar()) + 1) * now->ticksPerBar();
                 if (nextBar <= end && nextBar < now->length)
@@ -401,11 +414,13 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
             emitSegment (*now, { t, end, sampleStart }, samplesPerTick, out, clicks, numClicks, clicking, numSamples);
             sampleStart += (end - t) * samplesPerTick;
             remaining -= end - t;
+            hostT += end - t;
             t = end;
 
             if (barSwitch)
             {
                 switchToQueued();
+                anchor = hostT;
                 t = 0;
             }
         }

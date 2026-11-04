@@ -186,6 +186,7 @@ private:
     void advanceSong();
     void queueForSong();
     bool songPlaying = false, wasPlaying = false;
+    bool songStartQueued = false;   // the song's first step waits for the bar (in the Rig)
     int songStep = 0, songRepeat = 0, lastPasses = 0;
     int queuedSequence = -1, queuedAtPasses = 0, immediateSequence = -1;
     std::atomic<juce::uint64> playedPads { 0 };

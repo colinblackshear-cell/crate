@@ -308,6 +308,58 @@ struct EngineTests : juce::UnitTest
             run.blocks (1, &host);
             expect (! engine.isPlaying(), "stops with Logic");
         }
+
+        // In the Rig: a queued sequence comes in on the host's bar line, from its top.
+        for (const int blockSize : { 512, 480 })   // 480 ends a block exactly on each beat at 48 kHz
+        {
+            beginTest ("in the Rig, queued sequences start from their top on the host's bars (block " + juce::String (blockSize) + ")");
+            Engine engine;
+            engine.prepare (48000.0);
+            engine.switchWhileFollowing = true;
+            auto a = oneBar (120.0);
+            a.tracks[0].add ({ 0, 1, 100, 24 });
+            auto b = oneBar (120.0);
+            b.setBars (2);
+            b.tracks[0].add ({ 0, 2, 100, 24 });
+            b.tracks[0].add ({ 96 * 4, 3, 100, 24 });
+            engine.setSnapshot (Engine::makeSnapshot (a, 0));
+            Run run { engine };
+            run.blockSize = blockSize;
+            Engine::Host host;
+            host.playing = true;
+            host.bpm = 120.0;
+            auto playFor = [&] (double beats)
+            {
+                const int count = (int) std::round (beats * 24000.0 / blockSize);
+                for (int i = 0; i < count; ++i)
+                {
+                    run.blocks (1, &host);
+                    host.ppq += blockSize * 2.0 / 48000.0;
+                }
+            };
+            playFor (1.0);
+            engine.queue (Engine::makeSnapshot (b, 1), true);   // at the next bar (beat 4)
+            playFor (11.5);
+            // The beats each pad played on (to the nearest sample or two).
+            auto at = [&] (int pad)
+            {
+                std::vector<long long> v;
+                for (auto [when, p] : run.hits)
+                    if (p == pad)
+                        v.push_back (std::llround (when / 24000.0 * 100.0) / 100);
+                return v;
+            };
+            expect (at (1) == std::vector<long long> { 0 }, "A plays its bar");
+            expect (at (2) == std::vector<long long> { 4, 12 }, "B starts on bar 2 and loops from there");
+            expect (at (3) == std::vector<long long> { 8 }, "B's second bar lands on the Rig's bar 3");
+            expectEquals (engine.getPlayingId(), 1);
+
+            // A sequence queued for its end switches exactly there too.
+            engine.queue (Engine::makeSnapshot (a, 0), false);
+            run.hits.clear();
+            playFor (8.5);   // past beat 20, the end of B's second time round
+            expect (at (1) == std::vector<long long> { 20 }, "A comes back at B's end");
+        }
     }
 };
 

@@ -1,10 +1,11 @@
 #include "SongView.h"
+#include "RigColours.h"
 
 namespace Theme = crate::Theme;
 
 namespace
 {
-const juce::Colour songColour { 0xffffb74d };
+const juce::Colour songColour = RigColours::song;
 constexpr int kRowHeight = 58;
 }
 
