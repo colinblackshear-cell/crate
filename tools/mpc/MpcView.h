@@ -6,6 +6,7 @@
 #include "PadEditor.h"
 #include "PadGrid.h"
 #include "PadSoundEditor.h"
+#include "LivePanel.h"
 #include "SequencerView.h"
 #include "core/ui/LibraryList.h"
 #include "core/ui/Theme.h"
@@ -82,6 +83,7 @@ private:
     PadEditor editor { project };
     PadSoundEditor soundEditor { processor };
     TransportBar transport { processor };
+    LivePanel live { processor };
     SequencerView sequencer { processor };
     juce::TextButton padsTab { "Pads" }, sequenceTab { "Steps" };
     // Computer keys play the 16 pads on screen, laid out like the MPC's pads (bottom row first).

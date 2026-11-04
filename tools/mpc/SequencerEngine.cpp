@@ -20,15 +20,17 @@ SequencerEngine::SequencerEngine()
     latest = std::make_shared<const Snapshot>();
 }
 
-std::shared_ptr<const SequencerEngine::Snapshot> SequencerEngine::makeSnapshot (const seq::Sequence& s)
+std::shared_ptr<const SequencerEngine::Snapshot> SequencerEngine::makeSnapshot (const seq::Sequence& s, int id, bool forceLoop)
 {
     auto snap = std::make_shared<Snapshot>();
     snap->length = s.lengthTicks();
     snap->beatsPerBar = s.beatsPerBar;
     snap->bpm = s.bpm;
-    snap->loop = s.loop;
+    snap->loop = s.loop || forceLoop;
+    snap->id = id;
+    const bool anySolo = std::any_of (s.tracks.begin(), s.tracks.end(), [] (const seq::Track& t) { return t.solo; });
     for (const auto& t : s.tracks)
-        if (! t.mute)
+        if (anySolo ? t.solo : ! t.mute)
             snap->notes.insert (snap->notes.end(), t.notes.begin(), t.notes.end());
     std::sort (snap->notes.begin(), snap->notes.end());
     return snap;
@@ -41,8 +43,22 @@ void SequencerEngine::setSnapshot (std::shared_ptr<const Snapshot> next)
     {
         const juce::SpinLock::ScopedLockType sl (snapshotLock);
         old = std::exchange (latest, std::move (next));
+        ++latestVersion;
     }
     // The audio thread may still be playing it; it's freed in freeUnusedSnapshots once it isn't.
+    if (old != nullptr)
+        retired.push_back (std::move (old));
+}
+
+void SequencerEngine::queue (std::shared_ptr<const Snapshot> next, bool atNextBar)
+{
+    std::shared_ptr<const Snapshot> old;
+    {
+        const juce::SpinLock::ScopedLockType sl (snapshotLock);
+        old = std::exchange (queuedLatest, std::move (next));
+        queuedAtBarLatest = atNextBar;
+        ++queuedVersion;
+    }
     if (old != nullptr)
         retired.push_back (std::move (old));
 }
@@ -51,6 +67,17 @@ void SequencerEngine::freeUnusedSnapshots()
 {
     retired.erase (std::remove_if (retired.begin(), retired.end(), [] (const auto& s) { return s.use_count() == 1; }),
                    retired.end());
+}
+
+void SequencerEngine::switchToQueued()
+{
+    // The snapshot being let go of is still held on the message thread (as `latest`, the queue,
+    // or in `retired`), so this never frees it here.
+    playingSnapshot = std::move (queuedSnapshot);
+    queuedSnapshot = nullptr;
+    ++passes;
+    for (auto& s : skips)
+        s.pad = -1;
 }
 
 void SequencerEngine::play (bool fromStart) { request = fromStart ? 2 : 1; }
@@ -219,8 +246,21 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
     numClicks = 0;
     {
         const juce::SpinLock::ScopedTryLockType sl (snapshotLock);
-        if (sl.isLocked() && latest != playingSnapshot)
-            playingSnapshot = latest;   // the old one is still held by `retired`, so this never frees it
+        if (sl.isLocked())
+        {
+            // The old ones are still held on the message thread, so these never free anything.
+            if (latestVersion != seenVersion)
+            {
+                playingSnapshot = latest;
+                seenVersion = latestVersion;
+            }
+            if (queuedVersion != seenQueuedVersion)
+            {
+                queuedSnapshot = queuedLatest;
+                queuedAtBar = queuedAtBarLatest;
+                seenQueuedVersion = queuedVersion;
+            }
+        }
     }
     if (playingSnapshot == nullptr || numSamples <= 0)
         return;
@@ -317,10 +357,25 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
         double t = tick, remaining = numSamples * ticksPerSample, sampleStart = 0;
         while (remaining > 1.0e-9 && playing)
         {
-            if (t >= snap.length)
+            const Snapshot* now = playingSnapshot.get();
+            if (t >= now->length)
             {
-                if (snap.loop)
-                    t -= snap.length;
+                if (queuedSnapshot != nullptr && ! following)
+                {
+                    switchToQueued();
+                    t = 0;
+                    continue;
+                }
+                if (stopAtEnd.exchange (false) && ! following)
+                {
+                    stopNow (juce::jlimit (0, numSamples - 1, (int) sampleStart));
+                    break;
+                }
+                if (now->loop)
+                {
+                    t -= now->length;
+                    ++passes;
+                }
                 else
                 {
                     if (! following)
@@ -328,14 +383,34 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
                     break;
                 }
             }
-            const double end = t < 0 ? juce::jmin (0.0, t + remaining) : juce::jmin ((double) snap.length, t + remaining);
-            emitSegment (snap, { t, end, sampleStart }, samplesPerTick, out, clicks, numClicks, clicking, numSamples);
+
+            double end = t < 0 ? juce::jmin (0.0, t + remaining) : juce::jmin ((double) now->length, t + remaining);
+
+            // A sequence queued for the next bar takes over at the bar line.
+            bool barSwitch = false;
+            if (queuedSnapshot != nullptr && queuedAtBar && ! following && t >= 0)
+            {
+                const double nextBar = (std::floor (t / now->ticksPerBar()) + 1) * now->ticksPerBar();
+                if (nextBar <= end && nextBar < now->length)
+                {
+                    end = nextBar;
+                    barSwitch = true;
+                }
+            }
+
+            emitSegment (*now, { t, end, sampleStart }, samplesPerTick, out, clicks, numClicks, clicking, numSamples);
             sampleStart += (end - t) * samplesPerTick;
             remaining -= end - t;
             t = end;
+
+            if (barSwitch)
+            {
+                switchToQueued();
+                t = 0;
+            }
         }
         if (playing)
-            tick = (t >= snap.length && snap.loop) ? t - snap.length : t;
+            tick = t;
     }
 
     // Let go of sequenced notes when they end (note-off pads stop then).
@@ -356,6 +431,9 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
 
     sampleClock += numSamples;
     playingNow = playing;
+    queuedNow = queuedSnapshot != nullptr;
+    playingIdNow = playingSnapshot->id;
+    passesNow = passes;
     recordingNow = recording;
     followingNow = following;
     positionNow = tick;

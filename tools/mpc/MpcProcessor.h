@@ -59,6 +59,25 @@ public:
     // Adds the notes recorded since the last call to the sequence. Runs on a timer; tests call it.
     int collectRecorded();
 
+    //==========================================================================
+    // Playing live. Picking a sequence while one plays waits for the end of the one playing (or
+    // the next bar line), like the MPC's next sequence; stopped, it switches straight away.
+    void selectSequence (int index);
+    int getQueuedSequence() const { return queuedSequence; }   // -1 when nothing is waiting
+    bool switchAtBar = false;
+
+    // Song mode: plays the current song's steps in order, each sequence as many times as it says.
+    bool playSong (int fromStep = 0);
+    bool isSongPlaying() const { return songPlaying; }
+    int getSongStep() const { return songStep; }
+    int getSongRepeat() const { return songRepeat; }
+
+    // Stop button: stops, leaves song mode and forgets a queued sequence.
+    void stopTransport();
+    // Keeps the current sequence and song position in step with what's playing. Runs on the
+    // timer; tests call it.
+    void followTransport();
+
     // Pads played since the last call (bit n = pad n), from MIDI or clicks, to light them.
     juce::uint64 takePlayedPads() { return playedPads.exchange (0); }
 
@@ -99,6 +118,7 @@ private:
         double rate = 1;            // playback speed from the pad's tune
         bool reverse = false;
         PadMode mode = PadMode::oneShot;
+        int muteGroup = 0;
     };
     using Kit = std::array<PadSound, mpc::kPadCount>;
 
@@ -157,6 +177,12 @@ private:
 
     std::vector<seq::Sequence> undoStack, redoStack;
     int undoSequence = -1;
+
+    void advanceSong();
+    void queueForSong();
+    bool songPlaying = false, wasPlaying = false;
+    int songStep = 0, songRepeat = 0, lastPasses = 0;
+    int queuedSequence = -1, queuedAtPasses = 0, immediateSequence = -1;
     std::atomic<juce::uint64> playedPads { 0 };
     std::atomic<bool> stopRequested { false };
     double hostRate = 44100.0;

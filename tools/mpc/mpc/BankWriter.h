@@ -18,6 +18,7 @@ struct BankPad
     uint8_t pan = 50;             // 0..100
     int16_t tune = 0;             // tenths of a semitone
     VoiceOverlap voiceOverlap = VoiceOverlap::poly;
+    uint8_t muteNote1 = kNoteOff, muteNote2 = kNoteOff;   // notes this pad cuts off
 };
 
 struct Bank

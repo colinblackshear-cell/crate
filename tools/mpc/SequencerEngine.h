@@ -26,9 +26,12 @@ public:
         int beatsPerBar = 4;
         double bpm = 90.0;
         bool loop = true;
+        int id = 0;                     // which sequence it is
+        int ticksPerBar() const { return beatsPerBar * seq::kTicksPerBeat; }
     };
 
-    static std::shared_ptr<const Snapshot> makeSnapshot (const seq::Sequence&);
+    // `id` is the sequence's index; a song plays every sequence as a loop.
+    static std::shared_ptr<const Snapshot> makeSnapshot (const seq::Sequence&, int id = 0, bool forceLoop = false);
 
     // A note you played while recording, already timing-corrected, for the message thread to
     // add to the track.
@@ -59,6 +62,16 @@ public:
     // Message thread.
     void setSnapshot (std::shared_ptr<const Snapshot>);
     void freeUnusedSnapshots();
+
+    // Plays this sequence next: when the one playing reaches its end, or at the next bar line.
+    // Null clears the queue. Song mode queues each step's sequence this way.
+    void queue (std::shared_ptr<const Snapshot>, bool atNextBar);
+    // Stop when the sequence playing reaches its end (the end of a song).
+    std::atomic<bool> stopAtEnd { false };
+
+    int getPlayingId() const { return playingIdNow.load(); }   // the sequence playing (or last played)
+    int getPasses() const { return passesNow.load(); }         // counts each time a sequence ends or switches
+    bool hasQueued() const { return queuedNow.load(); }
 
     void play (bool fromStart);
     void record();               // from stopped: count in and record from the start; playing: punch in or out
@@ -111,6 +124,15 @@ private:
     std::shared_ptr<const Snapshot> latest;                       // message thread writes, under the lock
     std::vector<std::shared_ptr<const Snapshot>> retired;         // message thread only
     std::shared_ptr<const Snapshot> playingSnapshot;              // audio thread only
+    int latestVersion = 0, seenVersion = -1;                      // so a queued switch isn't undone
+    std::shared_ptr<const Snapshot> queuedLatest;                 // message thread writes, under the lock
+    bool queuedAtBarLatest = false;
+    int queuedVersion = 0, seenQueuedVersion = 0;
+    std::vector<std::shared_ptr<const Snapshot>> retiredQueued;   // message thread only
+    std::shared_ptr<const Snapshot> queuedSnapshot;               // audio thread only
+    bool queuedAtBar = false;
+    int passes = 0;
+    void switchToQueued();
 
     // Transport requests from the message thread.
     std::atomic<int> request { 0 };        // 0 none, 1 play, 2 play from start, 3 record, 4 stop, 5 locate
@@ -134,6 +156,7 @@ private:
     juce::AbstractFifo fifo { 1024 };
     std::array<Recorded, 1024> fifoData {};
 
-    std::atomic<bool> playingNow { false }, recordingNow { false }, followingNow { false };
+    std::atomic<bool> playingNow { false }, recordingNow { false }, followingNow { false }, queuedNow { false };
+    std::atomic<int> playingIdNow { 0 }, passesNow { 0 };
     std::atomic<double> positionNow { 0 };
 };

@@ -55,6 +55,8 @@ BankFiles buildBank (const Bank& bank, std::vector<std::string>& takenFolderName
         note.soundIndex = (uint8_t) files.sounds.size();
         note.tune = pad.tune;
         note.voiceOverlap = pad.voiceOverlap;
+        note.muteNote1 = pad.muteNote1;
+        note.muteNote2 = pad.muteNote2;
 
         auto& mixer = program.mixers[(size_t) (program.padToNote[(size_t) pad.pad] - kFirstNote)];
         mixer.volume = std::min<uint8_t> (pad.volume, 100);

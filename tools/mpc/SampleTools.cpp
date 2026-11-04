@@ -194,6 +194,16 @@ mpc::Bank toMpcBank (const Bank& bank)
         p.pan = (uint8_t) juce::jlimit (0, 100, pad.pan);
         p.tune = (int16_t) juce::jlimit (-120, 120, pad.tune);
         p.voiceOverlap = toOverlap (pad.mode);
+        // The MPC2000XL lets each note cut off two others: the first two in its mute group.
+        if (pad.muteGroup > 0)
+        {
+            std::vector<uint8_t> others;
+            for (int j = 0; j < mpc::kPadCount && others.size() < 2; ++j)
+                if (j != i && ! bank.pads[(size_t) j].isEmpty() && bank.pads[(size_t) j].muteGroup == pad.muteGroup)
+                    others.push_back ((uint8_t) noteForPad (j));
+            if (others.size() > 0) p.muteNote1 = others[0];
+            if (others.size() > 1) p.muteNote2 = others[1];
+        }
         out.pads.push_back (std::move (p));
     }
 
@@ -255,6 +265,27 @@ std::optional<Bank> importProgram (const juce::File& pgmFile, juce::StringArray&
         pad.tune = note.tune;
         pad.mode = fromOverlap (note.voiceOverlap);
         pad.mono = pad.audio->getNumChannels() == 1;
+    }
+
+    // Pads that cut each other off on the MPC share a mute group here.
+    int nextGroup = 1;
+    for (int i = 0; i < mpc::kPadCount; ++i)
+    {
+        const auto& note = program->noteForPad (i);
+        for (const auto muted : { note.muteNote1, note.muteNote2 })
+        {
+            const int j = padForNote (muted);
+            if (muted == mpc::kNoteOff || j < 0 || j == i || bank.pads[(size_t) i].isEmpty() || bank.pads[(size_t) j].isEmpty())
+                continue;
+            auto& a = bank.pads[(size_t) i].muteGroup;
+            auto& b = bank.pads[(size_t) j].muteGroup;
+            if (a == 0 && b == 0)
+                a = b = nextGroup++;
+            else if (a == 0)
+                a = b;
+            else if (b == 0)
+                b = a;
+        }
     }
 
     return bank;

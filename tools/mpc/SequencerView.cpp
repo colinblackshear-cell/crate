@@ -61,16 +61,20 @@ TransportBar::TransportBar (MpcProcessor& p) : processor (p), project (p.getProj
         }
         else if (id > 0)
         {
-            project.setCurrentSequence (id - 1);
+            // While it plays, the new one waits its turn (see Next in the live row).
+            processor.selectSequence (id - 1);
+            if (processor.getQueuedSequence() >= 0)
+                say ("Next up: " + project.getSequences()[(size_t) id - 1].name
+                     + (processor.switchAtBar ? ", from the next bar." : ", when this one ends."));
         }
         refresh();
     };
 
     playStart.setTooltip ("Play from the start");
-    playStart.onClick = [&engine] { engine.play (true); };
+    playStart.onClick = [this, &engine] { if (processor.isSongPlaying()) processor.stopTransport(); engine.play (true); };
     play.setTooltip ("Play from where it stopped (Space starts and stops)");
     play.onClick = [&engine] { engine.isPlaying() ? engine.stop() : engine.play (false); };
-    stop.onClick = [&engine] { engine.stop(); };
+    stop.onClick = [this] { processor.stopTransport(); };
     rec.setTooltip ("Record what you play onto the selected track. From stop it counts in a bar first; while playing it punches in and out.");
     rec.onClick = [this] { processor.toggleRecord(); };
 
@@ -426,7 +430,7 @@ SequencerView::SequencerView (MpcProcessor& p) : processor (p), project (p.getPr
             if ((int) s.tracks.size() < seq::kMaxTracks)
             {
                 processor.beginEdit();
-                s.tracks.push_back ({ "Track " + juce::String ((int) s.tracks.size() + 1), false, {} });
+                s.tracks.push_back ({ "Track " + juce::String ((int) s.tracks.size() + 1), false, false, {} });
                 processor.recordTrack = (int) s.tracks.size() - 1;
                 project.sequenceChanged();
             }

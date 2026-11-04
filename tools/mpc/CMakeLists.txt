@@ -28,6 +28,7 @@ juce_add_plugin(MpcBankBuilder
 # The app and plugin code; the tests compile the same list.
 set(MPC_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/BankModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/LivePanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MpcProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MpcView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PadEditor.cpp
@@ -39,7 +40,7 @@ set(MPC_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/SequencerView.cpp
     PARENT_SCOPE)
 
-target_sources(MpcBankBuilder PRIVATE PluginEntry.cpp BankModel.cpp MpcProcessor.cpp MpcView.cpp PadEditor.cpp PadGrid.cpp
+target_sources(MpcBankBuilder PRIVATE PluginEntry.cpp BankModel.cpp LivePanel.cpp MpcProcessor.cpp MpcView.cpp PadEditor.cpp PadGrid.cpp
     PadSoundEditor.cpp SampleTools.cpp
     Sequence.cpp SequencerEngine.cpp SequencerView.cpp)
 target_include_directories(MpcBankBuilder PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
