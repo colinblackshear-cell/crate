@@ -42,6 +42,7 @@ public:
         loopsMute,                                 // a button
         loopRecord1, loopRecord8 = loopRecord1 + 7, // buttons: record / stop / overdub each layer
         loopMute1, loopMute8 = loopMute1 + 7,       // buttons: mute each layer
+        nextScene, previousScene,                  // buttons
         numControls
     };
     static juce::String controlName (int control);

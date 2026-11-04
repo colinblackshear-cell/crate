@@ -1,5 +1,6 @@
 #include "RigView.h"
 #include "LooperView.h"
+#include "SongView.h"
 
 namespace Theme = crate::Theme;
 
@@ -340,8 +341,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looper = looperView;
     tabs.addTab ("Looper", Theme::panel, looperView, true);
-    const juce::Colour tabColours[] = { mpcColour, vocoderColour, bassColour, synthColour, samplerColour, loopsColour };
-    for (int i = 0; i < 6; ++i)
+    auto* songView = new SongView (engine);
+    songView->onSay = [this] (const juce::String& text) { say (text); };
+    song = songView;
+    tabs.addTab ("Song", Theme::panel, songView, true);
+    const juce::Colour tabColours[] = { mpcColour, vocoderColour, bassColour, synthColour, samplerColour, loopsColour,
+                                        juce::Colour (0xffffb74d) };
+    for (int i = 0; i < 7; ++i)
         tabs.getTabbedButtonBar().setTabBackgroundColour (i, tabColours[i].withAlpha (0.25f));
 
     for (int t = 0; t < RigEngine::numTools; ++t)
@@ -428,6 +434,8 @@ void RigView::refresh()
         s->refresh();
     if (looper != nullptr)
         looper->refresh();
+    if (song != nullptr)
+        song->refresh();
     updateLearnButtons();
 }
 
@@ -505,6 +513,7 @@ void RigView::timerCallback()
 
     if (fxPanel != nullptr)
         fxPanel->tick();
+    engine.tickScenes();
 
     if (learningKnob)
     {

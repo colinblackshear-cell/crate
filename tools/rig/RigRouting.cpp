@@ -26,6 +26,8 @@ juce::String RigRouting::controlName (int c)
         case inputHear:    return "Input on/off";
         case loopsLevel:   return "Loops level";
         case loopsMute:    return "Loops mute";
+        case nextScene:    return "Next scene";
+        case previousScene: return "Previous scene";
         default:
             if (c >= loopRecord1 && c <= loopRecord8)
                 return "Loop " + juce::String (c - loopRecord1 + 1) + " record";
