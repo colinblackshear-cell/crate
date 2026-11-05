@@ -315,6 +315,15 @@ struct ChopTests : juce::UnitTest
             expect (restored.getChops() == chops, "chops come back with the project");
             expect (restored.getKeys().getMode() == KeyboardSampler::Mode::slices);
 
+            // in the Rig, "To MPC pads" hands the slices over
+            {
+                size_t received = 0;
+                view->setSendSlicesToPads ([&received] (std::vector<SharedAudio> slices, const juce::String&)
+                                           { received = slices.size(); return juce::String ("sent"); });
+                view->sendSlicesToPads();
+                expectEquals ((int) received, (int) chops.size() + 1);
+            }
+
             // lower sensitivity finds fewer; an even split replaces them; an edit that changes
             // the length clears them
             view->getSensitivitySlider().setValue (0.0, juce::sendNotificationSync);

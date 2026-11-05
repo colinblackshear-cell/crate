@@ -282,6 +282,9 @@ EditorView::EditorView (EditorProcessor& p)
     };
     saveSlicesButton.setTooltip ("Saves each slice as its own sound in the library, ready for the MPC pads or any Crate tool");
     saveSlicesButton.onClick = [this] { saveSlices(); };
+    sendPadsButton.setTooltip ("Puts the slices on the MPC's pads, in a new kit, so the drum pads play them straight away");
+    sendPadsButton.onClick = [this] { sendSlicesToPads(); };
+    sendPadsButton.setVisible (false);
     chopInfo.setColour (juce::Label::textColourId, crate::Theme::textDim);
     wave.setMarkersEditable (true);
     wave.onMarkersChange = [this]
@@ -306,6 +309,8 @@ EditorView::EditorView (EditorProcessor& p)
              &fadeOutButton, &curveBox, &fadeHeading, &levelHeading, &fadeLength, &fadeAmount,
              &fadeLengthLabel, &fadeAmountLabel, &effects, &reverseButton, &normalizeButton, &gainSlider, &gainButton, &message })
         addAndMakeVisible (c);
+
+    addChildComponent (sendPadsButton);   // shown when a host offers MPC pads
 
     document.addChangeListener (this);
     setWantsKeyboardFocus (true);
@@ -457,14 +462,19 @@ void EditorView::resized()
     findHitsButton.setBounds (row4.removeFromLeft (84));
     row4.removeFromLeft (12);
     sensitivityLabel.setBounds (row4.removeFromLeft (76));
-    sensitivitySlider.setBounds (row4.removeFromLeft (150));
+    sensitivitySlider.setBounds (row4.removeFromLeft (sendPadsButton.isVisible() ? 116 : 150));
     row4.removeFromLeft (12);
     splitBox.setBounds (row4.removeFromLeft (112));
     row4.removeFromLeft (4);
     clearChopsButton.setBounds (row4.removeFromLeft (56));
     row4.removeFromLeft (12);
     saveSlicesButton.setBounds (row4.removeFromRight (juce::jmin (112, row4.getWidth())));
-    row4.removeFromRight (8);
+    row4.removeFromRight (4);
+    if (sendPadsButton.isVisible())
+    {
+        sendPadsButton.setBounds (row4.removeFromRight (juce::jmin (100, row4.getWidth())));
+        row4.removeFromRight (4);
+    }
     chopInfo.setBounds (row4);
 
     // transport under the waveform
@@ -972,7 +982,28 @@ void EditorView::showChops()
     }
     chopInfo.setText (text, juce::dontSendNotification);
     saveSlicesButton.setEnabled (! chops.empty() && ! processor.isRecording());
+    sendPadsButton.setEnabled (saveSlicesButton.isEnabled());
     clearChopsButton.setEnabled (! chops.empty());
+}
+
+void EditorView::setSendSlicesToPads (std::function<juce::String (std::vector<crate::SharedAudio>, const juce::String&)> fn)
+{
+    sendSlices = std::move (fn);
+    sendPadsButton.setVisible (sendSlices != nullptr);
+    chopInfo.setFont (juce::FontOptions (sendSlices != nullptr ? 12.5f : 15.0f));
+    resized();
+}
+
+void EditorView::sendSlicesToPads()
+{
+    if (sendSlices == nullptr || ! document.hasAudio() || processor.getChops().empty())
+        return;
+
+    std::vector<crate::SharedAudio> slices;
+    for (auto& s : crate::SoundFx::slice (*document.getAudio(), processor.getChops()))
+        slices.push_back (crate::share (std::move (s)));
+    const auto name = document.getName().isNotEmpty() ? document.getName() : juce::String ("Chop");
+    say (sendSlices (std::move (slices), name));
 }
 
 void EditorView::saveSlices()

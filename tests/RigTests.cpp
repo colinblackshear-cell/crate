@@ -209,6 +209,35 @@ struct RigEngineTests : juce::UnitTest
 
     void runTest() override
     {
+        beginTest ("smart chop's slices go onto the MPC's pads in a new kit");
+        {
+            RigEngine engine;
+            engine.prepare (44100.0, 512);
+            auto& project = engine.getMpc().getProject();
+            const int kitsBefore = (int) project.getBanks().size();
+
+            std::vector<SharedAudio> slices;
+            for (int i = 0; i < 5; ++i)
+                slices.push_back (share (sine (4410 * (i + 1), 1, 0.5f)));
+            const auto text = engine.sendSlicesToMpc (slices, "My breakbeat loop");
+            project.dispatchPendingMessages();
+
+            expectEquals ((int) project.getBanks().size(), kitsBefore + 1, "a new kit, nothing overwritten");
+            expectEquals (project.getCurrentIndex(), kitsBefore, "and it's the one that plays");
+            const auto& bank = project.currentBank();
+            expectEquals (bank.usedPads(), 5);
+            expectEquals (bank.pads[2].audio->getNumSamples(), 4410 * 3, "in order from A01");
+            expect (bank.pads[0].name.length() <= 16, "names fit the MPC: " + bank.pads[0].name);
+            expect (text.contains ("A05"), text);
+
+            engine.addMidiNow (juce::MidiMessage::noteOn (10, 36, 1.0f));
+            expect (runEngine (engine, 4) > 0.2f, "drum pad 1 plays the first slice");
+
+            std::vector<SharedAudio> tooMany (70, share (sine (441)));
+            expect (engine.sendSlicesToMpc (tooMany, "x").contains ("didn't fit"));
+            expectEquals (engine.sendSlicesToMpc ({}, "x"), juce::String ("There are no slices to send."));
+        }
+
         beginTest ("a drum pad plays the MPC's pad through the mixer");
         {
             RigEngine engine;
