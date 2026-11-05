@@ -104,7 +104,7 @@ private:
     crate::Theme::LookAndFeel lookAndFeel;
 
     // Transport.
-    juce::TextButton playButton { "Play" }, stopButton { "Stop" }, clickButton { "Click" };
+    juce::TextButton playButton { "Play" }, stopButton { "Stop" }, clickButton { "Click" }, micButton { "Mic off" };
     juce::TextButton learnPlay { "Learn" }, learnStop { "Learn" };
     juce::Label tempoLabel { {}, "Tempo" };
     juce::Slider tempo { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };

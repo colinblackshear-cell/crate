@@ -321,7 +321,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     setLookAndFeel (&lookAndFeel);
     setWantsKeyboardFocus (true);
 
-    for (auto* c : std::initializer_list<juce::Component*> { &playButton, &stopButton, &clickButton, &learnPlay, &learnStop,
+    for (auto* c : std::initializer_list<juce::Component*> { &playButton, &stopButton, &clickButton, &micButton, &learnPlay, &learnStop,
                                                              &tempoLabel, &tempo, &tapButton, &sampleButton, &knobButton, &recordButton, &position, &midiLight,
                                                              &audioButton, &saveButton, &openButton, &tabs,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
@@ -339,6 +339,15 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     clickButton.setClickingTogglesState (true);
     clickButton.onClick = [this, &transport] { transport.metronome = clickButton.getToggleState(); };
     clickButton.setTooltip ("A metronome click on every beat while playing.");
+    micButton.setClickingTogglesState (true);
+    micButton.onClick = [this]
+    {
+        engine.micOn = micButton.getToggleState();
+        refresh();
+        if (engine.micOn.load())
+            say ("Mic on: use headphones, or your speakers can feed back into the mic.");
+    };
+    micButton.setTooltip ("Hear your mic (the vocoder and the Input strip). Use headphones with it on, so the speakers don't feed back. Sampling and looping from the mic work either way.");
     learnPlay.setTooltip ("Press, then press a button on your keyboard to make it start and stop the Rig.");
     learnStop.setTooltip ("Press, then press a button on your keyboard to make it stop the Rig.");
     learnPlay.onClick = [this] { startLearning (RigRouting::play, learnPlay); };
@@ -532,6 +541,9 @@ void RigView::refresh()
     auto& transport = engine.getTransport();
     tempo.setValue (transport.getBpm(), juce::dontSendNotification);
     clickButton.setToggleState (transport.metronome.load(), juce::dontSendNotification);
+    micButton.setToggleState (engine.micOn.load(), juce::dontSendNotification);
+    micButton.setButtonText (engine.micOn.load() ? "Mic on" : "Mic off");
+    micButton.setVisible (devices != nullptr);
     padBank.setSelectedItemIndex (engine.getRouting().padBank.load(), juce::dontSendNotification);
     keysTo.setSelectedId (engine.getRouting().keysTo.load() + 1, juce::dontSendNotification);
     sampleSource.setSelectedId (engine.captureSource + 1, juce::dontSendNotification);
@@ -1124,6 +1136,11 @@ void RigView::resized()
     tapButton.setBounds (bar.removeFromLeft (48));
     bar.removeFromLeft (6);
     clickButton.setBounds (bar.removeFromLeft (56));
+    if (devices != nullptr)
+    {
+        bar.removeFromLeft (6);
+        micButton.setBounds (bar.removeFromLeft (70));
+    }
     bar.removeFromLeft (6);
     sampleButton.setBounds (bar.removeFromLeft (90));
     bar.removeFromLeft (6);

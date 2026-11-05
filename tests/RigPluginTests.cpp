@@ -90,6 +90,7 @@ struct RigPluginTests : juce::UnitTest
             RigEngine engine;
             engine.prepare (kRate, kBlock);
             engine.inputOn = true;
+            engine.micOn = true;
             // Only the Input strip hears the input (the vocoder's raw voice and the Sampler would too).
             engine.vocoderOn = false;
             engine.sampleSource = (int) RigEngine::SampleSource::vocoder;

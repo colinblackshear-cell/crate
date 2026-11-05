@@ -108,6 +108,11 @@ public:
     // Fader position to gain: 0.8 is unity, the top is about +6 dB.
     static float faderGain (float level);
 
+    // The mic, heard: while it's off, the vocoder and the Input strip don't hear your mic or
+    // interface (so laptop speakers can't feed back). Sampling and looping from the mic still
+    // work. Off when the app starts; on in Logic (its Side Chain is the switch there).
+    std::atomic<bool> micOn { false };
+
     // The vocoder runs only while it's on (it uses the most processor time).
     std::atomic<bool> vocoderOn { true };
 

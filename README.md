@@ -199,6 +199,10 @@ Logic plugin (see **The Rig in Logic** below).
 - **Knobs:** to put a keyboard knob on any control in any tool (the bass cutoff, the synth's LFO
   depth...), press **Knobs** > **Learn a knob**, touch the control on screen, then turn the knob.
   The same menu lists your knobs so you can forget one, or all of them.
+- **Mic:** the **Mic off / Mic on** button at the top. While it's off, the vocoder and the Input
+  strip don't hear your mic or interface, so laptop speakers can't feed back into it (a low
+  rumble). Turn it on with headphones on. Sampling and looping from the mic work either way. It's
+  off each time the app opens; in Logic, the Side Chain is the switch instead.
 - **Sample any tool into another:** the **Sample** row (bottom left) picks what to record (the
   **Mic / input**, the MPC, Vocoder, Bass, Synth, Input strip, Sampler, Loops, or the whole **Rig
   mix**, each as you hear it), where it goes (**into Sampler**, or **onto MPC pad**: the next empty

@@ -395,9 +395,13 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     synthTool.processBlock (synthBlock, synthMidi);
 
     // The vocoder shapes its synth with your voice from the input.
+    const bool hearMic = micOn.load();
     if (vocoderOn.load())
     {
-        copyInput (vocoderBlock);
+        if (hearMic)
+            copyInput (vocoderBlock);
+        else
+            vocoderBlock.clear();
         vocoder.processBlock (vocoderBlock, vocoderMidi);
     }
     else
@@ -421,7 +425,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     // The Input strip: a guitar or another mic, through its effects.
     juce::AudioBuffer<float> inputBlock (inputBuffer.getArrayOfWritePointers(), 2, n);
-    if (inputOn.load() && numInputs > 0)
+    if (inputOn.load() && hearMic && numInputs > 0)
     {
         const auto jack = (InputJack) inputJack.load();
         if (jack == InputJack::both)

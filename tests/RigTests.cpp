@@ -295,10 +295,21 @@ struct RigEngineTests : juce::UnitTest
             expect (engine.getSampler().takeInputLevel() > 0.4f, "the sampler hears it");
         }
 
+        beginTest ("with the mic off, the vocoder doesn't hear it (no feedback through the speakers)");
+        {
+            RigEngine engine;
+            engine.prepare (44100.0, 512);
+            auto voice = sine (512, 1, 0.5f, 220.0);
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 48, 1.0f));
+            runEngine (engine, 20, 512, &voice);
+            expect (engine.getStrip (RigEngine::vocoderStrip).peak.load() < 1.0e-4f, "silent until the mic is on");
+        }
+
         beginTest ("the keys play the vocoder with the mic as its voice");
         {
             RigEngine engine;
             engine.prepare (44100.0, 512);
+            engine.micOn = true;
             auto voice = sine (512, 1, 0.5f, 220.0);
             engine.addMidiNow (juce::MidiMessage::noteOn (1, 48, 1.0f));
             runEngine (engine, 20, 512, &voice);
@@ -317,6 +328,7 @@ struct RigEngineTests : juce::UnitTest
         {
             RigEngine engine;
             engine.prepare (44100.0, 512);
+            engine.micOn = true;
             engine.sampleSource = (int) RigEngine::SampleSource::vocoder;
             engine.getStrip (RigEngine::vocoderStrip).mute = true;   // recorded before its fader
             auto voice = sine (512, 1, 0.5f, 220.0);
