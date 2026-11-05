@@ -10,6 +10,7 @@ target_sources(CrateTests PRIVATE
     RigLooperTests.cpp
     RigSceneTests.cpp
     RigRecorderTests.cpp
+    SoundBankTests.cpp
     SynthTests.cpp
     SequencerTests.cpp
     TestMain.cpp

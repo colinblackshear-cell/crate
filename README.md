@@ -212,6 +212,16 @@ in Logic, use each tool's own plugin.
   again to stop, or stop the Rig. Each take goes in its own folder in `~/Music/Crate/Rig/Recordings`;
   set Logic to the tempo it says in `Open in Logic.txt` and drag everything in at bar 1: it all
   lines up. Silent strips are left out, and the metronome is never recorded.
+- **Sounds (your sound bank):** the **Sounds** tab finds every sample in your folders: your
+  Splice folder (`~/Splice`, where Splice saves what you download), `~/Music/Crate/Sounds` and
+  the usual sample folders are looked through by themselves, and **Folders...** adds any other
+  folder. It sorts each sound into a kind (Kicks, Snares, Claps, Hats, Cymbals, Toms, Percussion,
+  Bass, Synths, Keys, Guitar, Vocals, FX) from its name and folders, and reads the tempo and key
+  from names like `NS_Keys_Loop_92_Fmin`. Type to search, pick a kind, show only loops or one-shots,
+  or **Near tempo** for loops close to the Rig's tempo. Click a sound to hear it (**Hear on click**),
+  then send it **Onto MPC pad** (the next empty pad; double-click or Return does the same),
+  **Into Sampler**, or **Onto a loop layer** (stretched to the Rig's tempo). The files stay where
+  they are; the Rig looks for new downloads each time it opens, or straight away with **Folders... > Look through the folders again**.
 - **Shows:** **Save show** saves everything (every tool's sounds, patterns and settings, the loops, the mixer, tempo,
   routing, learned controls and knobs) to `~/Music/Crate/Rig`; **Open show** brings one back. The Rig
   also saves where you left off when you quit and opens it again next time.

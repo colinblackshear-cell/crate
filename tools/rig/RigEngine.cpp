@@ -498,6 +498,40 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     for (int ch = 0; ch < 2; ++ch)
         mix.addFrom (ch, 0, click, ch, 0, n, clickGain);
 
+    // A sound being previewed from the Sounds tab, like the click: heard, not recorded.
+    {
+        const juce::SpinLock::ScopedTryLockType sl (previewLock);
+        if (sl.isLocked() && previewVersion != previewSeen)
+        {
+            previewSeen = previewVersion;
+            previewSound = previewNext;
+            previewPos = 0;
+        }
+    }
+    if (previewSound != nullptr)
+    {
+        const double step = crate::kSampleRate / sampleRate;
+        const int length = previewSound->getNumSamples();
+        const int chans = previewSound->getNumChannels();
+        for (int i = 0; i < n; ++i)
+        {
+            const int at = (int) previewPos;
+            if (at + 1 >= length)
+            {
+                previewSound = nullptr;
+                break;
+            }
+            const float frac = (float) (previewPos - at);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float* d = previewSound->getReadPointer (juce::jmin (ch, chans - 1));
+                mix.addSample (ch, i, (d[at] + (d[at + 1] - d[at]) * frac) * 0.8f * clickGain);
+            }
+            previewPos += step;
+        }
+    }
+    previewPlaying = previewSound != nullptr;
+
     const float peak = juce::jmax (mix.getMagnitude (0, 0, n), mix.getMagnitude (1, 0, n));
     if (peak > master.peak.load())
         master.peak = peak;
@@ -518,27 +552,53 @@ juce::String RigEngine::serviceCapture()
                       + (bars > 0 ? " " + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String());
     if (captureDest == RigCapture::toMpcPad)
     {
-        // The first empty pad in the bank your keyboard's pads play, else anywhere in the kit.
-        auto& project = mpc.getProject();
-        auto& kit = project.currentBank();
-        const int first = juce::jlimit (0, 3, routing.padBank.load()) * 16;
-        int pad = -1;
-        for (int i = 0; i < mpc::kPadCount && pad < 0; ++i)
-            if (kit.pads[(size_t) ((first + i) % mpc::kPadCount)].isEmpty())
-                pad = (first + i) % mpc::kPadCount;
-        if (pad < 0)
+        const auto padName = putOnMpcPad (std::move (audio), name, bars > 0 ? beats : 0);
+        if (padName.isEmpty())
             return "Every MPC pad in this kit has a sound: clear one and record again.";
-        auto& p = kit.pads[(size_t) pad];
-        p.audio = crate::share (std::move (audio));
-        p.name = name.substring (0, 16);
-        p.beats = bars > 0 ? beats : 0;
-        project.changed();
-        const auto padName = juce::String::charToString ((juce::juce_wchar) ('A' + pad / 16)) + juce::String (pad % 16 + 1);
         return "Recorded " + RigCapture::sourceName (source) + " onto MPC pad " + padName + ".";
     }
 
-    sampler.getDocument().load (crate::share (std::move (audio)), name, "Sample");
+    putInSampler (std::move (audio), name);
     return "Recorded " + RigCapture::sourceName (source) + " into the Sampler: play it from the keys or edit it in its tab.";
+}
+
+juce::String RigEngine::putOnMpcPad (juce::AudioBuffer<float> audio, const juce::String& name, double beats)
+{
+    // The first empty pad in the bank your keyboard's pads play, else anywhere in the kit.
+    auto& project = mpc.getProject();
+    auto& kit = project.currentBank();
+    const int first = juce::jlimit (0, 3, routing.padBank.load()) * 16;
+    int pad = -1;
+    for (int i = 0; i < mpc::kPadCount && pad < 0; ++i)
+        if (kit.pads[(size_t) ((first + i) % mpc::kPadCount)].isEmpty())
+            pad = (first + i) % mpc::kPadCount;
+    if (pad < 0)
+        return {};
+    auto& p = kit.pads[(size_t) pad];
+    p.audio = crate::share (std::move (audio));
+    p.name = name.substring (0, 16);
+    p.beats = beats;
+    project.changed();
+    return juce::String::charToString ((juce::juce_wchar) ('A' + pad / 16)) + juce::String (pad % 16 + 1);
+}
+
+void RigEngine::putInSampler (juce::AudioBuffer<float> audio, const juce::String& name)
+{
+    sampler.getDocument().load (crate::share (std::move (audio)), name, "Sample");
+}
+
+void RigEngine::preview (std::shared_ptr<const juce::AudioBuffer<float>> sound)
+{
+    {
+        const juce::SpinLock::ScopedLockType sl (previewLock);
+        previewNext = sound.get();
+        ++previewVersion;
+    }
+    if (sound != nullptr)
+        previewHeld.push_back (std::move (sound));
+    // The audio thread moves on within a block; the last few are kept well past that.
+    while (previewHeld.size() > 4)
+        previewHeld.erase (previewHeld.begin());
 }
 
 juce::File RigEngine::recordingsFolder()

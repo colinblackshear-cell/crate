@@ -2,6 +2,7 @@
 #include "LooperView.h"
 #include "SongView.h"
 #include "StageView.h"
+#include "SoundsView.h"
 #include "RigColours.h"
 
 namespace Theme = crate::Theme;
@@ -413,6 +414,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     songView->onSay = [this] (const juce::String& text) { say (text); };
     song = songView;
     addPage ("Song", RigColours::song, songView);
+    auto* soundsView = new SoundsView (engine);
+    soundsView->onSay = [this] (const juce::String& text) { say (text); };
+    addPage ("Sounds", juce::Colour (0xffa1887f), soundsView);
 
     addAndMakeVisible (popOutButton);
     popOutButton.setTooltip ("Opens this tab in its own window, to put it on a second screen (the Stage on one, "
