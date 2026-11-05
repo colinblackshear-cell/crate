@@ -39,6 +39,13 @@ public:
     // Call after they've played it: moves the clock on and adds the metronome to `out`.
     void endBlock (int numSamples, juce::AudioBuffer<float>* out = nullptr);
 
+    // When the Rig is a plugin (in Logic): the host's position for this block, given before
+    // beginBlock. Logic's tempo and time signature always win; while Logic plays, the Rig plays
+    // where Logic is, and when Logic stops the Rig stops. With Logic stopped the Rig's own
+    // Play still works, to jam.
+    void setHostPosition (const juce::Optional<PositionInfo>&);
+    bool isHosted() const { return hosted.load(); }
+
     juce::Optional<PositionInfo> getPosition() const override;
     // Where this block starts, and whether it plays (between beginBlock and endBlock).
     double getBlockPosition() const { return ppq; }
@@ -57,6 +64,11 @@ private:
     int clickAge = 0;
     bool clickActive = false;
     bool clickAccent = false;
+
+    std::atomic<bool> hosted { false };
+    bool hostValid = false, hostFresh = false, hostPlaying = false, hostWasPlaying = false;
+    double hostPpq = 0;
+    long long hostSamples = 0;
 
     std::atomic<bool> playingNow { false };
     std::atomic<double> ppqNow { 0 };

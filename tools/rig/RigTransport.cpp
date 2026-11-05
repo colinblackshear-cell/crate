@@ -25,7 +25,44 @@ void RigTransport::beginBlock()
         default:
             break;
     }
+
+    // (Only the first block after the host's position: a long host block played in pieces
+    // moves on by itself.)
+    if (hostValid && hostFresh)
+    {
+        hostFresh = false;
+        // Logic's count-in (before bar 1) stays silent.
+        if (hostPlaying && hostPpq >= 0.0)
+        {
+            playing = true;
+            ppq = hostPpq;
+            samplePosition = juce::jmax (0LL, hostSamples);
+        }
+        else if (hostWasPlaying && ! hostPlaying)
+        {
+            playing = false;
+            ppq = 0;
+            samplePosition = 0;
+        }
+        hostWasPlaying = hostPlaying;
+    }
     playingNow = playing;
+}
+
+void RigTransport::setHostPosition (const juce::Optional<PositionInfo>& info)
+{
+    hostValid = info.hasValue();
+    hosted = hostValid;
+    hostFresh = hostValid;
+    if (! hostValid)
+        return;
+    if (const auto b = info->getBpm(); b.hasValue() && *b > 0)
+        bpm = juce::jlimit (kMinBpm, kMaxBpm, *b);
+    if (const auto sig = info->getTimeSignature(); sig.hasValue() && sig->numerator > 0)
+        beatsPerBar = juce::jlimit (1, 16, sig->numerator);
+    hostPlaying = info->getIsPlaying();
+    hostPpq = info->getPpqPosition().orFallback (0.0);
+    hostSamples = info->getTimeInSamples().orFallback (0);
 }
 
 void RigTransport::endBlock (int numSamples, juce::AudioBuffer<float>* out)

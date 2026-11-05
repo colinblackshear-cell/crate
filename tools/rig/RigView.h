@@ -13,7 +13,9 @@ class RigView : public juce::Component,
                 private juce::AudioProcessorListener
 {
 public:
-    RigView (RigEngine&, juce::AudioDeviceManager&);
+    // `devices` is the app's audio and MIDI setup; null when the Rig is a plugin in Logic
+    // (Logic picks the audio and MIDI then).
+    RigView (RigEngine&, juce::AudioDeviceManager* devices);
     ~RigView() override;
 
     void paint (juce::Graphics&) override;
@@ -98,7 +100,7 @@ private:
     void audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*, int parameterIndex) override;
 
     RigEngine& engine;
-    juce::AudioDeviceManager& devices;
+    juce::AudioDeviceManager* devices;
     crate::Theme::LookAndFeel lookAndFeel;
 
     // Transport.

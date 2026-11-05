@@ -200,7 +200,7 @@ struct RigSceneTests : juce::UnitTest
             juce::AudioDeviceManager devices;
             juce::ValueTree saved;
             {
-                RigView view (engine, devices);
+                RigView view (engine, &devices);
                 view.setSize (1400, 900);
                 view.popOutTab ("MPC");
                 expect (view.isInOwnWindow ("MPC"));
@@ -216,7 +216,7 @@ struct RigSceneTests : juce::UnitTest
 
             engine.loadShow (saved);
             expectEquals (engine.screens.getNumChildren(), 1, "loaded with the show");
-            RigView view (engine, devices);
+            RigView view (engine, &devices);
             view.restoreWindows();
             expect (view.isInOwnWindow ("MPC") && ! view.isInOwnWindow ("Stage"));
         }

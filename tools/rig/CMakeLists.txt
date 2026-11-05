@@ -1,5 +1,5 @@
-# The Rig: plays the Crate tools live in one window, on one clock. A plain app (no plugin):
-# for Logic, use each tool's own plugin.
+# The Rig: plays the Crate tools live in one window, on one clock. An app, and (below) a plugin
+# for Logic.
 juce_add_gui_app(CrateRig
     COMPANY_NAME "Colin Blackshear"
     BUNDLE_ID "com.colinblackshear.crate.rig"
@@ -51,3 +51,52 @@ target_link_libraries(CrateRig
         juce::juce_recommended_warning_flags)
 
 crate_rename_vocoder_entry()
+
+# The Rig as a Logic plugin: an instrument that runs the whole Rig in a Logic song. Same code
+# as the app; RigPlugin is its host side (Logic's clock, MIDI, side chain and outputs).
+set(RIG_PLUGIN_FORMATS VST3)
+if(APPLE)
+    list(APPEND RIG_PLUGIN_FORMATS AU)
+endif()
+
+juce_add_plugin(CrateRigPlugin
+    COMPANY_NAME "Colin Blackshear"
+    BUNDLE_ID "com.colinblackshear.crate.rigplugin"
+    PLUGIN_MANUFACTURER_CODE Cblk
+    PLUGIN_CODE CRig
+    FORMATS ${RIG_PLUGIN_FORMATS}
+    PRODUCT_NAME "Crate Rig"
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "Crate Rig hears your microphone through Logic's side chain."
+    VST3_CATEGORIES Instrument Sampler
+    AU_MAIN_TYPE kAudioUnitType_MusicDevice
+    COPY_PLUGIN_AFTER_BUILD FALSE)
+
+target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp
+    ${MPC_SOURCES}
+    ${VOCODER_SOURCES}
+    ${BASS_SOURCES}
+    ${SYNTH_SOURCES}
+    ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
+    ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
+    ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
+target_include_directories(CrateRigPlugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
+    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth)
+target_link_libraries(CrateRigPlugin
+    PRIVATE
+        crate_core
+        mpc_format
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)
+
+# The Sample Editor's plugin entry is built in too; the plugin's own is RigPlugin's.
+set_source_files_properties(${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
+    PROPERTIES COMPILE_DEFINITIONS createPluginFilter=createSampleEditorPluginFilter)

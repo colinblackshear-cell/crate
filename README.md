@@ -116,8 +116,8 @@ the Logic project.
 
 ### Crate Rig (for playing live)
 
-One window that plays the tools together, on one clock, for a live set. It's a Mac app only;
-in Logic, use each tool's own plugin.
+One window that plays the tools together, on one clock, for a live set. It's a Mac app, and a
+Logic plugin (see **The Rig in Logic** below).
 
 - **One transport:** **Play** (or the space bar) starts the MPC's sequencer and everything else
   together, **Stop** stops and goes back to the start. Set the **Tempo** with the buttons or tap
@@ -228,6 +228,32 @@ in Logic, use each tool's own plugin.
 - **Audio + MIDI:** pick your audio interface and buffer size. A buffer of 128 samples or less
   keeps the delay from key to sound under about 3 ms.
 
+#### The Rig in Logic
+
+The whole Rig also runs inside Logic, as an instrument called **Crate Rig**:
+
+1. Make a **Software Instrument** track and pick **AU Instruments > Colin Blackshear > Crate Rig**
+   (choose **Multi Output** if you want each tool on its own track).
+2. **Your mic:** make an audio track for the mic (or just know its input), then at the top of
+   the Crate Rig window set **Side Chain** to it. The vocoder, the Input strip, sampling and
+   the looper hear it from there.
+3. **Your keys:** select the Crate Rig track and play; the Launchkey comes in through Logic and
+   the Rig splits it between the tools as usual (keys, pads, split, learned knobs).
+4. **The clock is Logic's:** the Rig uses Logic's tempo and time signature, plays when Logic plays,
+   from where Logic is, and stops when Logic stops (the MPC's sequences and songs, the bass,
+   the arp and the loops all line up with Logic's bars). With Logic stopped, the Rig's own
+   **Play** still works, to jam.
+5. **A track for each tool:** with the Multi Output version, click **+** at the bottom of the
+   instrument's channel strip in Logic's mixer to add tracks for the MPC, Vocoder, Bass, Synth,
+   Input, Sampler and Loops. A tool with its own track plays there (after its strip in the Rig)
+   and leaves the Rig's main output, so you can record and mix each one in Logic.
+6. Logic saves the show with the song. The loops are kept as WAVs in
+   `~/Music/Crate/Rig/In Logic`.
+
+To record: arm the Crate Rig track (and its tool tracks) and record in Logic as usual; you get
+the MIDI you played, and Bounce in Place or the tool tracks give you audio. **Record set** in the
+Rig works too.
+
 ### Crate on your phone
 
 A web app for recording on the go: open
@@ -264,7 +290,7 @@ without resampling.
 ## Installing a build
 
 Each GitHub build has a download per tool, **Sample-Editor-mac** and **MPC-Bank-Builder-mac**, each
-with the app, the AU and the VST3, and **Crate-Rig-mac** with the Rig app. Sample-Editor-mac also has the instrument version
+with the app, the AU and the VST3, and **Crate-Rig-mac** with the Rig app and its Logic plugin (`Crate-Rig-AU.zip`). Sample-Editor-mac also has the instrument version
 (**Sample-Editor-Instrument-AU** and **-VST3**).
 
 1. Unzip them. Put the `.app` in Applications, the `.component` in
@@ -276,7 +302,7 @@ with the app, the AU and the VST3, and **Crate-Rig-mac** with the Rig app. Sampl
    sudo xattr -cr "/Applications/Sample Editor.app" ~/Library/Audio/Plug-Ins/Components/"Sample Editor.component"
    sudo xattr -cr ~/Library/Audio/Plug-Ins/Components/"Sample Editor Instrument.component"
    sudo xattr -cr "/Applications/MPC Bank Builder.app" ~/Library/Audio/Plug-Ins/Components/"MPC Bank Builder.component"
-   sudo xattr -cr "/Applications/Crate Rig.app"
+   sudo xattr -cr "/Applications/Crate Rig.app" ~/Library/Audio/Plug-Ins/Components/"Crate Rig.component"
    killall -9 AudioComponentRegistrar
    ```
 3. The first time you press Record, macOS asks for microphone access. In the apps, choose your
