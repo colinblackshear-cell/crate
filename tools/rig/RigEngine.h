@@ -67,6 +67,15 @@ public:
     void stopCapture() { capture.stop(); }
     juce::String serviceCapture();
     int captureSource = RigCapture::mic, captureBars = 0;
+
+    // Sounds from anywhere (message thread). 44.1 kHz audio onto the next empty MPC pad of the
+    // bank the keyboard's pads play (returns its name, "A3", or empty if every pad is full), or
+    // into the Sampler. `beats` > 0 sets the pad's length for the MPC's keep in time.
+    juce::String putOnMpcPad (juce::AudioBuffer<float>, const juce::String& name, double beats);
+    void putInSampler (juce::AudioBuffer<float>, const juce::String& name);
+    // Plays a 44.1 kHz sound once to the speakers (not recorded), to hear it; null stops it.
+    void preview (std::shared_ptr<const juce::AudioBuffer<float>>);
+    bool isPreviewing() const { return previewPlaying.load(); }
     int captureDest = RigCapture::toSampler;
 
     // Scenes (message thread): what's playing now, as a scene; and the regular check that
@@ -172,6 +181,15 @@ private:
     RigScenes scenes;
     RigRecorder recorder;
     RigCapture capture;
+    // The preview: the window holds the sounds (so they're never freed here); the audio thread
+    // plays the newest by its pointer.
+    juce::SpinLock previewLock;
+    const juce::AudioBuffer<float>* previewNext = nullptr;   // under previewLock
+    int previewVersion = 0, previewSeen = 0;
+    const juce::AudioBuffer<float>* previewSound = nullptr;  // audio thread
+    double previewPos = 0;
+    std::atomic<bool> previewPlaying { false };
+    std::vector<std::shared_ptr<const juce::AudioBuffer<float>>> previewHeld;   // message thread
     void applyScene (const RigScene::State&);   // audio thread, at the bar
     std::array<double, RigLooper::kLayers> loadedLoopBeats {};
     std::array<Strip, numStrips> strips;
