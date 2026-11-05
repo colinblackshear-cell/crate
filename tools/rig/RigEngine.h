@@ -35,6 +35,10 @@ public:
     ~RigEngine() override;
 
     MpcProcessor& getMpc() { return mpc; }
+    // Puts chopped slices (from the Sampler) on the MPC's pads in a new kit, from A01, and makes
+    // it the kit that plays, so the drum pads play the slices straight away. Message thread.
+    // Returns what to tell the user.
+    juce::String sendSlicesToMpc (std::vector<crate::SharedAudio> slices, const juce::String& name);
     EditorProcessor& getSampler() { return sampler; }
     VocoderProcessor& getVocoder() { return vocoder; }
     BassProcessor& getBass() { return bass; }

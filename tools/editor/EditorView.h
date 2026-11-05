@@ -73,6 +73,11 @@ public:
     juce::ComboBox& getKeyModeBox() { return keyModeBox; }
     juce::ToggleButton& getComputerKeysToggle() { return computerKeys; }
     juce::Slider& getSensitivitySlider() { return sensitivitySlider; }
+    // A host that also has MPC pads (the Rig) sets this to show a "To MPC pads" button: it gets
+    // the slices and a name, and returns what to tell the user.
+    void setSendSlicesToPads (std::function<juce::String (std::vector<crate::SharedAudio>, const juce::String&)>);
+    void sendSlicesToPads();
+
     // "findHits", "split<N>" or "clear"
     void runChop (const juce::String& action)
     {
@@ -160,6 +165,8 @@ private:
 
     juce::Label chopHeading { {}, "CHOP" }, sensitivityLabel { {}, "Sensitivity" }, chopInfo;
     juce::TextButton findHitsButton { "Find hits" }, clearChopsButton { "Clear" }, saveSlicesButton { "Save slices..." };
+    juce::TextButton sendPadsButton { "To MPC pads" };
+    std::function<juce::String (std::vector<crate::SharedAudio>, const juce::String&)> sendSlices;
     juce::Slider sensitivitySlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::ComboBox splitBox;
     bool chopsFromHits = false;   // moving Sensitivity re-finds them
