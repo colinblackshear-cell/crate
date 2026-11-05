@@ -334,8 +334,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     playButton.setClickingTogglesState (false);
     playButton.onClick = [&transport] { transport.togglePlay(); };
     playButton.setTooltip ("Starts and stops every tool together (space bar).");
-    stopButton.onClick = [&transport] { transport.stop(); };
-    stopButton.setTooltip ("Stops and goes back to the start.");
+    stopButton.onClick = [this, &transport]
+    {
+        transport.stop();
+        engine.allNotesOff();   // Stop always means quiet: no hanging notes or latched arps
+    };
+    stopButton.setTooltip ("Stops, goes back to the start, and silences any notes still sounding.");
     clickButton.setClickingTogglesState (true);
     clickButton.onClick = [this, &transport] { transport.metronome = clickButton.getToggleState(); };
     clickButton.setTooltip ("A metronome click on every beat while playing.");

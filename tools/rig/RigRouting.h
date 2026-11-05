@@ -104,6 +104,9 @@ public:
     int mpcNoteForPad (int padNote) const;
 
 private:
+    // Where each key that's down went (by channel and note; 0 = not down), so its release goes
+    // to the same tool even if the keys were sent somewhere else meanwhile. Audio thread.
+    std::array<std::array<juce::uint8, 128>, 16> sounding {};
     void handleController (int channel, int cc, int value, Result&);
 
     std::atomic<int> learning { -1 };

@@ -133,6 +133,9 @@ public:
     // button), so the window should refresh. Reset by the window.
     std::atomic<bool> controlsMoved { false };
 
+    // Silences every tool's notes at the next block (stuck notes, a latched arp). Stop does it.
+    void allNotesOff() { notesOffRequested = true; }
+
     // Plays a note into the Rig as if it came from a keyboard (tests, the window).
     void addMidi (const juce::MidiMessage&);
 
@@ -212,6 +215,7 @@ private:
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;
 
     const juce::MidiBuffer* hostMidi = nullptr;
+    std::atomic<bool> notesOffRequested { false };
     std::array<float* const*, numStems> stemOut {};
 
     juce::MidiMessageCollector incoming;

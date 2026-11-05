@@ -295,6 +295,40 @@ struct RigEngineTests : juce::UnitTest
             expect (engine.getSampler().takeInputLevel() > 0.4f, "the sampler hears it");
         }
 
+        beginTest ("a key let go after the keys moved to another tool still stops (no stuck notes)");
+        {
+            RigEngine engine;
+            engine.prepare (44100.0, 512);
+            engine.getRouting().keysTo = (int) RigRouting::Dest::synth;
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 48, 1.0f));
+            expect (runEngine (engine, 8) > 0.01f, "the synth plays");
+            engine.getRouting().keysTo = (int) RigRouting::Dest::bass;
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 48));
+            runEngine (engine, 60);
+            expect (engine.getStrip (RigEngine::synthStrip).peak.exchange (0.0f) >= 0.0f);
+            expect (runEngine (engine, 10) < 1.0e-4f, "the synth note let go");
+        }
+
+        beginTest ("Stop silences a latched arp");
+        {
+            RigEngine engine;
+            engine.prepare (44100.0, 512);
+            engine.getRouting().keysTo = (int) RigRouting::Dest::synth;
+            auto& params = engine.getSynth().getParameters();
+            for (auto* p : params)
+                if (auto* b = dynamic_cast<juce::RangedAudioParameter*> (p))
+                    if (b->getParameterID() == "arpOn" || b->getParameterID() == "latch")
+                        b->setValueNotifyingHost (1.0f);
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 48, 1.0f));
+            runEngine (engine, 4);
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 48));
+            expect (runEngine (engine, 80) > 0.01f, "latched: keeps playing after you let go, even stopped");
+            engine.getTransport().stop();
+            engine.allNotesOff();
+            runEngine (engine, 60);
+            expect (runEngine (engine, 10) < 1.0e-4f, "quiet after Stop");
+        }
+
         beginTest ("with the mic off, the vocoder doesn't hear it (no feedback through the speakers)");
         {
             RigEngine engine;

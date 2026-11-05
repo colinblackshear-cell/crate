@@ -299,6 +299,7 @@ void RigEngine::applyControls (const RigRouting::Result& r)
     if (r.presses[RigRouting::stop] > 0)
     {
         transport.stop();
+        notesOffRequested = true;
         moved = true;
     }
     else if (r.presses[RigRouting::play] > 0)
@@ -339,6 +340,12 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     std::array<juce::MidiBuffer*, RigRouting::kNumDests> destinations { nullptr, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi };
     routing.route (midiIn, destinations, controls);
     applyControls (controls);
+    if (notesOffRequested.exchange (false))
+        for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi })
+        {
+            m->addEvent (juce::MidiMessage::allNotesOff (1), 0);
+            m->addEvent (juce::MidiMessage::allSoundOff (1), 0);
+        }
 
     // Play and stop land here, at the start of the block, for every tool at once.
     transport.beginBlock();

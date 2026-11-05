@@ -245,7 +245,22 @@ void RigRouting::route (const juce::MidiBuffer& in, std::array<juce::MidiBuffer*
         }
 
         if (isNote)
-            send (split > 0 && m.getNoteNumber() < split ? lower : upper, m, at);
+        {
+            auto& where = sounding[(size_t) juce::jlimit (0, 15, m.getChannel() - 1)][(size_t) m.getNoteNumber()];
+            int dest = split > 0 && m.getNoteNumber() < split ? lower : upper;
+            if (m.isNoteOn())
+                where = (juce::uint8) juce::jmax (0, dest);
+            else if (m.isNoteOff())
+            {
+                // A key let go goes where it was played, so nothing's left hanging.
+                if (where > 0)
+                    dest = where;
+                where = 0;
+            }
+            else if (where > 0)
+                dest = where;   // aftertouch follows the key
+            send (dest, m, at);
+        }
         else if (m.isPitchWheel() || m.isChannelPressure())
         {
             send (upper, m, at);
