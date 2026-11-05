@@ -178,6 +178,12 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     prepared = true;
 }
 
+juce::String RigEngine::stemName (int s)
+{
+    static const char* names[] = { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops" };
+    return juce::isPositiveAndBelow (s, (int) numStems) ? names[s] : "";
+}
+
 void RigEngine::process (const float* const* inputs, int numInputs, float* const* outputs, int numOutputs, int numSamples)
 {
     for (int ch = 0; ch < numOutputs; ++ch)
@@ -317,6 +323,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             nowMidi.clear();
         }
     }
+    if (hostMidi != nullptr)
+        for (const auto m : *hostMidi)
+            if (m.samplePosition >= offset && m.samplePosition < offset + n)
+                midiIn.addEvent (m.getMessage(), m.samplePosition - offset);
     if (! midiIn.isEmpty())
         lastMidiTime = juce::Time::getMillisecondCounter();
 
@@ -442,10 +452,14 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     sampler.processBlock (samplerBlock, samplerMidi);
     applyStrip (samplerStrip, samplerBlock);
 
+    // Each tool's strip (in Stem order), for its own output in Logic.
+    const std::array<juce::AudioBuffer<float>*, numStems> stems { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, nullptr };
+
     mix.clear();
-    for (auto* buffer : { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock })
-        for (int ch = 0; ch < 2; ++ch)
-            mix.addFrom (ch, 0, *buffer, ch, 0, n);
+    for (int st = 0; st < loopsStem; ++st)
+        if (stemOut[(size_t) st] == nullptr)
+            for (int ch = 0; ch < 2; ++ch)
+                mix.addFrom (ch, 0, *stems[(size_t) st], ch, 0, n);
 
     // The looper records from the input, a tool, or the mix so far (never itself), and plays
     // its layers through the Loops strip.
@@ -471,8 +485,17 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         controlsMoved = true;
     }
     applyStrip (loopsStrip, loopsBlock);
-    for (int ch = 0; ch < 2; ++ch)
-        mix.addFrom (ch, 0, loopsBlock, ch, 0, n);
+    if (stemOut[loopsStem] == nullptr)
+        for (int ch = 0; ch < 2; ++ch)
+            mix.addFrom (ch, 0, loopsBlock, ch, 0, n);
+    for (int st = 0; st < numStems; ++st)
+        if (auto* const* out = stemOut[(size_t) st])
+        {
+            const auto& from = st == loopsStem ? loopsBlock : *stems[(size_t) st];
+            for (int ch = 0; ch < 2; ++ch)
+                if (out[ch] != nullptr)
+                    juce::FloatVectorOperations::copy (out[ch] + offset, from.getReadPointer (ch), n);
+        }
 
     // The metronome: heard (under the master fader), but kept out of recordings.
     juce::AudioBuffer<float> click (clickBuffer.getArrayOfWritePointers(), 2, n);

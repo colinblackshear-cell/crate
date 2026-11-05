@@ -10,6 +10,8 @@ target_sources(CrateTests PRIVATE
     RigLooperTests.cpp
     RigSceneTests.cpp
     RigRecorderTests.cpp
+    RigPluginTests.cpp
+    ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
     SoundBankTests.cpp
     SynthTests.cpp
     SequencerTests.cpp
@@ -43,3 +45,6 @@ target_link_libraries(MpcFormatTests PRIVATE mpc_format)
 add_test(NAME mpc_format_tests COMMAND MpcFormatTests)
 
 crate_rename_vocoder_entry()
+# The tests build the Rig plugin's code without being a plugin.
+set_source_files_properties(${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
+    PROPERTIES COMPILE_DEFINITIONS createPluginFilter=createRigPluginFilter)

@@ -135,6 +135,15 @@ public:
     // Audio. `prepare` and `process` are what the audio device calls; tests call them directly.
     void prepare (double sampleRate, int maximumBlockSize);
     void process (const float* const* inputs, int numInputs, float* const* outputs, int numOutputs, int numSamples);
+    // As a plugin: the host's MIDI for the next process() call (sample positions within it),
+    // or null. Audio thread.
+    void setHostMidi (const juce::MidiBuffer* m) { hostMidi = m; }
+    // As a plugin: a tool's own stereo output (Logic's multi-output tracks). A tool sent to
+    // its own output plays there, after its strip, and no longer in the main mix. Null puts it
+    // back in the mix. Audio thread, before process().
+    enum Stem { mpcStem, vocoderStem, bassStem, synthStem, inputStem, samplerStem, loopsStem, numStems };
+    static juce::String stemName (int);
+    void setStemOutput (int stem, float* const* stereo) { stemOut[(size_t) stem] = stereo; }
     // Plays queued MIDI at the start of the next block, without timestamps (tests).
     void addMidiNow (const juce::MidiMessage&);
 
@@ -196,6 +205,9 @@ private:
     std::array<StripFx, numStrips> fx;
     juce::MidiBuffer noMidi;
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;
+
+    const juce::MidiBuffer* hostMidi = nullptr;
+    std::array<float* const*, numStems> stemOut {};
 
     juce::MidiMessageCollector incoming;
     juce::SpinLock nowLock;

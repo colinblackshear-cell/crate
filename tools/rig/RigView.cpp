@@ -315,7 +315,7 @@ void RigView::showFx (int strip)
 }
 
 //==============================================================================
-RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
+RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     : engine (e), devices (d)
 {
     setLookAndFeel (&lookAndFeel);
@@ -750,6 +750,9 @@ void RigView::updateLearnButtons()
 void RigView::timerCallback()
 {
     auto& transport = engine.getTransport();
+    // In Logic, Logic's tempo is the Rig's.
+    if (transport.isHosted() && std::abs (tempo.getValue() - transport.getBpm()) > 0.001)
+        tempo.setValue (transport.getBpm(), juce::dontSendNotification);
     const bool playing = transport.isPlaying();
     playButton.setToggleState (playing, juce::dontSendNotification);
     playButton.setButtonText (playing ? "Playing" : "Play");
@@ -992,12 +995,19 @@ void RigView::showKnobMenu()
 
 void RigView::openMidiInputs()
 {
+    if (devices == nullptr)
+    {
+        // In Logic, the keys come from the track.
+        if (midiLight.getText().isEmpty())
+            midiLight.setText ("MIDI from Logic", juce::dontSendNotification);
+        return;
+    }
     const auto inputs = juce::MidiInput::getAvailableDevices();
     juce::StringArray names;
     for (const auto& input : inputs)
     {
-        if (! devices.isMidiInputDeviceEnabled (input.identifier))
-            devices.setMidiInputDeviceEnabled (input.identifier, true);
+        if (! devices->isMidiInputDeviceEnabled (input.identifier))
+            devices->setMidiInputDeviceEnabled (input.identifier, true);
         names.add (input.name);
     }
     if (inputs != knownInputs || midiLight.getText().isEmpty())
@@ -1010,7 +1020,9 @@ void RigView::openMidiInputs()
 
 void RigView::showAudioSettings()
 {
-    auto selector = std::make_unique<juce::AudioDeviceSelectorComponent> (devices, 0, 2, 1, 2, true, false, true, false);
+    if (devices == nullptr)
+        return;
+    auto selector = std::make_unique<juce::AudioDeviceSelectorComponent> (*devices, 0, 2, 1, 2, true, false, true, false);
     selector->setSize (520, 480);
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned (selector.release());
@@ -1123,7 +1135,9 @@ void RigView::resized()
     bar.removeFromRight (6);
     saveButton.setBounds (bar.removeFromRight (94));
     bar.removeFromRight (6);
-    audioButton.setBounds (bar.removeFromRight (108));
+    audioButton.setVisible (devices != nullptr);
+    if (devices != nullptr)
+        audioButton.setBounds (bar.removeFromRight (108));
 
     auto bottom = area.removeFromBottom (kBottomHeight).reduced (10, 8);
     auto routing = bottom.removeFromLeft (350);

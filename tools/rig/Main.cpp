@@ -83,7 +83,7 @@ private:
             : DocumentWindow ("Crate Rig", crate::Theme::background, DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
-            setContentOwned (new RigView (engine, devices), false);
+            setContentOwned (new RigView (engine, &devices), false);
             setResizable (true, false);
             setResizeLimits (1000, 700, 4000, 3000);
 
