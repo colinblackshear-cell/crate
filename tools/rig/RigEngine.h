@@ -13,6 +13,8 @@
 #include "StripFx.h"
 #include "RigLooper.h"
 #include "RigScenes.h"
+#include "RigRecorder.h"
+#include "RigCapture.h"
 
 #include <array>
 
@@ -47,6 +49,25 @@ public:
     RigTransport& getTransport() { return transport; }
     RigLooper& getLooper() { return looper; }
     RigScenes& getScenes() { return scenes; }
+
+    // Record the set (message thread): every strip and the mix as WAVs, and what's played on
+    // the keys and pads as MIDI, into `folder`; it starts at the next bar. Call stopRecording()
+    // to end it, and serviceRecorder() often (it returns true when a take has been saved).
+    RigRecorder& getRecorder() { return recorder; }
+    bool startRecording (const juce::File& folder);
+    void stopRecording() { recorder.stop(); }
+    bool serviceRecorder() { return recorder.service(); }
+    static juce::File recordingsFolder();
+
+    // Record one tool into another (message thread): `source` (a RigCapture::Source) into
+    // captureDest, from the next bar, for `bars` (0: until stopCapture). serviceCapture() hands
+    // a finished recording to where it goes and says what happened (empty while nothing's done).
+    RigCapture& getCapture() { return capture; }
+    bool startCapture (int source, int bars) { return capture.start (source, bars); }
+    void stopCapture() { capture.stop(); }
+    juce::String serviceCapture();
+    int captureSource = RigCapture::mic, captureBars = 0;
+    int captureDest = RigCapture::toSampler;
 
     // Scenes (message thread): what's playing now, as a scene; and the regular check that
     // moves song mode on and gets the MPC and bass ready for a scene about to start. The
@@ -149,6 +170,8 @@ private:
     RigRouting routing;
     RigLooper looper;
     RigScenes scenes;
+    RigRecorder recorder;
+    RigCapture capture;
     void applyScene (const RigScene::State&);   // audio thread, at the bar
     std::array<double, RigLooper::kLayers> loadedLoopBeats {};
     std::array<Strip, numStrips> strips;
@@ -161,7 +184,7 @@ private:
     juce::MidiBuffer nowMidi;          // addMidiNow, under nowLock
 
     // Audio-thread buffers, sized in prepare().
-    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, inputBuffer, rawInputBuffer, loopsBuffer, mixBuffer;
+    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, inputBuffer, rawInputBuffer, loopsBuffer, mixBuffer, clickBuffer;
     juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi;
     double sampleRate = 0;
     int maxBlock = 0;

@@ -321,10 +321,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     setWantsKeyboardFocus (true);
 
     for (auto* c : std::initializer_list<juce::Component*> { &playButton, &stopButton, &clickButton, &learnPlay, &learnStop,
-                                                             &tempoLabel, &tempo, &tapButton, &sampleButton, &knobButton, &position, &midiLight,
+                                                             &tempoLabel, &tempo, &tapButton, &sampleButton, &knobButton, &recordButton, &position, &midiLight,
                                                              &audioButton, &saveButton, &openButton, &tabs,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
-                                                             &sourceLabel, &sampleSource, &splitLabel, &splitNote, &lowerKeysTo })
+                                                             &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
         addAndMakeVisible (c);
 
     auto& transport = engine.getTransport();
@@ -364,9 +364,16 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     };
 
     sampleButton.setColour (juce::TextButton::buttonOnColourId, Theme::record);
-    sampleButton.setTooltip ("Records what the Sampler hears (pick it in Sampler records: the mic, the vocoder, or the Rig mix) "
-                             "straight into the Sampler. Press again to stop; then play it from the keys or edit it in the Sampler tab.");
+    sampleButton.setTooltip ("Records one tool into another, as picked under Sample at the bottom left: the mic, a tool or the "
+                             "Rig mix, into the Sampler or onto the next empty MPC pad. It starts at the next bar (now, if the "
+                             "Rig is stopped) and stops after the bars picked, or when you press again.");
     sampleButton.onClick = [this] { toggleSampling(); };
+
+    recordButton.setColour (juce::TextButton::buttonOnColourId, Theme::record);
+    recordButton.setTooltip ("Records the set for Logic, from the next bar: every tool as its own WAV (as you hear it), "
+                             "the mix, and what you play on the keys and pads as MIDI. Press again to stop (stopping the "
+                             "Rig stops it too). Saved in Music > Crate > Rig > Recordings.");
+    recordButton.onClick = [this] { toggleRecordSet(); };
 
     knobButton.setColour (juce::TextButton::buttonOnColourId, Theme::accent);
     knobButton.setTooltip ("Put a knob of your keyboard on any setting: choose Learn a knob, touch the setting on screen "
@@ -390,7 +397,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
     stageView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
     stageView->onSample = [this] { toggleSampling(); };
-    stageView->isSampling = [this] { return sampleButton.getToggleState(); };
+    stageView->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
     stage = stageView;
     addPage ("Stage", Theme::text, stageView);
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
@@ -452,10 +459,30 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager& d)
     };
     splitNote.setTooltip ("Split the keyboard: keys below this note play a second instrument.");
     keysTo.setTooltip ("What your keyboard's keys play.");
-    for (int i = 0; i < 3; ++i)
-        sampleSource.addItem (RigEngine::sampleSourceName (i), i + 1);
-    sampleSource.onChange = [this] { engine.sampleSource = sampleSource.getSelectedId() - 1; };
-    sampleSource.setTooltip ("What the Sampler records: your mic, the vocoder, or the Rig mix (everything but the sampler, as you hear it).");
+    for (int i = 0; i < RigCapture::numSources; ++i)
+        sampleSource.addItem (RigCapture::sourceName (i), i + 1);
+    sampleSource.onChange = [this]
+    {
+        engine.captureSource = sampleSource.getSelectedId() - 1;
+        // The Sampler's own Record button (in its tab) hears the same, where it can.
+        switch (engine.captureSource)
+        {
+            case RigCapture::mic:     engine.sampleSource = (int) RigEngine::SampleSource::mic; break;
+            case RigCapture::vocoder: engine.sampleSource = (int) RigEngine::SampleSource::vocoder; break;
+            case RigCapture::mix:     engine.sampleSource = (int) RigEngine::SampleSource::mix; break;
+            default: break;
+        }
+    };
+    sampleSource.setTooltip ("What Sample records: the mic, any tool as you hear it (after its effects and level), or the whole Rig mix.");
+    sampleDest.addItem ("into Sampler", RigCapture::toSampler + 1);
+    sampleDest.addItem ("onto MPC pad", RigCapture::toMpcPad + 1);
+    sampleDest.onChange = [this] { engine.captureDest = sampleDest.getSelectedId() - 1; };
+    sampleDest.setTooltip ("Where it goes: the Sampler (play it from the keys, chop it), or the next empty pad of the MPC "
+                           "(in the bank your keyboard's pads play).");
+    for (int bars : RigCapture::barChoices())
+        sampleBars.addItem (bars == 0 ? "Free" : juce::String (bars) + (bars == 1 ? " bar" : " bars"), bars + 1);
+    sampleBars.onChange = [this] { engine.captureBars = sampleBars.getSelectedId() - 1; };
+    sampleBars.setTooltip ("How long: a number of bars (it stops by itself, in time, ready to loop), or Free (until you press Sample again).");
 
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::mpcStrip, RigRouting::mpcLevel, RigRouting::mpcMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::vocoderStrip, RigRouting::vocoderLevel, RigRouting::vocoderMute, &engine.vocoderOn));
@@ -503,7 +530,9 @@ void RigView::refresh()
     clickButton.setToggleState (transport.metronome.load(), juce::dontSendNotification);
     padBank.setSelectedItemIndex (engine.getRouting().padBank.load(), juce::dontSendNotification);
     keysTo.setSelectedId (engine.getRouting().keysTo.load() + 1, juce::dontSendNotification);
-    sampleSource.setSelectedId (engine.sampleSource.load() + 1, juce::dontSendNotification);
+    sampleSource.setSelectedId (engine.captureSource + 1, juce::dontSendNotification);
+    sampleDest.setSelectedId (engine.captureDest + 1, juce::dontSendNotification);
+    sampleBars.setSelectedId (engine.captureBars + 1, juce::dontSendNotification);
     lowerKeysTo.setSelectedId (engine.getRouting().lowerKeysTo.load() + 1, juce::dontSendNotification);
     const int split = engine.getRouting().splitNote.load();
     splitNote.setSelectedId (split > 0 ? split + 1 : 1, juce::dontSendNotification);
@@ -727,21 +756,20 @@ void RigView::timerCallback()
     const int beat = (int) std::floor (std::fmod (beats, (double) beatsPerBar)) + 1;
     position.setText (juce::String (bar) + " . " + juce::String (beat), juce::dontSendNotification);
 
-    auto& sampler = engine.getSampler();
-    if (sampler.isRecording())
-    {
-        sampler.collectRecording();
-        const int seconds = (int) sampler.getRecordedSeconds();
-        sampleButton.setButtonText ("Stop " + juce::String (seconds / 60) + ":" + juce::String (seconds % 60).paddedLeft ('0', 2));
-    }
-    else if (sampleButton.getToggleState())
-    {
-        toggleSampling();   // the Sampler hit its length limit, or stopped in its own tab
-    }
+    if (const auto done = engine.serviceCapture(); done.isNotEmpty())
+        say (done);
+    updateSampleButton();
 
     if (fxPanel != nullptr)
         fxPanel->tick();
     engine.tickScenes();
+    if (engine.serviceRecorder())
+    {
+        const auto& files = engine.getRecorder().getSavedFiles();
+        say ("Saved the set: " + juce::String (juce::jmax (0, files.size() - 1)) + " files in Recordings/"
+             + engine.getRecorder().getFolder().getFileName() + ". Open in Logic.txt there says how.");
+    }
+    updateRecordButton();
 
     if (learningKnob)
     {
@@ -780,30 +808,75 @@ void RigView::timerCallback()
 
 void RigView::toggleSampling()
 {
-    auto& sampler = engine.getSampler();
-    if (! sampleButton.getToggleState())
+    auto& capture = engine.getCapture();
+    if (capture.getState() == RigCapture::State::idle)
     {
-        sampler.stop();
-        sampler.startRecording();
-        sampleButton.setToggleState (true, juce::dontSendNotification);
-        sampleButton.setButtonText ("Stop 0:00");
-        return;
+        if (engine.startCapture (engine.captureSource, engine.captureBars) && engine.getTransport().isPlaying())
+            say ("Sampling " + RigCapture::sourceName (engine.captureSource) + " from the next bar...");
     }
+    else
+    {
+        engine.stopCapture();
+    }
+    updateSampleButton();
+}
 
-    sampleButton.setToggleState (false, juce::dontSendNotification);
-    sampleButton.setButtonText ("Sample");
-    if (! sampler.isRecording())
-        return;   // already stopped (and loaded) in the Sampler tab
+void RigView::updateSampleButton()
+{
+    const auto& capture = engine.getCapture();
+    const auto state = capture.getState();
+    juce::String text = "Sample";
+    if (state == RigCapture::State::armed)
+        text = "Next bar...";
+    else if (state == RigCapture::State::recording)
+    {
+        const int seconds = (int) capture.getRecordedSeconds();
+        text = "Stop " + juce::String (seconds / 60) + ":" + juce::String (seconds % 60).paddedLeft ('0', 2);
+    }
+    sampleButton.setToggleState (state == RigCapture::State::recording
+                                     || (state == RigCapture::State::armed && (juce::Time::getMillisecondCounter() / 400) % 2 == 0),
+                                 juce::dontSendNotification);
+    if (sampleButton.getButtonText() != text)
+        sampleButton.setButtonText (text);
+}
 
-    auto take = sampler.stopRecording();
-    if (take.getNumSamples() < crate::samples (0.05))
-        return;
+void RigView::toggleRecordSet()
+{
+    auto& recorder = engine.getRecorder();
+    if (recorder.getState() == RigRecorder::State::idle)
+    {
+        const auto folder = RigEngine::recordingsFolder().getChildFile (juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M.%S"));
+        if (! engine.startRecording (folder))
+            say ("Couldn't start recording in " + folder.getFullPathName() + ".");
+        else
+            say (engine.getTransport().isPlaying() ? "Recording the set from the next bar..." : "Recording the set when you press Play...");
+    }
+    else
+    {
+        engine.stopRecording();
+    }
+    updateRecordButton();
+}
 
-    // Into the Sampler, ready to play from the keys or edit (and undoable there).
-    sampler.getDocument().load (crate::share (std::move (take)),
-                                engine.sampleSourceName (engine.sampleSource.load()) + " "
-                                    + juce::Time::getCurrentTime().formatted ("%H.%M.%S"),
-                                "Sample");
+void RigView::updateRecordButton()
+{
+    auto& recorder = engine.getRecorder();
+    const auto state = recorder.getState();
+    juce::String text = "Record set";
+    if (state == RigRecorder::State::armed)
+        text = "Rec: next bar";
+    else if (state == RigRecorder::State::recording)
+    {
+        const int seconds = (int) recorder.getRecordedSeconds();
+        text = "Stop " + juce::String (seconds / 60) + ":" + juce::String (seconds % 60).paddedLeft ('0', 2);
+    }
+    else if (state == RigRecorder::State::finishing)
+        text = "Saving...";
+    recordButton.setToggleState (state == RigRecorder::State::recording
+                                     || (state == RigRecorder::State::armed && (juce::Time::getMillisecondCounter() / 400) % 2 == 0),
+                                 juce::dontSendNotification);
+    if (recordButton.getButtonText() != text)
+        recordButton.setButtonText (text);
 }
 
 void RigView::say (const juce::String& text)
@@ -1018,45 +1091,52 @@ void RigView::resized()
     auto area = getLocalBounds();
 
     auto bar = area.removeFromTop (56).reduced (10, 10);
-    bar.removeFromLeft (60);
-    playButton.setBounds (bar.removeFromLeft (96));
+    bar.removeFromLeft (56);
+    playButton.setBounds (bar.removeFromLeft (90));
     bar.removeFromLeft (4);
-    learnPlay.setBounds (bar.removeFromLeft (64));
+    learnPlay.setBounds (bar.removeFromLeft (56));
+    bar.removeFromLeft (8);
+    stopButton.setBounds (bar.removeFromLeft (64));
+    bar.removeFromLeft (4);
+    learnStop.setBounds (bar.removeFromLeft (56));
     bar.removeFromLeft (10);
-    stopButton.setBounds (bar.removeFromLeft (70));
-    bar.removeFromLeft (4);
-    learnStop.setBounds (bar.removeFromLeft (64));
-    bar.removeFromLeft (16);
-    position.setBounds (bar.removeFromLeft (100));
-    bar.removeFromLeft (16);
-    tempoLabel.setBounds (bar.removeFromLeft (52));
-    tempo.setBounds (bar.removeFromLeft (170));
+    position.setBounds (bar.removeFromLeft (86));
+    bar.removeFromLeft (10);
+    tempoLabel.setBounds (bar.removeFromLeft (48));
+    tempo.setBounds (bar.removeFromLeft (150));
     bar.removeFromLeft (6);
-    tapButton.setBounds (bar.removeFromLeft (52));
+    tapButton.setBounds (bar.removeFromLeft (48));
     bar.removeFromLeft (6);
-    clickButton.setBounds (bar.removeFromLeft (64));
+    clickButton.setBounds (bar.removeFromLeft (56));
     bar.removeFromLeft (6);
-    sampleButton.setBounds (bar.removeFromLeft (96));
+    sampleButton.setBounds (bar.removeFromLeft (90));
     bar.removeFromLeft (6);
-    knobButton.setBounds (bar.removeFromLeft (70));
+    recordButton.setBounds (bar.removeFromLeft (104));
+    bar.removeFromLeft (6);
+    knobButton.setBounds (bar.removeFromLeft (64));
 
-    openButton.setBounds (bar.removeFromRight (100));
+    openButton.setBounds (bar.removeFromRight (94));
     bar.removeFromRight (6);
-    saveButton.setBounds (bar.removeFromRight (100));
+    saveButton.setBounds (bar.removeFromRight (94));
     bar.removeFromRight (6);
-    audioButton.setBounds (bar.removeFromRight (120));
+    audioButton.setBounds (bar.removeFromRight (108));
 
     auto bottom = area.removeFromBottom (kBottomHeight).reduced (10, 8);
-    auto routing = bottom.removeFromLeft (320);
+    auto routing = bottom.removeFromLeft (350);
     const std::pair<juce::Label*, juce::ComboBox*> rows[] = { { &padsLabel, &padBank }, { &keysLabel, &keysTo },
                                                               { &splitLabel, &splitNote }, { &sourceLabel, &sampleSource } };
     for (auto [label, box] : rows)
     {
         auto row = routing.removeFromTop (28);
-        label->setBounds (row.removeFromLeft (124));
-        box->setBounds (row.removeFromLeft (box == &padBank ? 70 : box == &splitNote ? 82 : 120).reduced (0, 2));
+        label->setBounds (row.removeFromLeft (box == &sampleSource ? 54 : 124));
+        box->setBounds (row.removeFromLeft (box == &padBank ? 70 : box == &splitNote ? 82 : box == &sampleSource ? 104 : 120).reduced (0, 2));
         if (box == &splitNote)
             lowerKeysTo.setBounds (row.removeFromLeft (100).reduced (4, 2));
+        if (box == &sampleSource)
+        {
+            sampleDest.setBounds (row.removeFromLeft (118).reduced (4, 2));
+            sampleBars.setBounds (row.removeFromLeft (72).reduced (0, 2));
+        }
         routing.removeFromTop (1);
     }
 

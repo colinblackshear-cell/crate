@@ -761,7 +761,7 @@ public:
     {
         addAndMakeVisible (sample);
         sample.setColour (juce::TextButton::buttonOnColourId, Theme::record);
-        sample.setTooltip ("Records what the Sampler hears straight into it (the same as Sample at the top).");
+        sample.setTooltip ("The same as Sample at the top: records what's picked under Sample, into the Sampler or onto an MPC pad.");
         sample.onClick = [this] { if (owner.onSample) owner.onSample(); };
     }
 
@@ -773,7 +773,9 @@ protected:
         sample.setButtonText (recording ? "Stop sampling" : "Sample");
         const auto text = "Has: " + (engine.getSampler().getDocument().getName().isNotEmpty() ? engine.getSampler().getDocument().getName()
                                                                                               : juce::String ("nothing yet"))
-                        + "\nRecords: " + RigEngine::sampleSourceName (engine.sampleSource.load());
+                        + "\nSample records " + RigCapture::sourceName (engine.captureSource) + " "
+                        + (engine.captureDest == RigCapture::toMpcPad ? "onto an MPC pad" : "into the Sampler")
+                        + (engine.captureBars > 0 ? ", " + juce::String (engine.captureBars) + (engine.captureBars == 1 ? " bar" : " bars") : juce::String());
         if (text != shown)
         {
             shown = text;
