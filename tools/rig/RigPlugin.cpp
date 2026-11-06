@@ -18,6 +18,7 @@ RigPlugin::RigPlugin() : AudioProcessor (buses())
     // Rig app (they'd think they were in Logic otherwise).
     juce::AudioProcessor::setTypeOfNextNewPlugin (wrapperType_Undefined);
     engine = std::make_unique<RigEngine>();
+    engine->micOn = true;   // Logic's Side Chain decides
 }
 
 RigPlugin::~RigPlugin() = default;
