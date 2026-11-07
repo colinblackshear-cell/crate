@@ -4,6 +4,7 @@
 #include "StageView.h"
 #include "SoundsView.h"
 #include "RigColours.h"
+#include "EditorView.h"
 
 namespace Theme = crate::Theme;
 
@@ -418,7 +419,14 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     addPage ("Vocoder", vocoderColour, engine.getVocoder().createEditorAndMakeActive());
     addPage ("Bass", bassColour, engine.getBass().createEditorAndMakeActive());
     addPage ("Synth", synthColour, engine.getSynth().createEditorAndMakeActive());
-    addPage ("Sampler", samplerColour, engine.getSampler().createEditorAndMakeActive());
+    {
+        auto* samplerView = engine.getSampler().createEditorAndMakeActive();
+        // Smart chop's "To MPC pads": the slices go straight onto the MPC's pads
+        if (auto* editor = dynamic_cast<EditorView*> (samplerView))
+            editor->setSendSlicesToPads ([this] (std::vector<crate::SharedAudio> slices, const juce::String& name)
+                                         { return engine.sendSlicesToMpc (std::move (slices), name); });
+        addPage ("Sampler", samplerColour, samplerView);
+    }
     auto* looperView = new LooperView (engine);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looper = looperView;

@@ -1,5 +1,7 @@
 #include "RigEngine.h"
 
+#include <algorithm>
+
 #include "core/AudioFiles.h"
 #include "core/Edits.h"
 
@@ -1040,4 +1042,39 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
             looper.setLayerAudio (i, std::move (audio), beats);
         }
     }
+}
+
+//==============================================================================
+juce::String RigEngine::sendSlicesToMpc (std::vector<crate::SharedAudio> slices, const juce::String& name)
+{
+    slices.erase (std::remove_if (slices.begin(), slices.end(),
+                                  [] (const crate::SharedAudio& a) { return a == nullptr || a->getNumSamples() == 0; }),
+                  slices.end());
+    if (slices.empty())
+        return "There are no slices to send.";
+
+    auto& project = mpc.getProject();
+    const auto base = name.trim().isNotEmpty() ? name.trim().substring (0, 12) : juce::String ("Chop");
+    const int index = project.addBank ("Chop " + base);
+    auto& bank = project.getBanks()[(size_t) index];
+
+    const int count = juce::jmin ((int) slices.size(), (int) mpc::kPadCount);
+    for (int i = 0; i < count; ++i)
+    {
+        auto& pad = bank.pads[(size_t) i];
+        pad.audio = slices[(size_t) i];
+        pad.name = base + " " + juce::String (i + 1);   // the MPC keeps 16 characters
+        pad.mode = PadMode::mono;                        // a new hit cuts the last slice off
+        pad.mono = pad.audio->getNumChannels() == 1;
+    }
+
+    project.setCurrent (index);
+    mpc.padBankOnScreen = 0;   // the drum pads play A01 to A16
+    project.changed();
+
+    juce::String text = "Sent " + juce::String (count) + " slices to a new MPC kit, \"" + bank.name + "\": pads A01 to "
+                        + padLabel (count - 1) + ". The drum pads play them now.";
+    if (count < (int) slices.size())
+        text << " (The other " << ((int) slices.size() - count) << " didn't fit; a kit has 64 pads.)";
+    return text;
 }
