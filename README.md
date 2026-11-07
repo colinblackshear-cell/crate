@@ -124,7 +124,16 @@ Logic plugin (see **The Rig in Logic** below).
   together, **Stop** stops and goes back to the start. Set the **Tempo** with the buttons or tap
   it with **Tap**; **Click** turns the metronome on. The MPC follows the Rig's tempo the way it
   follows Logic's.
-- **The Stage:** the first tab shows every tool on one screen while you play. Along the top is
+- **Main, the Rig as one groovebox:** the first tab. The six tracks (Drums, Bass, Synth, Vocoder,
+  Sampler, Loops) run down the left; each says what it's doing or why it's quiet ("Muted", "Mic is
+  off", "No notes yet: light some steps") and has a mute. Click a track and the middle shows it:
+  16 big steps (the drums' hits for the sound picked above them, the bass line with its notes,
+  the arp's rhythm), a row of patterns (beats, bass patterns, arp modes, vocoder sounds, loop
+  mutes) and eight knobs. The keys play the track you pick, and the keyboard's first eight
+  knobs (CC 21-28, the Launchkey's) turn its eight knobs, unless you've learned a knob onto
+  something else. Song parts A-H run along the bottom: an empty one saves what's playing, a
+  full one plays it from the next bar.
+- **The Stage:** the next tab shows every tool on one screen while you play. Along the top is
   the song: the part playing, what's next and when, a button for each part, **< Back**,
   **Next >** and **Song mode**. Below, each tool has a tile showing what it's doing right now,
   with its mute and meter: the **MPC**'s sequence and where it is in it, a button per sequence

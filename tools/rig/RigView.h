@@ -133,6 +133,7 @@ private:
     class LooperView* looper = nullptr;   // owned by the tabs
     class SongView* song = nullptr;
     class StageView* stage = nullptr;
+    class GrooveView* groove = nullptr;
     void showTab (const juce::String& name);
 
     // Each tab's page. A page can pop out into its own window (to put it on a second screen);

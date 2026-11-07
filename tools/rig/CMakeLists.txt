@@ -18,12 +18,13 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/RigScenes.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SongView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/StageView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/GrooveView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigRecorder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigCapture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SoundsView.cpp
     PARENT_SCOPE)
 
-target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp
+target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -77,7 +78,7 @@ juce_add_plugin(CrateRigPlugin
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp
+target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}

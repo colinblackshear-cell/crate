@@ -176,10 +176,26 @@ void RigRouting::handleController (int channel, int cc, int value, Result& resul
         return;
     }
 
+    bool used = false;
+    auto move = [&result] (int tool, int parameter, float value)
+    {
+        // The latest value per setting wins within a block.
+        int slot = result.numParamMoves;
+        for (int i = 0; i < result.numParamMoves; ++i)
+            if (result.paramMoves[(size_t) i].tool == tool && result.paramMoves[(size_t) i].parameter == parameter)
+                slot = i;
+        if (slot >= (int) result.paramMoves.size())
+            return;
+        result.paramMoves[(size_t) slot] = { tool, parameter, value };
+        if (slot == result.numParamMoves)
+            ++result.numParamMoves;
+    };
+
     for (int c = 0; c < numControls; ++c)
     {
         if (assigned[(size_t) c].load() != packed)
             continue;
+        used = true;
         if (isFader (c))
             result.values[(size_t) c] = (float) value / 127.0f;
         else if (value > 0 && lastValue[(size_t) c] == 0)
@@ -188,17 +204,38 @@ void RigRouting::handleController (int channel, int cc, int value, Result& resul
     }
 
     for (const auto& k : knobs)
-        if (k.packed.load() == packed && result.numParamMoves < (int) result.paramMoves.size())
+        if (k.packed.load() == packed)
         {
-            // The latest value per knob wins within a block.
-            int slot = result.numParamMoves;
-            for (int i = 0; i < result.numParamMoves; ++i)
-                if (result.paramMoves[(size_t) i].tool == k.tool.load() && result.paramMoves[(size_t) i].parameter == k.parameter.load())
-                    slot = i;
-            result.paramMoves[(size_t) slot] = { k.tool.load(), k.parameter.load(), (float) value / 127.0f };
-            if (slot == result.numParamMoves)
-                ++result.numParamMoves;
+            used = true;
+            move (k.tool.load(), k.parameter.load(), (float) value / 127.0f);
         }
+
+    // Not learned: the first eight knobs turn the Main screen's track.
+    const int index = cc - kFirstFollowCc;
+    if (! used && juce::isPositiveAndBelow (index, kFollowKnobs))
+    {
+        const auto& f = follow[(size_t) index];
+        if (const int parameter = f.packed.load(); parameter >= 0)
+            move (f.tool.load(), parameter, (float) value / 127.0f);
+    }
+}
+
+void RigRouting::setFollowKnob (int index, int tool, int parameter)
+{
+    if (! juce::isPositiveAndBelow (index, kFollowKnobs))
+        return;
+    auto& f = follow[(size_t) index];
+    f.packed = -1;
+    f.tool = tool;
+    f.parameter = parameter;
+    f.packed = parameter;
+}
+
+std::pair<int, int> RigRouting::getFollowKnob (int index) const
+{
+    if (! juce::isPositiveAndBelow (index, kFollowKnobs))
+        return { 0, -1 };
+    return { follow[(size_t) index].tool.load(), follow[(size_t) index].packed.load() };
 }
 
 void RigRouting::route (const juce::MidiBuffer& in, std::array<juce::MidiBuffer*, kNumDests>& to, Result& result)
