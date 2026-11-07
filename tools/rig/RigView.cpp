@@ -2,6 +2,7 @@
 #include "LooperView.h"
 #include "SongView.h"
 #include "StageView.h"
+#include "GrooveView.h"
 #include "SoundsView.h"
 #include "RigColours.h"
 #include "EditorView.h"
@@ -332,6 +333,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto& transport = engine.getTransport();
 
     playButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff4caf50));
+    playButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2e5d33));
+    playButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd8f5da));
+    playButton.setColour (juce::TextButton::textColourOnId, Theme::background);
     playButton.setClickingTogglesState (false);
     playButton.onClick = [&transport] { transport.togglePlay(); };
     playButton.setTooltip ("Starts and stops every tool together (space bar).");
@@ -395,9 +399,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
                            "(the bass's Cutoff, the synth's LFO depth...), then turn the knob.");
     knobButton.onClick = [this] { showKnobMenu(); };
 
-    position.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+    // The display: a green LCD with the bar and beat.
+    position.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 22.0f, juce::Font::bold));
     position.setJustificationType (juce::Justification::centred);
-    position.setColour (juce::Label::backgroundColourId, Theme::background);
+    position.setColour (juce::Label::backgroundColourId, juce::Colour (0xff17251a));
+    position.setColour (juce::Label::textColourId, juce::Colour (0xff9be7a1));
+    position.setColour (juce::Label::outlineColourId, juce::Colour (0xff2f4a33));
     midiLight.setJustificationType (juce::Justification::centredLeft);
     midiLight.setColour (juce::Label::textColourId, Theme::textDim);
 
@@ -405,9 +412,19 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     saveButton.onClick = [this] { saveShowAs(); };
     openButton.onClick = [this] { openShow(); };
 
-    // The Stage first (every tool at once), then the tools, as their own windows show them.
+    // Main first (the Rig as one groovebox), then the Stage (every tool at once), then the
+    // tools, as their own windows show them.
     tabs.setTabBarDepth (34);
     tabs.setOutline (0);
+    auto* grooveView = new GrooveView (engine);
+    grooveView->onOpen = [this] (const juce::String& name) { showTab (name); };
+    grooveView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+    grooveView->onSample = [this] { toggleSampling(); };
+    grooveView->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
+    grooveView->showMic = devices != nullptr;
+    grooveView->refresh();
+    groove = grooveView;
+    addPage ("Main", RigColours::song, grooveView);
     auto* stageView = new StageView (engine);
     stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
     stageView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
@@ -573,6 +590,8 @@ void RigView::refresh()
         song->refresh();
     if (stage != nullptr)
         stage->refresh();
+    if (groove != nullptr)
+        groove->refresh();
     updateLearnButtons();
 }
 
@@ -785,7 +804,11 @@ void RigView::timerCallback()
     const double beats = transport.getPositionInBeats();
     const int bar = (int) std::floor (beats / beatsPerBar) + 1;
     const int beat = (int) std::floor (std::fmod (beats, (double) beatsPerBar)) + 1;
-    position.setText (juce::String (bar) + " . " + juce::String (beat), juce::dontSendNotification);
+    position.setText ("BAR " + juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat), juce::dontSendNotification);
+
+    // The Main screen sends the keys to the track you pick.
+    if (keysTo.getSelectedId() != engine.getRouting().keysTo.load() + 1)
+        keysTo.setSelectedId (engine.getRouting().keysTo.load() + 1, juce::dontSendNotification);
 
     if (const auto done = engine.serviceCapture(); done.isNotEmpty())
         say (done);
@@ -1132,18 +1155,18 @@ void RigView::resized()
 
     auto bar = area.removeFromTop (56).reduced (10, 10);
     bar.removeFromLeft (56);
-    playButton.setBounds (bar.removeFromLeft (90));
+    playButton.setBounds (bar.removeFromLeft (100));
     bar.removeFromLeft (4);
-    learnPlay.setBounds (bar.removeFromLeft (56));
+    learnPlay.setBounds (bar.removeFromLeft (46));
     bar.removeFromLeft (8);
-    stopButton.setBounds (bar.removeFromLeft (64));
+    stopButton.setBounds (bar.removeFromLeft (76));
     bar.removeFromLeft (4);
-    learnStop.setBounds (bar.removeFromLeft (56));
+    learnStop.setBounds (bar.removeFromLeft (46));
     bar.removeFromLeft (10);
-    position.setBounds (bar.removeFromLeft (86));
+    position.setBounds (bar.removeFromLeft (124));
     bar.removeFromLeft (10);
     tempoLabel.setBounds (bar.removeFromLeft (48));
-    tempo.setBounds (bar.removeFromLeft (150));
+    tempo.setBounds (bar.removeFromLeft (120));
     bar.removeFromLeft (6);
     tapButton.setBounds (bar.removeFromLeft (48));
     bar.removeFromLeft (6);
@@ -1156,7 +1179,7 @@ void RigView::resized()
     bar.removeFromLeft (6);
     sampleButton.setBounds (bar.removeFromLeft (90));
     bar.removeFromLeft (6);
-    recordButton.setBounds (bar.removeFromLeft (104));
+    recordButton.setBounds (bar.removeFromLeft (96));
     bar.removeFromLeft (6);
     knobButton.setBounds (bar.removeFromLeft (64));
 

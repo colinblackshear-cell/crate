@@ -93,6 +93,16 @@ public:
     void clearParameterKnobs();
     std::vector<ParameterKnob> getParameterKnobs() const;
 
+    //==========================================================================
+    // The keyboard's eight knobs follow the track picked on the Main screen: knob 1 turns that
+    // track's first knob, and so on. The knobs are the CCs from kFirstFollowCc (21-28, what the
+    // Launchkey's knobs send) on any channel, unless a knob is learned onto something else.
+    static constexpr int kFollowKnobs = 8, kFirstFollowCc = 21;
+    // Points knob `index` at a tool's parameter (its index in the tool's parameter list), or
+    // nothing with parameter -1.
+    void setFollowKnob (int index, int tool, int parameter);
+    std::pair<int, int> getFollowKnob (int index) const;
+
     // The Launchkey's first drum pad note; pads are this note plus 0-15.
     static constexpr int kFirstPadNote = 36;
 
@@ -116,6 +126,7 @@ private:
     // message thread with the slot's cc set last, so the audio thread never sees half a knob.
     struct AtomicKnob { std::atomic<int> packed { -1 }, tool { 0 }, parameter { 0 }; };
     std::array<AtomicKnob, kMaxParameterKnobs> knobs;
+    std::array<AtomicKnob, kFollowKnobs> follow;   // packed = parameter (-1 = none)
     // Packed assignments: channel * 128 + cc, or -1.
     std::array<std::atomic<int>, numControls> assigned;
     // Last value per button control, to catch presses (value going above 0).
