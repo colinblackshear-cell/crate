@@ -720,7 +720,7 @@ juce::ValueTree RigEngine::saveShow() const
     show.setProperty ("inputOn", inputOn.load(), nullptr);
     show.setProperty ("inputJack", inputJack.load(), nullptr);
 
-    if (screens.getNumChildren() > 0)
+    if (screens.getNumChildren() > 0 || screens.getNumProperties() > 0)
         show.appendChild (screens.createCopy(), nullptr);
 
     for (int s = 0; s < numStrips; ++s)

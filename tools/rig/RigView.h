@@ -5,9 +5,13 @@
 #include "RigEngine.h"
 #include "core/ui/Theme.h"
 #include "core/ui/ParamControls.h"
+#include "RigPanels.h"
 
-// The Rig's window: one transport across the top, the tools in tabs (the Stage, with every tool
-// on one screen, then MPC, Vocoder, Bass...), and a mixer with the keyboard routing along the bottom.
+// The Rig's window, built like a piece of 70s/80s studio gear: the top bar (transport, tempo,
+// where the song is, VU meters), five big screen buttons (Groove, Vocoder, Looper, Sampler + MPC,
+// Stage; F1-F5), the screen, and the song parts with "Live now" along the bottom. Everything else
+// (the MPC, Bass and Synth in full, the song list, the sound bank, the mixer and keyboard set-up)
+// is under More.
 class RigView : public juce::Component,
                 private juce::Timer,
                 private juce::AudioProcessorListener
@@ -103,16 +107,31 @@ private:
     juce::AudioDeviceManager* devices;
     crate::Theme::LookAndFeel lookAndFeel;
 
-    // Transport.
-    juce::TextButton playButton { "Play" }, stopButton { "Stop" }, clickButton { "Click" }, micButton { "Mic off" };
+    // The frame.
+    vintage::LookAndFeel vintageLook;
+    rigpanels::Header header;
+    rigpanels::ScreenBar screenBar;
+    rigpanels::Footer footer;
+    void showMoreMenu();
+    void setDarkPanel (bool);
+    juce::String currentPage() const;
+    void nudgeTempo (double);
+
+    // The Mixer page (under More): the strips, the keyboard routing, Sample, knob Learn, the
+    // click, the mic, and the show's files.
+    class MixerPage;
+    MixerPage* mixerPage = nullptr;   // owned by its page
+    void layoutMixer (juce::Rectangle<int>);
+    juce::TextButton clickButton { "Click" }, micButton { "Mic off" };
     juce::TextButton learnPlay { "Learn" }, learnStop { "Learn" };
-    juce::Label tempoLabel { {}, "Tempo" };
-    juce::Slider tempo { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
-    juce::TextButton tapButton { "Tap" }, sampleButton { "Sample" }, knobButton { "Knobs" }, recordButton { "Record set" };
+    juce::Label learnPlayLabel { {}, "Play key" }, learnStopLabel { {}, "Stop key" };
+    juce::TextButton sampleButton { "Sample" }, knobButton { "Knobs" };
     void toggleRecordSet();
     void updateRecordButton();
-    juce::Label position, midiLight;
     juce::TextButton audioButton { "Audio + MIDI" }, saveButton { "Save show" }, openButton { "Open show" };
+    juce::String keyboardName;
+    bool keyboardFound = false, keyboardActive = false;
+    float vuLevel = 0;
 
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
@@ -156,7 +175,6 @@ private:
     // Keeps the engine's list of popped-out windows up to date (it's saved with the show), and
     // puts the windows back as a loaded show had them.
     void storeWindows();
-    juce::TextButton popOutButton { "Pop out" };
 
     // Each strip's meter (0..1, falling slowly), shared by the mixer and the Stage.
     std::array<float, RigEngine::numStrips> meters {};

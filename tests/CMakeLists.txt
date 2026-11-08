@@ -34,6 +34,7 @@ target_compile_definitions(CrateTests PRIVATE
 target_link_libraries(CrateTests PRIVATE
     crate_core
     mpc_format
+    rig_fonts
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 add_test(NAME crate_tests COMMAND CrateTests)

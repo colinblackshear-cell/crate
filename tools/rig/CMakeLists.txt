@@ -1,5 +1,19 @@
 # The Rig: plays the Crate tools live in one window, on one clock. An app, and (below) a plugin
 # for Logic.
+
+# The panel's fonts (all SIL Open Font License; see fonts/LICENSES.txt): Barlow Condensed for
+# labels and buttons, Barlow for small print, VT323 for the LCDs, Fraunces for the wordmark.
+juce_add_binary_data(rig_fonts
+    HEADER_NAME RigFonts.h
+    NAMESPACE RigFonts
+    SOURCES
+        fonts/BarlowCondensed-SemiBold.ttf
+        fonts/BarlowCondensed-Bold.ttf
+        fonts/BarlowCondensed-ExtraBold.ttf
+        fonts/Barlow-SemiBold.ttf
+        fonts/VT323-Regular.ttf
+        fonts/Fraunces-ExtraBoldItalic.ttf)
+set_target_properties(rig_fonts PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 juce_add_gui_app(CrateRig
     COMPANY_NAME "Colin Blackshear"
     BUNDLE_ID "com.colinblackshear.crate.rig"
@@ -22,9 +36,11 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/RigRecorder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigCapture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SoundsView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Vintage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RigPanels.cpp
     PARENT_SCOPE)
 
-target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp
+target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp Vintage.cpp RigPanels.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -46,6 +62,7 @@ target_link_libraries(CrateRig
     PRIVATE
         crate_core
         mpc_format
+        rig_fonts
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -78,7 +95,7 @@ juce_add_plugin(CrateRigPlugin
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp
+target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp RigLooper.cpp LooperView.cpp RigScenes.cpp SongView.cpp StageView.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp Vintage.cpp RigPanels.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -93,6 +110,7 @@ target_link_libraries(CrateRigPlugin
     PRIVATE
         crate_core
         mpc_format
+        rig_fonts
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
