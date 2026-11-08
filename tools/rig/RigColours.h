@@ -7,9 +7,10 @@
 // Each tool's colour, the same on its tab, its mixer strip and its Stage tile.
 namespace RigColours
 {
-inline const juce::Colour mpc { 0xffff8a3d }, sampler { 0xff8fd3c8 }, vocoder { 0xffb48cff }, master { 0xffeeeeee },
-                          bass { 0xff4fc3f7 }, synth { 0xfff06292 }, input { 0xffffd54f }, loops { 0xff81c784 },
-                          song { 0xffffb74d };
+// The design's track colours (drums red, bass orange, synth yellow, vocoder teal, loops green).
+inline const juce::Colour mpc { 0xffe85a3a }, sampler { 0xffc58fd6 }, vocoder { 0xff5fb3c4 }, master { 0xfff1e7d1 },
+                          bass { 0xfff39b33 }, synth { 0xffefcb45 }, input { 0xffd8c49a }, loops { 0xff9cc27a },
+                          song { 0xffffb23e };
 
 inline juce::Colour forStrip (int strip)
 {

@@ -6,12 +6,15 @@
 #include "SoundsView.h"
 #include "RigColours.h"
 #include "EditorView.h"
+#include "MpcView.h"
+#include "SamplerScreen.h"
+#include "VocoderScreen.h"
 
 namespace Theme = crate::Theme;
 
 namespace
 {
-constexpr int kBottomHeight = 132;
+constexpr int kCheek = 26;   // the walnut cheeks either side
 const juce::Colour mpcColour = RigColours::mpc, samplerColour = RigColours::sampler, vocoderColour = RigColours::vocoder,
                    bassColour = RigColours::bass, synthColour = RigColours::synth, loopsColour = RigColours::loops;
 
@@ -88,6 +91,24 @@ private:
     RigView& view;
     const int page;
     juce::TextButton show { "Show it" }, back { "Bring it back here" };
+};
+
+// The Mixer page: lays its parts out through the view, which owns them.
+class RigView::MixerPage : public juce::Component
+{
+public:
+    explicit MixerPage (RigView& v) : view (v) {}
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (Theme::panel);
+        g.setColour (Theme::textDim);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawText ("TOOLS", getLocalBounds().reduced (14, 0).removeFromTop (22), juce::Justification::bottomLeft);
+    }
+    void resized() override { view.layoutMixer (getLocalBounds()); }
+
+private:
+    RigView& view;
 };
 
 //==============================================================================
@@ -217,41 +238,88 @@ void RigView::showFx (int strip)
     {
         fxPanel = std::make_unique<FxPanel> (engine, strip);
         fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
-                                                                                 { if (safe != nullptr) { safe->fxPanel.reset(); safe->resized(); } }); };
-        addAndMakeVisible (*fxPanel);
+                                                                                 { if (safe != nullptr) { safe->fxPanel.reset(); safe->mixerPage->resized(); } }); };
+        mixerPage->addAndMakeVisible (*fxPanel);
     }
-    resized();
+    mixerPage->resized();
 }
 
 //==============================================================================
+//==============================================================================
 RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
-    : engine (e), devices (d)
+    : engine (e), devices (d), header (d != nullptr), footer (e)
 {
     setLookAndFeel (&lookAndFeel);
     setWantsKeyboardFocus (true);
+    setOpaque (true);
+    vintage::setStage ((bool) engine.screens.getProperty ("dark", false));
 
-    for (auto* c : std::initializer_list<juce::Component*> { &playButton, &stopButton, &clickButton, &micButton, &learnPlay, &learnStop,
-                                                             &tempoLabel, &tempo, &tapButton, &sampleButton, &knobButton, &recordButton, &position, &midiLight,
-                                                             &audioButton, &saveButton, &openButton, &tabs,
-                                                             &padsLabel, &padBank, &keysLabel, &keysTo,
-                                                             &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer })
+    {
+        c->setLookAndFeel (&vintageLook);
         addAndMakeVisible (c);
+    }
+    addAndMakeVisible (tabs);
 
     auto& transport = engine.getTransport();
 
-    playButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff4caf50));
-    playButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2e5d33));
-    playButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd8f5da));
-    playButton.setColour (juce::TextButton::textColourOnId, Theme::background);
-    playButton.setClickingTogglesState (false);
-    playButton.onClick = [&transport] { transport.togglePlay(); };
-    playButton.setTooltip ("Starts and stops every tool together (space bar).");
-    stopButton.onClick = [this, &transport]
+    // The top bar.
+    header.play.onClick = [&transport] { transport.togglePlay(); };
+    header.stop.onClick = [this, &transport]
     {
         transport.stop();
         engine.allNotesOff();   // Stop always means quiet: no hanging notes or latched arps
     };
-    stopButton.setTooltip ("Stops, goes back to the start, and silences any notes still sounding.");
+    header.rec.onClick = [this] { toggleRecordSet(); };
+    header.up.onClick = [this] { nudgeTempo (juce::ModifierKeys::getCurrentModifiers().isShiftDown() ? 0.1 : 1.0); };
+    header.down.onClick = [this] { nudgeTempo (juce::ModifierKeys::getCurrentModifiers().isShiftDown() ? -0.1 : -1.0); };
+    header.up.setRepeatSpeed (400, 80);
+    header.down.setRepeatSpeed (400, 80);
+    header.onMic = [this]
+    {
+        engine.micOn = ! engine.micOn.load();
+        refresh();
+        if (engine.micOn.load())
+            say ("Mic on: use headphones, or your speakers can feed back into the mic.");
+    };
+    header.tap.onClick = [this]
+    {
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        if (! taps.empty() && now - taps.back() > 2000.0)
+            taps.clear();
+        taps.push_back (now);
+        if (taps.size() > 5)
+            taps.erase (taps.begin());
+        if (taps.size() >= 2)
+        {
+            const double beat = (taps.back() - taps.front()) / (double) (taps.size() - 1);
+            engine.getTransport().setBpm (std::round (60000.0 / beat * 2.0) / 2.0);
+        }
+    };
+
+    // The screens, and More.
+    screenBar.onScreen = [this] (const juce::String& page) { showTab (page); };
+    screenBar.more.onClick = [this] { showMoreMenu(); };
+
+    // The song parts and Live now.
+    footer.onTrack = [this] (int strip)
+    {
+        showTab ("Groove");
+        if (groove != nullptr)
+            for (int t = 0; t < GrooveView::numTracks; ++t)
+                if (GrooveView::stripFor (t) == strip)
+                    groove->selectTrack (t);
+    };
+    footer.onEditParts = [this] { showTab ("Song"); };
+
+    // The Mixer page's parts.
+    mixerPage = new MixerPage (*this);
+    for (auto* c : std::initializer_list<juce::Component*> { &clickButton, &micButton, &learnPlay, &learnStop, &learnPlayLabel, &learnStopLabel,
+                                                             &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
+                                                             &padsLabel, &padBank, &keysLabel, &keysTo,
+                                                             &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
+        mixerPage->addAndMakeVisible (c);
+
     clickButton.setClickingTogglesState (true);
     clickButton.onClick = [this, &transport] { transport.metronome = clickButton.getToggleState(); };
     clickButton.setTooltip ("A metronome click on every beat while playing.");
@@ -263,67 +331,36 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         if (engine.micOn.load())
             say ("Mic on: use headphones, or your speakers can feed back into the mic.");
     };
-    micButton.setTooltip ("Hear your mic (the vocoder and the Input strip). Use headphones with it on, so the speakers don't feed back. Sampling and looping from the mic work either way.");
+    micButton.setTooltip ("Hear your mic (the vocoder and the Input strip). Use headphones with it on, so the speakers don't feed back. "
+                          "Sampling and looping from the mic work either way. The Mic lamp at the top right switches it too.");
     learnPlay.setTooltip ("Press, then press a button on your keyboard to make it start and stop the Rig.");
     learnStop.setTooltip ("Press, then press a button on your keyboard to make it stop the Rig.");
     learnPlay.onClick = [this] { startLearning (RigRouting::play, learnPlay); };
     learnStop.onClick = [this] { startLearning (RigRouting::stop, learnStop); };
-
-    tempo.setRange (RigTransport::kMinBpm, RigTransport::kMaxBpm, 0.5);
-    tempo.setTextValueSuffix (" BPM");
-    tempo.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 90, 28);
-    tempo.onValueChange = [this, &transport] { transport.setBpm (tempo.getValue()); };
-    tapButton.setTooltip ("Tap a few times in time to set the tempo.");
-    tapButton.onClick = [this]
-    {
-        const auto now = juce::Time::getMillisecondCounterHiRes();
-        if (! taps.empty() && now - taps.back() > 2000.0)
-            taps.clear();
-        taps.push_back (now);
-        if (taps.size() > 5)
-            taps.erase (taps.begin());
-        if (taps.size() >= 2)
-        {
-            const double beat = (taps.back() - taps.front()) / (double) (taps.size() - 1);
-            tempo.setValue (std::round (60000.0 / beat * 2.0) / 2.0);
-        }
-    };
+    for (auto* l : { &learnPlayLabel, &learnStopLabel })
+        l->setColour (juce::Label::textColourId, Theme::textDim);
 
     sampleButton.setColour (juce::TextButton::buttonOnColourId, Theme::record);
-    sampleButton.setTooltip ("Records one tool into another, as picked under Sample at the bottom left: the mic, a tool or the "
+    sampleButton.setTooltip ("Records one tool into another, as picked beside it: the mic, a tool or the "
                              "Rig mix, into the Sampler or onto the next empty MPC pad. It starts at the next bar (now, if the "
                              "Rig is stopped) and stops after the bars picked, or when you press again.");
     sampleButton.onClick = [this] { toggleSampling(); };
-
-    recordButton.setColour (juce::TextButton::buttonOnColourId, Theme::record);
-    recordButton.setTooltip ("Records the set for Logic, from the next bar: every tool as its own WAV (as you hear it), "
-                             "the mix, and what you play on the keys and pads as MIDI. Press again to stop (stopping the "
-                             "Rig stops it too). Saved in Music > Crate > Rig > Recordings.");
-    recordButton.onClick = [this] { toggleRecordSet(); };
 
     knobButton.setColour (juce::TextButton::buttonOnColourId, Theme::accent);
     knobButton.setTooltip ("Put a knob of your keyboard on any setting: choose Learn a knob, touch the setting on screen "
                            "(the bass's Cutoff, the synth's LFO depth...), then turn the knob.");
     knobButton.onClick = [this] { showKnobMenu(); };
 
-    // The display: a green LCD with the bar and beat.
-    position.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 22.0f, juce::Font::bold));
-    position.setJustificationType (juce::Justification::centred);
-    position.setColour (juce::Label::backgroundColourId, juce::Colour (0xff17251a));
-    position.setColour (juce::Label::textColourId, juce::Colour (0xff9be7a1));
-    position.setColour (juce::Label::outlineColourId, juce::Colour (0xff2f4a33));
-    midiLight.setJustificationType (juce::Justification::centredLeft);
-    midiLight.setColour (juce::Label::textColourId, Theme::textDim);
-
     audioButton.onClick = [this] { showAudioSettings(); };
     saveButton.onClick = [this] { saveShowAs(); };
     openButton.onClick = [this] { openShow(); };
 
-    // Main first (the Rig as one groovebox), then the Stage (every tool at once), then the
-    // tools, as their own windows show them.
-    tabs.setTabBarDepth (34);
+    // The five screens first (F1-F5), then what More shows. The tab bar is hidden: the screen
+    // buttons and More pick the page.
+    tabs.setTabBarDepth (0);
     tabs.setOutline (0);
     auto* grooveView = new GrooveView (engine);
+    grooveView->setLookAndFeel (&vintageLook);
     grooveView->onOpen = [this] (const juce::String& name) { showTab (name); };
     grooveView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
     grooveView->onSample = [this] { toggleSampling(); };
@@ -331,30 +368,65 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     grooveView->showMic = devices != nullptr;
     grooveView->refresh();
     groove = grooveView;
-    addPage ("Main", RigColours::song, grooveView);
-    auto* stageView = new StageView (engine);
-    stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
-    stageView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
-    stageView->onSample = [this] { toggleSampling(); };
-    stageView->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
-    stage = stageView;
-    addPage ("Stage", Theme::text, stageView);
-    addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
-    addPage ("Vocoder", vocoderColour, engine.getVocoder().createEditorAndMakeActive());
-    addPage ("Bass", bassColour, engine.getBass().createEditorAndMakeActive());
-    addPage ("Synth", synthColour, engine.getSynth().createEditorAndMakeActive());
+    addPage ("Groove", RigColours::song, grooveView);
     {
-        auto* samplerView = engine.getSampler().createEditorAndMakeActive();
-        // Smart chop's "To MPC pads": the slices go straight onto the MPC's pads
-        if (auto* editor = dynamic_cast<EditorView*> (samplerView))
-            editor->setSendSlicesToPads ([this] (std::vector<crate::SharedAudio> slices, const juce::String& name)
-                                         { return engine.sendSlicesToMpc (std::move (slices), name); });
-        addPage ("Sampler", samplerColour, samplerView);
+        // The pedalboard (Easy), over the vocoder's own window (Studio).
+        auto* screen = new VocoderScreen (engine, engine.getVocoder().createEditorAndMakeActive(), devices != nullptr);
+        screen->setLookAndFeel (&vintageLook);
+        screen->onSay = [this] (const juce::String& text) { say (text); };
+        screen->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+        screen->onRecVoice = [this] { toggleSampling(); };
+        screen->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
+        screen->onMic = [this] { if (header.onMic) header.onMic(); };
+        vocoderScreen = screen;
+        addPage ("Vocoder", vocoderColour, screen);
     }
     auto* looperView = new LooperView (engine);
+    looperView->setLookAndFeel (&vintageLook);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
+    // The Sampler · MPC screen, over the full sample editor (a page of its own, in More).
+    auto* samplerView = engine.getSampler().createEditorAndMakeActive();
+    auto* samplerEditor = dynamic_cast<EditorView*> (samplerView);
+    // Smart chop's "To MPC pads": the slices go straight onto the MPC's pads
+    if (samplerEditor != nullptr)
+        samplerEditor->setSendSlicesToPads ([this] (std::vector<crate::SharedAudio> slices, const juce::String& name)
+                                            { return engine.sendSlicesToMpc (std::move (slices), name); });
+    if (samplerEditor != nullptr)
+    {
+        auto* screen = new SamplerScreen (engine, *samplerEditor);
+        screen->setLookAndFeel (&vintageLook);
+        screen->onSay = [this] (const juce::String& text) { say (text); };
+        screen->onOpen = [this] (const juce::String& name) { showTab (name); };
+        screen->onSendToMpc = [this]
+        {
+            if (auto* mpcView = dynamic_cast<MpcView*> (pages[(size_t) pageIndex ("MPC")].content.get()))
+                mpcView->exportToCard();
+        };
+        samplerScreen = screen;
+        addPage ("Sampler", samplerColour, screen);
+    }
+    auto* stageView = new StageView (engine);
+    stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
+    stageView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+    stageView->onRecord = [this] { toggleRecordSet(); };
+    stageView->onTap = [this] { header.tap.onClick(); };
+    stageView->onNudgeTempo = [this] (double amount) { nudgeTempo (amount); };
+    stageView->recordState = [this]
+    {
+        // The Stage shows "armed" as a red ring, which it asks for as Lit::next.
+        const auto state = engine.getRecorder().getState();
+        return std::pair<juce::String, vintage::Lit> (header.rec.text, state == RigRecorder::State::armed ? vintage::Lit::next
+                                                                      : state == RigRecorder::State::recording ? vintage::Lit::arm
+                                                                                                               : vintage::Lit::none);
+    };
+    stage = stageView;
+    addPage ("Stage", Theme::text, stageView);
+    addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
+    addPage (samplerEditor != nullptr ? "Sampler editor" : "Sampler", samplerColour, samplerView);
+    addPage ("Bass", bassColour, engine.getBass().createEditorAndMakeActive());
+    addPage ("Synth", synthColour, engine.getSynth().createEditorAndMakeActive());
     auto* songView = new SongView (engine);
     songView->onSay = [this] (const juce::String& text) { say (text); };
     song = songView;
@@ -362,21 +434,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto* soundsView = new SoundsView (engine);
     soundsView->onSay = [this] (const juce::String& text) { say (text); };
     addPage ("Sounds", juce::Colour (0xffa1887f), soundsView);
-
-    addAndMakeVisible (popOutButton);
-    popOutButton.setTooltip ("Opens this tab in its own window, to put it on a second screen (the Stage on one, "
-                             "the MPC on the other, say). Close the window to bring it back. Windows are saved with the show.");
-    popOutButton.onClick = [this]
-    {
-        const int i = tabs.getCurrentTabIndex();
-        if (juce::isPositiveAndBelow (i, (int) pages.size()))
-        {
-            if (pages[(size_t) i].window != nullptr)
-                pages[(size_t) i].window->toFront (true);
-            else
-                popOut (i);
-        }
-    };
+    addPage ("Mixer", Theme::text, mixerPage);
+    screenBar.setCurrent ("Groove");
 
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).addListener (this);
@@ -446,7 +505,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     for (size_t i = 0; i < stripViews.size(); ++i)
     {
         auto* s = stripViews[i].get();
-        addAndMakeVisible (s);
+        mixerPage->addAndMakeVisible (s);
         const int control = faders[i];
         s->learn.onClick = [this, s, control] { startLearning (control, s->learn); };
         s->fxButton.onClick = [this, s] { showFx (s->strip); };
@@ -474,8 +533,9 @@ RigView::~RigView()
 
 void RigView::refresh()
 {
+    if ((bool) engine.screens.getProperty ("dark", false) != vintage::isStage())
+        setDarkPanel ((bool) engine.screens.getProperty ("dark", false));
     auto& transport = engine.getTransport();
-    tempo.setValue (transport.getBpm(), juce::dontSendNotification);
     clickButton.setToggleState (transport.metronome.load(), juce::dontSendNotification);
     micButton.setToggleState (engine.micOn.load(), juce::dontSendNotification);
     micButton.setButtonText (engine.micOn.load() ? "Mic on" : "Mic off");
@@ -497,6 +557,10 @@ void RigView::refresh()
         song->refresh();
     if (stage != nullptr)
         stage->refresh();
+    if (samplerScreen != nullptr)
+        samplerScreen->refresh();
+    if (vocoderScreen != nullptr)
+        vocoderScreen->refresh();
     if (groove != nullptr)
         groove->refresh();
     updateLearnButtons();
@@ -511,6 +575,28 @@ void RigView::showTab (const juce::String& name)
         pages[(size_t) i].window->toFront (true);
     else
         tabs.setCurrentTabIndex (i);
+    pageChanged();
+}
+
+// The Stage fills the window on a black panel: no top bar or footer (it has its own), and the
+// screen buttons go dark too. Leaving it puts the panel back as it was.
+void RigView::pageChanged()
+{
+    const bool onStage = currentPage() == "Stage";
+    if (onStage == stageShown)
+        return;
+    stageShown = onStage;
+    vintage::setStage (onStage || (bool) engine.screens.getProperty ("dark", false));
+    header.setVisible (! onStage);
+    footer.setVisible (! onStage);
+    resized();
+    repaint();
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer })
+        c->repaint();
+    if (groove != nullptr)
+        groove->repaint();
+    if (stage != nullptr)
+        stage->repaint();
 }
 
 void RigView::popOutTab (const juce::String& tab)
@@ -700,18 +786,15 @@ void RigView::updateLearnButtons()
 void RigView::timerCallback()
 {
     auto& transport = engine.getTransport();
-    // In Logic, Logic's tempo is the Rig's.
-    if (transport.isHosted() && std::abs (tempo.getValue() - transport.getBpm()) > 0.001)
-        tempo.setValue (transport.getBpm(), juce::dontSendNotification);
     const bool playing = transport.isPlaying();
-    playButton.setToggleState (playing, juce::dontSendNotification);
-    playButton.setButtonText (playing ? "Playing" : "Play");
-
-    const int beatsPerBar = transport.getBeatsPerBar();
-    const double beats = transport.getPositionInBeats();
-    const int bar = (int) std::floor (beats / beatsPerBar) + 1;
-    const int beat = (int) std::floor (std::fmod (beats, (double) beatsPerBar)) + 1;
-    position.setText ("BAR " + juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat), juce::dontSendNotification);
+    if (header.play.lit != (playing ? vintage::Lit::play : vintage::Lit::none))
+    {
+        header.play.lit = playing ? vintage::Lit::play : vintage::Lit::none;
+        header.play.text = playing ? "Playing" : "Play";
+        header.play.repaint();
+    }
+    screenBar.setCurrent (currentPage());
+    pageChanged();
 
     // The Main screen sends the keys to the track you pick.
     if (keysTo.getSelectedId() != engine.getRouting().keysTo.load() + 1)
@@ -743,7 +826,7 @@ void RigView::timerCallback()
     {
         sayUntil = 0;
         knownInputs.clear();
-        midiLight.setText ({}, juce::dontSendNotification);
+        footer.message.setText ({}, juce::dontSendNotification);
         openMidiInputs();
     }
 
@@ -761,7 +844,55 @@ void RigView::timerCallback()
         s->tick (meters[(size_t) s->strip]);
 
     const bool recent = juce::Time::getMillisecondCounter() - engine.lastMidiTime.load() < 150;
-    midiLight.setColour (juce::Label::textColourId, recent ? Theme::accent : Theme::textDim);
+    keyboardActive = recent;
+
+    // The top bar: tempo, where the song is, the master meters, what's plugged in.
+    {
+        rigpanels::Header::Shown shown;
+        shown.bpm = transport.getBpm();
+        const int beatsPerBar = transport.getBeatsPerBar();
+        const double beats = transport.getPositionInBeats();
+        const int bar = (int) std::floor (beats / beatsPerBar) + 1;
+        const int beat = (int) std::floor (std::fmod (beats, (double) beatsPerBar)) + 1;
+        shown.barBeat = juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat);
+        auto& scenes = engine.getScenes();
+        const auto& list = scenes.getScenes();
+        const int current = scenes.getCurrent(), queued = scenes.getQueued();
+        auto nameOf = [&list] (int i)
+        {
+            const auto letter = juce::String::charToString ((juce::juce_wchar) ('A' + i));
+            const auto& n = list[(size_t) i].name;
+            return n == "Part " + letter ? juce::String ("Part ") + letter : n;
+        };
+        if (juce::isPositiveAndBelow (current, (int) list.size()) && current < 26)
+        {
+            shown.partLetter = juce::String::charToString ((juce::juce_wchar) ('A' + current));
+            shown.partName = nameOf (current);
+        }
+        if (juce::isPositiveAndBelow (queued, (int) list.size()) && queued < 26)
+        {
+            shown.partQueued = true;
+            shown.partName = "Next: " + juce::String::charToString ((juce::juce_wchar) ('A' + queued)) + " " + nameOf (queued);
+        }
+        else
+            shown.partName = (shown.partName.isNotEmpty() ? shown.partName + juce::String::fromUTF8 (" \xc2\xb7 ") : juce::String())
+                           + "Bar.Beat";
+        // VU: -20 dB at the left end, 0 at three quarters, +3 at the right.
+        auto vu = [] (float gain)
+        {
+            const float db = juce::Decibels::gainToDecibels (gain, -40.0f);
+            return juce::jlimit (0.0f, 1.04f, (db + 20.0f) / 23.0f);
+        };
+        vuLevel = vuLevel * 0.7f + vu (meters[(size_t) RigEngine::masterStrip]) * 0.3f;
+        shown.vuLeft = shown.vuRight = vuLevel;
+        shown.keyboard = keyboardName;
+        shown.keyboardFound = keyboardFound;
+        shown.keyboardActive = keyboardActive;
+        shown.macKeys = devices != nullptr || recent;
+        shown.micOn = devices != nullptr ? engine.micOn.load() : true;
+        header.update (shown);
+    }
+    footer.tick ([this] (int strip) { return meters[(size_t) strip]; });
 
     if (++ticks % 60 == 0)
         openMidiInputs();
@@ -823,9 +954,9 @@ void RigView::updateRecordButton()
 {
     auto& recorder = engine.getRecorder();
     const auto state = recorder.getState();
-    juce::String text = "Record set";
+    juce::String text = "Rec";
     if (state == RigRecorder::State::armed)
-        text = "Rec: next bar";
+        text = juce::String::fromUTF8 ("Rec \xc2\xb7 Armed");
     else if (state == RigRecorder::State::recording)
     {
         const int seconds = (int) recorder.getRecordedSeconds();
@@ -833,16 +964,21 @@ void RigView::updateRecordButton()
     }
     else if (state == RigRecorder::State::finishing)
         text = "Saving...";
-    recordButton.setToggleState (state == RigRecorder::State::recording
-                                     || (state == RigRecorder::State::armed && (juce::Time::getMillisecondCounter() / 400) % 2 == 0),
-                                 juce::dontSendNotification);
-    if (recordButton.getButtonText() != text)
-        recordButton.setButtonText (text);
+    // Armed: a red ring (it records from the next bar). Recording: lit red.
+    const auto lit = state == RigRecorder::State::recording ? vintage::Lit::arm : vintage::Lit::none;
+    const bool ring = state == RigRecorder::State::armed;
+    if (header.rec.text != text || header.rec.lit != lit || header.rec.redRing != ring)
+    {
+        header.rec.text = text;
+        header.rec.lit = lit;
+        header.rec.redRing = ring;
+        header.rec.repaint();
+    }
 }
 
 void RigView::say (const juce::String& text)
 {
-    midiLight.setText (text, juce::dontSendNotification);
+    footer.message.setText (text, juce::dontSendNotification);
     sayUntil = juce::Time::getMillisecondCounter() + 5000;
 }
 
@@ -872,9 +1008,9 @@ void RigView::finishKnobLearn()
         if (! learningKnob)
             return;
         if (touchedTool >= 0)
-            midiLight.setText ("Now turn a knob on your keyboard...", juce::dontSendNotification);
+            footer.message.setText ("Now turn a knob on your keyboard...", juce::dontSendNotification);
         else if (caughtKnob.second >= 0)
-            midiLight.setText ("Got CC " + juce::String (caughtKnob.second) + ". Now touch a setting on screen...", juce::dontSendNotification);
+            footer.message.setText ("Got CC " + juce::String (caughtKnob.second) + ". Now touch a setting on screen...", juce::dontSendNotification);
         return;
     }
 
@@ -931,7 +1067,7 @@ void RigView::showKnobMenu()
                                 safe->touchedTool = safe->touchedParameter = -1;
                                 safe->caughtKnob = { 0, -1 };
                                 r.catchNextKnob();
-                                safe->midiLight.setText ("Touch a setting on screen, then turn a knob...", juce::dontSendNotification);
+                                safe->footer.message.setText ("Touch a setting on screen, then turn a knob...", juce::dontSendNotification);
                                 safe->sayUntil = juce::Time::getMillisecondCounter() + 60000;
                             }
                             else if (result == 2)
@@ -952,8 +1088,8 @@ void RigView::openMidiInputs()
     if (devices == nullptr)
     {
         // In Logic, the keys come from the track.
-        if (midiLight.getText().isEmpty())
-            midiLight.setText ("MIDI from Logic", juce::dontSendNotification);
+        keyboardName = "Logic track";
+        keyboardFound = true;
         return;
     }
     const auto inputs = juce::MidiInput::getAvailableDevices();
@@ -964,11 +1100,19 @@ void RigView::openMidiInputs()
             devices->setMidiInputDeviceEnabled (input.identifier, true);
         names.add (input.name);
     }
-    if (inputs != knownInputs || midiLight.getText().isEmpty())
+    if (inputs != knownInputs || keyboardName.isEmpty())
     {
         knownInputs = inputs;
-        midiLight.setText (names.isEmpty() ? "No MIDI keyboard found" : "MIDI: " + names.joinIntoString (", "), juce::dontSendNotification);
-        midiLight.setTooltip (midiLight.getText());
+        // The top bar names the keyboard: a Launchkey if there is one, else the first found.
+        juce::String shown;
+        for (const auto& n : names)
+            if (n.containsIgnoreCase ("launchkey"))
+                shown = n.containsIgnoreCase ("61") ? "Launchkey 61" : "Launchkey";
+        if (shown.isEmpty() && ! names.isEmpty())
+            shown = names[0].upToFirstOccurrenceOf (" MIDI", false, true).substring (0, 16);
+        keyboardFound = ! names.isEmpty();
+        keyboardName = keyboardFound ? shown : "No keyboard";
+        header.setTooltip (names.isEmpty() ? "No MIDI keyboard found" : "MIDI: " + names.joinIntoString (", "));
     }
 }
 
@@ -1031,113 +1175,201 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         engine.getTransport().togglePlay();
         return true;
     }
-    // 1-8 record, stop or overdub the looper's layers.
+    // Esc leaves the Stage.
+    if (key == juce::KeyPress::escapeKey && stageShown)
+    {
+        showTab ("Groove");
+        return true;
+    }
+    // F1-F5: the screens.
+    for (int i = 0; i < rigpanels::ScreenBar::screens().size(); ++i)
+        if (key.getKeyCode() == juce::KeyPress::F1Key + i)
+        {
+            showTab (rigpanels::ScreenBar::screens()[i]);
+            return true;
+        }
+    // 1-8: the song parts; on the Looper screen, its layers (record, stop, overdub).
     const auto c = key.getTextCharacter();
     if (c >= '1' && c <= '8' && ! key.getModifiers().isAnyModifierKeyDown())
     {
-        engine.getLooper().pressRecord ((int) (c - '1'));
+        if (currentPage() == "Looper")
+            engine.getLooper().pressRecord ((int) (c - '1'));
+        else
+            rigpanels::Footer::pressPart (engine, (int) (c - '1'));
         return true;
     }
     return false;
 }
 
+juce::String RigView::currentPage() const
+{
+    const int i = tabs.getCurrentTabIndex();
+    return juce::isPositiveAndBelow (i, (int) pages.size()) ? pages[(size_t) i].name : juce::String();
+}
+
+void RigView::nudgeTempo (double amount)
+{
+    auto& transport = engine.getTransport();
+    if (transport.isHosted())
+    {
+        say ("In Logic, Logic sets the tempo.");
+        return;
+    }
+    transport.setBpm (std::round ((transport.getBpm() + amount) * 10.0) / 10.0);
+}
+
+void RigView::setDarkPanel (bool dark)
+{
+    vintage::setStage (dark || stageShown);
+    engine.screens.setProperty ("dark", dark, nullptr);
+    repaint();
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer })
+        c->repaint();
+    if (groove != nullptr)
+        groove->repaint();
+}
+
+void RigView::showMoreMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Tools in full");
+    const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
+                               { "Synth", "Synth: sound and arp" }, { "Song", "Song: parts in order, lengths, names" },
+                               { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer, effects and keyboard set-up" } };
+    const auto here = currentPage();
+    for (int i = 0; i < (int) std::size (tools); ++i)
+        menu.addItem (10 + i, tools[i][1], true, here == tools[i][0]);
+    menu.addSeparator();
+    menu.addItem (2, "Pop this screen out (for a second screen)", here.isNotEmpty());
+    menu.addItem (3, "Dark panel (for dark rooms)", true, vintage::isStage());
+    menu.addItem (4, "Click (metronome)", true, engine.getTransport().metronome.load());
+    menu.addSeparator();
+    menu.addItem (5, "Save show...");
+    menu.addItem (6, "Open show...");
+    if (devices != nullptr)
+        menu.addItem (7, "Audio and MIDI set-up...");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.more),
+                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer" }] (int result)
+                        {
+                            if (safe == nullptr || result == 0)
+                                return;
+                            if (result >= 10)
+                                safe->showTab (names[(size_t) (result - 10)]);
+                            else if (result == 2)
+                            {
+                                const int i = safe->tabs.getCurrentTabIndex();
+                                if (juce::isPositiveAndBelow (i, (int) safe->pages.size()))
+                                {
+                                    if (safe->pages[(size_t) i].window != nullptr)
+                                        safe->pages[(size_t) i].window->toFront (true);
+                                    else
+                                        safe->popOut (i);
+                                }
+                            }
+                            else if (result == 3)
+                                safe->setDarkPanel (! vintage::isStage());
+                            else if (result == 4)
+                            {
+                                auto& t = safe->engine.getTransport();
+                                t.metronome = ! t.metronome.load();
+                                safe->refresh();
+                            }
+                            else if (result == 5)
+                                safe->saveShowAs();
+                            else if (result == 6)
+                                safe->openShow();
+                            else if (result == 7)
+                                safe->showAudioSettings();
+                        });
+}
+
 void RigView::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::background);
-    auto bar = getLocalBounds().removeFromTop (56);
-    g.setColour (Theme::panel);
-    g.fillRect (bar);
-    g.setColour (Theme::text);
-    g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
-    g.drawText ("Rig", bar.reduced (14, 0).removeFromLeft (60), juce::Justification::centredLeft);
-
-    auto bottom = getLocalBounds().removeFromBottom (kBottomHeight);
-    g.setColour (Theme::panel);
-    g.fillRect (bottom);
+    auto r = getLocalBounds();
+    vintage::drawCheek (g, r.removeFromLeft (kCheek));
+    vintage::drawCheek (g, r.removeFromRight (kCheek));
+    vintage::drawFace (g, r);
 }
 
 void RigView::resized()
 {
     auto area = getLocalBounds();
+    area.removeFromLeft (kCheek);
+    area.removeFromRight (kCheek);
 
-    auto bar = area.removeFromTop (56).reduced (10, 10);
-    bar.removeFromLeft (56);
-    playButton.setBounds (bar.removeFromLeft (100));
-    bar.removeFromLeft (4);
-    learnPlay.setBounds (bar.removeFromLeft (46));
-    bar.removeFromLeft (8);
-    stopButton.setBounds (bar.removeFromLeft (76));
-    bar.removeFromLeft (4);
-    learnStop.setBounds (bar.removeFromLeft (46));
-    bar.removeFromLeft (10);
-    position.setBounds (bar.removeFromLeft (124));
-    bar.removeFromLeft (10);
-    tempoLabel.setBounds (bar.removeFromLeft (48));
-    tempo.setBounds (bar.removeFromLeft (120));
-    bar.removeFromLeft (6);
-    tapButton.setBounds (bar.removeFromLeft (48));
-    bar.removeFromLeft (6);
-    clickButton.setBounds (bar.removeFromLeft (56));
+    // Shorter windows squeeze the top bar and the footer a little.
+    const bool compact = getHeight() < 820;
+    if (! stageShown)
+        header.setBounds (area.removeFromTop (compact ? 88 : 100));
+    screenBar.setBounds (area.removeFromTop (compact ? 56 : 62));
+    if (! stageShown)
+        footer.setBounds (area.removeFromBottom (compact ? 108 : 118));
+    tabs.setBounds (area.reduced (0, 4));
+}
+
+void RigView::layoutMixer (juce::Rectangle<int> page)
+{
+    auto area = page.reduced (14, 10);
+
+    // Tools across the top.
+    area.removeFromTop (14);
+    auto tools = area.removeFromTop (30);
+    auto place = [&tools] (juce::Component& c, int w) { c.setBounds (tools.removeFromLeft (w)); tools.removeFromLeft (8); };
+    place (clickButton, 64);
     if (devices != nullptr)
-    {
-        bar.removeFromLeft (6);
-        micButton.setBounds (bar.removeFromLeft (70));
-    }
-    bar.removeFromLeft (6);
-    sampleButton.setBounds (bar.removeFromLeft (90));
-    bar.removeFromLeft (6);
-    recordButton.setBounds (bar.removeFromLeft (96));
-    bar.removeFromLeft (6);
-    knobButton.setBounds (bar.removeFromLeft (64));
-
-    openButton.setBounds (bar.removeFromRight (94));
-    bar.removeFromRight (6);
-    saveButton.setBounds (bar.removeFromRight (94));
-    bar.removeFromRight (6);
+        place (micButton, 76);
+    place (knobButton, 72);
+    place (learnPlayLabel, 60);
+    place (learnPlay, 64);
+    place (learnStopLabel, 60);
+    place (learnStop, 64);
+    openButton.setBounds (tools.removeFromRight (100));
+    tools.removeFromRight (8);
+    saveButton.setBounds (tools.removeFromRight (100));
+    tools.removeFromRight (8);
     audioButton.setVisible (devices != nullptr);
     if (devices != nullptr)
-        audioButton.setBounds (bar.removeFromRight (108));
+        audioButton.setBounds (tools.removeFromRight (116));
+    area.removeFromTop (14);
 
-    auto bottom = area.removeFromBottom (kBottomHeight).reduced (10, 8);
-    auto routing = bottom.removeFromLeft (350);
+    // The strips at the bottom, the effects of one above them.
+    auto strips = area.removeFromBottom (96);
+    const int count = (int) stripViews.size();
+    const int w = (strips.getWidth() - 6 * (count - 1)) / juce::jmax (1, count);
+    for (auto& s : stripViews)
+    {
+        s->setBounds (strips.removeFromLeft (w));
+        strips.removeFromLeft (6);
+    }
+    area.removeFromBottom (10);
+    if (fxPanel != nullptr)
+    {
+        fxPanel->setBounds (area.removeFromBottom (130));
+        area.removeFromBottom (10);
+    }
+
+    // The keyboard routing and Sample.
+    auto routing = area.removeFromLeft (560);
     const std::pair<juce::Label*, juce::ComboBox*> rows[] = { { &padsLabel, &padBank }, { &keysLabel, &keysTo },
                                                               { &splitLabel, &splitNote }, { &sourceLabel, &sampleSource } };
     for (auto [label, box] : rows)
     {
-        auto row = routing.removeFromTop (28);
-        label->setBounds (row.removeFromLeft (box == &sampleSource ? 54 : 124));
-        box->setBounds (row.removeFromLeft (box == &padBank ? 70 : box == &splitNote ? 82 : box == &sampleSource ? 104 : 120).reduced (0, 2));
-        if (box == &splitNote)
-            lowerKeysTo.setBounds (row.removeFromLeft (100).reduced (4, 2));
+        auto row = routing.removeFromTop (30);
         if (box == &sampleSource)
         {
-            sampleDest.setBounds (row.removeFromLeft (118).reduced (4, 2));
-            sampleBars.setBounds (row.removeFromLeft (72).reduced (0, 2));
+            sampleButton.setBounds (row.removeFromLeft (110).reduced (0, 1));
+            row.removeFromLeft (8);
         }
-        routing.removeFromTop (1);
+        label->setBounds (row.removeFromLeft (box == &sampleSource ? 54 : 124));
+        box->setBounds (row.removeFromLeft (box == &padBank ? 70 : box == &splitNote ? 82 : box == &sampleSource ? 120 : 140).reduced (0, 2));
+        if (box == &splitNote)
+            lowerKeysTo.setBounds (row.removeFromLeft (120).reduced (4, 2));
+        if (box == &sampleSource)
+        {
+            sampleDest.setBounds (row.removeFromLeft (130).reduced (4, 2));
+            sampleBars.setBounds (row.removeFromLeft (80).reduced (0, 2));
+        }
+        routing.removeFromTop (4);
     }
-
-    bottom.removeFromLeft (10);
-    bottom = bottom.withSizeKeepingCentre (bottom.getWidth(), 92);
-    const int count = (int) stripViews.size();
-    const int w = (bottom.getWidth() - 6 * (count - 1)) / count;
-    for (auto& s : stripViews)
-    {
-        s->setBounds (bottom.removeFromLeft (w));
-        bottom.removeFromLeft (6);
-    }
-
-    if (fxPanel != nullptr)
-        fxPanel->setBounds (area.removeFromBottom (130));
-    tabs.setBounds (area);
-    // Pop out, then messages and the MIDI keyboards found, on the right of the tab bar.
-    auto tabRow = area.removeFromTop (34);
-    const int tabsWidth = tabs.getTabbedButtonBar().getNumTabs() > 0
-                              ? tabs.getTabbedButtonBar().getTabButton (tabs.getTabbedButtonBar().getNumTabs() - 1)->getRight() : 0;
-    tabRow.removeFromLeft (tabsWidth + 8);
-    popOutButton.setBounds (tabRow.removeFromLeft (84).reduced (0, 5));
-    popOutButton.toFront (false);
-    midiLight.setBounds (tabRow.reduced (8, 0));
-    midiLight.setJustificationType (juce::Justification::centredRight);
-    midiLight.toFront (false);
 }

@@ -1,12 +1,12 @@
 #include "GrooveView.h"
 #include "RigColours.h"
+#include "RigPanels.h"
 
-namespace Theme = crate::Theme;
+using vintage::Lit;
+using vintage::Weight;
 
 namespace
 {
-constexpr int kTrackWidth = 230, kGap = 10, kPartsHeight = 58;
-
 void setParam (juce::AudioProcessorValueTreeState& params, const juce::String& id, float value)
 {
     if (auto* p = params.getParameter (id))
@@ -23,13 +23,15 @@ float getParam (const juce::AudioProcessorValueTreeState& params, const juce::St
     return v != nullptr ? v->load() : 0.0f;
 }
 
-void styleButton (juce::TextButton& b, juce::Colour colour)
+// A button on the dark well: lit amber when it's the one on, or another status colour.
+void wellButton (juce::Button& b, Lit lit = Lit::current, float fontSize = 15.0f)
 {
-    b.setColour (juce::TextButton::buttonOnColourId, colour);
-    b.setColour (juce::TextButton::textColourOnId, Theme::background);
+    vintage::setInWell (b, true);
+    vintage::setLit (b, lit);
+    b.getProperties().set ("fontSize", fontSize);
 }
 
-// The vocoder sounds on the Main screen's pattern row: one of each kind.
+// The vocoder sounds on the Groove screen's pattern row: one of each kind.
 const char* const vocoderSounds[] = { "Raw Voice", "Classic Robot", "French Touch", "Choir Pad",
                                       "Talk Box Funk", "Hard Tune", "Space Echo", "Monster" };
 
@@ -41,14 +43,14 @@ const std::pair<const char*, const char*> vocoderSwitches[] = { { "robotOn", "Ro
 const char* const arpModes[] = { "Up", "Down", "Up + down", "Random", "As played" };
 
 struct KnobSpec { const char* id; const char* name; };
-const KnobSpec bassKnobs[] = { { "cutoff", "Cutoff" }, { "resonance", "Resonance" }, { "envMod", "Env mod" }, { "decay", "Decay" },
-                               { "accent", "Accent" }, { "glide", "Glide" }, { "drive", "Drive" }, { "volume", "Volume" } };
-const KnobSpec synthKnobs[] = { { "cutoff", "Cutoff" }, { "resonance", "Resonance" }, { "envMod", "Env mod" }, { "attack", "Attack" },
-                                { "release", "Release" }, { "detune", "Detune" }, { "lfoDepth", "LFO depth" }, { "volume", "Volume" } };
+const KnobSpec bassKnobs[] = { { "cutoff", "Cutoff" }, { "resonance", "Reso" }, { "envMod", "Env" }, { "decay", "Decay" },
+                               { "accent", "Accent" }, { "glide", "Glide" }, { "drive", "Drive" }, { "volume", "Level" } };
+const KnobSpec synthKnobs[] = { { "cutoff", "Cutoff" }, { "resonance", "Reso" }, { "envMod", "Env" }, { "attack", "Attack" },
+                                { "release", "Release" }, { "detune", "Detune" }, { "lfoDepth", "LFO" }, { "volume", "Level" } };
 const KnobSpec vocoderKnobs[] = { { "robotLevel", "Robot" }, { "voiceLevel", "Voice" }, { "formant", "Formant" }, { "cutoff", "Cutoff" },
-                                  { "resonance", "Resonance" }, { "chorusMix", "Chorus" }, { "delayMix", "Delay" }, { "reverbMix", "Reverb" } };
+                                  { "resonance", "Reso" }, { "chorusMix", "Chorus" }, { "delayMix", "Delay" }, { "reverbMix", "Reverb" } };
 // The tracks without their own knobs get their mixer strip's effects.
-const KnobSpec fxKnobs[] = { { "filter", "Filter" }, { "resonance", "Resonance" }, { "drive", "Drive" }, { "crush", "Crush" },
+const KnobSpec fxKnobs[] = { { "filter", "Filter" }, { "resonance", "Reso" }, { "drive", "Drive" }, { "crush", "Crush" },
                              { "delayMix", "Delay" }, { "feedback", "Feedback" }, { "reverbMix", "Reverb" }, { "reverbSize", "Room" } };
 
 int destFor (int track)
@@ -65,80 +67,133 @@ int destFor (int track)
 }
 
 constexpr int kDrumStepTicks = seq::kTicksPerBeat / 4;   // 1/16
+constexpr int kLabelWidth = 96, kTrackWidth = 292;
+
+// A short name for a drum sound: "Kick" from "808 Kick 03.wav", else its pad.
+juce::String shortSound (const juce::String& name, int pad)
+{
+    if (name.isEmpty())
+        return padLabel (pad);
+    for (auto* word : { "kick", "snare", "clap", "hat", "rim", "tom", "crash", "ride", "perc", "shaker", "cowbell", "conga", "snap", "808" })
+        if (name.containsIgnoreCase (word))
+            return juce::String (word);
+    return name.upToFirstOccurrenceOf (".", false, false).substring (0, 9);
+}
 }
 
 //==============================================================================
-// A track down the left: its name, what it's doing (or why it's quiet), a meter and a mute.
-class GrooveView::TrackButton : public juce::Component
+// A track down the left: a dark card with its colour stripe, its name and what it's playing,
+// a lamp and a word for what it's doing, a mute and a solo.
+class GrooveView::TrackCard : public juce::Component,
+                              public juce::SettableTooltipClient
 {
 public:
-    TrackButton (GrooveView& o, int t) : owner (o), index (t), colour (trackColour (t))
+    TrackCard (GrooveView& o, int t) : owner (o), index (t), colour (trackColour (t))
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
-        setRepaintsOnMouseActivity (true);
-        addAndMakeVisible (mute);
-        mute.setClickingTogglesState (true);
-        mute.setColour (juce::TextButton::buttonOnColourId, Theme::record);
+        for (auto* b : { &mute, &solo })
+        {
+            wellButton (*b, b == &mute ? Lit::mute : Lit::current, 20.0f);
+            b->setClickingTogglesState (false);
+            addAndMakeVisible (b);
+        }
         mute.setTooltip ("Mutes " + trackName (t) + ". Muted, it keeps going silently, so it comes back in time.");
-        mute.onClick = [this] { owner.engine.getStrip (stripFor (index)).mute = mute.getToggleState(); owner.repaint(); };
+        mute.onClick = [this]
+        {
+            auto& m = owner.engine.getStrip (stripFor (index)).mute;
+            m = ! m.load();
+            tick();
+        };
+        solo.setTooltip ("Solo: hear only " + trackName (t) + ". Press again to bring the others back.");
+        solo.onClick = [this] { owner.pressSolo (index); };
+    }
+
+    // What the lamp says.
+    std::pair<juce::String, Lit> status() const
+    {
+        auto& engine = owner.engine;
+        if (engine.getStrip (stripFor (index)).mute.load())
+            return { "Muted", Lit::mute };
+        if (index == vocoder && ! engine.vocoderOn.load())
+            return { "Off", Lit::none };
+        if (index == loops)
+            for (int l = 0; l < RigLooper::kLayers; ++l)
+            {
+                const auto st = engine.getLooper().getState (l);
+                if (st == RigLooper::State::recording || st == RigLooper::State::overdubbing || st == RigLooper::State::armed)
+                    return { "Rec", Lit::arm };
+            }
+        if (heard > 0.05f)
+            return { "Playing", Lit::play };
+        return { engine.getTransport().isPlaying() ? "Quiet" : "Ready", Lit::none };
     }
 
     void tick()
     {
+        const float m = owner.meterOf ? owner.meterOf (stripFor (index)) : 0.0f;
+        heard = m > 0.003f ? 1.0f : heard * 0.97f;
         const bool muted = owner.engine.getStrip (stripFor (index)).mute.load();
         mute.setToggleState (muted, juce::dontSendNotification);
-        const auto text = owner.stateOf (index);
-        const float m = owner.meterOf ? owner.meterOf (stripFor (index)) : 0.0f;
-        const bool keys = owner.engine.getRouting().keysTo.load() == destFor (index);
-        if (text != state || std::abs (m - meter) > 0.003f || keys != hasKeys)
+        solo.setToggleState (owner.soloTrack == index, juce::dontSendNotification);
+        const auto now = status();
+        const auto detail = owner.detailOf (index);
+        const bool selected = owner.track == index;
+        if (now != shownStatus || detail != shownDetail || selected != shownSelected)
         {
-            state = text;
-            meter = m;
-            hasKeys = keys;
+            shownStatus = now;
+            shownDetail = detail;
+            shownSelected = selected;
+            setTooltip (owner.stateOf (index));
             repaint();
         }
     }
 
     void paint (juce::Graphics& g) override
     {
+        const auto& p = vintage::pal();
         const bool selected = owner.track == index;
-        auto r = getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (selected ? Theme::raised.brighter (0.1f) : isMouseOver (true) ? Theme::raised.brighter (0.04f) : Theme::raised);
-        g.fillRoundedRectangle (r, 8.0f);
-        g.setColour (selected ? colour : colour.withAlpha (0.25f));
-        g.drawRoundedRectangle (r, 8.0f, selected ? 2.0f : 1.0f);
-        g.setColour (colour);
-        g.fillRoundedRectangle (r.withWidth (5.0f).reduced (0, 10), 2.0f);
-
-        auto area = getLocalBounds().reduced (16, 8);
-        area.removeFromRight (mute.getWidth() + 6);
-        auto top = area.removeFromTop (24);
-        g.setColour (selected ? colour : Theme::text);
-        g.setFont (juce::FontOptions (17.0f, juce::Font::bold));
-        g.drawText (trackName (index), top, juce::Justification::centredLeft);
-        if (hasKeys)
+        auto r = getLocalBounds().toFloat().reduced (4.0f);
+        if (selected)
         {
-            g.setColour (colour.withAlpha (0.85f));
-            g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
-            g.drawText ("KEYS", top, juce::Justification::centredRight);
+            vintage::glow (g, r, 12.0f, vintage::colours::selected, 10.0f, 0.5f);
+            g.setColour (vintage::colours::selected);
+            g.fillRoundedRectangle (r.expanded (3.0f), 14.0f);
+        }
+        vintage::drawWell (g, r);
+        {
+            juce::Graphics::ScopedSaveState s (g);
+            juce::Path clip;
+            clip.addRoundedRectangle (r, 12.0f);
+            g.reduceClipRegion (clip);
+            g.setColour (colour);
+            g.fillRect (r.withWidth (10.0f));
         }
 
-        const bool quiet = owner.engine.getStrip (stripFor (index)).mute.load();
-        g.setColour (quiet ? Theme::record.withAlpha (0.9f) : Theme::textDim);
-        g.setFont (juce::FontOptions (12.5f));
-        g.drawFittedText (state, area.removeFromTop (32), juce::Justification::topLeft, 2);
+        auto area = r.toNearestInt().withTrimmedLeft (22).reduced (0, 8).withTrimmedRight (12);
+        auto top = area.removeFromTop (area.getHeight() / 2);
+        g.setColour (p.wellInk);
+        g.setFont (vintage::cond (juce::jmin (30.0f, top.getHeight() * 0.95f), Weight::extra, 0.04f));
+        const auto name = trackName (index).toUpperCase();
+        const int nameWidth = juce::jmin (top.getWidth() / 2 + 20, (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), name) + 6);
+        g.drawText (name, top.removeFromLeft (nameWidth), juce::Justification::centredLeft, false);
+        g.setColour (p.wellInk2);
+        g.setFont (vintage::barlow (13.0f));
+        g.drawFittedText (shownDetail, top, juce::Justification::centredRight, 1, 0.8f);
 
-        auto bar = area.removeFromBottom (5).toFloat();
-        g.setColour (Theme::background);
-        g.fillRoundedRectangle (bar, 2.5f);
-        const float db = juce::Decibels::gainToDecibels (meter, -60.0f);
-        g.setColour (colour.withAlpha (quiet ? 0.3f : 0.9f));
-        g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f)), 2.5f);
+        auto row = area;
+        row.removeFromRight (mute.getWidth() + solo.getWidth() + 8);
+        vintage::drawLamp (g, { (float) row.getX() + 8.0f, (float) row.getCentreY() }, shownStatus.second);
+        vintage::engraved (g, shownStatus.first, row.withTrimmedLeft (24), juce::Justification::centredLeft, 13.0f, true);
     }
 
     void resized() override
     {
-        mute.setBounds (getLocalBounds().reduced (10).removeFromRight (34).withSizeKeepingCentre (34, 30));
+        auto r = getLocalBounds().reduced (4).withTrimmedRight (12).withTrimmedBottom (8);
+        const int size = juce::jlimit (30, 44, r.getHeight() / 2);
+        auto row = r.removeFromBottom (size);
+        solo.setBounds (row.removeFromRight (size));
+        row.removeFromRight (8);
+        mute.setBounds (row.removeFromRight (size));
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -147,15 +202,16 @@ public:
             owner.selectTrack (index);
     }
 
-    juce::TextButton mute { "M" };
+    juce::TextButton mute { "M" }, solo { "S" };
 
 private:
     GrooveView& owner;
     const int index;
     const juce::Colour colour;
-    juce::String state;
-    float meter = -1;
-    bool hasKeys = false;
+    float heard = 0;
+    std::pair<juce::String, Lit> shownStatus;
+    juce::String shownDetail;
+    bool shownSelected = false;
 };
 
 //==============================================================================
@@ -201,20 +257,25 @@ juce::String GrooveView::tabFor (int t)
 //==============================================================================
 GrooveView::GrooveView (RigEngine& e) : engine (e)
 {
+    setOpaque (true);
     for (int t = 0; t < numTracks; ++t)
-        addAndMakeVisible (trackButtons.add (new TrackButton (*this, t)));
+        addAndMakeVisible (cards.add (new TrackCard (*this, t)));
 
-    addAndMakeVisible (openButton);
+    for (auto* b : { &openButton, &micButton, &extraButton, &barButton, &clearButton })
+    {
+        wellButton (*b);
+        addChildComponent (b);
+    }
+    openButton.setVisible (true);
     openButton.onClick = [this] { if (onOpen) onOpen (tabFor (track)); };
 
-    addChildComponent (micButton);
     micButton.setClickingTogglesState (true);
-    micButton.setColour (juce::TextButton::buttonOnColourId, Theme::record);
+    vintage::setLit (micButton, Lit::arm);
     micButton.setTooltip ("The mic, for the vocoder. Use headphones with it on, or the speakers feed back into the mic.");
     micButton.onClick = [this] { engine.micOn = micButton.getToggleState(); };
 
-    addChildComponent (extraButton);
     extraButton.setClickingTogglesState (true);
+    vintage::setLit (extraButton, Lit::play);
     extraButton.onClick = [this]
     {
         if (track == bass)
@@ -224,7 +285,6 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
         updateButtons();
     };
 
-    addChildComponent (barButton);
     barButton.setTooltip ("Which bar of the beat the steps show. Click for the next one.");
     barButton.onClick = [this]
     {
@@ -234,18 +294,7 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
         repaint();
     };
 
-    for (int i = 0; i < 8; ++i)
-    {
-        auto* b = partButtons.add (new juce::TextButton (juce::String::charToString ((juce::juce_wchar) ('A' + i))));
-        styleButton (*b, RigColours::song);
-        b->onClick = [this, i]
-        {
-            if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
-                return;
-            pressPart (i);
-        };
-        addAndMakeVisible (b);
-    }
+    clearButton.onClick = [this] { clearPattern(); };
 
     // Start on the track the keys already play, so nothing changes until you pick one.
     for (int t = 0; t < numTracks; ++t)
@@ -266,8 +315,8 @@ void GrooveView::refresh()
     shownSignature = {};
     buildTrack();
     setFollowKnobs();
-    for (auto* t : trackButtons)
-        t->tick();
+    for (auto* c : cards)
+        c->tick();
     repaint();
 }
 
@@ -282,9 +331,33 @@ void GrooveView::selectTrack (int t)
     heldCell = dragStep = -1;
     buildTrack();
     setFollowKnobs();
-    for (auto* b : trackButtons)
-        b->tick();
+    for (auto* c : cards)
+        c->tick();
     repaint();
+}
+
+void GrooveView::pressSolo (int t)
+{
+    if (! juce::isPositiveAndBelow (t, (int) numTracks))
+        return;
+    if (soloTrack == t)
+    {
+        // Bring everything back as it was.
+        for (int st = 0; st < RigEngine::numStrips; ++st)
+            engine.getStrip (st).mute = mutesBeforeSolo[(size_t) st];
+        soloTrack = -1;
+    }
+    else
+    {
+        if (soloTrack < 0)
+            for (int st = 0; st < RigEngine::numStrips; ++st)
+                mutesBeforeSolo[(size_t) st] = engine.getStrip (st).mute.load();
+        for (int other = 0; other < numTracks; ++other)
+            engine.getStrip (stripFor (other)).mute = other != t;
+        soloTrack = t;
+    }
+    for (auto* c : cards)
+        c->tick();
 }
 
 //==============================================================================
@@ -339,10 +412,10 @@ void GrooveView::buildTrack()
 {
     const auto colour = trackColour (track);
     patternButtons.clear();
-    auto add = [this, colour] (const juce::String& text, const juce::String& tip)
+    auto add = [this] (const juce::String& text, const juce::String& tip)
     {
         auto* b = patternButtons.add (new juce::TextButton (text));
-        styleButton (*b, colour);
+        wellButton (*b, Lit::current, 15.0f);
         b->setTooltip (tip);
         const int i = patternButtons.size() - 1;
         b->onClick = [this, i] { pressPattern (i); };
@@ -365,20 +438,21 @@ void GrooveView::buildTrack()
             for (auto* m : arpModes)
                 add (m, "The arp plays the chord you hold, in this order, on the steps that are lit.");
             add ("Hold", "On, the arp keeps playing after you let go of the keys. Press a new chord to change it.");
-            patternButtons.getLast()->setClickingTogglesState (false);
             break;
         case vocoder:
             for (auto* name : vocoderSounds)
                 add (name, "Vocoder sound: " + juce::String (name) + ".");
             break;
         case sampler:
-            add ("Sample", "Records what's picked under Sample at the bottom left into the Sampler (or an MPC pad).");
-            patternButtons.getLast()->setColour (juce::TextButton::buttonOnColourId, Theme::record);
+            add ("Sample", "Records the mic, a tool or the mix (as set on the Mixer page) into the Sampler, from the next bar.");
+            vintage::setLit (*patternButtons.getLast(), Lit::arm);
             add ("Stop sound", "Stops the Sampler's sound.");
             break;
         case loops:
             for (int i = 0; i < RigLooper::kLayers; ++i)
                 add ("Mute " + juce::String (i + 1), "Mutes loop layer " + juce::String (i + 1) + ". It keeps going round, so it comes back in time.");
+            for (auto* b : patternButtons)
+                vintage::setLit (*b, Lit::mute);
             break;
         default: break;
     }
@@ -391,9 +465,9 @@ void GrooveView::buildTrack()
         if (params == nullptr || params->getParameter (id) == nullptr)
             continue;
         const auto* specs = track == bass ? bassKnobs : track == synth ? synthKnobs : track == vocoder ? vocoderKnobs : fxKnobs;
-        auto knob = std::make_unique<crate::ParamKnob> (*params, id, specs[i].name, colour);
+        auto knob = std::make_unique<vintage::Knob> (*params, id, specs[i].name, colour);
         knob->slider.setTooltip (juce::String (specs[i].name) + ". Knob " + juce::String (i + 1)
-                                 + " on your keyboard turns it too. Double-click for the default.");
+                                 + " on your keyboard turns it too. Drag up or down; double-click for the default.");
         if (track == vocoder)
         {
             // The vocoder's settings have no units of their own: keep the numbers short.
@@ -404,12 +478,14 @@ void GrooveView::buildTrack()
         knobs.push_back (std::move (knob));
     }
 
-    openButton.setButtonText ("Open " + tabFor (track) + "  >");
-    openButton.setTooltip ("Everything " + trackName (track) + " can do, in its own tab.");
+    openButton.setButtonText ("Open " + tabFor (track) + juce::String::fromUTF8 (" \xe2\x80\xba"));
+    openButton.setTooltip ("Everything " + trackName (track) + " can do, on its own page.");
     micButton.setVisible (track == vocoder && showMic);
     extraButton.setVisible (track == bass || track == vocoder);
-    styleButton (extraButton, colour);
     barButton.setVisible (track == drums);
+    clearButton.setVisible (track == drums || track == bass || track == synth);
+    clearButton.setTooltip (track == drums ? "Clears the shown bar of the beat, for the four sounds here."
+                                           : track == bass ? "Clears the bass pattern's steps." : "Lights every arp step again, no accents.");
     drumBar = 0;
     updateButtons();
     resized();
@@ -418,6 +494,16 @@ void GrooveView::buildTrack()
 // Lights the buttons to match what's on.
 void GrooveView::updateButtons()
 {
+    auto setLit = [] (juce::Button* b, bool on, Lit lit)
+    {
+        const bool changed = (int) b->getProperties()["lit"] != (int) lit || b->getToggleState() != on;
+        vintage::setLit (*b, lit);
+        if (b->getToggleState() != on)
+            b->setToggleState (on, juce::dontSendNotification);
+        if (changed)
+            b->repaint();
+    };
+    const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
     switch (track)
     {
         case drums:
@@ -425,10 +511,7 @@ void GrooveView::updateButtons()
             auto& mpc = engine.getMpc();
             const int now = mpc.getProject().getCurrentSequenceIndex(), queued = mpc.getQueuedSequence();
             for (int i = 0; i < patternButtons.size(); ++i)
-            {
-                patternButtons[i]->setToggleState (i == now, juce::dontSendNotification);
-                patternButtons[i]->setColour (juce::TextButton::buttonColourId, i == queued ? trackColour (track).withAlpha (0.35f) : Theme::panel);
-            }
+                setLit (patternButtons[i], i == now || (i == queued && pulse), i == now ? Lit::current : Lit::next);
             const auto& s = mpc.getProject().currentSequence();
             drumBar = juce::jlimit (0, juce::jmax (0, s.bars - 1), drumBar);
             barButton.setButtonText ("Bar " + juce::String (drumBar + 1) + " of " + juce::String (s.bars));
@@ -438,7 +521,7 @@ void GrooveView::updateButtons()
         {
             const int selected = engine.getBass().getSelectedPattern();
             for (int i = 0; i < patternButtons.size(); ++i)
-                patternButtons[i]->setToggleState (i == selected, juce::dontSendNotification);
+                setLit (patternButtons[i], i == selected, Lit::current);
             const bool on = getParam (engine.getBass().params, "sequencer") > 0.5f;
             extraButton.setToggleState (on, juce::dontSendNotification);
             extraButton.setButtonText (on ? "Pattern on" : "Pattern off");
@@ -451,9 +534,9 @@ void GrooveView::updateButtons()
             const bool arp = getParam (params, "arpOn") > 0.5f;
             const int mode = (int) getParam (params, "arpMode");
             for (int i = 0; i < patternButtons.size() - 1; ++i)
-                patternButtons[i]->setToggleState (i == 0 ? ! arp : arp && mode == i - 1, juce::dontSendNotification);
+                setLit (patternButtons[i], i == 0 ? ! arp : arp && mode == i - 1, Lit::current);
             if (auto* hold = patternButtons.getLast())
-                hold->setToggleState (getParam (params, "latch") > 0.5f, juce::dontSendNotification);
+                setLit (hold, getParam (params, "latch") > 0.5f, Lit::play);
             break;
         }
         case vocoder:
@@ -461,7 +544,7 @@ void GrooveView::updateButtons()
             auto& v = engine.getVocoder();
             const auto current = v.getProgramName (v.getCurrentProgram());
             for (int i = 0; i < patternButtons.size(); ++i)
-                patternButtons[i]->setToggleState (current == vocoderSounds[i], juce::dontSendNotification);
+                setLit (patternButtons[i], current == vocoderSounds[i], Lit::current);
             const bool on = engine.vocoderOn.load();
             extraButton.setToggleState (on, juce::dontSendNotification);
             extraButton.setButtonText (on ? "Vocoder on" : "Vocoder off");
@@ -475,34 +558,16 @@ void GrooveView::updateButtons()
             const bool recording = isSampling && isSampling();
             if (auto* b = patternButtons[0])
             {
-                b->setToggleState (recording, juce::dontSendNotification);
+                setLit (b, recording, Lit::arm);
                 b->setButtonText (recording ? "Stop sampling" : "Sample");
             }
             break;
         }
         case loops:
             for (int i = 0; i < patternButtons.size(); ++i)
-                patternButtons[i]->setToggleState (engine.getLooper().getLayer (i).mute.load(), juce::dontSendNotification);
+                setLit (patternButtons[i], engine.getLooper().getLayer (i).mute.load(), Lit::mute);
             break;
         default: break;
-    }
-
-    // Song parts: the one playing lit, the one coming next half lit, the first empty one says
-    // it saves.
-    auto& scenes = engine.getScenes();
-    const int count = (int) scenes.getScenes().size();
-    for (int i = 0; i < partButtons.size(); ++i)
-    {
-        auto* b = partButtons[i];
-        const auto letter = juce::String::charToString ((juce::juce_wchar) ('A' + i));
-        const bool has = i < count;
-        const auto name = has ? scenes.getScenes()[(size_t) i].name : juce::String();
-        b->setButtonText (has ? (name == "Part " + letter ? letter : letter + "  " + name) : i == count ? letter + "  + Save" : letter);
-        b->setToggleState (i == scenes.getCurrent(), juce::dontSendNotification);
-        b->setColour (juce::TextButton::buttonColourId, i == scenes.getQueued() ? RigColours::song.withAlpha (0.35f) : Theme::panel);
-        b->setAlpha (i <= count ? 1.0f : 0.4f);
-        b->setTooltip (has ? "Plays this part from the next bar (straight away when stopped)."
-                           : "Saves what's playing now (beats, patterns, mutes) as a song part. Then press it to come back to it.");
     }
 }
 
@@ -579,6 +644,71 @@ juce::String GrooveView::stateOf (int t) const
     }
 }
 
+// The few words on a track's card: its kit, pattern, mode or sound.
+juce::String GrooveView::detailOf (int t) const
+{
+    switch (t)
+    {
+        case drums:
+        {
+            auto& project = engine.getMpc().getProject();
+            const auto kit = project.currentBank().name;
+            return kit.isNotEmpty() ? kit : "Beat " + juce::String (project.getCurrentSequenceIndex() + 1);
+        }
+        case bass:
+            return getParam (engine.getBass().params, "sequencer") > 0.5f
+                       ? "Pattern " + juce::String (engine.getBass().getSelectedPattern() + 1) : juce::String ("Keys");
+        case synth:
+        {
+            auto& params = engine.getSynth().params;
+            if (getParam (params, "arpOn") < 0.5f)
+                return "Keys";
+            return juce::String ("Arp ") + arpModes[juce::jlimit (0, (int) std::size (arpModes) - 1, (int) getParam (params, "arpMode"))];
+        }
+        case vocoder:
+        {
+            auto& v = engine.getVocoder();
+            return v.getProgramName (v.getCurrentProgram());
+        }
+        case sampler:
+        {
+            auto& doc = engine.getSampler().getDocument();
+            return doc.hasAudio() ? (doc.getName().isNotEmpty() ? doc.getName() : juce::String ("A sound")) : juce::String ("Empty");
+        }
+        case loops:
+        {
+            int used = 0;
+            for (int i = 0; i < RigLooper::kLayers; ++i)
+                used += engine.getLooper().getState (i) != RigLooper::State::empty ? 1 : 0;
+            return juce::String (used) + " of " + juce::String (RigLooper::kLayers) + " layers";
+        }
+        default: return {};
+    }
+}
+
+juce::String GrooveView::patternText() const
+{
+    switch (track)
+    {
+        case drums:
+        {
+            auto& project = engine.getMpc().getProject();
+            return "BEAT " + juce::String (project.getCurrentSequenceIndex() + 1) + "/" + juce::String ((int) project.getSequences().size());
+        }
+        case bass:
+            return "PATTERN " + juce::String (engine.getBass().getSelectedPattern() + 1) + "/" + juce::String (crate::bass::kPatterns);
+        case synth:
+            return getParam (engine.getSynth().params, "arpOn") > 0.5f ? detailOf (synth).toUpperCase() : juce::String ("ARP OFF");
+        case vocoder:
+            return detailOf (vocoder).toUpperCase();
+        case sampler:
+            return engine.getSampler().getDocument().hasAudio() ? juce::String ("LOADED") : juce::String ("EMPTY");
+        case loops:
+            return detailOf (loops).toUpperCase();
+        default: return {};
+    }
+}
+
 //==============================================================================
 int GrooveView::numSteps() const
 {
@@ -591,9 +721,44 @@ int GrooveView::numSteps() const
     }
 }
 
-int GrooveView::drumPad() const
+int GrooveView::numRows() const
 {
-    return engine.getRouting().padBank.load() * kPadsPerBank + drumPadIndex;
+    switch (track)
+    {
+        case drums: return kDrumRows;
+        case bass:  return 4;
+        case synth: return 2;
+        default:    return 1;
+    }
+}
+
+int GrooveView::drumPad (int row) const
+{
+    const int first = engine.getRouting().padBank.load() * kPadsPerBank;
+    if (juce::isPositiveAndBelow (row, kDrumRows) && drumRows[(size_t) row] >= 0)
+        return first + drumRows[(size_t) row];
+
+    // Not picked: the kit's sounds in pad order, then the empty pads.
+    const auto& pads = engine.getMpc().getProject().currentBank().pads;
+    std::vector<int> order;
+    for (int pass = 0; pass < 2; ++pass)
+        for (int i = 0; i < kPadsPerBank; ++i)
+            if (pads[(size_t) (first + i)].isEmpty() == (pass == 1))
+                order.push_back (i);
+    // Leave out the ones other rows picked.
+    int n = 0;
+    for (int i : order)
+    {
+        if (std::find (drumRows.begin(), drumRows.end(), i) != drumRows.end())
+            continue;
+        int autoRow = 0;
+        for (int r = 0; r < row; ++r)
+            autoRow += drumRows[(size_t) r] < 0 ? 1 : 0;
+        if (n == autoRow)
+            return first + i;
+        ++n;
+    }
+    return first + juce::jlimit (0, kPadsPerBank - 1, row);
 }
 
 bool GrooveView::drumHit (int pad, int step) const
@@ -622,38 +787,91 @@ void GrooveView::setDrumHit (int pad, int step, bool on)
     mpc.getProject().sequenceChanged();
 }
 
-GrooveView::Cell GrooveView::cellAt (int i) const
+void GrooveView::clearPattern()
+{
+    switch (track)
+    {
+        case drums:
+            for (int row = 0; row < kDrumRows; ++row)
+                for (int step = 0; step < numSteps(); ++step)
+                    if (drumHit (drumPad (row), step))
+                        setDrumHit (drumPad (row), step, false);
+            break;
+        case bass:
+        {
+            auto& b = engine.getBass();
+            auto p = b.getPattern (b.getSelectedPattern());
+            for (auto& st : p.steps)
+                st = {};
+            b.setPattern (b.getSelectedPattern(), p);
+            break;
+        }
+        case synth:
+            engine.getSynth().setRhythm ({});
+            break;
+        default: break;
+    }
+    repaint();
+}
+
+juce::String GrooveView::rowName (int row) const
+{
+    switch (track)
+    {
+        case drums:
+        {
+            const int pad = drumPad (row);
+            const auto& p = engine.getMpc().getProject().currentBank().pads[(size_t) pad];
+            return shortSound (p.isEmpty() ? juce::String() : p.name, pad);
+        }
+        case bass:  { const char* names[] = { "Steps", "Note", "Accent", "Slide" }; return names[juce::jlimit (0, 3, row)]; }
+        case synth: return row == 0 ? "Arp" : "Accent";
+        default:    return {};
+    }
+}
+
+GrooveView::Cell GrooveView::cellAt (int row, int i) const
 {
     Cell c;
     switch (track)
     {
         case drums:
-            c.lit = drumHit (drumPad(), i);
+        {
+            const int pad = drumPad (row);
+            c.lit = drumHit (pad, i);
+            c.dim = engine.getMpc().getProject().currentBank().pads[(size_t) pad].isEmpty();
             break;
+        }
         case bass:
         {
             auto& b = engine.getBass();
             const auto p = b.getPattern (b.getSelectedPattern());
             const auto& s = p.steps[(size_t) i];
-            c.lit = s.on;
-            c.strong = s.accent;
             c.dim = i >= p.length;
-            c.label = s.on ? juce::MidiMessage::getMidiNoteName ((int) getParam (b.params, "root") + s.note, true, true, 3) : juce::String();
-            c.sub = s.on && s.slide ? "slide" : juce::String();
+            switch (row)
+            {
+                case 0: c.lit = s.on; break;
+                case 1:
+                    c.label = juce::MidiMessage::getMidiNoteName ((int) getParam (b.params, "root") + s.note, true, true, 3);
+                    c.lit = s.on;
+                    c.playing = dragStep == i;
+                    break;
+                case 2: c.lit = s.accent; break;
+                default: c.lit = s.slide; break;
+            }
             break;
         }
         case synth:
         {
             const auto r = engine.getSynth().getRhythm();
-            c.lit = r.on[(size_t) i];
-            c.strong = r.accent[(size_t) i];
+            c.lit = row == 0 ? r.on[(size_t) i] : r.accent[(size_t) i];
             c.dim = i >= r.length;
             break;
         }
         case vocoder:
             c.label = vocoderSwitches[i].second;
             c.lit = getParam (engine.getVocoder().params, vocoderSwitches[i].first) > 0.5f;
-            c.sub = c.lit ? "on" : "off";
+            c.sub = c.lit ? "On" : "Off";
             c.dim = ! engine.vocoderOn.load();
             break;
         case sampler:
@@ -679,7 +897,7 @@ GrooveView::Cell GrooveView::cellAt (int i) const
             switch (st)
             {
                 case RigLooper::State::empty:       c.sub = "Rec"; break;
-                case RigLooper::State::armed:       c.sub = "Waiting for the bar"; break;
+                case RigLooper::State::armed:       c.sub = "Next bar"; break;
                 case RigLooper::State::recording:   c.sub = "Recording"; break;
                 case RigLooper::State::playing:     c.sub = c.dim ? "Muted" : "Playing"; break;
                 case RigLooper::State::overdubbing: c.sub = "Overdub"; break;
@@ -715,58 +933,18 @@ int GrooveView::playheadStep() const
     }
 }
 
-int GrooveView::laneCount() const
-{
-    return track == drums || track == bass || track == synth ? 16 : 0;
-}
-
-GrooveView::Cell GrooveView::laneCell (int i) const
-{
-    Cell c;
-    switch (track)
-    {
-        case drums:
-        {
-            const int pad = engine.getRouting().padBank.load() * kPadsPerBank + i;
-            const auto& p = engine.getMpc().getProject().currentBank().pads[(size_t) pad];
-            c.label = padLabel (pad);
-            c.sub = p.isEmpty() ? juce::String ("empty") : p.name;
-            c.lit = i == drumPadIndex;
-            c.dim = p.isEmpty();
-            break;
-        }
-        case bass:
-        {
-            const auto cell = cellAt (i);
-            c.label = cell.label.isNotEmpty() ? cell.label : juce::String ("-");
-            c.lit = cell.lit;
-            c.dim = cell.dim || ! cell.lit;
-            c.playing = dragStep == i;
-            break;
-        }
-        case synth:
-        {
-            const auto r = engine.getSynth().getRhythm();
-            c.label = r.accent[(size_t) i] ? "Accent" : "";
-            c.lit = r.accent[(size_t) i];
-            c.dim = i >= r.length;
-            break;
-        }
-        default: break;
-    }
-    return c;
-}
-
 //==============================================================================
-void GrooveView::pressStep (int i)
+void GrooveView::pressStep (int i) { pressCell (0, i); }
+
+void GrooveView::pressCell (int row, int i)
 {
-    if (! juce::isPositiveAndBelow (i, numSteps()))
+    if (! juce::isPositiveAndBelow (i, numSteps()) || ! juce::isPositiveAndBelow (row, numRows()))
         return;
     switch (track)
     {
         case drums:
         {
-            const int pad = drumPad();
+            const int pad = drumPad (row);
             const bool add = ! drumHit (pad, i);
             setDrumHit (pad, i, add);
             if (add && ! engine.getTransport().isPlaying())
@@ -779,7 +957,14 @@ void GrooveView::pressStep (int i)
             const int index = b.getSelectedPattern();
             auto p = b.getPattern (index);
             auto& s = p.steps[(size_t) i];
-            s.on = ! s.on;
+            if (row == 2)
+                s.accent = ! s.accent;
+            else if (row == 3)
+                s.slide = ! s.slide;
+            else if (row == 1 && s.on)
+                break;   // the note row: drag a lit note up or down
+            else
+                s.on = ! s.on;
             if (i >= p.length && s.on)
                 p.length = i + 1;
             b.setPattern (index, p);
@@ -792,6 +977,12 @@ void GrooveView::pressStep (int i)
         {
             auto& synthTool = engine.getSynth();
             auto r = synthTool.getRhythm();
+            if (row == 1)
+            {
+                r.accent[(size_t) i] = ! r.accent[(size_t) i];
+                synthTool.setRhythm (r);
+                break;
+            }
             r.on[(size_t) i] = ! r.on[(size_t) i];
             if (i >= r.length && r.on[(size_t) i])
                 r.length = i + 1;
@@ -827,47 +1018,25 @@ void GrooveView::pressStep (int i)
     repaint();
 }
 
-void GrooveView::releaseCell (int i)
+void GrooveView::releaseCell()
 {
-    if (track == sampler && heldCell == i)
+    if (track == sampler && heldCell >= 0)
     {
         auto& s = engine.getSampler();
         const bool slices = s.getKeys().getMode() == crate::KeyboardSampler::Mode::slices;
-        const int note = slices ? crate::KeyboardSampler::kFirstSliceNote + i : s.getKeys().getRootNote() + i;
+        const int note = slices ? crate::KeyboardSampler::kFirstSliceNote + heldCell : s.getKeys().getRootNote() + heldCell;
         s.keyboardState.noteOff (1, juce::jlimit (0, 127, note), 0.0f);
     }
     heldCell = -1;
     repaint();
 }
 
-void GrooveView::pressLane (int i)
-{
-    if (track == drums)
-    {
-        drumPadIndex = juce::jlimit (0, kPadsPerBank - 1, i);
-        engine.getMpc().playPad (drumPad(), 100 / 127.0f);
-    }
-    else if (track == synth)
-        toggleAccent (i);
-    repaint();
-}
-
 void GrooveView::toggleAccent (int i)
 {
     if (track == bass)
-    {
-        auto& b = engine.getBass();
-        auto p = b.getPattern (b.getSelectedPattern());
-        p.steps[(size_t) i].accent = ! p.steps[(size_t) i].accent;
-        b.setPattern (b.getSelectedPattern(), p);
-    }
+        pressCell (2, i);
     else if (track == synth)
-    {
-        auto r = engine.getSynth().getRhythm();
-        r.accent[(size_t) i] = ! r.accent[(size_t) i];
-        engine.getSynth().setRhythm (r);
-    }
-    repaint();
+        pressCell (1, i);
 }
 
 void GrooveView::nudgeNote (int i, int semitones)
@@ -946,19 +1115,29 @@ void GrooveView::pressPattern (int i)
 
 void GrooveView::pressPart (int i)
 {
-    auto& scenes = engine.getScenes();
-    auto& list = scenes.getScenes();
-    if (juce::isPositiveAndBelow (i, (int) list.size()))
-        scenes.launch (i);
-    else if (i >= 0 && (int) list.size() < RigScenes::kMaxScenes)
+    rigpanels::Footer::pressPart (engine, i);
+}
+
+void GrooveView::showDrumRowMenu (int row)
+{
+    const int first = engine.getRouting().padBank.load() * kPadsPerBank;
+    const auto& pads = engine.getMpc().getProject().currentBank().pads;
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Sound for this row");
+    for (int i = 0; i < kPadsPerBank; ++i)
     {
-        // An empty part saves what's playing now, in the next free part.
-        RigScene scene;
-        scene.name = "Part " + juce::String::charToString ((juce::juce_wchar) ('A' + (int) list.size()));
-        scene.state = engine.captureScene();
-        list.push_back (scene);
+        const auto& p = pads[(size_t) (first + i)];
+        menu.addItem (i + 1, padLabel (first + i) + "   " + (p.isEmpty() ? juce::String ("(empty)") : p.name), true, drumPad (row) == first + i);
     }
-    updateButtons();
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (cellRect (row, 0).toNearestInt().withX (gridArea.getX()))),
+                        [safe = juce::Component::SafePointer<GrooveView> (this), row] (int result)
+                        {
+                            if (safe == nullptr || result == 0)
+                                return;
+                            safe->drumRows[(size_t) row] = result - 1;
+                            safe->engine.getMpc().playPad (safe->drumPad (row), 100 / 127.0f);
+                            safe->repaint();
+                        });
 }
 
 //==============================================================================
@@ -966,11 +1145,11 @@ void GrooveView::timerCallback()
 {
     if (! isShowing())
         return;
-    for (auto* t : trackButtons)
-        t->tick();
+    for (auto* c : cards)
+        c->tick();
     updateButtons();
 
-    // Follow the keys if they're sent somewhere else (the Keys play menu, a loaded show).
+    // Follow the keys if they're sent somewhere else (the Mixer page, a loaded show).
     const int keys = engine.getRouting().keysTo.load();
     if (destFor (track) >= 0 && keys != destFor (track))
         for (int t = 0; t < numTracks; ++t)
@@ -981,16 +1160,16 @@ void GrooveView::timerCallback()
             }
 
     juce::String sig;
-    sig << track << "/" << playheadStep() << "/" << stateOf (track) << "/" << heldCell << "/" << drumPadIndex << "/" << drumBar;
-    for (int i = 0; i < numSteps(); ++i)
+    sig << track << "/" << playheadStep() << "/" << stateOf (track) << "/" << heldCell << "/" << drumBar << "/" << patternText()
+        << (vintage::isStage() ? "d" : "l");
+    for (int row = 0; row < numRows(); ++row)
     {
-        const auto c = cellAt (i);
-        sig << (c.lit ? 1 : 0) << (c.strong ? 1 : 0) << (c.dim ? 1 : 0) << c.label << c.sub;
-    }
-    for (int i = 0; i < laneCount(); ++i)
-    {
-        const auto c = laneCell (i);
-        sig << (c.lit ? 1 : 0) << (c.dim ? 1 : 0) << c.label << c.sub;
+        sig << rowName (row) << ":";
+        for (int i = 0; i < numSteps(); ++i)
+        {
+            const auto c = cellAt (row, i);
+            sig << (c.lit ? 1 : 0) << (c.strong ? 1 : 0) << (c.dim ? 1 : 0) << (c.playing ? 1 : 0) << c.label << c.sub;
+        }
     }
     if (track == loops)
         for (int i = 0; i < RigLooper::kLayers; ++i)
@@ -998,66 +1177,78 @@ void GrooveView::timerCallback()
     if (sig != shownSignature)
     {
         shownSignature = sig;
-        repaint (centreArea);
+        repaint (wellArea);
     }
 }
 
 //==============================================================================
-juce::Rectangle<float> GrooveView::stepRect (int i) const
+juce::Rectangle<float> GrooveView::cellRect (int row, int i) const
 {
-    const int n = numSteps();
-    const float gap = 6.0f, groupGap = n == 16 ? 10.0f : 0.0f;
-    const float w = (stepArea.getWidth() - gap * (n - 1) - groupGap * 3) / (float) n;
-    const float x = stepArea.getX() + i * (w + gap) + (n == 16 ? (i / 4) * groupGap : 0.0f);
-    return { x, (float) stepArea.getY(), w, (float) stepArea.getHeight() };
+    const int n = numSteps(), rows = numRows();
+    auto grid = gridArea.toFloat();
+    if (! bigCells())
+        grid.removeFromLeft ((float) kLabelWidth + 12.0f);
+    const float gap = bigCells() ? 12.0f : 6.0f, groupGap = n == 16 ? 14.0f : 0.0f;
+    const float w = (grid.getWidth() - gap * (n - 1) - groupGap * 3) / (float) n;
+    const float x = grid.getX() + i * (w + gap) + (n == 16 ? (i / 4) * (groupGap) : 0.0f);
+    const float rowGap = 10.0f;
+    float h = (grid.getHeight() - rowGap * (rows - 1)) / (float) rows;
+    if (! bigCells())
+        h = juce::jmin (h, 58.0f);
+    return { x, grid.getY() + row * (h + rowGap), w, h };
 }
 
-juce::Rectangle<float> GrooveView::laneRect (int i) const
+std::pair<int, int> GrooveView::cellAt (juce::Point<int> p) const
 {
-    auto r = stepRect (i);
-    return { r.getX(), (float) laneArea.getY(), r.getWidth(), (float) laneArea.getHeight() };
+    for (int row = 0; row < numRows(); ++row)
+        for (int i = 0; i < numSteps(); ++i)
+            if (cellRect (row, i).expanded (2.0f).contains (p.toFloat()))
+                return { row, i };
+    return { -1, -1 };
 }
 
-int GrooveView::stepAt (juce::Point<int> p) const
+int GrooveView::rowLabelAt (juce::Point<int> p) const
 {
-    for (int i = 0; i < numSteps(); ++i)
-        if (stepRect (i).contains (p.toFloat()))
-            return i;
-    return -1;
-}
-
-int GrooveView::laneAt (juce::Point<int> p) const
-{
-    for (int i = 0; i < laneCount(); ++i)
-        if (laneRect (i).contains (p.toFloat()))
-            return i;
+    if (bigCells())
+        return -1;
+    for (int row = 0; row < numRows(); ++row)
+    {
+        const auto r = cellRect (row, 0);
+        if (juce::Rectangle<float> ((float) gridArea.getX(), r.getY(), (float) kLabelWidth, r.getHeight()).contains (p.toFloat()))
+            return row;
+    }
     return -1;
 }
 
 void GrooveView::mouseDown (const juce::MouseEvent& e)
 {
-    if (const int lane = laneAt (e.getPosition()); lane >= 0)
+    if (const int row = rowLabelAt (e.getPosition()); row >= 0)
     {
-        if (track == bass)
-        {
-            // Drag a note up or down.
-            const auto p = engine.getBass().getPattern (engine.getBass().getSelectedPattern());
-            dragStep = lane;
-            dragStartNote = p.steps[(size_t) lane].note;
-            dragStartY = e.y;
-            repaint();
-        }
-        else
-            pressLane (lane);
+        if (track == drums)
+            showDrumRowMenu (row);
         return;
     }
-    if (const int step = stepAt (e.getPosition()); step >= 0)
+    const auto [row, step] = cellAt (e.getPosition());
+    if (step < 0)
+        return;
+    if ((e.mods.isPopupMenu() || e.mods.isShiftDown()) && (track == bass || track == synth))
     {
-        if ((e.mods.isPopupMenu() || e.mods.isShiftDown()) && (track == bass || track == synth))
-            toggleAccent (step);
-        else
-            pressStep (step);
+        toggleAccent (step);
+        return;
     }
+    if (track == bass && row == 1)
+    {
+        // Drag a note up or down (a click on an unlit one lights it).
+        const auto p = engine.getBass().getPattern (engine.getBass().getSelectedPattern());
+        if (! p.steps[(size_t) step].on)
+            pressCell (0, step);
+        dragStep = step;
+        dragStartNote = p.steps[(size_t) step].note;
+        dragStartY = e.y;
+        repaint();
+        return;
+    }
+    pressCell (row, step);
 }
 
 void GrooveView::mouseDrag (const juce::MouseEvent& e)
@@ -1073,7 +1264,7 @@ void GrooveView::mouseDrag (const juce::MouseEvent& e)
 void GrooveView::mouseUp (const juce::MouseEvent&)
 {
     if (heldCell >= 0)
-        releaseCell (heldCell);
+        releaseCell();
     dragStep = -1;
     repaint();
 }
@@ -1082,265 +1273,223 @@ void GrooveView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWhe
 {
     if (track != bass)
         return;
-    int i = laneAt (e.getPosition());
-    if (i < 0)
-        i = stepAt (e.getPosition());
-    if (i >= 0 && std::abs (w.deltaY) > 0.0f)
-        nudgeNote (i, w.deltaY > 0 ? 1 : -1);
+    const auto [row, step] = cellAt (e.getPosition());
+    if (step >= 0 && std::abs (w.deltaY) > 0.0f)
+        nudgeNote (step, w.deltaY > 0 ? 1 : -1);
 }
 
 //==============================================================================
 void GrooveView::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::panel);
+    const auto& p = vintage::pal();
     const auto colour = trackColour (track);
+    vintage::drawFace (g, getLocalBounds());
 
-    // The middle's panel.
-    g.setColour (Theme::raised);
-    g.fillRoundedRectangle (centreArea.toFloat(), 10.0f);
-    g.setColour (colour.withAlpha (0.35f));
-    g.drawRoundedRectangle (centreArea.toFloat().reduced (0.5f), 10.0f, 1.0f);
+    vintage::engraved (g, juce::String::fromUTF8 ("Tracks \xc2\xb7 tap to select"), tracksArea.withHeight (18));
 
-    // Header: the track, what it's doing, where the keys and knobs go.
-    auto header = headerArea;
-    header.removeFromRight (openButton.getWidth() + (micButton.isVisible() ? micButton.getWidth() + 8 : 0) + 12);
-    g.setColour (colour);
-    g.setFont (juce::FontOptions (28.0f, juce::Font::bold));
-    g.drawText (trackName (track), header.removeFromLeft (150), juce::Justification::centredLeft);
-    auto lines = header;
-    g.setColour (engine.getStrip (stripFor (track)).mute.load() ? Theme::record : Theme::text);
-    g.setFont (juce::FontOptions (16.0f));
-    g.drawFittedText (stateOf (track), lines.removeFromTop (lines.getHeight() / 2 + 4), juce::Justification::bottomLeft, 1);
-    g.setColour (Theme::textDim);
-    g.setFont (juce::FontOptions (12.5f));
-    const juce::String hint = [this]
+    // The steps' well.
+    vintage::drawWell (g, wellArea.toFloat());
     {
-        switch (track)
+        auto h = headerArea;
+        auto swatch = h.removeFromLeft (18).withSizeKeepingCentre (18, 18).toFloat();
+        vintage::glow (g, swatch, 4.0f, colour, 5.0f, 0.5f);
+        g.setColour (colour);
+        g.fillRoundedRectangle (swatch, 4.0f);
+        h.removeFromLeft (12);
+        g.setColour (p.wellInk);
+        g.setFont (vintage::cond (24.0f, Weight::extra, 0.1f));
+        const juce::String title = (bigCells() ? (track == vocoder ? "Parts" : track == sampler ? "Pads" : "Layers") : "Steps")
+                                   + juce::String::fromUTF8 (" \xc2\xb7 ") + trackName (track);
+        const int titleWidth = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), title.toUpperCase()) + 8;
+        g.drawText (title.toUpperCase(), h.removeFromLeft (titleWidth), juce::Justification::centredLeft, false);
+        h.removeFromLeft (12);
+
+        // The pattern on the LCD, at the right of the free space.
+        const int lcdWidth = juce::jmin (180, juce::jmax (0, h.getWidth() - 40));
+        auto lcd = h.removeFromRight (lcdWidth).withSizeKeepingCentre (lcdWidth, 30).toFloat();
+        if (lcdWidth > 60)
         {
-            case drums:   return juce::String ("Pick a sound above, then light the steps it plays on. The keys and pads play the drums.");
-            case bass:    return juce::String ("Light steps to play. Drag a note up or down to change it. Right-click a step for an accent.");
-            case synth:   return juce::String ("Light the steps the arp plays on. Pick how it plays below, then hold a chord.");
-            case vocoder: return juce::String ("Switch the parts on and off. Pick a sound below, sing, and play the keys.");
-            case sampler: return juce::String ("Press a pad to play your sound (or its slices). The keys play it too.");
-            case loops:   return juce::String ("Press a layer to record from the next bar, again to stop. It plays in time with everything.");
-            default:      return juce::String();
+            vintage::drawLcd (g, lcd);
+            vintage::lcdText (g, patternText(), lcd.reduced (8.0f, 0.0f), 22.0f);
         }
-    }();
-    g.drawFittedText (hint, lines, juce::Justification::topLeft, 1);
-
-    // The lane: the drum sounds, the bass notes, the synth accents.
-    if (const int lanes = laneCount(); lanes > 0)
-    {
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText (track == drums ? "SOUND" : track == bass ? "NOTES  (drag)" : "ACCENTS",
-                    laneArea.withY (laneArea.getY() - 16).withHeight (14), juce::Justification::centredLeft);
-        for (int i = 0; i < lanes; ++i)
+        h.removeFromRight (12);
+        const juce::String hint = [this]
         {
-            const auto c = laneCell (i);
-            auto r = laneRect (i);
-            g.setColour (c.lit ? colour.withAlpha (track == bass ? 0.3f : 0.9f) : Theme::background);
-            g.fillRoundedRectangle (r, 5.0f);
-            if (c.playing || (track == drums && c.lit))
+            switch (track)
             {
-                g.setColour (Theme::text);
-                g.drawRoundedRectangle (r.reduced (0.5f), 5.0f, 1.5f);
+                case drums:   return juce::String ("Click a sound's name to change it");
+                case bass:    return juce::String ("Drag a note up or down");
+                case synth:   return juce::String ("Hold a chord; it plays on the lit steps");
+                case vocoder: return juce::String ("Switch the parts on and off");
+                case sampler: return juce::String ("Press a pad to play it; the keys play it too");
+                case loops:   return juce::String ("Press a layer: records from the next bar");
+                default:      return juce::String();
             }
-            g.setColour (c.lit && track != bass ? Theme::background : c.dim ? Theme::textDim.withAlpha (0.6f) : Theme::text);
+        }();
+        vintage::engraved (g, hint, h, juce::Justification::centredLeft, 13.0f, true);
+    }
+
+    // Step numbers, with the play head.
+    const int n = numSteps(), now = playheadStep();
+    if (! numbersArea.isEmpty())
+        for (int i = 0; i < n; ++i)
+        {
+            auto r = cellRect (0, i).withY ((float) numbersArea.getY()).withHeight ((float) numbersArea.getHeight());
+            const bool here = i == now;
+            g.setColour (here ? vintage::colours::selected : p.wellInk2);
+            g.setFont (vintage::cond (15.0f, Weight::bold, 0.06f));
+            g.drawText (here ? juce::String::fromUTF8 ("\xe2\x96\xbc ") + juce::String (i + 1) : juce::String (i + 1), r,
+                        juce::Justification::centred);
+        }
+
+    // The rows.
+    for (int row = 0; row < numRows(); ++row)
+    {
+        if (! bigCells())
+        {
+            const auto first = cellRect (row, 0);
+            auto label = juce::Rectangle<float> ((float) gridArea.getX(), first.getY(), (float) kLabelWidth, first.getHeight()).toNearestInt();
+            g.setColour (p.wellInk);
+            g.setFont (vintage::cond (20.0f, Weight::extra, 0.08f));
+            g.drawFittedText (rowName (row).toUpperCase(), label, juce::Justification::centredLeft, 1, 0.6f);
             if (track == drums)
             {
-                auto t = r.reduced (4.0f, 3.0f);
-                g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-                g.drawText (c.label, t.removeFromTop (14.0f), juce::Justification::centredLeft);
-                g.setFont (juce::FontOptions (10.5f));
-                g.drawFittedText (c.sub, t.toNearestInt(), juce::Justification::topLeft, 2, 0.8f);
-            }
-            else
-            {
-                g.setFont (juce::FontOptions (track == bass ? 14.0f : 11.0f, juce::Font::bold));
-                g.drawText (c.label, r, juce::Justification::centred);
+                g.setColour (p.wellInk2);
+                g.setFont (vintage::barlow (11.0f));
+                g.drawText (juce::String::fromUTF8 ("\xe2\x96\xbe"), label, juce::Justification::centredRight);
             }
         }
-    }
-    else
-    {
-        // No lane: a word on what this track's cells are.
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText (track == vocoder ? "PARTS" : track == sampler ? "PADS" : "LAYERS",
-                    stepArea.withY (stepArea.getY() - 16).withHeight (14), juce::Justification::centredLeft);
-    }
-
-    // The steps.
-    const int n = numSteps(), now = playheadStep();
-    if (laneCount() > 0)
-    {
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText (track == drums ? "STEPS: " + padLabel (drumPad()) : juce::String ("STEPS"),
-                    stepArea.withY (stepArea.getY() - 16).withHeight (14), juce::Justification::centredLeft);
-    }
-    for (int i = 0; i < n; ++i)
-    {
-        const auto c = cellAt (i);
-        auto r = stepRect (i);
-        const auto fill = track == loops && c.strong ? Theme::record : colour;
-        g.setColour (Theme::background.withAlpha (c.dim && ! c.lit ? 0.5f : 1.0f));
-        g.fillRoundedRectangle (r, 7.0f);
-        if (c.lit)
+        for (int i = 0; i < n; ++i)
         {
-            float alpha = c.strong ? 1.0f : 0.72f;
-            if (c.dim)
-                alpha = 0.3f;
-            g.setColour (fill.withAlpha (alpha));
-            if (track == loops && engine.getLooper().getState (i) != RigLooper::State::empty)
+            const auto c = cellAt (row, i);
+            auto r = cellRect (row, i);
+            const auto fill = track == loops && c.strong ? vintage::colours::arm : colour;
+            float alpha = c.dim ? 0.35f : 1.0f;
+            if (track == bass && row == 1)
+                alpha *= 0.45f;
+            vintage::drawStep (g, r, c.lit, i == now && ! bigCells(), (i / 4) % 2 == 1 && n == 16, fill, alpha);
+            if (c.dim && ! c.lit)
+            {
+                g.setColour (p.well.withAlpha (0.45f));
+                g.fillRoundedRectangle (r.withTrimmedBottom (3.0f), 8.0f);
+            }
+            if (track == loops && c.lit && engine.getLooper().getState (i) != RigLooper::State::empty)
             {
                 // How far round the loop it is.
                 const float pos = juce::jlimit (0.0f, 1.0f, (float) engine.getLooper().getLayer (i).position.load());
-                g.setColour (fill.withAlpha (alpha * 0.35f));
-                g.fillRoundedRectangle (r, 7.0f);
-                g.setColour (fill.withAlpha (alpha));
-                g.fillRoundedRectangle (r.withTop (r.getBottom() - juce::jmax (6.0f, r.getHeight() * pos)), 7.0f);
+                g.setColour (juce::Colours::black.withAlpha (0.25f));
+                auto face = r.withTrimmedBottom (3.0f);
+                g.fillRoundedRectangle (face.withTop (face.getY() + face.getHeight() * pos), 8.0f);
             }
-            else
-                g.fillRoundedRectangle (r, 7.0f);
-        }
-        if (c.playing)
-        {
-            g.setColour (Theme::text.withAlpha (0.3f));
-            g.fillRoundedRectangle (r, 7.0f);
-        }
-        if (i == now)
-        {
-            g.setColour (Theme::text);
-            g.drawRoundedRectangle (r.reduced (1.0f), 7.0f, 3.0f);
-        }
-        else
-        {
-            g.setColour (c.lit ? fill : Theme::outline);
-            g.drawRoundedRectangle (r.reduced (0.5f), 7.0f, 1.0f);
-        }
+            if (c.playing)
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.3f));
+                g.fillRoundedRectangle (r.withTrimmedBottom (3.0f), 8.0f);
+            }
 
-        g.setColour (c.lit && ! c.dim ? Theme::background : Theme::textDim);
-        const bool big = track == vocoder || track == loops;
-        g.setFont (juce::FontOptions (big ? 20.0f : 14.0f, juce::Font::bold));
-        auto text = r.reduced (6.0f, 8.0f).toNearestInt();
-        g.drawText (c.label, text, big ? juce::Justification::centredTop : juce::Justification::centred);
-        if (c.sub.isNotEmpty())
-        {
-            g.setFont (juce::FontOptions (big ? 13.0f : 10.0f));
-            g.drawFittedText (c.sub, text, juce::Justification::centredBottom, 2);
-        }
-        if (c.strong && track != loops)
-        {
-            g.setColour (Theme::background);
-            g.fillEllipse (r.getRight() - 12.0f, r.getY() + 6.0f, 6.0f, 6.0f);
+            auto text = r.withTrimmedBottom (3.0f).reduced (6.0f, 8.0f).toNearestInt();
+            const auto ink = c.lit && alpha > 0.5f ? juce::Colour (0xff1e1a16) : p.wellInk.withAlpha (c.dim ? 0.5f : 0.9f);
+            g.setColour (ink);
+            if (bigCells())
+            {
+                g.setFont (vintage::cond (track == sampler ? 24.0f : 26.0f, Weight::extra, 0.06f));
+                g.drawFittedText (c.label.toUpperCase(), text, juce::Justification::centredTop, 1, 0.6f);
+                g.setFont (vintage::cond (14.0f, Weight::bold, 0.12f));
+                g.drawFittedText (c.sub.toUpperCase(), text, juce::Justification::centredBottom, 2, 0.7f);
+            }
+            else if (c.label.isNotEmpty())
+            {
+                g.setColour (p.wellInk.withAlpha (c.dim ? 0.5f : 0.95f));
+                g.setFont (vintage::cond (16.0f, Weight::extra));
+                g.drawFittedText (c.label, text, juce::Justification::centred, 1, 0.6f);
+            }
         }
     }
-    if (n == 16)
+
+    // The knobs' box.
+    g.setColour (p.line);
+    g.drawRoundedRectangle (knobBox.toFloat().reduced (1.0f), 12.0f, 2.0f);
     {
-        // Beat numbers under each group of four.
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (11.0f));
-        for (int b = 0; b < 4; ++b)
-        {
-            auto r = stepRect (b * 4);
-            g.drawText (juce::String (b + 1), r.withY (r.getBottom() + 2).withHeight (14).toNearestInt(), juce::Justification::centredLeft);
-        }
+        auto h = knobHeader;
+        g.setColour (p.ink);
+        g.setFont (vintage::cond (22.0f, Weight::extra, 0.1f));
+        const auto title = (juce::String ("Knobs") + juce::String::fromUTF8 (" \xc2\xb7 ") + trackName (track)).toUpperCase();
+        const int w = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), title) + 8;
+        g.drawText (title, h.removeFromLeft (w), juce::Justification::centredLeft, false);
+        h.removeFromLeft (12);
+        auto linked = h.removeFromRight (90);
+        vintage::drawLamp (g, { (float) linked.getX() + 8.0f, (float) linked.getCentreY() }, Lit::play);
+        vintage::engraved (g, "Linked", linked.withTrimmedLeft (24), juce::Justification::centredLeft, 13.0f, false, p.ink);
+        const bool fx = track == drums || track == sampler || track == loops;
+        vintage::engraved (g, juce::String::fromUTF8 ("Follow Launchkey knobs 1\xe2\x80\x93" "8") + (fx ? juce::String::fromUTF8 (" \xc2\xb7 this track's effects") : juce::String()),
+                           h, juce::Justification::centredLeft);
     }
-
-    // Knobs.
-    g.setColour (Theme::textDim);
-    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    g.drawText (juce::String ("KNOBS 1-8") + (track == drums || track == sampler || track == loops ? "  (effects on this track)" : "")
-                    + "   your keyboard's knobs turn these",
-                knobArea.withHeight (14), juce::Justification::centredLeft);
-
-    // Song parts.
-    g.setColour (Theme::textDim);
-    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    g.drawText ("SONG PARTS", partsArea.withWidth (90), juce::Justification::centredLeft);
 }
 
 void GrooveView::resized()
 {
-    auto area = getLocalBounds().reduced (kGap);
+    auto area = getLocalBounds().withTrimmedTop (6).withTrimmedBottom (14).reduced (22, 0);
 
-    partsArea = area.removeFromBottom (kPartsHeight - 14);
+    // Tracks down the left.
+    tracksArea = area.removeFromLeft (juce::jmin (kTrackWidth, area.getWidth() / 4 + 20));
     {
-        auto parts = partsArea;
-        parts.removeFromLeft (90);
-        const int w = (parts.getWidth() - 6 * 7) / 8;
-        for (auto* b : partButtons)
+        auto list = tracksArea.withTrimmedTop (24);
+        const int gap = 4;
+        const int h = (list.getHeight() - gap * (numTracks - 1)) / numTracks;
+        for (auto* c : cards)
         {
-            b->setBounds (parts.removeFromLeft (w));
-            parts.removeFromLeft (6);
+            c->setBounds (list.removeFromTop (h).expanded (4, 0));
+            list.removeFromTop (gap);
         }
     }
-    area.removeFromBottom (kGap);
+    area.removeFromLeft (16);
 
-    auto left = area.removeFromLeft (kTrackWidth);
-    const int h = (left.getHeight() - 8 * (numTracks - 1)) / numTracks;
-    for (auto* t : trackButtons)
+    // The knobs below, the steps above.
+    knobBox = area.removeFromBottom (juce::jlimit (150, 214, area.getHeight() * 36 / 100));
+    area.removeFromBottom (14);
+    wellArea = area;
     {
-        t->setBounds (left.removeFromTop (h));
-        left.removeFromTop (8);
-    }
-    area.removeFromLeft (kGap);
-
-    centreArea = area;
-    auto c = area.reduced (18, 14);
-    headerArea = c.removeFromTop (56);
-    {
-        auto right = headerArea;
-        openButton.setBounds (right.removeFromRight (150).withSizeKeepingCentre (150, 34));
-        right.removeFromRight (8);
-        if (micButton.isVisible())
-            micButton.setBounds (right.removeFromRight (100).withSizeKeepingCentre (100, 34));
-    }
-    c.removeFromTop (12);
-
-    // Knobs at the bottom, the pattern row above them, then the steps and the lane fill the rest.
-    knobArea = c.removeFromBottom (juce::jlimit (96, 130, c.getHeight() / 4));
-    {
-        auto k = knobArea.withTrimmedTop (16);
+        auto k = knobBox.reduced (18, 12);
+        knobHeader = k.removeFromTop (26);
+        k.removeFromTop (6);
         const int w = k.getWidth() / 8;
         for (auto& knob : knobs)
-            knob->setBounds (k.removeFromLeft (w).reduced (6, 0));
+            knob->setBounds (k.removeFromLeft (w).reduced (4, 0));
     }
-    c.removeFromBottom (12);
-    auto patternRow = c.removeFromBottom (40);
+
+    auto c = wellArea.reduced (16, 12);
+    headerArea = c.removeFromTop (44);
     {
-        auto row = patternRow;
-        if (extraButton.isVisible())
+        auto right = headerArea;
+        auto place = [&right] (juce::Component& b, int w)
         {
-            extraButton.setBounds (row.removeFromRight (140));
-            row.removeFromRight (16);
-        }
-        if (barButton.isVisible())
-        {
-            barButton.setBounds (row.removeFromRight (120));
-            row.removeFromRight (16);
-        }
+            if (! b.isVisible())
+                return;
+            b.setBounds (right.removeFromRight (w).withSizeKeepingCentre (w, 44));
+            right.removeFromRight (8);
+        };
+        place (openButton, 132);
+        place (clearButton, 76);
+        place (extraButton, 128);
+        place (barButton, 112);
+        place (micButton, 92);
+        headerArea = headerArea.withRight (right.getRight());
+    }
+    c.removeFromTop (8);
+    patternArea = c.removeFromBottom (44);
+    c.removeFromBottom (12);
+    {
+        auto row = patternArea;
         const int count = juce::jmax (1, patternButtons.size());
-        const int w = juce::jmin (150, (row.getWidth() - 6 * (count - 1)) / count);
+        const int w = juce::jmin (150, (row.getWidth() - 8 * (count - 1)) / count);
         for (auto* b : patternButtons)
         {
             b->setBounds (row.removeFromLeft (w));
-            row.removeFromLeft (6);
+            row.removeFromLeft (8);
         }
     }
-    c.removeFromBottom (24);
-
-    const bool lane = track == drums || track == bass || track == synth;
-    if (lane)
-    {
-        c.removeFromTop (16);
-        laneArea = c.removeFromTop (track == drums ? 54 : track == bass ? 40 : 30);
-        c.removeFromTop (14);
-    }
-    else
-        laneArea = {};
-    c.removeFromTop (16);
-    stepArea = c.withHeight (juce::jmin (c.getHeight(), 240));
+    numbersArea = bigCells() ? juce::Rectangle<int>() : c.removeFromTop (20);
+    if (! bigCells())
+        c.removeFromTop (4);
+    gridArea = c;
 }

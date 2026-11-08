@@ -203,6 +203,61 @@ struct RigGrooveTests : juce::UnitTest
             expectEquals (engine.getVocoder().getProgramName (engine.getVocoder().getCurrentProgram()), juce::String ("Classic Robot"));
             expect (engine.vocoderOn.load(), "picking a sound turns the vocoder on");
         }
+
+        beginTest ("drums: a row per sound; bass: rows for steps, notes, accents and slides");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            GrooveView view (engine);
+            view.selectTrack (GrooveView::drums);
+            expectEquals (view.numRows(), 4);
+            view.pressCell (1, 8);   // the second sound (pad 2 in an empty kit)
+            int notes = 0;
+            for (const auto& t : engine.getMpc().getProject().currentSequence().tracks)
+                for (const auto& n : t.notes)
+                {
+                    ++notes;
+                    expectEquals (n.pad, 1);
+                    expectEquals (n.tick, 8 * seq::kTicksPerBeat / 4);
+                }
+            expectEquals (notes, 1);
+
+            view.selectTrack (GrooveView::bass);
+            auto& bass = engine.getBass();
+            const auto before = bass.getPattern (bass.getSelectedPattern()).steps[2];
+            view.pressCell (0, 2);
+            view.pressCell (2, 2);
+            view.pressCell (3, 2);
+            const auto step = bass.getPattern (bass.getSelectedPattern()).steps[2];
+            expect (step.on != before.on && step.accent != before.accent && step.slide != before.slide);
+        }
+
+        beginTest ("solo hears one track, and a second press brings the others back");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            GrooveView view (engine);
+            engine.getStrip (RigEngine::synthStrip).mute = true;
+            view.pressSolo (GrooveView::bass);
+            expect (! engine.getStrip (RigEngine::bassStrip).mute.load());
+            expect (engine.getStrip (RigEngine::mpcStrip).mute.load());
+            expect (engine.getStrip (RigEngine::loopsStrip).mute.load());
+            view.pressSolo (GrooveView::bass);
+            expect (! engine.getStrip (RigEngine::mpcStrip).mute.load());
+            expect (engine.getStrip (RigEngine::synthStrip).mute.load(), "a mute from before the solo stays");
+        }
+
+        beginTest ("the dark panel is saved with the show");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            engine.screens.setProperty ("dark", true, nullptr);
+            const auto show = engine.saveShow();
+            RigEngine other;
+            other.prepare (kRate, kBlock);
+            other.loadShow (show);
+            expect ((bool) other.screens.getProperty ("dark", false));
+        }
     }
 };
 

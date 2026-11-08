@@ -3,19 +3,12 @@
 #include "core/AudioFiles.h"
 #include "core/SoundFx.h"
 #include "RigColours.h"
+#include "Vintage.h"
 
 namespace Theme = crate::Theme;
 
 namespace
 {
-juce::Colour layerColour (int i)
-{
-    static const juce::Colour colours[] = { juce::Colour (0xffff8a3d), juce::Colour (0xffb48cff), juce::Colour (0xff4fc3f7),
-                                            juce::Colour (0xfff06292), juce::Colour (0xffffd54f), juce::Colour (0xff8fd3c8),
-                                            juce::Colour (0xff81c784), juce::Colour (0xffe0e0e0) };
-    return colours[i % 8];
-}
-
 juce::String barsText (double beats, int beatsPerBar)
 {
     const double bars = beats / juce::jmax (1, beatsPerBar);
@@ -60,73 +53,91 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        using namespace vintage;
         auto area = getLocalBounds().toFloat();
-        g.setColour (Theme::background);
-        g.fillRoundedRectangle (area, 4.0f);
+        g.setColour (juce::Colour (0xff0e0c0a));
+        g.fillRoundedRectangle (area, 6.0f);
 
         const auto& looper = engine.getLooper();
         const auto& layer = looper.getLayer (index);
         const auto state = looper.getState (index);
-        const auto colour = layerColour (index);
         const int bpb = engine.getTransport().getBeatsPerBar();
+        const bool muted = layer.mute.load();
 
-        if (state == RigLooper::State::empty)
+        if (state == RigLooper::State::empty || state == RigLooper::State::armed)
         {
-            g.setColour (Theme::textDim.withAlpha (0.6f));
-            g.setFont (juce::FontOptions (13.0f));
-            g.drawText ("Empty: press Rec to record " + RigLooper::sourceName (layer.source.load()).toLowerCase(), area.reduced (10, 0),
-                        juce::Justification::centredLeft);
+            // A dotted line through the middle, and what happens next.
+            g.setColour (juce::Colour (0xff3a332d));
+            for (float x = area.getX() + 6; x < area.getRight() - 6; x += 6.0f)
+                g.fillRect (x, area.getCentreY() - 0.5f, 3.0f, 1.0f);
+            const bool armed = state == RigLooper::State::armed;
+            const int bars = layer.bars.load();
+            const juce::String text = armed ? juce::String::fromUTF8 ("\xe2\x97\x8f Records ") + (engine.getTransport().isPlaying() ? "on the next bar" : "when you press Play")
+                                                  + (bars > 0 ? juce::String::fromUTF8 (" \xe2\x80\x94 ") + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String())
+                                            : juce::String::fromUTF8 ("Empty \xe2\x80\x94 press Rec next layer");
+            const auto box = area.withSizeKeepingCentre (juce::jmin (area.getWidth() - 20, 330.0f), 22.0f);
+            g.setColour (juce::Colour (0xff0e0c0a));
+            g.fillRect (box);
+            g.setColour (armed ? colours::arm.brighter (0.3f) : pal().wellInk2);
+            g.setFont (barlow (14.0f));
+            g.drawText (text, box, juce::Justification::centred);
             return;
         }
-        if (state == RigLooper::State::armed)
-        {
-            g.setColour (Theme::record.withAlpha (0.8f));
-            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            g.drawText (engine.getTransport().isPlaying() ? "Starts at the next bar..." : "Starts when the clock starts...",
-                        area.reduced (10, 0), juce::Justification::centredLeft);
-            return;
-        }
 
-        // Peaks.
-        const float mid = area.getCentreY();
-        const float half = area.getHeight() * 0.45f;
-        g.setColour (colour.withAlpha (state == RigLooper::State::recording ? 0.5f : 0.75f));
-        const int w = (int) area.getWidth();
+        // The loop, as bars.
+        const auto colour = muted ? colours::mute : colours::loops;
+        const auto body = area.reduced (10.0f, 6.0f);
+        const float mid = body.getCentreY();
+        const float half = body.getHeight() * 0.5f;
         // While it records with a set length, it fills in from the left; with no length yet,
         // the whole width is what's recorded so far.
         const double filled = state == RigLooper::State::recording && layer.position.load() > 0
                                   ? juce::jlimit (0.0, 1.0, layer.position.load()) : 1.0;
-        const int drawn = (int) (w * filled);
-        for (int x = 0; x < drawn && ! peaks.empty(); ++x)
+        const float barW = 3.0f, gap = 1.0f;
+        const int total = (int) (body.getWidth() / (barW + gap));
+        const int drawn = (int) (total * filled);
+        for (int b = 0; b < drawn && ! peaks.empty(); ++b)
         {
-            const double t = (double) x / juce::jmax (1, drawn - 1);
+            const double t = (double) b / juce::jmax (1, total - 1);
             const auto p = peaks[(size_t) juce::jlimit (0, (int) peaks.size() - 1, (int) (t * (peaks.size() - 1)))];
-            g.drawVerticalLine (x, mid - juce::jmax (0.5f, p * half), mid + juce::jmax (0.5f, p * half) + 1);
+            const float h = juce::jmax (1.5f, std::sqrt (p) * half);
+            g.setColour ((state == RigLooper::State::recording ? colours::arm : colour).withAlpha (muted ? 0.55f : 0.85f));
+            g.fillRect (body.getX() + b * (barW + gap), mid - h, barW, h * 2);
         }
 
         // Bar lines.
         const double beats = layer.lengthBeats.load();
         if (state != RigLooper::State::recording && beats > 0)
         {
-            g.setColour (Theme::text.withAlpha (0.12f));
+            g.setColour (juce::Colours::white.withAlpha (0.08f));
             for (double b = bpb; b < beats; b += bpb)
-                g.drawVerticalLine ((int) (b / beats * area.getWidth()), area.getY(), area.getBottom());
+                g.fillRect ((float) (body.getX() + b / beats * body.getWidth()), area.getY() + 3, 1.0f, area.getHeight() - 6);
+        }
+
+        // The loop's ends, in yellow: double-click (or Edit) to trim them.
+        if (state != RigLooper::State::recording)
+        {
+            g.setColour (colours::selected);
+            g.drawRoundedRectangle (body.expanded (4.0f, 3.0f), 3.0f, 1.5f);
+            for (float x : { body.getX() - 5.0f, body.getRight() + 1.0f })
+                g.fillRoundedRectangle (x, area.getY() + 2, 4.0f, area.getHeight() - 4, 2.0f);
         }
 
         // Playhead.
         if (engine.getTransport().isPlaying() && state != RigLooper::State::recording)
         {
-            const float x = (float) (layer.position.load() * area.getWidth());
-            g.setColour (state == RigLooper::State::overdubbing ? Theme::record : Theme::text);
-            g.fillRect (x - 1.0f, area.getY(), 2.0f, area.getHeight());
+            const float x = (float) (body.getX() + layer.position.load() * body.getWidth());
+            g.setColour (state == RigLooper::State::overdubbing ? colours::arm : juce::Colour (0xfffff3d6));
+            g.fillRect (x - 1.0f, area.getY() + 2, 2.0f, area.getHeight() - 4);
         }
 
-        g.setColour (Theme::text.withAlpha (0.85f));
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        const juce::String label = state == RigLooper::State::recording ? "Recording  " + barsText (beats, bpb)
-                                 : state == RigLooper::State::overdubbing ? "Overdub  " + barsText (beats, bpb)
-                                                                          : barsText (beats, bpb);
-        g.drawText (label, area.reduced (8, 3), juce::Justification::topRight);
+        if (state == RigLooper::State::recording || state == RigLooper::State::overdubbing)
+        {
+            g.setColour (colours::arm.brighter (0.4f));
+            g.setFont (cond (13.0f, Weight::bold, 0.06f));
+            g.drawText ((state == RigLooper::State::recording ? "REC  " : "OVERDUB  ") + barsText (beats, bpb).toUpperCase(),
+                        area.reduced (12, 3), juce::Justification::topRight);
+        }
     }
 
 private:
@@ -141,56 +152,57 @@ private:
 };
 
 //==============================================================================
-class LooperView::Row : public juce::Component
+namespace looperlayout
+{
+// The columns of a layer's row (and the headings over them).
+constexpr int wNumber = 44, wName = 150, wState = 96, wFx = 150, wBars = 56, wLevel = 44, wMute = 44, wSolo = 44, wMore = 34, wGap = 8;
+}
+
+class LooperView::Row : public juce::Component,
+                        public juce::SettableTooltipClient
 {
 public:
     Row (LooperView& o, RigEngine& e, int i) : owner (o), engine (e), index (i), wave (e, i)
     {
+        using namespace vintage;
         auto& layer = engine.getLooper().getLayer (index);
-        for (auto* c : std::initializer_list<juce::Component*> { &record, &source, &bars, &wave, &mute, &level, &fx, &edit, &undo, &clear, &more })
+        for (auto* c : std::initializer_list<juce::Component*> { &wave, &fx, &level, &mute, &solo, &more })
             addAndMakeVisible (c);
+        for (auto* b : { &fx, &mute, &solo, &more })
+        {
+            setInWell (*b, true);
+            b->getProperties().set ("fontSize", 15.0f);
+        }
+        fx.getProperties().set ("fontSize", 13.0f);
+        setLit (mute, Lit::mute);
+        setLit (solo, Lit::current);
+        setLit (fx, Lit::current);
 
-        record.setColour (juce::TextButton::buttonOnColourId, Theme::record);
-        record.onClick = [this] { engine.getLooper().pressRecord (index); };
-        record.setTooltip ("Record a loop: it starts at the next bar, and stops at the end of the bar where you press again "
-                           "(or by itself after the bars you picked). On a playing loop, it overdubs. Keys 1-8 do the same.");
-
-        for (int s = 0; s < RigLooper::numSources; ++s)
-            source.addItem (RigLooper::sourceName (s), s + 1);
-        source.onChange = [this, &layer] { layer.source = source.getSelectedId() - 1; };
-        source.setTooltip ("What this layer records: your mic or instrument, one tool, or the whole Rig mix.");
-
-        for (int b : RigLooper::barChoices())
-            bars.addItem (b == 0 ? "Free" : juce::String (b) + (b == 1 ? " bar" : " bars"), b + 1);
-        bars.onChange = [this, &layer] { layer.bars = bars.getSelectedId() - 1; };
-        bars.setTooltip ("Free: record until you press again. Or a length, and it stops by itself.");
+        setTooltip ("Click the number to record this layer: it starts at the next bar, and stops at the end of the bar where you "
+                    "click again (or by itself after its bars). On a playing loop, it overdubs. Keys 1-8 do the same. "
+                    "Click the name to pick what it records and how long.");
 
         mute.setClickingTogglesState (true);
-        mute.setColour (juce::TextButton::buttonOnColourId, Theme::record);
         mute.onClick = [this, &layer] { layer.mute = mute.getToggleState(); };
+        mute.setTooltip ("Mute this loop (it keeps its place in time).");
+        solo.onClick = [this] { owner.soloLayer (index); };
+        solo.setTooltip ("Hear only this loop. Press again to bring the others back.");
 
+        level.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        level.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        level.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+        level.setColour (juce::Slider::rotarySliderFillColourId, colours::loops);
         level.setRange (0.0, 1.0);
         level.setDoubleClickReturnValue (true, 0.8);
-        level.setColour (juce::Slider::thumbColourId, layerColour (index));
-        level.setColour (juce::Slider::trackColourId, layerColour (index).withAlpha (0.6f));
+        level.setTooltip ("This loop's level.");
         level.onValueChange = [this, &layer] { layer.level = (float) level.getValue(); };
 
         fx.setTooltip ("This loop's own effects: filter, drive, crush, delay, reverb and beat repeat. Lit when any are on.");
-        fx.setColour (juce::TextButton::buttonOnColourId, layerColour (index).withAlpha (0.8f));
         fx.onClick = [this] { owner.showFx (index); };
-        edit.setTooltip ("Choose where this loop starts and ends (snapped to bars or beats, or free). Or double-click the loop.");
-        edit.onClick = [this] { owner.editLoop (index); };
         wave.onDoubleClick = [this] { owner.editLoop (index); };
-        undo.setTooltip ("Takes back the last overdub on this layer.");
-        undo.onClick = [this] { engine.getLooper().undo (index); };
-        clear.setTooltip ("Empties this layer.");
-        clear.onClick = [this]
-        {
-            engine.getLooper().clear (index);
-            juce::Timer::callAfterDelay (100, [safe = juce::Component::SafePointer<Row> (this)]
-                                         { if (safe != nullptr) safe->engine.getLooper().makeRoom (safe->index); });
-        };
-        more.setTooltip ("Import a loop or a song onto this layer, save the loop as a WAV, or put Record and Mute on your keyboard.");
+        wave.setInterceptsMouseClicks (true, false);
+        more.setTooltip ("Edit the loop's start and end, undo an overdub, clear it, import a loop or a song, save it as a WAV, "
+                         "or put Record and Mute on your keyboard.");
         more.onClick = [this] { showMenu(); };
         refresh();
     }
@@ -198,71 +210,154 @@ public:
     void refresh()
     {
         const auto& layer = engine.getLooper().getLayer (index);
-        source.setSelectedId (layer.source.load() + 1, juce::dontSendNotification);
-        bars.setSelectedId (layer.bars.load() + 1, juce::dontSendNotification);
         mute.setToggleState (layer.mute.load(), juce::dontSendNotification);
         level.setValue (layer.level.load(), juce::dontSendNotification);
     }
 
+    // As clicks do (the tests use these).
+    void pressNumber() { engine.getLooper().pressRecord (index); owner.selected = index; }
+
     void tick()
     {
         const auto state = engine.getLooper().getState (index);
-        switch (state)
+        const auto& layer = engine.getLooper().getLayer (index);
+        mute.setToggleState (layer.mute.load(), juce::dontSendNotification);
+        solo.setToggleState (owner.soloed == index, juce::dontSendNotification);
+        const bool active = engine.getLoopFx (index).isActive();
+        fx.setToggleState (active, juce::dontSendNotification);
+        const auto fxText = active ? "FX " + juce::String::fromUTF8 ("\xc2\xb7 ") + fxName() : juce::String ("+ Add effect");
+        if (fx.getButtonText() != fxText)
+            fx.setButtonText (fxText);
+
+        juce::String sig;
+        sig << (int) state << "/" << layer.source.load() << "/" << layer.bars.load() << "/" << layer.lengthBeats.load() << "/" << (int) layer.mute.load()
+            << "/" << (int) (owner.selected == index);
+        if (sig != shown)
         {
-            case RigLooper::State::empty:       record.setButtonText ("Rec"); break;
-            case RigLooper::State::armed:       record.setButtonText ("Armed"); break;
-            case RigLooper::State::recording:   record.setButtonText ("Stop"); break;
-            case RigLooper::State::playing:     record.setButtonText ("Dub"); break;
-            case RigLooper::State::overdubbing: record.setButtonText ("Stop dub"); break;
+            shown = sig;
+            repaint();
         }
-        const bool hot = state == RigLooper::State::armed || state == RigLooper::State::recording || state == RigLooper::State::overdubbing;
-        record.setToggleState (hot, juce::dontSendNotification);
-        const bool hasLoop = state == RigLooper::State::playing || state == RigLooper::State::overdubbing;
-        undo.setEnabled (hasLoop);
-        edit.setEnabled (state == RigLooper::State::playing);
-        fx.setToggleState (engine.getLoopFx (index).isActive(), juce::dontSendNotification);
-        clear.setEnabled (state != RigLooper::State::empty);
-        source.setEnabled (state != RigLooper::State::recording);
-        mute.setToggleState (engine.getLooper().getLayer (index).mute.load(), juce::dontSendNotification);
         wave.tick();
     }
 
     void paint (juce::Graphics& g) override
     {
-        g.setColour (Theme::raised);
-        g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
-        g.setColour (layerColour (index));
-        g.fillRoundedRectangle (getLocalBounds().removeFromLeft (6).toFloat(), 3.0f);
-        g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
-        g.drawText (juce::String (index + 1), getLocalBounds().withWidth (40).withTrimmedLeft (8), juce::Justification::centred);
+        using namespace vintage;
+        const auto& layer = engine.getLooper().getLayer (index);
+        const auto state = engine.getLooper().getState (index);
+        const bool hot = state == RigLooper::State::armed || state == RigLooper::State::recording || state == RigLooper::State::overdubbing;
+        const bool hasLoop = state == RigLooper::State::playing || state == RigLooper::State::overdubbing;
+        const auto r = getLocalBounds().toFloat();
+        drawWell (g, r, 8.0f);
+        if (hot)
+        {
+            g.setColour (colours::arm);
+            g.drawRoundedRectangle (r.reduced (1.0f), 8.0f, 2.0f);
+        }
+        else if (owner.selected == index && hasLoop)
+        {
+            g.setColour (colours::selected.withAlpha (0.6f));
+            g.drawRoundedRectangle (r.reduced (1.0f), 8.0f, 1.5f);
+        }
+
+        // The number: click it to record.
+        const auto tile = numberArea.toFloat();
+        const auto tileColour = hot ? colours::arm : hasLoop ? (layer.mute.load() ? colours::mute : colours::loops) : juce::Colour (0xff2e2925);
+        g.setColour (tileColour);
+        g.fillRoundedRectangle (tile, 6.0f);
+        g.setColour (hot || hasLoop ? juce::Colour (0xff1e1a16) : pal().wellInk2);
+        g.setFont (cond (juce::jmin (26.0f, tile.getHeight() * 0.7f), Weight::extra));
+        g.drawText (juce::String (index + 1), tile, juce::Justification::centred);
+
+        // The name and what it records from.
+        auto nameBox = nameArea.reduced (2, 0);
+        const bool twoLines = nameBox.getHeight() >= 30;
+        g.setColour (pal().wellInk);
+        g.setFont (cond (juce::jmin (19.0f, nameBox.getHeight() * 0.55f), Weight::extra, 0.05f));
+        auto top = twoLines ? nameBox.removeFromTop (nameBox.getHeight() * 55 / 100) : nameBox;
+        g.drawText ("LAYER " + juce::String (index + 1), top, twoLines ? juce::Justification::bottomLeft : juce::Justification::centredLeft);
+        if (twoLines)
+        {
+            juce::String sub = RigLooper::sourceName (layer.source.load());
+            if (state == RigLooper::State::armed)
+                sub << juce::String::fromUTF8 (" \xc2\xb7 waiting");
+            else if (state == RigLooper::State::empty)
+                sub = "Empty " + juce::String::fromUTF8 ("\xc2\xb7 ") + sub;
+            g.setColour (pal().wellInk2);
+            g.setFont (barlow (12.0f));
+            g.drawText (sub, nameBox, juce::Justification::topLeft);
+        }
+
+        // The state, as a lamp and a word.
+        Lit lit = Lit::none;
+        juce::String word = "Empty";
+        switch (state)
+        {
+            case RigLooper::State::empty: break;
+            case RigLooper::State::armed: lit = Lit::arm; word = "Armed"; break;
+            case RigLooper::State::recording: lit = Lit::arm; word = "Rec"; break;
+            case RigLooper::State::overdubbing: lit = Lit::arm; word = "Overdub"; break;
+            case RigLooper::State::playing:
+                lit = layer.mute.load() ? Lit::mute : Lit::play;
+                word = layer.mute.load() ? "Muted" : "Playing";
+                break;
+        }
+        drawLamp (g, { (float) stateArea.getX() + 8, (float) stateArea.getCentreY() }, lit, 14.0f);
+        engraved (g, word, stateArea.withTrimmedLeft (22), juce::Justification::centredLeft, 12.0f, true);
+
+        // Its length in bars.
+        const auto box = barsArea.toFloat().withSizeKeepingCentre ((float) barsArea.getWidth(), juce::jmin (30.0f, (float) barsArea.getHeight() - 4));
+        drawLcd (g, box, 5.0f);
+        const double beats = layer.lengthBeats.load();
+        const int bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
+        juce::String bars = "-";
+        if (hasLoop && beats > 0)
+        {
+            const double b = beats / bpb;
+            bars = std::abs (b - std::round (b)) < 0.01 ? juce::String ((int) std::round (b)) : juce::String (b, 1);
+        }
+        else if (layer.bars.load() > 0)
+            bars = juce::String (layer.bars.load());
+        lcdText (g, bars, box, 22.0f);
     }
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced (8, 6);
-        area.removeFromLeft (36);
-        record.setBounds (area.removeFromLeft (84));
-        area.removeFromLeft (8);
-        auto settings = area.removeFromLeft (130);
-        const int h = settings.getHeight() / 2;
-        source.setBounds (settings.removeFromTop (h).reduced (0, 1));
-        bars.setBounds (settings.reduced (0, 1));
-        area.removeFromLeft (8);
-        more.setBounds (area.removeFromRight (34).withSizeKeepingCentre (34, 30));
+        using namespace looperlayout;
+        auto area = getLocalBounds().reduced (6, 5);
+        numberArea = area.removeFromLeft (wNumber);
+        area.removeFromLeft (wGap + 2);
+        nameArea = area.removeFromLeft (wName);
+        area.removeFromLeft (wGap);
+        stateArea = area.removeFromLeft (wState);
+        area.removeFromLeft (wGap);
+        const int h = juce::jmin (area.getHeight(), 34);
+        more.setBounds (area.removeFromRight (wMore).withSizeKeepingCentre (wMore, h));
         area.removeFromRight (6);
-        clear.setBounds (area.removeFromRight (56).withSizeKeepingCentre (56, 30));
-        area.removeFromRight (4);
-        undo.setBounds (area.removeFromRight (56).withSizeKeepingCentre (56, 30));
-        area.removeFromRight (4);
-        edit.setBounds (area.removeFromRight (56).withSizeKeepingCentre (56, 30));
-        area.removeFromRight (4);
-        fx.setBounds (area.removeFromRight (44).withSizeKeepingCentre (44, 30));
-        area.removeFromRight (8);
-        level.setBounds (area.removeFromRight (120));
-        area.removeFromRight (4);
-        mute.setBounds (area.removeFromRight (56).withSizeKeepingCentre (56, 30));
-        area.removeFromRight (10);
+        solo.setBounds (area.removeFromRight (wSolo).withSizeKeepingCentre (wSolo, h));
+        area.removeFromRight (6);
+        mute.setBounds (area.removeFromRight (wMute).withSizeKeepingCentre (wMute, h));
+        area.removeFromRight (wGap);
+        level.setBounds (area.removeFromRight (wLevel).withSizeKeepingCentre (wLevel, juce::jmin (wLevel, area.getHeight())));
+        area.removeFromRight (wGap);
+        barsArea = area.removeFromRight (wBars);
+        area.removeFromRight (wGap);
+        fx.setBounds (area.removeFromRight (wFx).withSizeKeepingCentre (wFx, h));
+        area.removeFromRight (wGap);
         wave.setBounds (area);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (numberArea.contains (e.getPosition()))
+            pressNumber();
+        else if (nameArea.contains (e.getPosition()) || barsArea.contains (e.getPosition()))
+            showSettingsMenu();
+        else
+        {
+            owner.selected = index;
+            repaint();
+        }
     }
 
 private:
@@ -275,6 +370,11 @@ private:
     void showMenu()
     {
         juce::PopupMenu menu;
+        const auto state = engine.getLooper().getState (index);
+        menu.addItem ("Undo the last overdub", state == RigLooper::State::playing || state == RigLooper::State::overdubbing, false,
+                      [this] { engine.getLooper().undo (index); });
+        menu.addItem ("Clear this layer", state != RigLooper::State::empty, false, [this] { clearLayer(); });
+        menu.addSeparator();
         menu.addItem ("Import a loop, stretched to the Rig's tempo...", [this] { importFile (false); });
         menu.addItem ("Import a song or loop, and set the Rig's tempo to it...", [this] { importFile (true); });
         menu.addItem ("Edit where it starts and ends...", engine.getLooper().getState (index) == RigLooper::State::playing, false,
@@ -304,6 +404,43 @@ private:
         learnItem (RigRouting::loopRecord1 + index, "Loop " + juce::String (index + 1) + " record");
         learnItem (RigRouting::loopMute1 + index, "Loop " + juce::String (index + 1) + " mute");
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&more));
+    }
+
+    void clearLayer()
+    {
+        engine.getLooper().clear (index);
+        juce::Timer::callAfterDelay (100, [safe = juce::Component::SafePointer<Row> (this)]
+                                     { if (safe != nullptr) safe->engine.getLooper().makeRoom (safe->index); });
+    }
+
+    // What it records from, and for how long.
+    void showSettingsMenu()
+    {
+        auto& layer = engine.getLooper().getLayer (index);
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Layer " + juce::String (index + 1) + " records");
+        const bool canChange = engine.getLooper().getState (index) != RigLooper::State::recording;
+        for (int s = 0; s < RigLooper::numSources; ++s)
+            menu.addItem (RigLooper::sourceName (s), canChange, layer.source.load() == s, [this, s] { engine.getLooper().getLayer (index).source = s; });
+        menu.addSectionHeader ("For");
+        for (int b : RigLooper::barChoices())
+            menu.addItem (b == 0 ? "Until you press again" : juce::String (b) + (b == 1 ? " bar" : " bars"), true, layer.bars.load() == b,
+                          [this, b] { engine.getLooper().getLayer (index).bars = b; });
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (nameArea)));
+    }
+
+    // The first effect that's on, for the effect slot.
+    juce::String fxName() const
+    {
+        auto& p = engine.getLoopFx (index).params;
+        const auto value = [&p] (const char* id) { auto* v = p.getRawParameterValue (id); return v != nullptr ? v->load() : 0.0f; };
+        if (value ("repeat") > 0.5f) return "Repeat";
+        if (value ("delayMix") > 0.01f) return "Echo";
+        if (value ("reverbMix") > 0.01f) return "Reverb";
+        if (std::abs (value ("filter")) >= 0.02f) return "Filter";
+        if (value ("crush") > 0.01f) return "Lo-fi";
+        if (value ("drive") > 0.01f) return "Drive";
+        return "On";
     }
 
     void importFile (bool setTempo)
@@ -390,29 +527,243 @@ private:
     LooperView& owner;
     RigEngine& engine;
     const int index;
-    juce::TextButton record { "Rec" }, mute { "Mute" }, edit { "Edit" }, fx { "FX" }, undo { "Undo" }, clear { "Clear" }, more { "..." };
-    juce::ComboBox source, bars;
-    juce::Slider level { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
+    juce::TextButton mute { "M" }, solo { "S" }, fx { "+ Add effect" }, more { "..." };
+    juce::Slider level;
     LoopWave wave;
+    juce::Rectangle<int> numberArea, nameArea, stateArea, barsArea;
+    juce::String shown;
 };
 
 //==============================================================================
+namespace
+{
+const std::array<int, 5> lengthChoices { 0, 1, 2, 4, 8 };
+const std::array<std::pair<int, const char*>, 3> sourceChoices { { { RigLooper::input, "Mic" }, { RigLooper::vocoder, "Vocoder" },
+                                                                   { RigLooper::mix, "Master" } } };
+}
+
 LooperView::LooperView (RigEngine& e) : engine (e)
 {
+    using namespace vintage;
+    setOpaque (true);
     for (int i = 0; i < RigLooper::kLayers; ++i)
         addAndMakeVisible (rows.add (new Row (*this, engine, i)));
     help.setText ("Loops stay in time with the Rig. Rec starts at the next bar; press again to finish the bar. "
                   "Rec on a playing loop overdubs. Keys 1-8 record too.",
                   juce::dontSendNotification);
-    help.setColour (juce::Label::textColourId, Theme::textDim);
-    help.setFont (juce::FontOptions (13.0f));
-    addAndMakeVisible (help);
-    songButton.setClickingTogglesState (false);
-    songButton.setColour (juce::TextButton::buttonOnColourId, RigColours::song);
+    addChildComponent (help);   // the headings and tooltips say this now
+
+    setLit (recNext, Lit::arm);
+    recNext.getProperties().set ("fontSize", 19.0f);
+    recNext.setTooltip ("Records the next empty layer from the next bar. Press again to finish it at the end of that bar "
+                        "(or it stops by itself after the length).");
+    recNext.onClick = [this] { pressRecNext(); };
+    overdub.setTooltip ("Records over the layer you picked last (click a row to pick it). Press again to stop.");
+    overdub.onClick = [this] { pressOverdub(); };
+    setLit (overdub, Lit::arm);
+    undoButton.setTooltip ("Takes back the last overdub on the layer you picked last.");
+    undoButton.onClick = [this] { pressUndo(); };
+    for (auto* b : { &recNext, &overdub, &undoButton })
+        addAndMakeVisible (*b);
+    overdub.getProperties().set ("fontSize", 17.0f);
+    undoButton.getProperties().set ("fontSize", 17.0f);
+
+    for (int b : lengthChoices)
+    {
+        auto* button = lengthButtons.add (new juce::TextButton (b == 0 ? "Free" : juce::String (b)));
+        button->getProperties().set ("fontSize", 17.0f);
+        button->setTooltip (b == 0 ? "The next layer records until you press again." : "The next layer records " + juce::String (b) + (b == 1 ? " bar." : " bars."));
+        button->onClick = [this, b] { setNextBars (b); };
+        addAndMakeVisible (button);
+    }
+    for (const auto& [source, name] : sourceChoices)
+    {
+        auto* button = sourceButtons.add (new juce::TextButton (name));
+        button->getProperties().set ("fontSize", 16.0f);
+        button->setTooltip ("The next layer records " + RigLooper::sourceName (source).toLowerCase() + ".");
+        button->onClick = [this, s = source] { setNextSource (s); };
+        addAndMakeVisible (button);
+    }
+    setLit (songButton, Lit::current);
+    songButton.getProperties().set ("fontSize", 17.0f);
     songButton.setTooltip ("Build the song: which loops (and tools) play in each part, and for how many bars.");
     songButton.onClick = [this] { showSongGrid (songGrid == nullptr); };
     addAndMakeVisible (songButton);
+    updateTop();
     startTimerHz (30);
+}
+
+int LooperView::nextEmptyLayer() const
+{
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (engine.getLooper().getState (i) == RigLooper::State::empty)
+            return i;
+    return -1;
+}
+
+int LooperView::busyLayer() const
+{
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto state = engine.getLooper().getState (i);
+        if (state == RigLooper::State::armed || state == RigLooper::State::recording)
+            return i;
+    }
+    return -1;
+}
+
+void LooperView::pressLayer (int layer)
+{
+    if (juce::isPositiveAndBelow (layer, rows.size()))
+        rows[layer]->pressNumber();
+}
+
+void LooperView::pressRecNext()
+{
+    if (const int busy = busyLayer(); busy >= 0)
+    {
+        engine.getLooper().pressRecord (busy);
+        return;
+    }
+    const int next = nextEmptyLayer();
+    if (next < 0)
+    {
+        if (onSay)
+            onSay ("Every layer has a loop. Clear one (its ... menu) to record another.");
+        return;
+    }
+    engine.getLooper().pressRecord (next);
+    selected = next;
+    updateTop();
+}
+
+void LooperView::pressOverdub()
+{
+    int layer = selected;
+    if (layer < 0 || engine.getLooper().getState (layer) == RigLooper::State::empty)
+        for (int i = RigLooper::kLayers; --i >= 0;)
+            if (engine.getLooper().getState (i) == RigLooper::State::playing)
+            {
+                layer = i;
+                break;
+            }
+    if (layer < 0 || engine.getLooper().getState (layer) == RigLooper::State::empty)
+    {
+        if (onSay)
+            onSay ("Record a loop first, then Overdub records over it.");
+        return;
+    }
+    selected = layer;
+    const auto state = engine.getLooper().getState (layer);
+    if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
+        engine.getLooper().pressRecord (layer);
+    updateTop();
+}
+
+void LooperView::pressUndo()
+{
+    if (selected >= 0)
+        engine.getLooper().undo (selected);
+}
+
+void LooperView::setNextBars (int bars)
+{
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (engine.getLooper().getState (i) == RigLooper::State::empty)
+            engine.getLooper().getLayer (i).bars = bars;
+    updateTop();
+}
+
+void LooperView::setNextSource (int source)
+{
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (engine.getLooper().getState (i) == RigLooper::State::empty)
+            engine.getLooper().getLayer (i).source = source;
+    updateTop();
+}
+
+void LooperView::soloLayer (int layer)
+{
+    auto& looper = engine.getLooper();
+    if (soloed >= 0)
+    {
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+            looper.getLayer (i).mute = mutesBeforeSolo[(size_t) i];
+        const bool same = soloed == layer;
+        soloed = -1;
+        if (same)
+            return;
+    }
+    if (! juce::isPositiveAndBelow (layer, RigLooper::kLayers))
+        return;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        mutesBeforeSolo[(size_t) i] = looper.getLayer (i).mute.load();
+        looper.getLayer (i).mute = i != layer;
+    }
+    soloed = layer;
+}
+
+juce::String LooperView::statusText() const
+{
+    const auto& looper = engine.getLooper();
+    const auto& transport = engine.getTransport();
+    const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+    if (const int busy = busyLayer(); busy >= 0)
+    {
+        const juce::String name = "Layer " + juce::String (busy + 1);
+        if (looper.getState (busy) == RigLooper::State::armed)
+        {
+            if (! transport.isPlaying())
+                return name + " waits for Play";
+            const double beat = transport.getPositionInBeats();
+            const int left = juce::jmax (1, (int) std::ceil (bpb - std::fmod (beat, (double) bpb) - 1.0e-6));
+            return name + " in " + juce::String (left) + (left == 1 ? " beat" : " beats");
+        }
+        return name + " recording";
+    }
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (looper.getState (i) == RigLooper::State::overdubbing)
+            return "Overdub on layer " + juce::String (i + 1);
+    const int next = nextEmptyLayer();
+    return next < 0 ? juce::String ("All layers in use") : "Next: layer " + juce::String (next + 1);
+}
+
+void LooperView::updateTop()
+{
+    using namespace vintage;
+    const int next = nextEmptyLayer();
+    const auto& looper = engine.getLooper();
+    const int bars = next >= 0 ? looper.getLayer (next).bars.load() : -1;
+    const int source = next >= 0 ? looper.getLayer (next).source.load() : -1;
+    for (int i = 0; i < (int) lengthChoices.size(); ++i)
+        lengthButtons[i]->setToggleState (bars == lengthChoices[(size_t) i], juce::dontSendNotification);
+    for (int i = 0; i < (int) sourceChoices.size(); ++i)
+        sourceButtons[i]->setToggleState (source == sourceChoices[(size_t) i].first, juce::dontSendNotification);
+
+    const int busy = busyLayer();
+    const auto recText = busy >= 0 ? (looper.getState (busy) == RigLooper::State::armed ? juce::String ("Armed: layer ") + juce::String (busy + 1)
+                                                                                        : juce::String ("Stop layer ") + juce::String (busy + 1))
+                                   : juce::String::fromUTF8 ("\xe2\x97\x8f Rec next layer");
+    if (recNext.getButtonText() != recText)
+        recNext.setButtonText (recText);
+    // Lit red while a layer waits or records; otherwise a cream button with the red dot.
+    recNext.setToggleState (busy >= 0 && (looper.getState (busy) == RigLooper::State::recording
+                                          || (juce::Time::getMillisecondCounter() / 400) % 2 == 0),
+                            juce::dontSendNotification);
+    bool dubbing = false;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        dubbing = dubbing || looper.getState (i) == RigLooper::State::overdubbing;
+    overdub.setToggleState (dubbing, juce::dontSendNotification);
+    overdub.setButtonText (dubbing ? "Stop dub" : "Overdub");
+    undoButton.setEnabled (selected >= 0 && looper.getState (selected) != RigLooper::State::empty);
+
+    const auto status = statusText() + "/" + juce::String (engine.getTransport().getBpm()) + "/" + juce::String ((int) engine.getTransport().isPlaying());
+    if (status != shownStatus)
+    {
+        shownStatus = status;
+        repaint (controlsArea);
+    }
 }
 
 LooperView::~LooperView() { stopTimer(); }
@@ -427,6 +778,7 @@ void LooperView::refresh()
 
 void LooperView::timerCallback()
 {
+    updateTop();
     for (auto* r : rows)
         r->tick();
     if (fxPanel != nullptr)
@@ -469,7 +821,7 @@ void LooperView::showFx (int layer)
     if (! same && juce::isPositiveAndBelow (layer, RigLooper::kLayers))
     {
         fxLayer = layer;
-        fxPanel = std::make_unique<StripFxPanel> (engine.getLoopFx (layer), "Loop " + juce::String (layer + 1) + " effects", layerColour (layer));
+        fxPanel = std::make_unique<StripFxPanel> (engine.getLoopFx (layer), "Loop " + juce::String (layer + 1) + " effects", vintage::colours::loops);
         fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
                                                                                { if (safe != nullptr && safe->fxPanel != nullptr) safe->showFx (safe->fxLayer); }); };
         addAndMakeVisible (*fxPanel);
@@ -507,27 +859,87 @@ void LooperView::closeEditor()
 
 void LooperView::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::panel);
-    g.setColour (juce::Colour (0xff81c784));
-    g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
-    g.drawText ("LOOPER", getLocalBounds().reduced (14, 8).removeFromTop (26), juce::Justification::centredLeft);
+    using namespace vintage;
+    drawFace (g, getLocalBounds());
+    engraved (g, "Length", lengthLabel, juce::Justification::centredLeft, 12.0f);
+    engraved (g, "Record from", sourceLabel, juce::Justification::centredLeft, 12.0f);
+
+    // In sync, and what happens next.
+    const auto& transport = engine.getTransport();
+    const double bpm = transport.getBpm();
+    drawLamp (g, { (float) syncArea.getX() + 8, (float) syncArea.getCentreY() }, transport.isPlaying() ? Lit::play : Lit::none, 14.0f);
+    engraved (g, juce::String::fromUTF8 ("Synced \xc2\xb7 ") + (std::abs (bpm - std::round (bpm)) < 0.05 ? juce::String (juce::roundToInt (bpm)) : juce::String (bpm, 1))
+                     + juce::String::fromUTF8 (" BPM \xc2\xb7 bars"),
+              syncArea.withTrimmedLeft (22), juce::Justification::centredLeft, 12.0f);
+    const auto lcdBox = statusArea.toFloat();
+    drawLcd (g, lcdBox);
+    lcdText (g, statusText().toUpperCase(), lcdBox, juce::jmin (26.0f, lcdBox.getHeight() * 0.8f));
+
+    // The headings over the rows.
+    using namespace looperlayout;
+    auto h = headings.reduced (6, 0);
+    const auto heading = [&g] (const juce::String& text, juce::Rectangle<int> r, juce::Justification j = juce::Justification::centredLeft)
+    { engraved (g, text, r, j, 11.0f); };
+    heading ("Layer", h.removeFromLeft (wNumber + wGap + 2 + wName));
+    h.removeFromLeft (wGap);
+    heading ("State", h.removeFromLeft (wState));
+    h.removeFromLeft (wGap);
+    auto right = h.removeFromRight (wMore + 6 + wSolo + 6 + wMute);
+    heading ("Mute / solo", right.withTrimmedRight (wMore + 6), juce::Justification::centred);
+    h.removeFromRight (wGap);
+    heading ("Level", h.removeFromRight (wLevel), juce::Justification::centred);
+    h.removeFromRight (wGap);
+    heading ("Bars", h.removeFromRight (wBars), juce::Justification::centred);
+    h.removeFromRight (wGap);
+    heading ("Effect slot", h.removeFromRight (wFx));
+    h.removeFromRight (wGap);
+    heading (juce::String::fromUTF8 ("Waveform \xc2\xb7 double-click to trim start / end"), h);
 }
 
 void LooperView::resized()
 {
-    auto area = getLocalBounds().reduced (10, 8);
-    auto top = area.removeFromTop (26);
-    top.removeFromLeft (100);
-    songButton.setBounds (top.removeFromRight (100));
-    top.removeFromRight (8);
-    help.setBounds (top);
-    area.removeFromTop (6);
+    auto area = getLocalBounds().withTrimmedLeft (22).withTrimmedRight (22).withTrimmedTop (6).withTrimmedBottom (12);
+    auto top = area.removeFromTop (54);
+    controlsArea = top;
+    {
+        auto t = top;
+        recNext.setBounds (t.removeFromLeft (200));
+        t.removeFromLeft (12);
+        overdub.setBounds (t.removeFromLeft (110).reduced (0, 6));
+        t.removeFromLeft (8);
+        undoButton.setBounds (t.removeFromLeft (84).reduced (0, 6));
+        t.removeFromLeft (18);
+        auto lengths = t.removeFromLeft (5 * 46 + 4 * 6);
+        lengthLabel = lengths.removeFromTop (16);
+        for (auto* b : lengthButtons)
+        {
+            b->setBounds (lengths.removeFromLeft (b == lengthButtons[0] ? 52 : 40).reduced (0, 1));
+            lengths.removeFromLeft (6);
+        }
+        t.removeFromLeft (14);
+        auto sources = t.removeFromLeft (3 * 86 + 2 * 6);
+        sourceLabel = sources.removeFromTop (16);
+        for (auto* b : sourceButtons)
+        {
+            b->setBounds (sources.removeFromLeft (86).reduced (0, 1));
+            sources.removeFromLeft (6);
+        }
+        t.removeFromLeft (14);
+        songButton.setBounds (t.removeFromRight (96).reduced (0, 6));
+        t.removeFromRight (10);
+        statusArea = t.removeFromRight (juce::jmin (260, juce::jmax (180, t.getWidth() / 2))).reduced (0, 6);
+        t.removeFromRight (10);
+        syncArea = t;
+    }
+    area.removeFromTop (8);
+    headings = area.removeFromTop (18);
+    area.removeFromTop (4);
     if (fxPanel != nullptr)
     {
         fxPanel->setBounds (area.removeFromBottom (130));
         area.removeFromBottom (6);
     }
-    const int h = juce::jmin (72, (area.getHeight() - 6 * (rows.size() - 1)) / rows.size());
+    const int h = juce::jmin (60, (area.getHeight() - 6 * (rows.size() - 1)) / rows.size());
     for (auto* r : rows)
     {
         r->setBounds (area.removeFromTop (h));
@@ -535,14 +947,14 @@ void LooperView::resized()
     }
     if (songGrid != nullptr)
     {
-        auto bounds = getLocalBounds().reduced (10, 8).withTrimmedTop (32);
+        auto bounds = getLocalBounds().reduced (22, 8).withTrimmedTop (86);
         songGrid->setBounds (bounds);
         songGrid->toFront (false);
     }
     // The editor sits over the layers, leaving its own row (and the ones above) in view.
     if (editor != nullptr)
     {
-        auto bounds = getLocalBounds().reduced (10, 8).withTrimmedTop (32);
+        auto bounds = getLocalBounds().reduced (22, 8).withTrimmedTop (86);
         if (fxPanel != nullptr)
             bounds = bounds.withTrimmedBottom (136);
         const auto* row = rows[editor->getLayer()];

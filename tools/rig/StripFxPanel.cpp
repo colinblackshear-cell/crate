@@ -1,4 +1,5 @@
 #include "StripFxPanel.h"
+#include "Vintage.h"
 
 #include "core/ui/Theme.h"
 
@@ -60,17 +61,18 @@ void StripFxPanel::tick()
 
 void StripFxPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::raised);
+    // A dark well on the Rig's panel, with a stripe in the strip's (or loop's) colour.
+    vintage::drawFace (g, getLocalBounds());
+    const auto well = getLocalBounds().toFloat().reduced (1.0f);
+    vintage::drawWell (g, well, 10.0f);
     g.setColour (colour);
-    g.fillRect (getLocalBounds().removeFromTop (2));
-    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    g.drawText (title, getLocalBounds().reduced (14, 8).removeFromTop (20),
-                juce::Justification::centredLeft);
-    g.setColour (Theme::textDim);
-    g.setFont (juce::FontOptions (13.0f));
-    auto area = getLocalBounds().reduced (14, 8);
+    g.fillRoundedRectangle (well.withWidth (6.0f).reduced (0, 10.0f), 3.0f);
+    g.setColour (vintage::pal().wellInk);
+    g.setFont (vintage::cond (19.0f, vintage::Weight::extra, 0.06f));
+    g.drawText (title.toUpperCase(), getLocalBounds().reduced (16, 8).removeFromTop (20), juce::Justification::centredLeft);
+    auto area = getLocalBounds().reduced (16, 8);
     area.removeFromTop (24);
-    g.drawText ("Repeat", area.removeFromTop (16).removeFromLeft (150), juce::Justification::centredLeft);
+    vintage::engraved (g, "Repeat", area.removeFromTop (16).removeFromLeft (150), juce::Justification::centredLeft, 12.0f, true);
 }
 
 void StripFxPanel::resized()

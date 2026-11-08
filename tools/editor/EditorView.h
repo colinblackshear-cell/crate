@@ -86,6 +86,11 @@ public:
         else if (action == "clear")        clearChopsButton.triggerClick();
     }
     KeysView& getKeysView() { return keyboard; }
+    // After the chops were changed from outside (the Rig's Sampler screen).
+    void chopsChanged() { chopsFromHits = false; showChops(); }
+    void chooseSoundFile() { chooseFile(); }
+    void openSoundFile (const juce::File& file) { openFile (file); }
+    void toggleRecord() { toggleRecording(); }
 
 private:
     static constexpr int kEffectsWidth = 330;

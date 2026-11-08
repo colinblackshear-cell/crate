@@ -523,7 +523,8 @@ void MpcProcessor::handleMidi (const juce::MidiMessage& m, const std::shared_ptr
     if (sound.audio == nullptr || sound.audio->getNumSamples() == 0)
         return;
 
-    playedPads.fetch_or ((juce::uint64) 1 << pad);
+    for (auto& played : playedPads)
+        played.fetch_or ((juce::uint64) 1 << pad);
 
     // Mono and note-off pads cut off their own earlier hits, like on the MPC, and a pad cuts off
     // the others in its mute group (a closed hat stops the open one).
@@ -538,7 +539,7 @@ void MpcProcessor::handleMidi (const juce::MidiMessage& m, const std::shared_ptr
     Voice v;
     v.kit = current;
     v.pad = pad;
-    v.velocity = m.getFloatVelocity();
+    v.velocity = fullLevel.load() ? 1.0f : m.getFloatVelocity();
     v.step = sound.rate * kMpcSampleRate / hostRate;
     v.position = sound.reverse ? sound.audio->getNumSamples() - 1 : 0;
     voices.push_back (std::move (v));
