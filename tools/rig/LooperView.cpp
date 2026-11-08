@@ -31,6 +31,13 @@ class LoopWave : public juce::Component
 public:
     LoopWave (RigEngine& e, int i) : engine (e), index (i) {}
 
+    std::function<void()> onDoubleClick;
+    void mouseDoubleClick (const juce::MouseEvent&) override
+    {
+        if (onDoubleClick)
+            onDoubleClick();
+    }
+
     void tick()
     {
         auto& layer = engine.getLooper().getLayer (index);
@@ -139,7 +146,7 @@ public:
     Row (LooperView& o, RigEngine& e, int i) : owner (o), engine (e), index (i), wave (e, i)
     {
         auto& layer = engine.getLooper().getLayer (index);
-        for (auto* c : std::initializer_list<juce::Component*> { &record, &source, &bars, &wave, &mute, &level, &undo, &clear, &more })
+        for (auto* c : std::initializer_list<juce::Component*> { &record, &source, &bars, &wave, &mute, &level, &fx, &edit, &undo, &clear, &more })
             addAndMakeVisible (c);
 
         record.setColour (juce::TextButton::buttonOnColourId, Theme::record);
@@ -167,6 +174,12 @@ public:
         level.setColour (juce::Slider::trackColourId, layerColour (index).withAlpha (0.6f));
         level.onValueChange = [this, &layer] { layer.level = (float) level.getValue(); };
 
+        fx.setTooltip ("This loop's own effects: filter, drive, crush, delay, reverb and beat repeat. Lit when any are on.");
+        fx.setColour (juce::TextButton::buttonOnColourId, layerColour (index).withAlpha (0.8f));
+        fx.onClick = [this] { owner.showFx (index); };
+        edit.setTooltip ("Choose where this loop starts and ends (snapped to bars or beats, or free). Or double-click the loop.");
+        edit.onClick = [this] { owner.editLoop (index); };
+        wave.onDoubleClick = [this] { owner.editLoop (index); };
         undo.setTooltip ("Takes back the last overdub on this layer.");
         undo.onClick = [this] { engine.getLooper().undo (index); };
         clear.setTooltip ("Empties this layer.");
@@ -205,6 +218,8 @@ public:
         record.setToggleState (hot, juce::dontSendNotification);
         const bool hasLoop = state == RigLooper::State::playing || state == RigLooper::State::overdubbing;
         undo.setEnabled (hasLoop);
+        edit.setEnabled (state == RigLooper::State::playing);
+        fx.setToggleState (engine.getLoopFx (index).isActive(), juce::dontSendNotification);
         clear.setEnabled (state != RigLooper::State::empty);
         source.setEnabled (state != RigLooper::State::recording);
         mute.setToggleState (engine.getLooper().getLayer (index).mute.load(), juce::dontSendNotification);
@@ -237,6 +252,10 @@ public:
         clear.setBounds (area.removeFromRight (56).withSizeKeepingCentre (56, 30));
         area.removeFromRight (4);
         undo.setBounds (area.removeFromRight (56).withSizeKeepingCentre (56, 30));
+        area.removeFromRight (4);
+        edit.setBounds (area.removeFromRight (56).withSizeKeepingCentre (56, 30));
+        area.removeFromRight (4);
+        fx.setBounds (area.removeFromRight (44).withSizeKeepingCentre (44, 30));
         area.removeFromRight (8);
         level.setBounds (area.removeFromRight (120));
         area.removeFromRight (4);
@@ -257,6 +276,8 @@ private:
         juce::PopupMenu menu;
         menu.addItem ("Import a loop, stretched to the Rig's tempo...", [this] { importFile (false); });
         menu.addItem ("Import a song or loop, and set the Rig's tempo to it...", [this] { importFile (true); });
+        menu.addItem ("Edit where it starts and ends...", engine.getLooper().getState (index) == RigLooper::State::playing, false,
+                      [this] { owner.editLoop (index); });
         menu.addItem ("Save this loop as a WAV...", engine.getLooper().getState (index) == RigLooper::State::playing, false, [this] { exportFile(); });
         menu.addSeparator();
         const auto learnItem = [this, &menu] (int control, const juce::String& what)
@@ -368,7 +389,7 @@ private:
     LooperView& owner;
     RigEngine& engine;
     const int index;
-    juce::TextButton record { "Rec" }, mute { "Mute" }, undo { "Undo" }, clear { "Clear" }, more { "..." };
+    juce::TextButton record { "Rec" }, mute { "Mute" }, edit { "Edit" }, fx { "FX" }, undo { "Undo" }, clear { "Clear" }, more { "..." };
     juce::ComboBox source, bars;
     juce::Slider level { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
     LoopWave wave;
@@ -400,6 +421,58 @@ void LooperView::timerCallback()
 {
     for (auto* r : rows)
         r->tick();
+    if (fxPanel != nullptr)
+        fxPanel->tick();
+    if (editor != nullptr)
+    {
+        editor->tick();
+        if (! editor->isValid())
+            closeEditor();   // the loop was cleared (from a key, a scene, or the keyboard)
+    }
+}
+
+void LooperView::showFx (int layer)
+{
+    const bool same = fxPanel != nullptr && fxLayer == layer;
+    if (fxPanel != nullptr)
+        removeChildComponent (fxPanel.get());
+    fxPanel.reset();
+    fxLayer = -1;
+    if (! same && juce::isPositiveAndBelow (layer, RigLooper::kLayers))
+    {
+        fxLayer = layer;
+        fxPanel = std::make_unique<StripFxPanel> (engine.getLoopFx (layer), "Loop " + juce::String (layer + 1) + " effects", layerColour (layer));
+        fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
+                                                                               { if (safe != nullptr && safe->fxPanel != nullptr) safe->showFx (safe->fxLayer); }); };
+        addAndMakeVisible (*fxPanel);
+    }
+    resized();
+}
+
+void LooperView::editLoop (int layer)
+{
+    if (editor != nullptr && editor->getLayer() == layer)
+        return;
+    closeEditor();
+    if (engine.getLooper().getState (layer) != RigLooper::State::playing)
+        return;
+    auto e = std::make_unique<LoopEditor> (engine, layer);
+    if (! e->isValid())
+        return;
+    e->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
+                                                           { if (safe != nullptr) safe->closeEditor(); }); };
+    editor = std::move (e);
+    addAndMakeVisible (*editor);
+    resized();
+}
+
+void LooperView::closeEditor()
+{
+    if (editor == nullptr)
+        return;
+    removeChildComponent (editor.get());
+    editor.reset();
+    resized();
 }
 
 void LooperView::paint (juce::Graphics& g)
@@ -417,10 +490,31 @@ void LooperView::resized()
     top.removeFromLeft (100);
     help.setBounds (top);
     area.removeFromTop (6);
+    if (fxPanel != nullptr)
+    {
+        fxPanel->setBounds (area.removeFromBottom (130));
+        area.removeFromBottom (6);
+    }
     const int h = juce::jmin (72, (area.getHeight() - 6 * (rows.size() - 1)) / rows.size());
     for (auto* r : rows)
     {
         r->setBounds (area.removeFromTop (h));
         area.removeFromTop (6);
+    }
+    // The editor sits over the layers, leaving its own row (and the ones above) in view.
+    if (editor != nullptr)
+    {
+        auto bounds = getLocalBounds().reduced (10, 8).withTrimmedTop (32);
+        if (fxPanel != nullptr)
+            bounds = bounds.withTrimmedBottom (136);
+        const auto* row = rows[editor->getLayer()];
+        const int below = row->getBottom() + 6;
+        const int height = juce::jmin (bounds.getHeight(), 320);
+        if (bounds.getBottom() - below >= height)
+            bounds = bounds.withTop (below).withHeight (height);
+        else
+            bounds = bounds.withTop (bounds.getBottom() - height);
+        editor->setBounds (bounds);
+        editor->toFront (false);
     }
 }
