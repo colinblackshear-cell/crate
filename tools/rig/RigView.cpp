@@ -475,8 +475,17 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto* stageView = new StageView (engine);
     stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
     stageView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
-    stageView->onSample = [this] { toggleSampling(); };
-    stageView->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
+    stageView->onRecord = [this] { toggleRecordSet(); };
+    stageView->onTap = [this] { header.tap.onClick(); };
+    stageView->onNudgeTempo = [this] (double amount) { nudgeTempo (amount); };
+    stageView->recordState = [this]
+    {
+        // The Stage shows "armed" as a red ring, which it asks for as Lit::next.
+        const auto state = engine.getRecorder().getState();
+        return std::pair<juce::String, vintage::Lit> (header.rec.text, state == RigRecorder::State::armed ? vintage::Lit::next
+                                                                      : state == RigRecorder::State::recording ? vintage::Lit::arm
+                                                                                                               : vintage::Lit::none);
+    };
     stage = stageView;
     addPage ("Stage", Theme::text, stageView);
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
@@ -626,6 +635,28 @@ void RigView::showTab (const juce::String& name)
         pages[(size_t) i].window->toFront (true);
     else
         tabs.setCurrentTabIndex (i);
+    pageChanged();
+}
+
+// The Stage fills the window on a black panel: no top bar or footer (it has its own), and the
+// screen buttons go dark too. Leaving it puts the panel back as it was.
+void RigView::pageChanged()
+{
+    const bool onStage = currentPage() == "Stage";
+    if (onStage == stageShown)
+        return;
+    stageShown = onStage;
+    vintage::setStage (onStage || (bool) engine.screens.getProperty ("dark", false));
+    header.setVisible (! onStage);
+    footer.setVisible (! onStage);
+    resized();
+    repaint();
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer })
+        c->repaint();
+    if (groove != nullptr)
+        groove->repaint();
+    if (stage != nullptr)
+        stage->repaint();
 }
 
 void RigView::popOutTab (const juce::String& tab)
@@ -823,6 +854,7 @@ void RigView::timerCallback()
         header.play.repaint();
     }
     screenBar.setCurrent (currentPage());
+    pageChanged();
 
     // The Main screen sends the keys to the track you pick.
     if (keysTo.getSelectedId() != engine.getRouting().keysTo.load() + 1)
@@ -1203,6 +1235,12 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         engine.getTransport().togglePlay();
         return true;
     }
+    // Esc leaves the Stage.
+    if (key == juce::KeyPress::escapeKey && stageShown)
+    {
+        showTab ("Groove");
+        return true;
+    }
     // F1-F5: the screens.
     for (int i = 0; i < rigpanels::ScreenBar::screens().size(); ++i)
         if (key.getKeyCode() == juce::KeyPress::F1Key + i)
@@ -1242,7 +1280,7 @@ void RigView::nudgeTempo (double amount)
 
 void RigView::setDarkPanel (bool dark)
 {
-    vintage::setStage (dark);
+    vintage::setStage (dark || stageShown);
     engine.screens.setProperty ("dark", dark, nullptr);
     repaint();
     for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer })
@@ -1322,9 +1360,11 @@ void RigView::resized()
 
     // Shorter windows squeeze the top bar and the footer a little.
     const bool compact = getHeight() < 820;
-    header.setBounds (area.removeFromTop (compact ? 88 : 100));
+    if (! stageShown)
+        header.setBounds (area.removeFromTop (compact ? 88 : 100));
     screenBar.setBounds (area.removeFromTop (compact ? 56 : 62));
-    footer.setBounds (area.removeFromBottom (compact ? 108 : 118));
+    if (! stageShown)
+        footer.setBounds (area.removeFromBottom (compact ? 108 : 118));
     tabs.setBounds (area.reduced (0, 4));
 }
 

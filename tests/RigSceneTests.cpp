@@ -157,7 +157,7 @@ struct RigSceneTests : juce::UnitTest
             expectEquals (mpc.getSequencer().getPlayingId(), 1, "and it moves on after two bars");
         }
 
-        beginTest ("the Stage shows every tool and opens them");
+        beginTest ("the Stage: song parts, mutes, loop layers, vocoder parts, and into a tool");
         {
             RigEngine engine;
             engine.prepare (kSceneRate, kSceneBlock);
@@ -173,16 +173,33 @@ struct RigSceneTests : juce::UnitTest
             stage.refresh();
             runBeats (engine, 1.0);
             stage.refresh();
-            expectEquals (stage.getNumChildComponents(), 8, "the song and seven tools");
             for (auto* child : stage.getChildren())
                 expect (! child->getBounds().isEmpty());
-            // A click on the MPC tile's title goes into the MPC.
-            auto* mpcTile = stage.getChildComponent (1);
-            const auto at = mpcTile->getLocalBounds().getCentre().withY (16).toFloat();
+
+            // The song parts: Verse plays, the next empty one saves.
+            stage.parts[0]->onClick();
+            runBeats (engine, 1.0);
+            expectEquals (engine.getScenes().getCurrent(), 0);
+            stage.parts[3]->onClick();
+            expectEquals ((int) engine.getScenes().getScenes().size(), 2, "an empty part saves what's playing");
+
+            // Mutes, loop layers, the vocoder's parts.
+            stage.pressMute (1);
+            expect (engine.getStrip (RigEngine::bassStrip).mute.load());
+            stage.pressLayer (2, true);
+            expect (engine.getLooper().getLayer (2).mute.load());
+            stage.pressLayer (0, false);
+            runBeats (engine, 0.1);
+            expect (engine.getLooper().getState (0) != RigLooper::State::empty);
+            stage.pressVocoderPart (2);   // Robot
+            expect (engine.vocoderOn.load(), "switching a vocoder part on turns the vocoder on");
+
+            // A click on a channel's name goes into its tool.
+            const auto at = stage.channelArea (0).getCentre().withY (stage.channelArea (0).getY() + 20).toFloat();
             const juce::MouseEvent click (juce::Desktop::getInstance().getMainMouseSource(), at, {}, juce::MouseInputSource::defaultPressure,
-                                          0.0f, 0.0f, 0.0f, 0.0f, mpcTile, mpcTile, juce::Time::getCurrentTime(), at,
+                                          0.0f, 0.0f, 0.0f, 0.0f, &stage, &stage, juce::Time::getCurrentTime(), at,
                                           juce::Time::getCurrentTime(), 1, false);
-            mpcTile->mouseUp (click);
+            stage.mouseUp (click);
             expect (opened.contains ("MPC"));
         }
 

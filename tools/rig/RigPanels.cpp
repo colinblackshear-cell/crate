@@ -53,7 +53,7 @@ void PanelButton::paintButton (juce::Graphics& g, bool over, bool down)
     if (icon != Icon::none)
     {
         auto iconArea = area.removeFromTop (area.getHeight() * 11 / 20).toFloat();
-        const float s = juce::jmin (26.0f, iconArea.getHeight() - 4.0f);
+        const float s = juce::jmin (fontSize * 2.6f, iconArea.getHeight() - 4.0f);
         auto ic = juce::Rectangle<float> (s, s).withCentre ({ iconArea.getCentreX(), iconArea.getBottom() - s * 0.5f - 1.0f });
         juce::Path path;
         if (icon == Icon::play)

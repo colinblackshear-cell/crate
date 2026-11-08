@@ -3,16 +3,15 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
-#include "core/ui/Theme.h"
+#include "RigPanels.h"
 
-// The Stage: every tool on one screen, live, for playing a show. The song's parts run along the
-// top (what's playing, what's next, and a button for each part). Below, a tile for each tool
-// shows what it's doing right now: the MPC's sequence and where it is in it, the bass line and
-// the arp stepping along, the looper's layers going round, the vocoder and the input, each with
-// its level and a mute. The buttons on a tile play it (pick a sequence or the MPC's song, a bass
-// pattern, the arp, a loop layer); click anywhere else on a tile to go into that tool.
-//
-// Everything runs on the Rig's one clock, so whatever you start here comes in on the beat.
+// The Stage (F5): the screen for playing a show, on a black panel, readable from across a room.
+// Giant Play, Stop and Rec; the tempo big on an amber LCD with -, Tap and +; the part playing as
+// a big green letter with its name, the bar in the part, a row of bar lamps and what's next.
+// Below, a channel for each track (lamp and word, a tall LED meter, a big Mute), the loop
+// layers as round lamps (press one to record, stop or overdub it; right-click to mute it), the
+// vocoder's parts as switches, and the master VU meters with a clip lamp. The song parts run
+// along the bottom as huge buttons that switch on the next bar.
 class StageView : public juce::Component,
                   private juce::Timer
 {
@@ -22,34 +21,47 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseUp (const juce::MouseEvent&) override;
 
     // Re-reads the tools (after a show is loaded).
     void refresh();
 
-    // Go into a tool: the name of its tab ("MPC", "Bass"...).
+    // Go into a tool: the name of its page ("MPC", "Bass"...). A click on a channel's name.
     std::function<void (const juce::String& tab)> onOpen;
     // A strip's meter, 0..1, as the mixer shows it.
     std::function<float (int strip)> meterOf;
-    // The Rig's Sample button.
-    std::function<void()> onSample;
-    std::function<bool()> isSampling;
+    // The Rig's Rec (record the set), Tap and tempo nudge, and how Rec looks now.
+    std::function<void()> onRecord, onTap;
+    std::function<void (double)> onNudgeTempo;
+    std::function<std::pair<juce::String, vintage::Lit>()> recordState;
 
-    class Tile;
+    // The channels: Drums, Bass, Synth, Vocoder, Loops.
+    static constexpr int kChannels = 5;
+    static int channelStrip (int channel);
+    static juce::String channelName (int channel);
+    static juce::String channelPage (int channel);
+
+    // As a click does (the tests use these).
+    void pressMute (int channel);
+    void pressLayer (int layer, bool mute);
+    void pressVocoderPart (int part);
+    juce::Rectangle<int> channelArea (int channel) const { return channelAreas[(size_t) juce::jlimit (0, kChannels - 1, channel)]; }
+
+    rigpanels::PanelButton play { "Play" }, stop { "Stop" }, rec { "Rec" }, minus { juce::String::fromUTF8 ("\xe2\x88\x92") },
+        tap { "Tap" }, plus { "+" };
+    juce::OwnedArray<rigpanels::PanelButton> parts, mutes;
 
 private:
-    class SongTile;
-    class MpcTile;
-    class BassTile;
-    class SynthTile;
-    class SwitchTile;
-    class LooperTile;
-    class SamplerTile;
-
     void timerCallback() override;
+    juce::Rectangle<int> layerRect (int layer) const;
+    juce::Rectangle<int> vocoderPartRect (int part) const;
 
     RigEngine& engine;
-    std::unique_ptr<SongTile> songTile;
-    juce::OwnedArray<Tile> tiles;   // MPC, Bass, Synth / Looper, Vocoder, Input, Sampler
+    std::array<float, kChannels> levels {};
+    float vuLevel = 0, clipHold = 0;
+    juce::Rectangle<int> transportArea, tempoArea, tempoLcd, partArea, channelsArea, loopsArea, masterArea, partsLabel;
+    std::array<juce::Rectangle<int>, kChannels> channelAreas;
+    juce::String shownSignature;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StageView)
 };

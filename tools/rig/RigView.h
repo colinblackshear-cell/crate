@@ -116,6 +116,8 @@ private:
     void setDarkPanel (bool);
     juce::String currentPage() const;
     void nudgeTempo (double);
+    void pageChanged();
+    bool stageShown = false;
 
     // The Mixer page (under More): the strips, the keyboard routing, Sample, knob Learn, the
     // click, the mic, and the show's files.

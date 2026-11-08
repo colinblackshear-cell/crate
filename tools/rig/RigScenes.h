@@ -59,6 +59,8 @@ public:
     int getCurrent() const { return current; }
     int getQueued() const { return queued; }
     double getQueuedBeat() const { return queuedBeat; }
+    // The beat the current scene started on (its bar line).
+    double getCurrentStartBeat() const { return currentStartBeat; }
 
     // Song mode: scenes with a length move on by themselves.
     bool songMode = false;
