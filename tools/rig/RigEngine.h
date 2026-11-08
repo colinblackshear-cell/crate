@@ -213,7 +213,7 @@ private:
     double previewPos = 0;
     std::atomic<bool> previewPlaying { false };
     std::vector<std::shared_ptr<const juce::AudioBuffer<float>>> previewHeld;   // message thread
-    void applyScene (const RigScene::State&);   // audio thread, at the bar
+    void applyScene (const RigScene::State&, double beat);   // audio thread, at the bar (`beat`)
     std::array<double, RigLooper::kLayers> loadedLoopBeats {};
     std::array<Strip, numStrips> strips;
     std::array<StripFx, numStrips> fx;

@@ -246,6 +246,13 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
         undoLayer = -1;
     }
 
+    if (const double restart = layer.restartBeat.exchange (-1.0); restart >= 0)
+    {
+        const auto state = (State) layer.state.load();
+        if (state == State::playing || state == State::overdubbing)
+            layer.startBeat = restart;
+    }
+
     for (int p = layer.presses.exchange (0); p > 0; --p)
     {
         switch ((State) layer.state.load())

@@ -51,6 +51,7 @@ public:
     private:
         friend class RigLooper;
         std::atomic<int> presses { 0 }, clears { 0 }, undos { 0 };
+        std::atomic<double> restartBeat { -1.0 };
         juce::SpinLock lock;                  // the audio, while the window swaps it
         juce::AudioBuffer<float> audio;       // capacity; the loop is the first `length` samples
         int length = 0;
@@ -67,6 +68,8 @@ public:
 
     // Any thread (the window, MIDI): record / stop / overdub, undo the last overdub, clear.
     void pressRecord (int layer) { ++layers[(size_t) layer].presses; }
+    // Any thread: the loop starts again from its top at `beat` (a song part coming in).
+    void restartAt (int layer, double beat) { layers[(size_t) layer].restartBeat = beat; }
     void undo (int layer) { ++layers[(size_t) layer].undos; }
     void clear (int layer) { ++layers[(size_t) layer].clears; }
 

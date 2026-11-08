@@ -4,6 +4,7 @@
 
 #include "LoopEditor.h"
 #include "StripFxPanel.h"
+#include "SongGrid.h"
 #include "RigEngine.h"
 #include "core/ui/Theme.h"
 #include "Vintage.h"
@@ -19,7 +20,8 @@
 // (click to change them), a lamp and a word for its state, the loop with its playhead and its
 // ends in yellow (double-click to trim them: LoopEditor), its effect slot (the loop's own
 // effects), its length in bars, level, mute, solo, and a menu (edit, undo, clear, import a loop
-// or song, save it, or put Record and Mute on buttons of your keyboard).
+// or song, save it, or put Record and Mute on buttons of your keyboard). Song grid lays the
+// loops (and tools) out into the song's parts.
 class LooperView : public juce::Component,
                    private juce::Timer
 {
@@ -39,6 +41,9 @@ public:
     // Opens (or closes, if it's open) a loop's effects along the bottom.
     void showFx (int layer);
     StripFxPanel* getFxPanel() const { return fxPanel.get(); }
+    // Opens (or closes) the song grid: loops and tools down the side, song parts across.
+    void showSongGrid (bool show);
+    SongGrid* getSongGrid() const { return songGrid.get(); }
 
     // Status messages for the Rig's message line.
     std::function<void (const juce::String&)> onSay;
@@ -75,6 +80,8 @@ private:
     void closeEditor();
     std::unique_ptr<StripFxPanel> fxPanel;
     int fxLayer = -1;
+    std::unique_ptr<SongGrid> songGrid;
+    juce::TextButton songButton { "Song grid" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LooperView)
 };
