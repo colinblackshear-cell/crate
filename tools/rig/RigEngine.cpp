@@ -90,6 +90,11 @@ RigEngine::RigEngine()
     synthTool.setPlayHead (&transport);
     for (auto& f : fx)
         f.setPlayHead (&transport);
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        loopFx[(size_t) i].setPlayHead (&transport);
+        looper.setEffects (i, &loopFx[(size_t) i]);
+    }
     transport.setBpm (mpc.getProject().currentSequence().bpm);
     // The MPC changes sequence (and moves through its songs) on the Rig's bar lines.
     mpc.getSequencer().switchWhileFollowing = true;
@@ -123,6 +128,8 @@ RigEngine::~RigEngine()
     bass.setPlayHead (nullptr);
     synthTool.setPlayHead (nullptr);
     for (auto& f : fx)
+        f.setPlayHead (nullptr);
+    for (auto& f : loopFx)
         f.setPlayHead (nullptr);
 }
 
@@ -165,7 +172,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     inputBuffer.setSize (2, maxBlock);
     rawInputBuffer.setSize (2, maxBlock);
     loopsBuffer.setSize (2, maxBlock);
-    looper.prepare (sampleRate);
+    looper.prepare (sampleRate, maxBlock);
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
     capture.prepare (sampleRate);
@@ -756,6 +763,12 @@ juce::ValueTree RigEngine::saveShow() const
         const auto state = looper.getState (i);
         if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
             loop.setProperty ("beats", layer.lengthBeats.load(), nullptr);
+        if (loopFx[(size_t) i].isActive())
+        {
+            juce::MemoryBlock fxState;
+            const_cast<StripFx&> (loopFx[(size_t) i]).getStateInformation (fxState);
+            loop.setProperty ("fx", fxState.toBase64Encoding(), nullptr);
+        }
         show.appendChild (loop, nullptr);
     }
 
@@ -838,6 +851,8 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     // Shows from before the effects have none.
     for (auto& f : fx)
         f.reset();
+    for (auto& f : loopFx)
+        f.reset();
 
     for (auto& s : strips)
     {
@@ -881,6 +896,9 @@ void RigEngine::loadShow (const juce::ValueTree& show)
                 layer.level = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("level", 0.8f));
                 layer.mute = (bool) child.getProperty ("mute", false);
                 loadedLoopBeats[(size_t) i] = (double) child.getProperty ("beats", 0.0);
+                juce::MemoryBlock fxState;
+                if (child.hasProperty ("fx") && fxState.fromBase64Encoding (child.getProperty ("fx").toString()) && ! fxState.isEmpty())
+                    loopFx[(size_t) i].setStateInformation (fxState.getData(), (int) fxState.getSize());
             }
         }
         else if (child.hasType ("Control"))

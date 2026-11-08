@@ -2,6 +2,8 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "StripFx.h"
+
 #include <array>
 #include <atomic>
 
@@ -16,6 +18,9 @@
 //
 // Loops play by the beat, so they follow the tempo when it changes. A loop or a whole song
 // from a file can be dropped on a layer, either stretched to the Rig's tempo or setting it.
+//
+// Each layer can have its own effects (a StripFx rack the engine owns): the loop plays
+// through them, and what it records is never affected by them.
 //
 // The window and MIDI ask for things through atomics; the audio thread does them.
 class RigLooper
@@ -77,9 +82,28 @@ public:
     // Message thread: gives an empty layer room to record again after holding a long file.
     void makeRoom (int layer);
 
+    // Trimming, on the message thread. The editor always works on the loop as it was before
+    // you trimmed it, so you can change your mind: openTrim keeps a copy of the whole loop (or
+    // keeps the copy it has, if the loop hasn't changed since the last trim), and setTrim plays
+    // the part between two of its beats, stretched to `playBeats` so it stays on the beat.
+    // Recording, overdubbing, clearing or loading a new sound on the layer starts afresh.
+    struct Trim
+    {
+        juce::AudioBuffer<float> whole;   // the loop before trimming
+        double wholeBeats = 0;
+        double start = 0, end = 0;        // the part that plays, in beats of `whole`
+    };
+    bool openTrim (int layer);            // false if the layer has no loop
+    const Trim& getTrim (int layer) const { return trims[(size_t) layer]; }
+    void setTrim (int layer, double startBeat, double endBeat, double playBeats);
+    // The part of `audio` (which is `beats` long) between two beats, with short fades at the cuts.
+    static juce::AudioBuffer<float> cropBeats (const juce::AudioBuffer<float>& audio, double beats, double from, double to);
+
     //==========================================================================
     // Audio thread.
-    void prepare (double sampleRate);
+    void prepare (double sampleRate, int maxBlock = 4096);
+    // Before prepare: the effects each layer plays through (null for none). Not owned.
+    void setEffects (int layer, StripFx* fx) { effects[(size_t) layer] = fx; }
 
     struct Clock
     {
@@ -102,6 +126,11 @@ private:
     std::array<Layer, kLayers> layers;
     juce::AudioBuffer<float> undoAudio;
     int undoLayer = -1, undoLength = 0;
+    std::array<StripFx*, kLayers> effects {};
+    std::array<juce::AudioBuffer<float>, kLayers> layerOut;   // a layer's sound, before its effects
+    std::array<int, kLayers> fxTail {};                        // samples left of an effect's tail
+    std::array<Trim, kLayers> trims;
+    std::array<int, kLayers> trimVersions {};   // the layer's version when its trim was set
 
     JUCE_DECLARE_NON_COPYABLE (RigLooper)
 };
