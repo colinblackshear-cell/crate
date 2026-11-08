@@ -134,6 +134,66 @@ void RigLooper::makeRoom (int index)
         std::swap (layer.audio, room);
 }
 
+bool RigLooper::openTrim (int index)
+{
+    auto& trim = trims[(size_t) index];
+    const auto& layer = layers[(size_t) index];
+    if (trim.wholeBeats > 0 && trimVersions[(size_t) index] == layer.version.load() && trim.whole.getNumSamples() > 0)
+        return true;
+    auto audio = copyLayerAudio (index);
+    const double beats = layer.lengthBeats.load();
+    if (audio.getNumSamples() == 0 || beats <= 0)
+    {
+        trim = {};
+        return false;
+    }
+    trim.whole = std::move (audio);
+    trim.wholeBeats = beats;
+    trim.start = 0;
+    trim.end = beats;
+    trimVersions[(size_t) index] = layer.version.load();
+    return true;
+}
+
+juce::AudioBuffer<float> RigLooper::cropBeats (const juce::AudioBuffer<float>& audio, double beats, double from, double to)
+{
+    const int total = audio.getNumSamples();
+    if (total == 0 || beats <= 0)
+        return {};
+    const auto toSample = [&] (double b) { return juce::jlimit (0, total, (int) std::round (b / beats * total)); };
+    const int a = toSample (juce::jmin (from, to)), b = toSample (juce::jmax (from, to));
+    const int n = juce::jmax (1, b - a);
+    juce::AudioBuffer<float> out (2, n);
+    for (int ch = 0; ch < 2; ++ch)
+        out.copyFrom (ch, 0, audio, juce::jmin (ch, audio.getNumChannels() - 1), juce::jmin (a, total - n), n);
+    const int fade = juce::jmin (kFade, n / 4);
+    if (fade > 0)
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            if (a > 0)
+                out.applyGainRamp (ch, 0, fade, 0.0f, 1.0f);
+            if (b < total)
+                out.applyGainRamp (ch, n - fade, fade, 1.0f, 0.0f);
+        }
+    return out;
+}
+
+void RigLooper::setTrim (int index, double startBeat, double endBeat, double playBeats)
+{
+    auto& trim = trims[(size_t) index];
+    if (trim.wholeBeats <= 0)
+        return;
+    startBeat = juce::jlimit (0.0, trim.wholeBeats, startBeat);
+    endBeat = juce::jlimit (0.0, trim.wholeBeats, endBeat);
+    if (endBeat - startBeat < 1.0e-3 || playBeats <= 0)
+        return;
+    auto part = cropBeats (trim.whole, trim.wholeBeats, startBeat, endBeat);
+    trim.start = startBeat;
+    trim.end = endBeat;
+    setLayerAudio (index, std::move (part), playBeats);
+    trimVersions[(size_t) index] = layers[(size_t) index].version.load();
+}
+
 void RigLooper::finishRecording (Layer& layer)
 {
     layer.length = juce::jmax (1, layer.writeIndex);

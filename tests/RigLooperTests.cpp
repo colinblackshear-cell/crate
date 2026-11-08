@@ -2,6 +2,7 @@
 
 #include "RigEngine.h"
 #include "RigLooper.h"
+#include "LooperView.h"
 
 namespace
 {
@@ -163,6 +164,87 @@ struct RigLooperTests : juce::UnitTest
             rig.clock.playing = true;
             rig.run (8.0);
             expectWithinAbsoluteError (rig.heardAtBeat (4.0), 0.5f, 0.01f);
+        }
+
+        beginTest ("trimming plays the part between two beats, and can be changed or put back");
+        {
+            LooperRig rig;
+            // An 8-beat loop whose sound is its own beat number (0, 1, 2 ... 7).
+            const int perBeat = 1000;
+            juce::AudioBuffer<float> audio (2, 8 * perBeat);
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+                for (int ch = 0; ch < 2; ++ch)
+                    audio.setSample (ch, i, (float) (i / perBeat) / 10.0f);
+            rig.looper.setLayerAudio (2, audio, 8.0);
+            rig.looper.getLayer (2).level = 1.0f;
+            expect (rig.looper.openTrim (2));
+            expectWithinAbsoluteError (rig.looper.getTrim (2).wholeBeats, 8.0, 1.0e-9);
+
+            // Beats 2 to 6: 4 beats long, starting with beat 2's sound.
+            rig.looper.setTrim (2, 2.0, 6.0, LoopEditor::playBeatsFor (2.0, 6.0));
+            expectWithinAbsoluteError (rig.looper.getLayer (2).lengthBeats.load(), 4.0, 1.0e-9);
+            rig.clock.playing = true;
+            rig.run (8.0);
+            expectWithinAbsoluteError (rig.heardAtBeat (0.5), 0.2f, 0.01f, "the loop starts at beat 2");
+            expectWithinAbsoluteError (rig.heardAtBeat (3.5), 0.5f, 0.01f, "and ends at beat 6");
+            expectWithinAbsoluteError (rig.heardAtBeat (4.5), 0.2f, 0.01f, "then goes round");
+
+            // Opening again keeps the whole loop, so the trim can be changed.
+            expect (rig.looper.openTrim (2));
+            expectWithinAbsoluteError (rig.looper.getTrim (2).wholeBeats, 8.0, 1.0e-9);
+            expectWithinAbsoluteError (rig.looper.getTrim (2).start, 2.0, 1.0e-9);
+            rig.looper.setTrim (2, 0.0, 8.0, 8.0);
+            expectEquals (rig.looper.copyLayerAudio (2).getNumSamples(), 8 * perBeat, "Whole loop puts it back");
+
+            // A free trim is stretched to whole beats; recording over it starts afresh.
+            expectEquals (LoopEditor::playBeatsFor (1.1, 4.0), 3.0);
+            expectEquals (LoopEditor::playBeatsFor (0.0, 0.3), 1.0);
+            rig.looper.setTrim (2, 1.1, 4.0, LoopEditor::playBeatsFor (1.1, 4.0));
+            expectWithinAbsoluteError (rig.looper.getLayer (2).lengthBeats.load(), 3.0, 1.0e-9);
+            rig.looper.clear (2);
+            rig.run (0.1);
+            rig.looper.setLayerAudio (2, audio, 8.0);
+            expect (rig.looper.openTrim (2));
+            expectWithinAbsoluteError (rig.looper.getTrim (2).start, 0.0, 1.0e-9, "a new sound is edited whole");
+
+            expectEquals (LoopEditor::placeText (0.0, 4), juce::String ("bar 1 beat 1"));
+            expectEquals (LoopEditor::placeText (6.0, 4), juce::String ("bar 2 beat 3"));
+            expectEquals (LoopEditor::placeText (4.25, 4), juce::String ("bar 2 beat 1.2"));
+        }
+
+        beginTest ("the loop editor: Edit opens it, the handles snap, and it trims the loop");
+        {
+            RigEngine engine;
+            engine.prepare (kLoopRate, kBlock);
+            juce::AudioBuffer<float> audio (2, (int) (kLoopRate * 4));   // 2 bars at 120
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+                for (int ch = 0; ch < 2; ++ch)
+                    audio.setSample (ch, i, 0.6f * std::sin (i * 0.05f) * (float) std::exp (-(i % 24000) / 4000.0));
+            engine.getLooper().setLayerAudio (0, audio, 8.0);
+
+            LooperView view (engine);
+            view.setBounds (0, 0, 1180, 700);
+            expect (view.getEditor() == nullptr);
+            view.editLoop (3);
+            expect (view.getEditor() == nullptr, "no editor for an empty layer");
+            view.editLoop (0);
+            auto* editor = view.getEditor();
+            expect (editor != nullptr);
+            if (editor != nullptr)
+            {
+                expect (editor->isVisible() && ! editor->getBounds().isEmpty());
+                editor->setRange (1.0, 7.0);
+                expectWithinAbsoluteError (engine.getLooper().getLayer (0).lengthBeats.load(), 6.0, 1.0e-9);
+                expectEquals (engine.getLooper().copyLayerAudio (0).getNumSamples(), (int) (kLoopRate * 3));
+                if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_LOOP_EDITOR_SNAPSHOT", {}); path.isNotEmpty())
+                {
+                    const auto image = view.createComponentSnapshot (view.getLocalBounds(), true, 2.0f);
+                    juce::File file (path);
+                    file.deleteFile();
+                    juce::FileOutputStream stream (file);
+                    juce::PNGImageFormat().writeImageToStream (image, stream);
+                }
+            }
         }
 
         beginTest ("in the Rig: the looper records the bass, plays it through the Loops strip, and saves with the show");
