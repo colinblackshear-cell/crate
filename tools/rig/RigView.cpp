@@ -382,6 +382,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         addPage ("Vocoder", vocoderColour, screen);
     }
     auto* looperView = new LooperView (engine);
+    looperView->setLookAndFeel (&vintageLook);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
