@@ -36,6 +36,9 @@ public:
     // Shows the pads or the sequencer's step grid in the middle of the window.
     void showSequencer (bool);
 
+    // Asks for the MPC's card (or any folder) and writes every kit to it.
+    void exportToCard();
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
@@ -51,7 +54,6 @@ private:
     void chopSelectedPad (int slices);
     void openSoundEditor (bool open);
     void openKit();
-    void exportToCard();
     void writeBanks (const juce::File& destination);
     void refresh();
     void setStatus (const juce::String& text, bool warning = false);

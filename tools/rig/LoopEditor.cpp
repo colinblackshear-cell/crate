@@ -1,4 +1,5 @@
 #include "LoopEditor.h"
+#include "Vintage.h"
 
 #include "core/ui/Theme.h"
 
@@ -122,7 +123,7 @@ public:
         {
             const auto p = peaks[(size_t) juce::jlimit (0, (int) peaks.size() - 1, (int) ((double) x / juce::jmax (1, w - 1) * (peaks.size() - 1)))];
             const bool inside = x >= x0 && x <= x1;
-            g.setColour (inside ? Theme::waveform : Theme::textDim.withAlpha (0.35f));
+            g.setColour (inside ? vintage::colours::loops : Theme::textDim.withAlpha (0.35f));
             g.drawVerticalLine (x, mid - juce::jmax (0.5f, p * half), mid + juce::jmax (0.5f, p * half) + 1);
         }
 
@@ -130,7 +131,7 @@ public:
         g.setColour (juce::Colours::black.withAlpha (0.35f));
         g.fillRect (juce::Rectangle<float> (waveArea.getX(), waveArea.getY(), x0 - waveArea.getX(), waveArea.getHeight()));
         g.fillRect (juce::Rectangle<float> (x1, waveArea.getY(), waveArea.getRight() - x1, waveArea.getHeight()));
-        g.setColour (Theme::waveform.withAlpha (0.08f));
+        g.setColour (vintage::colours::loops.withAlpha (0.08f));
         g.fillRect (juce::Rectangle<float> (x0, waveArea.getY(), x1 - x0, waveArea.getHeight()));
 
         // The playhead, where the Rig is in the part that plays now.
@@ -250,7 +251,7 @@ LoopEditor::LoopEditor (RigEngine& e, int l) : engine (e), layer (l)
     addAndMakeVisible (*wave);
 
     title.setText ("Edit loop " + juce::String (layer + 1), juce::dontSendNotification);
-    title.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+    title.setFont (vintage::cond (22.0f, vintage::Weight::extra, 0.06f));
     title.setColour (juce::Label::textColourId, Theme::text);
     info.setFont (juce::FontOptions (14.0f));
     info.setColour (juce::Label::textColourId, Theme::text);
@@ -388,9 +389,10 @@ void LoopEditor::updateText()
 
 void LoopEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::panel);
-    g.setColour (Theme::outline);
-    g.drawRect (getLocalBounds(), 1);
+    vintage::drawFace (g, getLocalBounds());
+    vintage::drawWell (g, getLocalBounds().toFloat().reduced (1.0f), 12.0f);
+    g.setColour (vintage::colours::selected);
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 12.0f, 2.0f);
 }
 
 void LoopEditor::resized()

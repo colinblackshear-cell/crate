@@ -6,11 +6,20 @@
 #include "StripFxPanel.h"
 #include "RigEngine.h"
 #include "core/ui/Theme.h"
+#include "Vintage.h"
 
-// The Looper tab: the eight layers, one row each. A big Record button (record / stop /
-// overdub), what it records from, how many bars, the loop drawn with its playhead, mute,
-// level, FX (the loop's own effects), Edit (where it starts and ends: LoopEditor), undo and clear, and a menu to import a loop or song, export the loop, or put Record
-// and Mute on buttons of your keyboard.
+// The Looper screen (F3): eight layers in time with the Rig.
+//
+// Along the top: Rec next layer (records the next empty layer from the next bar; press again to
+// finish it), Overdub and Undo (on the layer picked last), the length and what the next layer
+// records from (your mic, the vocoder or the whole mix), whether it's in sync, and an LCD saying
+// what happens next ("LAYER 6 IN 2 BEATS").
+//
+// Then a row per layer: its number (click to record it, as keys 1-8 do), its name and source
+// (click to change them), a lamp and a word for its state, the loop with its playhead and its
+// ends in yellow (double-click to trim them: LoopEditor), its effect slot (the loop's own
+// effects), its length in bars, level, mute, solo, and a menu (edit, undo, clear, import a loop
+// or song, save it, or put Record and Mute on buttons of your keyboard).
 class LooperView : public juce::Component,
                    private juce::Timer
 {
@@ -34,6 +43,20 @@ public:
     // Status messages for the Rig's message line.
     std::function<void (const juce::String&)> onSay;
 
+    // The top row, as clicks do (the tests use these).
+    void pressRecNext();
+    void pressOverdub();
+    void pressUndo();
+    void setNextBars (int bars);       // for the empty layers
+    void setNextSource (int source);   // RigLooper::Source, for the empty layers
+    void soloLayer (int layer);        // again to un-solo
+    void pressLayer (int layer);       // the layer's number
+    int nextEmptyLayer() const;        // -1 when they're all in use
+    int busyLayer() const;             // armed or recording, or -1
+    juce::String statusText() const;   // what the LCD says
+    int getSelected() const { return selected; }
+    int getSoloed() const { return soloed; }
+
 private:
     class Row;
     void timerCallback() override;
@@ -41,6 +64,13 @@ private:
     RigEngine& engine;
     juce::OwnedArray<Row> rows;
     juce::Label help;
+    int selected = -1, soloed = -1;
+    std::array<bool, RigLooper::kLayers> mutesBeforeSolo {};
+    juce::TextButton recNext { "Rec next layer" }, overdub { "Overdub" }, undoButton { "Undo" };
+    juce::OwnedArray<juce::TextButton> lengthButtons, sourceButtons;
+    juce::Rectangle<int> controlsArea, lengthLabel, sourceLabel, syncArea, statusArea, headings;
+    juce::String shownStatus;
+    void updateTop();
     std::unique_ptr<LoopEditor> editor;
     void closeEditor();
     std::unique_ptr<StripFxPanel> fxPanel;

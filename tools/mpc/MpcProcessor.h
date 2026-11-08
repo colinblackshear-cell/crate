@@ -84,7 +84,11 @@ public:
     void followTransport();
 
     // Pads played since the last call (bit n = pad n), from MIDI or clicks, to light them.
-    juce::uint64 takePlayedPads() { return playedPads.exchange (0); }
+    // The pads that played since the last call, one bit each. Each reader (0 the MPC's own
+    // window, 1 the Rig's Sampler screen) gets its own copy, so they don't take each other's.
+    juce::uint64 takePlayedPads (int reader = 0) { return playedPads[(size_t) juce::jlimit (0, 1, reader)].exchange (0); }
+    // MPC Full Level: every hit plays at full velocity.
+    std::atomic<bool> fullLevel { false };
 
     //==========================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -189,7 +193,7 @@ private:
     bool songStartQueued = false;   // the song's first step waits for the bar (in the Rig)
     int songStep = 0, songRepeat = 0, lastPasses = 0;
     int queuedSequence = -1, queuedAtPasses = 0, immediateSequence = -1;
-    std::atomic<juce::uint64> playedPads { 0 };
+    std::array<std::atomic<juce::uint64>, 2> playedPads {};
     std::atomic<bool> stopRequested { false };
     juce::MidiBuffer remapped;
     void remapDrumPads (juce::MidiBuffer&);

@@ -249,6 +249,52 @@ struct RigLooperTests : juce::UnitTest
             }
         }
 
+        beginTest ("the Looper screen: Rec next layer, length and source, overdub, solo, and what the LCD says");
+        {
+            RigEngine engine;
+            engine.prepare (kLoopRate, kBlock);
+            LooperView view (engine);
+            view.setBounds (0, 0, 1400, 640);
+            auto& looper = engine.getLooper();
+            juce::AudioBuffer<float> audio (2, (int) (kLoopRate * 2));
+            audio.clear();
+            looper.setLayerAudio (0, audio, 4.0);
+            looper.setLayerAudio (2, audio, 4.0);
+
+            expectEquals (view.nextEmptyLayer(), 1, "the first empty layer");
+            expect (view.statusText().contains ("layer 2"), view.statusText());
+            view.setNextBars (2);
+            view.setNextSource (RigLooper::vocoder);
+            expectEquals (looper.getLayer (1).bars.load(), 2, "the length goes to the empty layers");
+            expectEquals (looper.getLayer (7).source.load(), (int) RigLooper::vocoder);
+            expectEquals (looper.getLayer (0).source.load(), (int) RigLooper::mix, "not to the ones with loops");
+
+            view.pressRecNext();
+            juce::AudioBuffer<float> in (2, kBlock), out (2, kBlock);
+            in.clear();
+            engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
+            expectEquals (view.busyLayer(), 1, "layer 2 waits for the next bar");
+            expect (view.statusText().startsWith ("Layer 2"), view.statusText());
+            view.pressRecNext();
+            engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
+            expect (looper.getState (1) != RigLooper::State::armed, "pressed again: it's called off");
+
+            // Overdub works on the layer picked last; a click on a number records that layer.
+            view.pressLayer (2);
+            engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
+            expectEquals (view.getSelected(), 2);
+            expect (looper.getState (2) == RigLooper::State::overdubbing || ! engine.getTransport().isPlaying(), "a playing loop overdubs");
+
+            // Solo: only that loop, then everything back as it was.
+            looper.getLayer (2).mute = true;
+            view.soloLayer (0);
+            expect (! looper.getLayer (0).mute.load() && looper.getLayer (2).mute.load() && looper.getLayer (5).mute.load());
+            expectEquals (view.getSoloed(), 0);
+            view.soloLayer (0);
+            expect (! looper.getLayer (0).mute.load() && looper.getLayer (2).mute.load() && ! looper.getLayer (5).mute.load(), "back as it was");
+            expectEquals (view.getSoloed(), -1);
+        }
+
         beginTest ("each loop plays through its own effects, and they save with the show");
         {
             LooperRig rig;

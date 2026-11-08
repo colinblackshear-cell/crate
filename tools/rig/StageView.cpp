@@ -1,13 +1,24 @@
 #include "StageView.h"
 #include "RigColours.h"
 
-namespace Theme = crate::Theme;
+using vintage::Lit;
+using vintage::Weight;
 
 namespace
 {
-constexpr int kHeader = 34, kFooter = 40, kGap = 10;
+// The vocoder's parts, as switches on the Stage.
+struct VocoderPart { const char* id; const char* name; juce::uint32 colour; };
+const VocoderPart vocoderParts[] = { { "voiceOn", "Voice", 0xfff1e7d1 }, { "tuneOn", "Tune", 0xffffb23e }, { "robotOn", "Robot", 0xff5fb3c4 },
+                                     { "arpOn", "Arp", 0xffe0816f }, { "vintageOn", "Vintage", 0xffc9a26b }, { "fxOn", "Effects", 0xff9cc27a } };
+constexpr int kVocoderParts = (int) std::size (vocoderParts);
 
-void setParam (juce::AudioProcessorValueTreeState& params, const char* id, float value)
+float getParam (const juce::AudioProcessorValueTreeState& params, const juce::String& id)
+{
+    auto* v = params.getRawParameterValue (id);
+    return v != nullptr ? v->load() : 0.0f;
+}
+
+void setParam (juce::AudioProcessorValueTreeState& params, const juce::String& id, float value)
 {
     if (auto* p = params.getParameter (id))
     {
@@ -17,811 +28,90 @@ void setParam (juce::AudioProcessorValueTreeState& params, const char* id, float
     }
 }
 
-float getParam (juce::AudioProcessorValueTreeState& params, const char* id)
-{
-    auto* v = params.getRawParameterValue (id);
-    return v != nullptr ? v->load() : 0.0f;
-}
+juce::String letter (int i) { return juce::String::charToString ((juce::juce_wchar) ('A' + i)); }
 
-void styleButton (juce::TextButton& b, juce::Colour colour)
+juce::String partName (const RigScene& s, int i)
 {
-    b.setColour (juce::TextButton::buttonOnColourId, colour);
-    b.setColour (juce::TextButton::textColourOnId, Theme::background);
-}
-
-// Lays out `buttons` left to right in rows of `perRow`, each `height` tall.
-void layoutGrid (juce::OwnedArray<juce::TextButton>& buttons, juce::Rectangle<int> area, int perRow, int height)
-{
-    const int w = (area.getWidth() - 4 * (perRow - 1)) / juce::jmax (1, perRow);
-    for (int i = 0; i < buttons.size(); ++i)
-    {
-        const int row = i / perRow, col = i % perRow;
-        buttons[i]->setBounds (area.getX() + col * (w + 4), area.getY() + row * (height + 4), w, height);
-    }
+    return s.name == "Part " + letter (i) ? juce::String() : s.name;
 }
 }
 
 //==============================================================================
-// A tool's tile: its name and colour, what it's doing (drawn by the tool's own tile), and its
-// strip's mute and meter along the bottom. A click that misses the buttons goes into the tool.
-class StageView::Tile : public juce::Component
+int StageView::channelStrip (int c)
 {
-public:
-    Tile (StageView& o, const juce::String& n, const juce::String& t, juce::Colour c, int s)
-        : owner (o), engine (o.engine), name (n), tab (t), colour (c), strip (s)
-    {
-        setRepaintsOnMouseActivity (true);
-        setMouseCursor (juce::MouseCursor::PointingHandCursor);
-        if (strip >= 0)
-        {
-            addAndMakeVisible (mute);
-            mute.setClickingTogglesState (true);
-            mute.setColour (juce::TextButton::buttonOnColourId, Theme::record);
-            mute.onClick = [this] { engine.getStrip (strip).mute = mute.getToggleState(); };
-            mute.setTooltip ("Mutes " + name + ", the same as its mixer strip.");
-        }
-    }
+    const int strips[] = { RigEngine::mpcStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
+    return strips[juce::jlimit (0, kChannels - 1, c)];
+}
 
-    // 30 times a second, while the Stage shows.
-    void tick()
-    {
-        if (strip >= 0)
-        {
-            mute.setToggleState (engine.getStrip (strip).mute.load(), juce::dontSendNotification);
-            const float m = owner.meterOf ? owner.meterOf (strip) : 0.0f;
-            const bool fx = engine.getFx (strip).isActive();
-            if (std::abs (m - meter) > 0.002f || fx != fxOn)
-            {
-                meter = m;
-                fxOn = fx;
-                repaint (footerArea());
-            }
-        }
-        tickBody();
-    }
-
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().toFloat().reduced (1.0f);
-        const bool over = isMouseOver (true);
-        g.setColour (over ? Theme::raised.brighter (0.07f) : Theme::raised);
-        g.fillRoundedRectangle (r, 8.0f);
-        g.setColour (colour.withAlpha (over ? 0.9f : 0.5f));
-        g.drawRoundedRectangle (r, 8.0f, 1.0f);
-        g.fillRect (getLocalBounds().reduced (10, 0).removeFromTop (3));
-
-        auto header = headerArea();
-        g.setColour (colour);
-        g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-        g.drawText (name, header, juce::Justification::centredLeft);
-        g.setColour (over ? Theme::text : Theme::textDim);
-        g.setFont (juce::FontOptions (12.0f));
-        g.drawText ("Open " + tab + "  >", header, juce::Justification::centredRight);
-
-        paintBody (g, bodyArea());
-
-        if (strip >= 0)
-        {
-            auto f = footerArea();
-            f.removeFromLeft (mute.getWidth() + 8);
-            if (fxOn)
-            {
-                g.setColour (colour);
-                g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-                g.drawText ("FX", f.removeFromRight (22), juce::Justification::centredRight);
-                f.removeFromRight (6);
-            }
-            auto bar = f.withSizeKeepingCentre (f.getWidth(), 8).toFloat();
-            g.setColour (Theme::background);
-            g.fillRoundedRectangle (bar, 4.0f);
-            const float db = juce::Decibels::gainToDecibels (meter, -60.0f);
-            const float fill = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
-            g.setColour (meter > 0.98f ? Theme::record : colour.withAlpha (engine.getStrip (strip).mute.load() ? 0.3f : 0.9f));
-            g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * fill), 4.0f);
-        }
-    }
-
-    void resized() override
-    {
-        if (strip >= 0)
-            mute.setBounds (footerArea().removeFromLeft (60));
-        layoutBody (bodyArea());
-    }
-
-    void mouseUp (const juce::MouseEvent& e) override
-    {
-        if (! e.mouseWasClicked())
-            return;
-        if (! e.mods.isPopupMenu() && bodyClick (e.getPosition()))
-            return;
-        if (owner.onOpen)
-            owner.onOpen (tab);
-    }
-
-    // Forget what's been drawn, so the next tick redraws everything (a show was loaded).
-    virtual void reset() {}
-
-protected:
-    virtual void tickBody() {}
-    virtual void paintBody (juce::Graphics&, juce::Rectangle<int>) {}
-    virtual void layoutBody (juce::Rectangle<int>) {}
-    // A click on the tile itself (not a button): true if the tile used it.
-    virtual bool bodyClick (juce::Point<int>) { return false; }
-
-    juce::Rectangle<int> headerArea() const { return getLocalBounds().reduced (12, 0).removeFromTop (kHeader); }
-    juce::Rectangle<int> footerArea() const
-    {
-        return strip >= 0 ? getLocalBounds().reduced (12, 8).removeFromBottom (kFooter - 16) : juce::Rectangle<int>();
-    }
-    juce::Rectangle<int> bodyArea() const
-    {
-        auto a = getLocalBounds().reduced (12, 0);
-        a.removeFromTop (kHeader);
-        a.removeFromBottom (strip >= 0 ? kFooter : 10);
-        return a;
-    }
-
-    StageView& owner;
-    RigEngine& engine;
-    const juce::String name, tab;
-    const juce::Colour colour;
-    const int strip;
-
-private:
-    juce::TextButton mute { "Mute" };
-    float meter = 0;
-    bool fxOn = false;
-};
-
-//==============================================================================
-// The song's parts: what's playing, what's next, a button for each part, Back / Next and
-// song mode.
-class StageView::SongTile : public Tile
+juce::String StageView::channelName (int c)
 {
-public:
-    explicit SongTile (StageView& o) : Tile (o, "Song", "Song", RigColours::song, -1)
-    {
-        for (auto* b : { &back, &next, &songMode })
-        {
-            addAndMakeVisible (b);
-            styleButton (*b, colour);
-        }
-        songMode.setClickingTogglesState (true);
-        songMode.onClick = [this] { engine.getScenes().songMode = songMode.getToggleState(); };
-        songMode.setTooltip ("On, a part with a length moves on to the next part by itself when its bars are up.");
-        back.onClick = [this] { engine.getScenes().back(); };
-        next.onClick = [this] { engine.getScenes().next(); };
-        back.setTooltip ("The part before this one, at the next bar.");
-        next.setTooltip ("The next part, at the next bar.");
-    }
+    const char* names[] = { "Drums", "Bass", "Synth", "Vocoder", "Loops" };
+    return names[juce::jlimit (0, kChannels - 1, c)];
+}
 
-    void reset() override { signature = {}; }
-
-protected:
-    void tickBody() override
-    {
-        auto& scenes = engine.getScenes();
-        const auto& list = scenes.getScenes();
-        juce::StringArray names;
-        for (const auto& s : list)
-            names.add (s.name);
-        if (const auto sig = names.joinIntoString ("|") + juce::String ((int) list.size()); sig != signature)
-        {
-            signature = sig;
-            buttons.clear();
-            for (int i = 0; i < (int) list.size(); ++i)
-            {
-                auto* b = buttons.add (new juce::TextButton (list[(size_t) i].name));
-                styleButton (*b, colour);
-                b->setTooltip ("Plays " + list[(size_t) i].name + " from the next bar.");
-                b->onClick = [this, i] { engine.getScenes().launch (i); };
-                addAndMakeVisible (b);
-            }
-            resized();
-            repaint();
-        }
-
-        const int current = scenes.getCurrent(), queued = scenes.getQueued();
-        for (int i = 0; i < buttons.size(); ++i)
-        {
-            buttons[i]->setToggleState (i == current, juce::dontSendNotification);
-            buttons[i]->setColour (juce::TextButton::buttonColourId, i == queued ? colour.withAlpha (0.35f) : Theme::panel);
-        }
-        songMode.setToggleState (scenes.songMode, juce::dontSendNotification);
-        back.setEnabled (! list.empty());
-        next.setEnabled (! list.empty());
-
-        const auto text = describe();
-        if (text != shown)
-        {
-            shown = text;
-            repaint (bodyArea());
-        }
-    }
-
-    juce::String describe() const
-    {
-        auto& scenes = engine.getScenes();
-        const auto& list = scenes.getScenes();
-        const int current = scenes.getCurrent(), queued = scenes.getQueued();
-        juce::String now = juce::isPositiveAndBelow (current, (int) list.size()) ? list[(size_t) current].name
-                         : list.empty() ? juce::String ("No song parts") : juce::String ("Not started");
-        juce::String after;
-        if (list.empty())
-            after = "No parts yet. Set up what plays, then + Add scene in the Song tab.";
-        else if (juce::isPositiveAndBelow (queued, (int) list.size()))
-        {
-            auto& transport = engine.getTransport();
-            const int bpb = juce::jmax (1, transport.getBeatsPerBar());
-            const double left = scenes.getQueuedBeat() - transport.getPositionInBeats();
-            const int bars = (int) std::ceil (left / bpb - 1.0e-6);
-            after = "Next: " + list[(size_t) queued].name
-                    + (! transport.isPlaying() ? juce::String()
-                       : bars <= 1 ? " at the next bar" : " in " + juce::String (bars) + " bars");
-        }
-        else
-            after = current < 0 ? "Press a part to start it." : "Press a part to play it next.";
-        return now + "\n" + after;
-    }
-
-    void paintBody (juce::Graphics& g, juce::Rectangle<int> area) override
-    {
-        auto text = area.removeFromLeft (textWidth);
-        const auto lines = juce::StringArray::fromLines (shown);
-        g.setColour (Theme::text);
-        g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
-        g.drawFittedText (lines[0], text.removeFromTop (32), juce::Justification::centredLeft, 1);
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (13.0f));
-        g.drawFittedText (lines[1], text, juce::Justification::topLeft, 2);
-    }
-
-    void layoutBody (juce::Rectangle<int> area) override
-    {
-        textWidth = juce::jmin (300, area.getWidth() / 3);
-        area.removeFromLeft (textWidth + 10);
-        auto right = area.removeFromRight (240);
-        auto row = right.removeFromTop (30);
-        back.setBounds (row.removeFromLeft (76));
-        row.removeFromLeft (4);
-        next.setBounds (row.removeFromLeft (76));
-        row.removeFromLeft (4);
-        songMode.setBounds (row);
-        area.removeFromRight (10);
-        const int perRow = juce::jmax (1, juce::jmin (juce::jmax (1, buttons.size()), area.getWidth() / 100));
-        layoutGrid (buttons, area, perRow, 30);
-    }
-
-private:
-    juce::TextButton back { "< Back" }, next { "Next >" }, songMode { "Song mode" };
-    juce::OwnedArray<juce::TextButton> buttons;
-    juce::String signature, shown;
-    int textWidth = 260;
-};
-
-//==============================================================================
-// The MPC: the sequence playing and where it is, a button for each sequence, and its songs.
-class StageView::MpcTile : public Tile
+juce::String StageView::channelPage (int c)
 {
-public:
-    explicit MpcTile (StageView& o) : Tile (o, "MPC", "MPC", RigColours::mpc, RigEngine::mpcStrip)
-    {
-        addAndMakeVisible (songButton);
-        addChildComponent (songBox);
-        styleButton (songButton, colour);
-        songButton.setTooltip ("Plays the MPC song (the sequences in order, each as many times as it says). "
-                               "Playing, it comes in at the next bar; stopped, it starts everything from the top.");
-        songButton.onClick = [this]
-        {
-            auto& mpc = engine.getMpc();
-            if (mpc.isSongPlaying())
-                engine.playMpcSequence (mpc.getProject().getCurrentSequenceIndex());   // stay on this one
-            else
-                engine.playMpcSong (mpc.getProject().getCurrentSongIndex());
-        };
-        songBox.onChange = [this]
-        {
-            const int i = songBox.getSelectedItemIndex();
-            if (i >= 0 && i != engine.getMpc().getProject().getCurrentSongIndex())
-                engine.getMpc().getProject().setCurrentSong (i);
-        };
-    }
+    const char* pages[] = { "MPC", "Bass", "Synth", "Vocoder", "Looper" };
+    return pages[juce::jlimit (0, kChannels - 1, c)];
+}
 
-    void reset() override { signature = {}; }
-
-protected:
-    void tickBody() override
-    {
-        auto& mpc = engine.getMpc();
-        auto& project = mpc.getProject();
-        const auto& seqs = project.getSequences();
-        const auto& songs = project.getSongs();
-
-        juce::StringArray names, songNames;
-        for (int i = 0; i < (int) seqs.size(); ++i)
-            names.add (label (i));
-        for (const auto& s : songs)
-            songNames.add (s.name);
-        if (const auto sig = names.joinIntoString ("|") + "/" + songNames.joinIntoString ("|"); sig != signature)
-        {
-            signature = sig;
-            buttons.clear();
-            for (int i = 0; i < juce::jmin (kMaxButtons, (int) seqs.size()); ++i)
-            {
-                auto* b = buttons.add (new juce::TextButton (names[i]));
-                styleButton (*b, colour);
-                b->setTooltip ("Plays this sequence. Playing, it comes in at the next bar.");
-                b->onClick = [this, i] { engine.playMpcSequence (i); };
-                addAndMakeVisible (b);
-            }
-            songBox.clear (juce::dontSendNotification);
-            songBox.addItemList (songNames, 1);
-            songBox.setVisible (songs.size() > 1);
-            resized();
-        }
-
-        const bool playing = mpc.getSequencer().isPlaying();
-        const int now = playing ? mpc.getSequencer().getPlayingId() : project.getCurrentSequenceIndex();
-        const int queued = mpc.getQueuedSequence();
-        for (int i = 0; i < buttons.size(); ++i)
-        {
-            buttons[i]->setToggleState (i == now, juce::dontSendNotification);
-            buttons[i]->setColour (juce::TextButton::buttonColourId, i == queued ? colour.withAlpha (0.35f) : Theme::panel);
-        }
-
-        songBox.setSelectedItemIndex (project.getCurrentSongIndex(), juce::dontSendNotification);
-        const auto& song = project.currentSong();
-        const bool inSong = mpc.isSongPlaying();
-        songButton.setEnabled (! song.steps.empty());
-        songButton.setToggleState (inSong, juce::dontSendNotification);
-        songButton.setButtonText (song.steps.empty() ? "No song yet (make one in the MPC)"
-                                  : inSong ? "Song: part " + juce::String (mpc.getSongStep() + 1) + " of " + juce::String ((int) song.steps.size())
-                                                 + "  (stop song)"
-                                           : "Play song: " + song.name);
-
-        // Where it is in the sequence.
-        double fraction = 0;
-        juce::String where;
-        if (juce::isPositiveAndBelow (now, (int) seqs.size()))
-        {
-            const auto& s = seqs[(size_t) now];
-            const double pos = playing ? mpc.getSequencer().getPosition() : 0.0;
-            fraction = pos >= 0 ? juce::jlimit (0.0, 1.0, pos / juce::jmax (1, s.lengthTicks())) : 0.0;
-            const int bar = pos >= 0 ? (int) (pos / s.ticksPerBar()) + 1 : 0;
-            where = names[now] + "\n" + (bar > 0 ? "bar " + juce::String (bar) + " of " + juce::String (s.bars) : juce::String ("counting in"));
-        }
-        if (where != shown || std::abs (fraction - shownFraction) > 0.002)
-        {
-            shown = where;
-            shownFraction = fraction;
-            repaint (bodyArea().removeFromTop (48));
-        }
-    }
-
-    void paintBody (juce::Graphics& g, juce::Rectangle<int> area) override
-    {
-        auto top = area.removeFromTop (40);
-        const auto lines = juce::StringArray::fromLines (shown);
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (13.0f));
-        g.drawText (lines[1], top, juce::Justification::topRight);
-        g.setColour (Theme::text);
-        g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
-        g.drawFittedText (lines[0], top.withTrimmedRight (90), juce::Justification::topLeft, 1);
-        auto bar = area.removeFromTop (6).toFloat();
-        g.setColour (Theme::background);
-        g.fillRoundedRectangle (bar, 3.0f);
-        g.setColour (colour);
-        g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) shownFraction), 3.0f);
-    }
-
-    void layoutBody (juce::Rectangle<int> area) override
-    {
-        area.removeFromTop (54);
-        auto songRow = area.removeFromBottom (30);
-        if (songBox.isVisible())
-        {
-            songBox.setBounds (songRow.removeFromLeft (140));
-            songRow.removeFromLeft (4);
-        }
-        songButton.setBounds (songRow);
-        area.removeFromBottom (8);
-        const int perRow = 4;
-        const int rows = juce::jmax (1, (buttons.size() + perRow - 1) / perRow);
-        layoutGrid (buttons, area, perRow, juce::jlimit (22, 32, (area.getHeight() - 4 * (rows - 1)) / rows));
-    }
-
-private:
-    static constexpr int kMaxButtons = 8;
-
-    juce::String label (int i) const
-    {
-        const auto& s = engine.getMpc().getProject().getSequences()[(size_t) i];
-        return juce::String (i + 1).paddedLeft ('0', 2) + (s.name.isNotEmpty() ? " " + s.name : juce::String());
-    }
-
-    juce::OwnedArray<juce::TextButton> buttons;
-    juce::TextButton songButton { "Play song" };
-    juce::ComboBox songBox;
-    juce::String signature, shown;
-    double shownFraction = -1;
-};
-
-//==============================================================================
-// The bass: the line's 16 steps with the one playing lit, its 8 patterns and the sequencer.
-class StageView::BassTile : public Tile
+StageView::StageView (RigEngine& e) : engine (e)
 {
-public:
-    explicit BassTile (StageView& o) : Tile (o, "Bass", "Bass", RigColours::bass, RigEngine::bassStrip)
+    setOpaque (true);
+    auto& transport = engine.getTransport();
+
+    play.icon = rigpanels::PanelButton::Icon::play;
+    stop.icon = rigpanels::PanelButton::Icon::stop;
+    rec.icon = rigpanels::PanelButton::Icon::rec;
+    for (auto* b : { &play, &stop, &rec })
     {
-        for (int i = 0; i < crate::bass::kPatterns; ++i)
-        {
-            auto* b = patterns.add (new juce::TextButton (juce::String (i + 1)));
-            styleButton (*b, colour);
-            b->setTooltip ("Bass pattern " + juce::String (i + 1) + ". It changes on its next step, in time.");
-            b->onClick = [this, i] { engine.getBass().selectPattern (i); };
-            addAndMakeVisible (b);
-        }
-        addAndMakeVisible (sequencer);
-        styleButton (sequencer, colour);
-        sequencer.setClickingTogglesState (true);
-        sequencer.setTooltip ("On, the bass plays its pattern. Off, it only plays what you play on the keys.");
-        sequencer.onClick = [this] { setParam (engine.getBass().params, "sequencer", sequencer.getToggleState() ? 1.0f : 0.0f); };
+        b->fontSize = 24.0f;
+        b->subSize = 15.0f;
+        addAndMakeVisible (b);
+    }
+    play.onClick = [&transport] { transport.togglePlay(); };
+    stop.onClick = [this, &transport]
+    {
+        transport.stop();
+        engine.allNotesOff();
+    };
+    rec.onClick = [this] { if (onRecord) onRecord(); };
+    play.setTooltip ("Starts and stops everything (space bar).");
+    stop.setTooltip ("Stops, goes back to the start, and silences any notes still sounding.");
+    rec.setTooltip ("Records the set for Logic from the next bar: every track as its own WAV, the mix, and the MIDI.");
+
+    for (auto* b : { &minus, &plus })
+    {
+        b->fontSize = 30.0f;
+        b->setRepeatSpeed (400, 80);
+        addAndMakeVisible (b);
+    }
+    tap.fontSize = 24.0f;
+    addAndMakeVisible (tap);
+    minus.onClick = [this] { if (onNudgeTempo) onNudgeTempo (-1.0); };
+    plus.onClick = [this] { if (onNudgeTempo) onNudgeTempo (1.0); };
+    tap.onClick = [this] { if (onTap) onTap(); };
+
+    for (int c = 0; c < kChannels; ++c)
+    {
+        auto* m = mutes.add (new rigpanels::PanelButton ("Mute"));
+        m->fontSize = 22.0f;
+        m->inWell = true;
+        m->setTooltip ("Mutes " + channelName (c) + ". It keeps going silently, so it comes back in time.");
+        m->onClick = [this, c] { pressMute (c); };
+        addAndMakeVisible (m);
     }
 
-    void reset() override { shownPattern = -1; }
-
-protected:
-    void tickBody() override
+    for (int i = 0; i < 8; ++i)
     {
-        auto& bass = engine.getBass();
-        const int selected = bass.getSelectedPattern();
-        for (int i = 0; i < patterns.size(); ++i)
-            patterns[i]->setToggleState (i == selected, juce::dontSendNotification);
-        const bool on = getParam (bass.params, "sequencer") > 0.5f;
-        sequencer.setToggleState (on, juce::dontSendNotification);
-        sequencer.setButtonText (on ? "Sequencer on" : "Sequencer off");
-
-        const int step = engine.getTransport().isPlaying() && on ? bass.getCurrentStep() : -1;
-        const auto pattern = bass.getPattern (selected);
-        bool changed = step != shownStep || selected != shownPattern || pattern.length != shown.length;
-        for (int i = 0; i < crate::bass::kSteps && ! changed; ++i)
-            changed = pattern.steps[(size_t) i].on != shown.steps[(size_t) i].on || pattern.steps[(size_t) i].note != shown.steps[(size_t) i].note
-                   || pattern.steps[(size_t) i].accent != shown.steps[(size_t) i].accent;
-        if (changed)
-        {
-            shown = pattern;
-            shownStep = step;
-            shownPattern = selected;
-            repaint (stepArea);
-        }
+        auto* b = parts.add (new rigpanels::PanelButton (letter (i)));
+        b->fontSize = 72.0f;
+        b->subSize = 17.0f;
+        b->onClick = [this, i] { rigpanels::Footer::pressPart (engine, i); };
+        addAndMakeVisible (b);
     }
 
-    void paintBody (juce::Graphics& g, juce::Rectangle<int>) override
-    {
-        const int n = crate::bass::kSteps;
-        const float w = stepArea.getWidth() / (float) n;
-        for (int i = 0; i < n; ++i)
-        {
-            auto cell = juce::Rectangle<float> (stepArea.getX() + i * w, (float) stepArea.getY(), w, (float) stepArea.getHeight()).reduced (1.5f, 0);
-            const auto& s = shown.steps[(size_t) i];
-            const bool inside = i < shown.length;
-            g.setColour (inside ? Theme::background : Theme::background.withAlpha (0.4f));
-            g.fillRoundedRectangle (cell, 3.0f);
-            if (inside && s.on)
-            {
-                // Higher notes sit higher in the cell.
-                const float height = juce::jmap ((float) juce::jlimit (-12, 24, s.note), -12.0f, 24.0f, 0.25f, 1.0f);
-                g.setColour (colour.withAlpha (s.accent ? 1.0f : 0.6f));
-                g.fillRoundedRectangle (cell.withTop (cell.getBottom() - cell.getHeight() * height), 3.0f);
-            }
-            if (i == shownStep)
-            {
-                g.setColour (Theme::text);
-                g.drawRoundedRectangle (cell, 3.0f, 2.0f);
-            }
-            if (i % 4 == 0)
-            {
-                g.setColour (Theme::textDim.withAlpha (0.6f));
-                g.fillRect (cell.getX(), cell.getBottom() + 2.0f, cell.getWidth(), 2.0f);
-            }
-        }
-    }
-
-    void layoutBody (juce::Rectangle<int> area) override
-    {
-        auto bottom = area.removeFromBottom (30);
-        sequencer.setBounds (bottom);
-        area.removeFromBottom (6);
-        auto row = area.removeFromBottom (28);
-        layoutGrid (patterns, row, patterns.size(), row.getHeight());
-        area.removeFromBottom (10);
-        stepArea = area.withTrimmedBottom (4);
-    }
-
-private:
-    juce::OwnedArray<juce::TextButton> patterns;
-    juce::TextButton sequencer { "Sequencer" };
-    juce::Rectangle<int> stepArea;
-    crate::bass::Pattern shown;
-    int shownStep = -2, shownPattern = -1;
-};
-
-//==============================================================================
-// The synth: the arp on or off and its rhythm stepping along.
-class StageView::SynthTile : public Tile
-{
-public:
-    explicit SynthTile (StageView& o) : Tile (o, "Synth", "Synth", RigColours::synth, RigEngine::synthStrip)
-    {
-        addAndMakeVisible (arp);
-        styleButton (arp, colour);
-        arp.setClickingTogglesState (true);
-        arp.setTooltip ("The arpeggiator: hold a chord and it plays the notes in time with everything else.");
-        arp.onClick = [this] { setParam (engine.getSynth().params, "arpOn", arp.getToggleState() ? 1.0f : 0.0f); };
-    }
-
-protected:
-    void tickBody() override
-    {
-        const bool on = getParam (engine.getSynth().params, "arpOn") > 0.5f;
-        arp.setToggleState (on, juce::dontSendNotification);
-        arp.setButtonText (on ? "Arp on" : "Arp off");
-        const auto rhythm = engine.getSynth().getRhythm();
-        const int step = on && engine.getTransport().isPlaying() ? engine.getSynth().getArpStep() : -1;
-        if (step != shownStep || rhythm.on != shown.on || rhythm.accent != shown.accent || rhythm.length != shown.length || on != shownOn)
-        {
-            shown = rhythm;
-            shownStep = step;
-            shownOn = on;
-            repaint (bodyArea());
-        }
-    }
-
-    void paintBody (juce::Graphics& g, juce::Rectangle<int>) override
-    {
-        const int n = crate::synthtool::kRhythmSteps;
-        const float w = stepArea.getWidth() / (float) n;
-        for (int i = 0; i < n; ++i)
-        {
-            auto cell = juce::Rectangle<float> (stepArea.getX() + i * w, (float) stepArea.getY(), w, (float) stepArea.getHeight()).reduced (1.5f, 0);
-            const bool inside = i < shown.length;
-            g.setColour (inside ? Theme::background : Theme::background.withAlpha (0.4f));
-            g.fillRoundedRectangle (cell, 3.0f);
-            if (inside && shown.on[(size_t) i])
-            {
-                g.setColour (colour.withAlpha (! shownOn ? 0.25f : shown.accent[(size_t) i] ? 1.0f : 0.6f));
-                g.fillRoundedRectangle (cell.withTop (cell.getY() + cell.getHeight() * (shown.accent[(size_t) i] ? 0.0f : 0.35f)), 3.0f);
-            }
-            if (i == shownStep)
-            {
-                g.setColour (Theme::text);
-                g.drawRoundedRectangle (cell, 3.0f, 2.0f);
-            }
-        }
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (12.0f));
-        g.drawText (shownOn ? "Hold a chord on the keys" : "Plays what you play on the keys", hintArea, juce::Justification::centredLeft);
-    }
-
-    void layoutBody (juce::Rectangle<int> area) override
-    {
-        arp.setBounds (area.removeFromBottom (30));
-        area.removeFromBottom (6);
-        hintArea = area.removeFromBottom (20);
-        area.removeFromBottom (6);
-        stepArea = area;
-        repaint();
-    }
-
-private:
-    juce::TextButton arp { "Arp" };
-    juce::Rectangle<int> stepArea, hintArea;
-    crate::synthtool::Rhythm shown;
-    int shownStep = -2;
-    bool shownOn = false;
-};
-
-//==============================================================================
-// A tool with an on/off switch: the vocoder, the audio input.
-class StageView::SwitchTile : public Tile
-{
-public:
-    SwitchTile (StageView& o, const juce::String& n, juce::Colour c, int s, std::atomic<bool>& f, std::function<juce::String()> h)
-        : Tile (o, n, n, c, s), flag (f), hint (std::move (h))
-    {
-        addAndMakeVisible (on);
-        styleButton (on, colour);
-        on.setClickingTogglesState (true);
-        on.onClick = [this] { flag = on.getToggleState(); };
-        on.setTooltip (strip == RigEngine::inputStrip ? "Plays your audio input (a guitar, another mic) through its strip. Off until you turn it on, so a mic doesn't feed back."
-                                                      : "Turns the vocoder on or off.");
-    }
-
-protected:
-    void tickBody() override
-    {
-        on.setToggleState (flag.load(), juce::dontSendNotification);
-        on.setButtonText (name + (flag.load() ? " on" : " off"));
-        if (const auto text = hint(); text != shown)
-        {
-            shown = text;
-            repaint (hintArea);
-        }
-    }
-
-    void paintBody (juce::Graphics& g, juce::Rectangle<int>) override
-    {
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (13.0f));
-        g.drawFittedText (shown, hintArea, juce::Justification::topLeft, 4);
-    }
-
-    void layoutBody (juce::Rectangle<int> area) override
-    {
-        on.setBounds (area.removeFromTop (44));
-        area.removeFromTop (8);
-        hintArea = area;
-    }
-
-private:
-    std::atomic<bool>& flag;
-    std::function<juce::String()> hint;
-    juce::TextButton on;
-    juce::Rectangle<int> hintArea;
-    juce::String shown;
-};
-
-//==============================================================================
-// The looper's eight layers: click one to record, stop or overdub it.
-class StageView::LooperTile : public Tile
-{
-public:
-    explicit LooperTile (StageView& o) : Tile (o, "Looper", "Looper", RigColours::loops, RigEngine::loopsStrip) {}
-
-protected:
-    void tickBody() override { repaint (bodyArea()); }
-
-    juce::Rectangle<float> cell (int i, juce::Rectangle<int> area) const
-    {
-        const int perRow = 4;
-        const float w = area.getWidth() / (float) perRow, h = area.getHeight() / 2.0f;
-        return { area.getX() + (i % perRow) * w, area.getY() + (i / perRow) * h, w, h };
-    }
-
-    void paintBody (juce::Graphics& g, juce::Rectangle<int> area) override
-    {
-        auto& looper = engine.getLooper();
-        const bool blink = (juce::Time::getMillisecondCounter() / 250) % 2 == 0;
-        for (int i = 0; i < RigLooper::kLayers; ++i)
-        {
-            auto r = cell (i, area).reduced (3.0f);
-            const auto& layer = looper.getLayer (i);
-            const auto state = looper.getState (i);
-            const bool muted = layer.mute.load();
-            g.setColour (Theme::background);
-            g.fillRoundedRectangle (r, 5.0f);
-
-            juce::String word;
-            juce::Colour fill = colour;
-            switch (state)
-            {
-                case RigLooper::State::empty:       word = "Rec"; break;
-                case RigLooper::State::armed:       word = "Armed"; fill = Theme::record; break;
-                case RigLooper::State::recording:   word = "Recording"; fill = Theme::record; break;
-                case RigLooper::State::playing:     word = muted ? "Muted" : "Playing"; break;
-                case RigLooper::State::overdubbing: word = "Overdub"; fill = Theme::record; break;
-            }
-            if (state == RigLooper::State::armed && blink)
-            {
-                g.setColour (fill.withAlpha (0.35f));
-                g.fillRoundedRectangle (r, 5.0f);
-            }
-            if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing || state == RigLooper::State::recording)
-            {
-                // How far round the loop it is (while recording: a stripe that grows).
-                const float pos = juce::jlimit (0.0f, 1.0f, (float) layer.position.load());
-                g.setColour (fill.withAlpha (muted ? 0.15f : 0.3f));
-                g.fillRoundedRectangle (r, 5.0f);
-                g.setColour (fill.withAlpha (muted ? 0.3f : 0.75f));
-                g.fillRoundedRectangle (r.withWidth (juce::jmax (4.0f, r.getWidth() * pos)), 5.0f);
-            }
-            g.setColour (state == RigLooper::State::empty ? Theme::outline : fill);
-            g.drawRoundedRectangle (r, 5.0f, 1.0f);
-
-            g.setColour (state == RigLooper::State::empty ? Theme::textDim : Theme::text);
-            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-            auto text = r.reduced (8.0f, 4.0f).toNearestInt();
-            g.drawText (juce::String (i + 1), text.removeFromTop (18), juce::Justification::topLeft);
-            g.setFont (juce::FontOptions (12.0f));
-            g.drawText (word, text, juce::Justification::bottomLeft);
-            g.setColour (Theme::textDim);
-            g.drawText (RigLooper::sourceName (layer.source.load()), text, juce::Justification::topRight);
-        }
-    }
-
-    bool bodyClick (juce::Point<int> p) override
-    {
-        for (int i = 0; i < RigLooper::kLayers; ++i)
-            if (cell (i, bodyArea()).contains (p.toFloat()))
-            {
-                engine.getLooper().pressRecord (i);
-                return true;
-            }
-        return false;
-    }
-};
-
-//==============================================================================
-// The sampler: what's loaded, and the Rig's Sample button.
-class StageView::SamplerTile : public Tile
-{
-public:
-    explicit SamplerTile (StageView& o) : Tile (o, "Sampler", "Sampler", RigColours::sampler, RigEngine::samplerStrip)
-    {
-        addAndMakeVisible (sample);
-        sample.setColour (juce::TextButton::buttonOnColourId, Theme::record);
-        sample.setTooltip ("The same as Sample at the top: records what's picked under Sample, into the Sampler or onto an MPC pad.");
-        sample.onClick = [this] { if (owner.onSample) owner.onSample(); };
-    }
-
-protected:
-    void tickBody() override
-    {
-        const bool recording = owner.isSampling && owner.isSampling();
-        sample.setToggleState (recording, juce::dontSendNotification);
-        sample.setButtonText (recording ? "Stop sampling" : "Sample");
-        const auto text = "Has: " + (engine.getSampler().getDocument().getName().isNotEmpty() ? engine.getSampler().getDocument().getName()
-                                                                                              : juce::String ("nothing yet"))
-                        + "\nSample records " + RigCapture::sourceName (engine.captureSource) + " "
-                        + (engine.captureDest == RigCapture::toMpcPad ? "onto an MPC pad" : "into the Sampler")
-                        + (engine.captureBars > 0 ? ", " + juce::String (engine.captureBars) + (engine.captureBars == 1 ? " bar" : " bars") : juce::String());
-        if (text != shown)
-        {
-            shown = text;
-            repaint (hintArea);
-        }
-    }
-
-    void paintBody (juce::Graphics& g, juce::Rectangle<int>) override
-    {
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (13.0f));
-        g.drawFittedText (shown, hintArea, juce::Justification::topLeft, 4);
-    }
-
-    void layoutBody (juce::Rectangle<int> area) override
-    {
-        sample.setBounds (area.removeFromTop (44));
-        area.removeFromTop (8);
-        hintArea = area;
-    }
-
-private:
-    juce::TextButton sample { "Sample" };
-    juce::Rectangle<int> hintArea;
-    juce::String shown;
-};
-
-//==============================================================================
-StageView::StageView (RigEngine& e)
-    : engine (e)
-{
-    songTile = std::make_unique<SongTile> (*this);
-    addAndMakeVisible (*songTile);
-    tiles.add (new MpcTile (*this));
-    tiles.add (new BassTile (*this));
-    tiles.add (new SynthTile (*this));
-    tiles.add (new LooperTile (*this));
-    tiles.add (new SwitchTile (*this, "Vocoder", RigColours::vocoder, RigEngine::vocoderStrip, engine.vocoderOn,
-                               [this] { return "Sing into the mic and play the keys.\nKeys play: "
-                                               + RigRouting::destName (engine.getRouting().keysTo.load()); }));
-    tiles.add (new SwitchTile (*this, "Input", RigColours::input, RigEngine::inputStrip, engine.inputOn,
-                               [this] { return "A guitar or another mic, through its own effects.\nListening to: "
-                                               + RigEngine::inputJackName (engine.inputJack.load()); }));
-    tiles.add (new SamplerTile (*this));
-    for (auto* t : tiles)
-        addAndMakeVisible (t);
+    refresh();
     startTimerHz (30);
 }
 
@@ -832,47 +122,474 @@ StageView::~StageView()
 
 void StageView::refresh()
 {
-    songTile->reset();
-    for (auto* t : tiles)
-        t->reset();
-    songTile->tick();
-    for (auto* t : tiles)
-        t->tick();
+    shownSignature = {};
+    timerCallback();
+    repaint();
 }
 
+void StageView::pressMute (int c)
+{
+    auto& m = engine.getStrip (channelStrip (c)).mute;
+    m = ! m.load();
+    timerCallback();
+}
+
+void StageView::pressLayer (int layer, bool mute)
+{
+    if (! juce::isPositiveAndBelow (layer, RigLooper::kLayers))
+        return;
+    if (mute)
+    {
+        auto& m = engine.getLooper().getLayer (layer).mute;
+        m = ! m.load();
+    }
+    else
+        engine.getLooper().pressRecord (layer);
+    repaint (loopsArea);
+}
+
+void StageView::pressVocoderPart (int part)
+{
+    if (! juce::isPositiveAndBelow (part, kVocoderParts))
+        return;
+    auto& params = engine.getVocoder().params;
+    const bool on = getParam (params, vocoderParts[part].id) < 0.5f;
+    setParam (params, vocoderParts[part].id, on ? 1.0f : 0.0f);
+    if (on)
+        engine.vocoderOn = true;
+    repaint (loopsArea);
+}
+
+//==============================================================================
 void StageView::timerCallback()
 {
-    if (! isShowing())
-        return;
-    songTile->tick();
-    for (auto* t : tiles)
-        t->tick();
+    auto& transport = engine.getTransport();
+    const bool playing = transport.isPlaying();
+    const auto playLit = playing ? Lit::play : Lit::none;
+    if (play.lit != playLit)
+    {
+        play.lit = playLit;
+        play.text = playing ? "Playing" : "Play";
+        play.repaint();
+    }
+    if (recordState)
+    {
+        const auto [text, lit] = recordState();
+        const bool ring = lit == Lit::next;
+        const auto shownLit = ring ? Lit::none : lit;
+        if (rec.text != text || rec.lit != shownLit || rec.redRing != ring)
+        {
+            rec.text = text;
+            rec.lit = shownLit;
+            rec.redRing = ring;
+            rec.repaint();
+        }
+    }
+
+    for (int c = 0; c < kChannels; ++c)
+    {
+        const bool muted = engine.getStrip (channelStrip (c)).mute.load();
+        const auto lit = muted ? Lit::mute : Lit::none;
+        if (mutes[c]->lit != lit)
+        {
+            mutes[c]->lit = lit;
+            mutes[c]->repaint();
+        }
+        const float m = meterOf ? meterOf (channelStrip (c)) : 0.0f;
+        const float db = juce::Decibels::gainToDecibels (m, -60.0f);
+        levels[(size_t) c] = muted ? 0.0f : juce::jlimit (0.0f, 1.0f, (db + 48.0f) / 48.0f);
+    }
+    const float master = meterOf ? meterOf (RigEngine::masterStrip) : 0.0f;
+    vuLevel = vuLevel * 0.7f + juce::jlimit (0.0f, 1.04f, (juce::Decibels::gainToDecibels (master, -40.0f) + 20.0f) / 23.0f) * 0.3f;
+    clipHold = master >= 0.99f ? 1.0f : juce::jmax (0.0f, clipHold - 1.0f / 60.0f);
+
+    // Song parts.
+    auto& scenes = engine.getScenes();
+    const auto& list = scenes.getScenes();
+    const int count = (int) list.size();
+    const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
+    for (int i = 0; i < parts.size(); ++i)
+    {
+        auto* b = parts[i];
+        const bool has = i < count;
+        juce::String sub;
+        Lit lit = Lit::none;
+        if (i == scenes.getCurrent())
+            sub = juce::String::fromUTF8 ("\xe2\x96\xb6 Now"), lit = Lit::play;
+        else if (i == scenes.getQueued())
+            sub = "Next", lit = pulse ? Lit::next : Lit::none;
+        else if (has)
+            sub = partName (list[(size_t) i], i);
+        else
+            sub = i == count ? "+ Save" : "Empty";
+        const bool empty = ! has && i != count;
+        if (b->sub != sub || b->lit != lit || b->empty != empty)
+        {
+            b->sub = sub;
+            b->lit = lit;
+            b->empty = empty;
+            b->repaint();
+        }
+    }
+
+    // Repaint what's drawn when it changes.
+    juce::String sig;
+    sig << transport.getBpm() << "/" << (int) std::floor (transport.getPositionInBeats()) << "/" << scenes.getCurrent() << "/"
+        << scenes.getQueued() << "/" << (clipHold > 0 ? 1 : 0) << "/" << juce::roundToInt (vuLevel * 200) << "/" << (int) engine.vocoderOn.load();
+    for (float l : levels)
+        sig << juce::roundToInt (l * 20) << ",";
+    for (int c = 0; c < kChannels; ++c)
+        sig << (int) engine.getStrip (channelStrip (c)).mute.load();
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        sig << (int) engine.getLooper().getState (i) << (int) engine.getLooper().getLayer (i).mute.load();
+    for (const auto& p : vocoderParts)
+        sig << (getParam (engine.getVocoder().params, p.id) > 0.5f ? 1 : 0);
+    if (sig != shownSignature)
+    {
+        shownSignature = sig;
+        repaint();
+    }
 }
 
+//==============================================================================
+juce::Rectangle<int> StageView::layerRect (int layer) const
+{
+    auto r = loopsArea.reduced (14).withTrimmedTop (40);
+    const int size = juce::jmin (48, (r.getWidth() - 30) / 4);
+    const int gap = (r.getWidth() - size * 4) / 3;
+    return { r.getX() + (layer % 4) * (size + gap), r.getY() + (layer / 4) * (size + 10), size, size };
+}
+
+juce::Rectangle<int> StageView::vocoderPartRect (int part) const
+{
+    auto r = loopsArea.reduced (14);
+    const int w = (r.getWidth() - 12) / 3;
+    const int top = r.getBottom() - 2 * 32 - 6;
+    return { r.getX() + (part % 3) * (w + 6), top + (part / 3) * 38, w, 32 };
+}
+
+void StageView::mouseUp (const juce::MouseEvent& e)
+{
+    if (! e.mouseWasClicked())
+        return;
+    const auto p = e.getPosition();
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (layerRect (i).contains (p))
+            return pressLayer (i, e.mods.isPopupMenu() || e.mods.isShiftDown());
+    for (int i = 0; i < kVocoderParts; ++i)
+        if (vocoderPartRect (i).contains (p))
+            return pressVocoderPart (i);
+    for (int c = 0; c < kChannels; ++c)
+        if (channelAreas[(size_t) c].withHeight (48).contains (p) && onOpen)
+            return onOpen (channelPage (c));
+}
+
+//==============================================================================
 void StageView::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::panel);
+    const auto& p = vintage::pal();
+    vintage::drawFace (g, getLocalBounds());
+    auto& transport = engine.getTransport();
+
+    // Tempo.
+    {
+        auto r = tempoArea.toFloat();
+        vintage::drawLcd (g, r, 10.0f);
+        auto lcd = tempoLcd.toFloat();
+        const double bpm = transport.getBpm();
+        const auto text = std::abs (bpm - std::round (bpm)) < 0.05 ? juce::String (juce::roundToInt (bpm)) : juce::String (bpm, 1);
+        vintage::lcdText (g, text, lcd.removeFromTop (lcd.getHeight() * 0.74f), juce::jmin (150.0f, lcd.getHeight() * 1.6f));
+        vintage::lcdText (g, juce::String::fromUTF8 ("BPM \xc2\xb7 ") + juce::String (transport.getBeatsPerBar()) + "/4", lcd, 26.0f);
+    }
+
+    // The part playing.
+    {
+        auto r = partArea.toFloat();
+        vintage::drawWell (g, r, 14.0f);
+        auto inner = r.reduced (22.0f, 18.0f);
+        auto& scenes = engine.getScenes();
+        const auto& list = scenes.getScenes();
+        const int current = scenes.getCurrent(), queued = scenes.getQueued();
+        const bool has = juce::isPositiveAndBelow (current, (int) list.size());
+
+        auto tile = inner.removeFromLeft (juce::jmin (150.0f, inner.getHeight() * 0.75f));
+        inner.removeFromLeft (20.0f);
+        if (has)
+        {
+            vintage::glow (g, tile, 12.0f, vintage::colours::play, 16.0f, 0.5f);
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xff86f2a9), 0, tile.getY(), juce::Colour (0xff37c26a), 0, tile.getBottom(), false));
+        }
+        else
+            g.setColour (juce::Colour (0xff2e2925));
+        g.fillRoundedRectangle (tile, 12.0f);
+        g.setColour (has ? juce::Colour (0xff062611) : p.wellInk2);
+        g.setFont (vintage::cond (juce::jmin (140.0f, tile.getHeight() * 0.72f), Weight::extra));
+        g.drawText (has ? letter (current) : juce::String ("-"), tile.withTrimmedBottom (tile.getHeight() * 0.2f), juce::Justification::centred);
+        g.setFont (vintage::cond (20.0f, Weight::extra, 0.16f));
+        g.drawText (has ? juce::String::fromUTF8 ("\xe2\x96\xb6 NOW") : juce::String ("NO PART"), tile.removeFromBottom (tile.getHeight() * 0.24f),
+                    juce::Justification::centredTop);
+
+        // Name, bar, progress, next.
+        const float rowH = inner.getHeight() / 4.0f;
+        auto nameRow = inner.removeFromTop (rowH);
+        g.setColour (p.wellInk);
+        g.setFont (vintage::cond (juce::jmin (54.0f, rowH * 1.05f), Weight::extra, 0.06f));
+        const auto name = has ? (partName (list[(size_t) current], current).isNotEmpty() ? partName (list[(size_t) current], current)
+                                                                                        : "Part " + letter (current))
+                              : juce::String ("Press a part");
+        g.drawFittedText (name.toUpperCase(), nameRow.toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+
+        const int beatsPerBar = juce::jmax (1, transport.getBeatsPerBar());
+        const double beats = transport.getPositionInBeats();
+        const double since = has ? juce::jmax (0.0, beats - scenes.getCurrentStartBeat()) : beats;
+        const int partBars = has ? list[(size_t) current].bars : 0;
+        const int barInPart = (int) std::floor (since / beatsPerBar);
+        const int beat = (int) std::floor (std::fmod (juce::jmax (0.0, beats), (double) beatsPerBar)) + 1;
+        const int blocks = partBars > 0 ? juce::jlimit (1, 16, partBars) : 8;
+        const int lit = partBars > 0 ? juce::jmin (barInPart, blocks - 1) : barInPart % 8;
+
+        auto barRow = inner.removeFromTop (rowH);
+        const auto barText = "BAR " + juce::String (partBars > 0 ? juce::jmin (barInPart + 1, partBars) : barInPart + 1)
+                             + (partBars > 0 ? "/" + juce::String (partBars) : juce::String());
+        auto lcd = barRow.removeFromLeft (juce::jmin (barRow.getWidth() * 0.6f, 40.0f + barText.length() * 20.0f)).reduced (0, 4.0f);
+        vintage::drawLcd (g, lcd);
+        vintage::lcdText (g, barText, lcd, juce::jmin (44.0f, lcd.getHeight() * 1.1f));
+        barRow.removeFromLeft (14.0f);
+        g.setColour (p.wellInk2);
+        g.setFont (vintage::cond (24.0f, Weight::bold));
+        g.drawText ("beat " + juce::String (beat), barRow, juce::Justification::centredLeft);
+
+        auto progress = inner.removeFromTop (rowH).withSizeKeepingCentre (inner.getWidth(), juce::jmin (22.0f, rowH * 0.6f));
+        const float bw = (progress.getWidth() - 6.0f * (blocks - 1)) / blocks;
+        for (int b = 0; b < blocks; ++b)
+        {
+            auto block = juce::Rectangle<float> (progress.getX() + b * (bw + 6.0f), progress.getY(), bw, progress.getHeight());
+            const bool on = transport.isPlaying() && b <= lit;
+            g.setColour (on ? vintage::colours::play : juce::Colour (0xff2e2925));
+            g.fillRoundedRectangle (block, 4.0f);
+            if (on && b == lit)
+            {
+                g.setColour (juce::Colour (0xfffff3d6));
+                g.drawRoundedRectangle (block.expanded (2.0f), 5.0f, 3.0f);
+            }
+        }
+
+        auto nextRow = inner.reduced (0, 4.0f);
+        if (juce::isPositiveAndBelow (queued, (int) list.size()))
+        {
+            g.setColour (vintage::colours::next);
+            g.drawRoundedRectangle (nextRow, 10.0f, 2.0f);
+            vintage::drawLamp (g, { nextRow.getX() + 24.0f, nextRow.getCentreY() }, Lit::next, 22.0f);
+            g.setColour (p.wellInk);
+            g.setFont (vintage::cond (juce::jmin (26.0f, nextRow.getHeight() * 0.8f), Weight::extra, 0.08f));
+            const auto nextName = partName (list[(size_t) queued], queued);
+            g.drawFittedText ("NEXT: " + letter (queued) + (nextName.isNotEmpty() ? juce::String::fromUTF8 (" \xc2\xb7 ") + nextName.toUpperCase() : juce::String()),
+                              nextRow.withTrimmedLeft (48.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+        }
+        else
+        {
+            g.setColour (p.wellInk2);
+            g.setFont (vintage::cond (18.0f, Weight::bold, 0.1f));
+            g.drawText ("TAP A PART BELOW TO START", nextRow, juce::Justification::centredLeft);
+        }
+    }
+
+    // Channels.
+    for (int c = 0; c < kChannels; ++c)
+    {
+        auto r = channelAreas[(size_t) c];
+        vintage::drawWell (g, r.toFloat(), 14.0f);
+        auto inner = r.reduced (12);
+        auto title = inner.removeFromTop (30);
+        g.setColour (RigColours::forStrip (channelStrip (c)));
+        g.fillRoundedRectangle (title.removeFromLeft (18).withSizeKeepingCentre (18, 18).toFloat(), 4.0f);
+        title.removeFromLeft (8);
+        g.setColour (p.wellInk);
+        g.setFont (vintage::cond (26.0f, Weight::extra, 0.06f));
+        g.drawFittedText (channelName (c).toUpperCase(), title, juce::Justification::centredLeft, 1, 0.7f);
+
+        inner.removeFromTop (8);
+        auto status = inner.removeFromTop (24);
+        const int strip = channelStrip (c);
+        juce::String word = "Ready";
+        Lit lamp = Lit::none;
+        bool recording = false;
+        if (strip == RigEngine::loopsStrip)
+            for (int l = 0; l < RigLooper::kLayers; ++l)
+            {
+                const auto st = engine.getLooper().getState (l);
+                recording = recording || st == RigLooper::State::recording || st == RigLooper::State::overdubbing || st == RigLooper::State::armed;
+            }
+        if (engine.getStrip (strip).mute.load())
+            word = "Muted", lamp = Lit::mute;
+        else if (strip == RigEngine::vocoderStrip && ! engine.vocoderOn.load())
+            word = "Off";
+        else if (recording)
+            word = "Playing + Rec", lamp = Lit::arm;
+        else if (levels[(size_t) c] > 0.05f)
+            word = "Playing", lamp = Lit::play;
+        else if (transport.isPlaying())
+            word = "Quiet";
+        vintage::drawLamp (g, { (float) status.getX() + 11.0f, (float) status.getCentreY() }, lamp, 22.0f);
+        vintage::engraved (g, word, status.withTrimmedLeft (30), juce::Justification::centredLeft, 15.0f, true, p.wellInk);
+
+        // The LED meter: 20 segments, green, then amber, then red.
+        auto meter = inner.withTrimmedTop (10).withTrimmedBottom (mutes[c]->getHeight() + 12);
+        meter = meter.withSizeKeepingCentre (juce::jmin (56, meter.getWidth()), meter.getHeight());
+        const float segH = (meter.getHeight() - 3.0f * 19) / 20.0f;
+        const int litSegs = juce::roundToInt (levels[(size_t) c] * 20.0f);
+        for (int k = 0; k < 20; ++k)
+        {
+            auto seg = juce::Rectangle<float> ((float) meter.getX(), meter.getBottom() - (k + 1) * (segH + 3.0f) + 3.0f, (float) meter.getWidth(), segH);
+            const auto colour = k < 13 ? vintage::colours::play : k < 17 ? juce::Colour (0xffffc94a) : juce::Colour (0xfff0503a);
+            if (k < litSegs)
+            {
+                g.setColour (colour.withAlpha (0.25f));
+                g.fillRoundedRectangle (seg.expanded (2.0f), 4.0f);
+                g.setColour (colour);
+            }
+            else
+                g.setColour (juce::Colour (0xff2a2521));
+            g.fillRoundedRectangle (seg, 3.0f);
+        }
+    }
+
+    // Loops and the vocoder.
+    {
+        auto r = loopsArea;
+        vintage::drawWell (g, r.toFloat(), 14.0f);
+        auto inner = r.reduced (14);
+        g.setColour (p.wellInk);
+        g.setFont (vintage::cond (26.0f, Weight::extra, 0.08f));
+        g.drawText ("LOOPS", inner.removeFromTop (30), juce::Justification::centredLeft);
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+        {
+            const auto lr = layerRect (i).toFloat();
+            const auto st = engine.getLooper().getState (i);
+            Lit lit = Lit::none;
+            if (st == RigLooper::State::recording || st == RigLooper::State::overdubbing || st == RigLooper::State::armed)
+                lit = Lit::arm;
+            else if (st == RigLooper::State::playing)
+                lit = engine.getLooper().getLayer (i).mute.load() ? Lit::mute : Lit::play;
+            vintage::drawLamp (g, lr.getCentre(), lit, lr.getWidth());
+            g.setColour (lit == Lit::none ? p.wellInk2 : juce::Colour (0xff1e1a16));
+            g.setFont (vintage::cond (24.0f, Weight::extra));
+            g.drawText (juce::String (i + 1), lr, juce::Justification::centred);
+        }
+        auto legend = layerRect (4).withY (layerRect (4).getBottom() + 8).withHeight (16).withWidth (inner.getWidth());
+        vintage::engraved (g, juce::String::fromUTF8 ("Green play \xc2\xb7 blue mute \xc2\xb7 red rec"), legend,
+                           juce::Justification::centredLeft, 10.5f, true);
+
+        const auto firstPart = vocoderPartRect (0);
+        g.setColour (p.wellInk);
+        g.setFont (vintage::cond (22.0f, Weight::extra, 0.08f));
+        g.drawText ("VOCODER", juce::Rectangle<int> (inner.getX(), firstPart.getY() - 32, inner.getWidth(), 28), juce::Justification::centredLeft);
+        for (int i = 0; i < kVocoderParts; ++i)
+        {
+            const auto pr = vocoderPartRect (i).toFloat();
+            const bool on = engine.vocoderOn.load() && getParam (engine.getVocoder().params, vocoderParts[i].id) > 0.5f;
+            const juce::Colour colour (vocoderParts[i].colour);
+            g.setColour (on ? colour : juce::Colour (0xff2a2521));
+            g.fillRoundedRectangle (pr, 6.0f);
+            g.setColour (on ? juce::Colour (0xff1e1a16) : p.wellInk2);
+            g.setFont (vintage::cond (17.0f, Weight::extra, 0.06f));
+            g.drawFittedText (juce::String (vocoderParts[i].name).toUpperCase(), pr.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        }
+    }
+
+    // Master.
+    {
+        auto r = masterArea;
+        vintage::drawWell (g, r.toFloat(), 14.0f);
+        auto inner = r.reduced (14);
+        g.setColour (p.wellInk);
+        g.setFont (vintage::cond (26.0f, Weight::extra, 0.08f));
+        g.drawText ("MASTER", inner.removeFromTop (30), juce::Justification::centredLeft);
+        auto lampRow = inner.removeFromBottom (24);
+        inner.removeFromBottom (8);
+        const float vuH = juce::jmin ((inner.getHeight() - 10.0f) / 2.0f, inner.getWidth() * 78.0f / 132.0f);
+        const float vuW = vuH * 132.0f / 78.0f;
+        auto vu = inner.toFloat().withSizeKeepingCentre (vuW, vuH * 2.0f + 10.0f);
+        vintage::drawVu (g, vu.removeFromTop (vuH), vuLevel, "L");
+        vu.removeFromTop (10.0f);
+        vintage::drawVu (g, vu, vuLevel, "R");
+        vintage::drawLamp (g, { (float) lampRow.getX() + 9.0f, (float) lampRow.getCentreY() }, clipHold > 0 ? Lit::arm : Lit::none);
+        vintage::engraved (g, clipHold > 0 ? "Clipping: turn down" : "No clipping", lampRow.withTrimmedLeft (26), juce::Justification::centredLeft,
+                           13.0f, true);
+    }
+
+    vintage::engraved (g, juce::String::fromUTF8 ("Song parts \xc2\xb7 tap to queue \xc2\xb7 plays on the next bar"), partsLabel,
+                       juce::Justification::centredLeft, 14.0f);
 }
 
 void StageView::resized()
 {
-    auto area = getLocalBounds().reduced (kGap);
-    songTile->setBounds (area.removeFromTop (104));
-    area.removeFromTop (kGap);
-    const int rowHeight = (area.getHeight() - kGap) / 2;
-    auto top = area.removeFromTop (rowHeight);
-    area.removeFromTop (kGap);
-    auto bottom = area;
+    auto area = getLocalBounds().withTrimmedTop (10).withTrimmedBottom (14).reduced (22, 0);
+    const float scale = juce::jlimit (0.6f, 1.0f, area.getHeight() / 690.0f);
 
-    auto place = [] (juce::Rectangle<int> row, std::initializer_list<std::pair<Tile*, float>> list)
+    // Song parts along the bottom.
+    auto partsRow = area.removeFromBottom (juce::roundToInt (132 * scale));
+    partsLabel = area.removeFromBottom (24);
+    area.removeFromBottom (4);
     {
-        const int total = row.getWidth() - kGap * ((int) list.size() - 1);
-        for (auto [tile, share] : list)
+        const int gap = 12;
+        const int w = (partsRow.getWidth() - gap * 7) / 8;
+        for (auto* b : parts)
         {
-            tile->setBounds (row.removeFromLeft (juce::roundToInt (total * share)));
-            row.removeFromLeft (kGap);
+            b->fontSize = 72.0f * scale;
+            b->setBounds (partsRow.removeFromLeft (w));
+            partsRow.removeFromLeft (gap);
         }
-    };
-    place (top, { { tiles[0], 0.4f }, { tiles[1], 0.3f }, { tiles[2], 0.3f } });
-    place (bottom, { { tiles[3], 0.4f }, { tiles[4], 0.2f }, { tiles[5], 0.2f }, { tiles[6], 0.2f } });
+    }
+    area.removeFromBottom (18);
+
+    // The top: transport, tempo, the part.
+    auto top = area.removeFromTop (juce::roundToInt (240 * scale));
+    area.removeFromTop (18);
+    {
+        auto t = top.withSizeKeepingCentre (top.getWidth(), juce::roundToInt (200 * scale));
+        transportArea = t.removeFromLeft (juce::roundToInt ((150 + 130 + 130 + 28) * scale));
+        auto tr = transportArea;
+        play.setBounds (tr.removeFromLeft (juce::roundToInt (150 * scale)));
+        tr.removeFromLeft (juce::roundToInt (14 * scale));
+        stop.setBounds (tr.removeFromLeft (juce::roundToInt (130 * scale)));
+        tr.removeFromLeft (juce::roundToInt (14 * scale));
+        rec.setBounds (tr);
+        for (auto* b : { &play, &stop, &rec })
+            b->fontSize = (b == &rec ? 22.0f : 24.0f) * scale;
+    }
+    top.removeFromLeft (juce::roundToInt (20 * scale) + transportArea.getWidth());
+    tempoArea = top.removeFromLeft (juce::roundToInt (330 * scale));
+    top.removeFromLeft (20);
+    partArea = top;
+    {
+        auto t = tempoArea.reduced (14);
+        auto buttons = t.removeFromBottom (juce::roundToInt (54 * scale));
+        t.removeFromBottom (8);
+        tempoLcd = t;
+        const int bw = juce::roundToInt (70 * scale), tw = juce::roundToInt (90 * scale);
+        auto row = buttons.withSizeKeepingCentre (bw * 2 + tw + 20, buttons.getHeight());
+        minus.setBounds (row.removeFromLeft (bw));
+        row.removeFromLeft (10);
+        tap.setBounds (row.removeFromLeft (tw));
+        row.removeFromLeft (10);
+        plus.setBounds (row.removeFromLeft (bw));
+    }
+
+    // The middle: channels, loops + vocoder, master.
+    const int sideW = juce::jmin (250, area.getWidth() / 6);
+    masterArea = area.removeFromRight (sideW);
+    area.removeFromRight (20);
+    loopsArea = area.removeFromRight (sideW);
+    area.removeFromRight (20);
+    channelsArea = area;
+    const int gap = 12;
+    const int cw = (area.getWidth() - gap * (kChannels - 1)) / kChannels;
+    for (int c = 0; c < kChannels; ++c)
+    {
+        channelAreas[(size_t) c] = area.removeFromLeft (cw);
+        area.removeFromLeft (gap);
+        auto inner = channelAreas[(size_t) c].reduced (12);
+        mutes[c]->setBounds (inner.removeFromBottom (48));
+    }
 }
