@@ -93,6 +93,8 @@ class Knob : public juce::Component
 {
 public:
     Knob (juce::AudioProcessorValueTreeState&, const juce::String& id, const juce::String& name, juce::Colour ring);
+    // A knob for a setting that isn't a parameter: set its range and onValueChange yourself.
+    Knob (const juce::String& name, juce::Colour ring);
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -100,7 +102,8 @@ public:
     juce::String name;
 
 private:
-    juce::AudioProcessorValueTreeState::SliderAttachment attachment;
+    void setUp (juce::Colour ring);
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     juce::Rectangle<int> nameArea, valueArea;
 };
 }

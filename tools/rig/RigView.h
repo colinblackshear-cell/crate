@@ -154,6 +154,7 @@ private:
     class LooperView* looper = nullptr;   // owned by the tabs
     class SongView* song = nullptr;
     class StageView* stage = nullptr;
+    class SamplerScreen* samplerScreen = nullptr;   // owned by the tabs
     class GrooveView* groove = nullptr;
     void showTab (const juce::String& name);
 

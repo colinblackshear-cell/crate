@@ -486,7 +486,20 @@ void Footer::resized()
         row.removeFromLeft (gap);
     }
     content.removeFromLeft (partsArea.getWidth() + 16);
-    message.setBounds (content.withTrimmedBottom (4));
+    // Messages go beside the parts; when there's no room there, on the line above them.
+    if (content.getWidth() >= 200)
+    {
+        message.setBounds (content.withTrimmedBottom (4));
+        message.setJustificationType (juce::Justification::centred);
+        message.setFont (barlow (14.0f));
+    }
+    else
+    {
+        const int right = showChips ? chipsArea.getX() - 12 : partsArea.getRight();
+        message.setBounds (juce::Rectangle<int>::leftTopRightBottom (partsLabel.getX() + 350, partsLabel.getY(), right, partsLabel.getBottom()));
+        message.setJustificationType (juce::Justification::centredLeft);
+        message.setFont (barlow (13.0f));
+    }
 }
 
 void Footer::paint (juce::Graphics& g)

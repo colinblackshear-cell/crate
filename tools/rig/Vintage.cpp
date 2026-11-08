@@ -482,15 +482,27 @@ void LookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int hei
 
 //==============================================================================
 Knob::Knob (juce::AudioProcessorValueTreeState& state, const juce::String& id, const juce::String& n, juce::Colour ring)
-    : name (n), attachment (state, id, slider)
+    : name (n)
+{
+    setUp (ring);
+    attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, slider);
+    if (auto* p = state.getParameter (id))
+        slider.setDoubleClickReturnValue (true, p->convertFrom0to1 (p->getDefaultValue()));
+}
+
+Knob::Knob (const juce::String& n, juce::Colour ring)
+    : name (n)
+{
+    setUp (ring);
+}
+
+void Knob::setUp (juce::Colour ring)
 {
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
     slider.setColour (juce::Slider::rotarySliderFillColourId, ring);
     slider.setMouseDragSensitivity (220);
-    if (auto* p = state.getParameter (id))
-        slider.setDoubleClickReturnValue (true, p->convertFrom0to1 (p->getDefaultValue()));
     slider.onValueChange = [this] { repaint (valueArea); };
     addAndMakeVisible (slider);
 }

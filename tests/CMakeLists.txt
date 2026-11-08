@@ -10,6 +10,7 @@ target_sources(CrateTests PRIVATE
     RigLooperTests.cpp
     RigSceneTests.cpp
     RigGrooveTests.cpp
+    RigSamplerScreenTests.cpp
     RigRecorderTests.cpp
     RigPluginTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp

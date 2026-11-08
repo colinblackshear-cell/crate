@@ -6,6 +6,8 @@
 #include "SoundsView.h"
 #include "RigColours.h"
 #include "EditorView.h"
+#include "MpcView.h"
+#include "SamplerScreen.h"
 
 namespace Theme = crate::Theme;
 
@@ -464,13 +466,26 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
+    // The Sampler · MPC screen, over the full sample editor (a page of its own, in More).
+    auto* samplerView = engine.getSampler().createEditorAndMakeActive();
+    auto* samplerEditor = dynamic_cast<EditorView*> (samplerView);
+    // Smart chop's "To MPC pads": the slices go straight onto the MPC's pads
+    if (samplerEditor != nullptr)
+        samplerEditor->setSendSlicesToPads ([this] (std::vector<crate::SharedAudio> slices, const juce::String& name)
+                                            { return engine.sendSlicesToMpc (std::move (slices), name); });
+    if (samplerEditor != nullptr)
     {
-        auto* samplerView = engine.getSampler().createEditorAndMakeActive();
-        // Smart chop's "To MPC pads": the slices go straight onto the MPC's pads
-        if (auto* editor = dynamic_cast<EditorView*> (samplerView))
-            editor->setSendSlicesToPads ([this] (std::vector<crate::SharedAudio> slices, const juce::String& name)
-                                         { return engine.sendSlicesToMpc (std::move (slices), name); });
-        addPage ("Sampler", samplerColour, samplerView);
+        auto* screen = new SamplerScreen (engine, *samplerEditor);
+        screen->setLookAndFeel (&vintageLook);
+        screen->onSay = [this] (const juce::String& text) { say (text); };
+        screen->onOpen = [this] (const juce::String& name) { showTab (name); };
+        screen->onSendToMpc = [this]
+        {
+            if (auto* mpcView = dynamic_cast<MpcView*> (pages[(size_t) pageIndex ("MPC")].content.get()))
+                mpcView->exportToCard();
+        };
+        samplerScreen = screen;
+        addPage ("Sampler", samplerColour, screen);
     }
     auto* stageView = new StageView (engine);
     stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
@@ -489,6 +504,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     stage = stageView;
     addPage ("Stage", Theme::text, stageView);
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
+    addPage (samplerEditor != nullptr ? "Sampler editor" : "Sampler", samplerColour, samplerView);
     addPage ("Bass", bassColour, engine.getBass().createEditorAndMakeActive());
     addPage ("Synth", synthColour, engine.getSynth().createEditorAndMakeActive());
     auto* songView = new SongView (engine);
@@ -621,6 +637,8 @@ void RigView::refresh()
         song->refresh();
     if (stage != nullptr)
         stage->refresh();
+    if (samplerScreen != nullptr)
+        samplerScreen->refresh();
     if (groove != nullptr)
         groove->refresh();
     updateLearnButtons();
@@ -1293,7 +1311,7 @@ void RigView::showMoreMenu()
 {
     juce::PopupMenu menu;
     menu.addSectionHeader ("Tools in full");
-    const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Bass", "Bass: sound and patterns" },
+    const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
                                { "Synth", "Synth: sound and arp" }, { "Song", "Song: parts in order, lengths, names" },
                                { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer, effects and keyboard set-up" } };
     const auto here = currentPage();
@@ -1310,7 +1328,7 @@ void RigView::showMoreMenu()
         menu.addItem (7, "Audio and MIDI set-up...");
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.more),
-                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Bass", "Synth", "Song", "Sounds", "Mixer" }] (int result)
+                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer" }] (int result)
                         {
                             if (safe == nullptr || result == 0)
                                 return;
