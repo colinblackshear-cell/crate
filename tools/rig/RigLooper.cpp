@@ -28,9 +28,19 @@ const std::array<int, 6>& RigLooper::barChoices()
 
 RigLooper::RigLooper() = default;
 
-void RigLooper::prepare (double rate)
+void RigLooper::prepare (double rate, int maxBlock)
 {
     sampleRate = rate > 0 ? rate : 44100.0;
+    for (size_t i = 0; i < layers.size(); ++i)
+    {
+        layerOut[i].setSize (2, juce::jmax (1, maxBlock));
+        fxTail[i] = 0;
+        if (effects[i] != nullptr)
+        {
+            effects[i]->setRateAndBufferSizeDetails (sampleRate, maxBlock);
+            effects[i]->prepareToPlay (sampleRate, maxBlock);
+        }
+    }
     const int capacity = (int) (sampleRate * kMaxRecordSeconds);
     for (auto& layer : layers)
     {
@@ -293,15 +303,41 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
     bool wantsPlay = false;
     const double beatsPerSample = clock.bpm / (60.0 * sampleRate);
     const float gainStep = 1.0f / (0.01f * (float) sampleRate);   // 10 ms to any level
-    auto* outL = out.getWritePointer (0);
-    auto* outR = out.getWritePointer (1);
 
     for (int index = 0; index < kLayers; ++index)
     {
         auto& layer = layers[(size_t) index];
+        // With effects, the layer plays into its own buffer first, then through them.
+        auto* fx = effects[(size_t) index];
+        auto& own = layerOut[(size_t) index];
+        const bool viaFx = fx != nullptr && own.getNumSamples() >= n;
+        if (viaFx)
+            own.clear (0, n);
+        auto* outL = viaFx ? own.getWritePointer (0) : out.getWritePointer (0);
+        auto* outR = viaFx ? own.getWritePointer (1) : out.getWritePointer (1);
+        const auto finishLayer = [&]
+        {
+            if (! viaFx)
+                return;
+            if (fx->isActive())
+                fxTail[(size_t) index] = (int) (sampleRate * fx->getTailLengthSeconds());
+            if (fxTail[(size_t) index] > 0)
+            {
+                juce::AudioBuffer<float> block (own.getArrayOfWritePointers(), 2, n);
+                juce::MidiBuffer none;
+                fx->processBlock (block, none);
+                fxTail[(size_t) index] = juce::jmax (0, fxTail[(size_t) index] - n);
+            }
+            for (int ch = 0; ch < 2; ++ch)
+                out.addFrom (ch, 0, own, ch, 0, n);
+        };
+
         const juce::SpinLock::ScopedTryLockType sl (layer.lock);
         if (! sl.isLocked())
-            continue;   // the window is swapping in a new sound; back next block
+        {
+            finishLayer();   // the window is swapping in a new sound; back next block (the effects ring on)
+            continue;
+        }
 
         handleRequests (layer, index, clock, wantsPlay);
 
@@ -415,6 +451,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             layer.peak = peak;
         if (changed)
             ++layer.version;
+        finishLayer();
     }
     return wantsPlay;
 }

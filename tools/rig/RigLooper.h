@@ -2,6 +2,8 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "StripFx.h"
+
 #include <array>
 #include <atomic>
 
@@ -16,6 +18,9 @@
 //
 // Loops play by the beat, so they follow the tempo when it changes. A loop or a whole song
 // from a file can be dropped on a layer, either stretched to the Rig's tempo or setting it.
+//
+// Each layer can have its own effects (a StripFx rack the engine owns): the loop plays
+// through them, and what it records is never affected by them.
 //
 // The window and MIDI ask for things through atomics; the audio thread does them.
 class RigLooper
@@ -96,7 +101,9 @@ public:
 
     //==========================================================================
     // Audio thread.
-    void prepare (double sampleRate);
+    void prepare (double sampleRate, int maxBlock = 4096);
+    // Before prepare: the effects each layer plays through (null for none). Not owned.
+    void setEffects (int layer, StripFx* fx) { effects[(size_t) layer] = fx; }
 
     struct Clock
     {
@@ -119,6 +126,9 @@ private:
     std::array<Layer, kLayers> layers;
     juce::AudioBuffer<float> undoAudio;
     int undoLayer = -1, undoLength = 0;
+    std::array<StripFx*, kLayers> effects {};
+    std::array<juce::AudioBuffer<float>, kLayers> layerOut;   // a layer's sound, before its effects
+    std::array<int, kLayers> fxTail {};                        // samples left of an effect's tail
     std::array<Trim, kLayers> trims;
     std::array<int, kLayers> trimVersions {};   // the layer's version when its trim was set
 

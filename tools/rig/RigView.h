@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
+#include "StripFxPanel.h"
 #include "core/ui/Theme.h"
 #include "core/ui/ParamControls.h"
 
@@ -62,26 +63,12 @@ private:
         float meter = 0;
     };
 
-    // One strip's effects, in a row above the mixer: knobs for the filter, drive, crush,
-    // delay and reverb, and the beat repeat's buttons.
-    class FxPanel : public juce::Component
+    // One strip's effects, in a row above the mixer.
+    class FxPanel : public StripFxPanel
     {
     public:
         FxPanel (RigEngine&, int strip);
-        void paint (juce::Graphics&) override;
-        void resized() override;
-        void tick();
-
         const int strip;
-        juce::TextButton resetButton { "Reset" }, closeButton { "Close" };
-
-    private:
-        void setRepeat (int choice);
-
-        RigEngine& engine;
-        std::vector<std::unique_ptr<crate::ParamKnob>> knobs;
-        std::unique_ptr<crate::ParamChoice> delayTime;
-        juce::OwnedArray<juce::TextButton> repeatButtons;
     };
     void showFx (int strip);
 

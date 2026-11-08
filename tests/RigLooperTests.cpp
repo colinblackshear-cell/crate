@@ -233,6 +233,8 @@ struct RigLooperTests : juce::UnitTest
             if (editor != nullptr)
             {
                 expect (editor->isVisible() && ! editor->getBounds().isEmpty());
+                view.showFx (0);
+                expect (view.getFxPanel() != nullptr && view.getFxPanel()->isVisible(), "FX opens the loop's effects");
                 editor->setRange (1.0, 7.0);
                 expectWithinAbsoluteError (engine.getLooper().getLayer (0).lengthBeats.load(), 6.0, 1.0e-9);
                 expectEquals (engine.getLooper().copyLayerAudio (0).getNumSamples(), (int) (kLoopRate * 3));
@@ -245,6 +247,51 @@ struct RigLooperTests : juce::UnitTest
                     juce::PNGImageFormat().writeImageToStream (image, stream);
                 }
             }
+        }
+
+        beginTest ("each loop plays through its own effects, and they save with the show");
+        {
+            LooperRig rig;
+            StripFx fx0, fx1;
+            rig.looper.setEffects (0, &fx0);
+            rig.looper.setEffects (1, &fx1);
+            rig.looper.prepare (kLoopRate, kBlock);
+            // A bright buzz on two layers; layer 1 closes its low-pass all the way.
+            juce::AudioBuffer<float> buzz (2, 24000);
+            for (int i = 0; i < buzz.getNumSamples(); ++i)
+                for (int ch = 0; ch < 2; ++ch)
+                    buzz.setSample (ch, i, (i % 2 == 0 ? 0.5f : -0.5f));
+            rig.looper.setLayerAudio (0, buzz, 1.0);
+            rig.looper.setLayerAudio (1, buzz, 1.0);
+            rig.looper.getLayer (0).level = 1.0f;
+            rig.looper.getLayer (1).level = 1.0f;
+            rig.looper.getLayer (1).mute = true;
+            rig.clock.playing = true;
+            rig.run (1.0);
+            float dry = 0;
+            for (size_t i = rig.heard.size() - 2000; i < rig.heard.size(); ++i)
+                dry = juce::jmax (dry, std::abs (rig.heard[i]));
+            expectGreaterThan (dry, 0.3f, "with no effects the loop plays as it is");
+
+            rig.looper.getLayer (0).mute = true;
+            rig.looper.getLayer (1).mute = false;
+            fx1.params.getParameter ("filter")->setValueNotifyingHost (0.0f);   // all the way left: low-pass closed
+            expect (fx1.isActive() && ! fx0.isActive());
+            rig.run (1.0);
+            float filtered = 0;
+            for (size_t i = rig.heard.size() - 2000; i < rig.heard.size(); ++i)
+                filtered = juce::jmax (filtered, std::abs (rig.heard[i]));
+            expectLessThan (filtered, dry * 0.3f, "layer 1's filter takes the buzz out");
+            expectEquals (rig.looper.copyLayerAudio (1).getSample (0, 1), -0.5f, "the loop itself is untouched");
+
+            RigEngine engine;
+            engine.getLoopFx (2).params.getParameter ("reverbMix")->setValueNotifyingHost (0.5f);
+            const auto show = engine.saveShow();
+            RigEngine other;
+            other.loadShow (show);
+            expect (other.getLoopFx (2).isActive(), "the loop's reverb comes back with the show");
+            expect (! other.getLoopFx (1).isActive());
+            expectWithinAbsoluteError (other.getLoopFx (2).params.getRawParameterValue ("reverbMix")->load(), 0.5f, 0.01f);
         }
 
         beginTest ("in the Rig: the looper records the bass, plays it through the Loops strip, and saves with the show");

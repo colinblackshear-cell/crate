@@ -108,6 +108,8 @@ public:
     Strip& getStrip (int id) { return strips[(size_t) id]; }
     // The strip's effects (filter, drive, crush, delay, reverb, repeat), before its fader.
     StripFx& getFx (int strip) { return fx[(size_t) strip]; }
+    // Each looper layer's own effects, which the loop plays through (the Loops strip comes after).
+    StripFx& getLoopFx (int layer) { return loopFx[(size_t) layer]; }
     static juce::String stripName (int id);
     // Fader position to gain: 0.8 is unity, the top is about +6 dB.
     static float faderGain (float level);
@@ -215,6 +217,7 @@ private:
     std::array<double, RigLooper::kLayers> loadedLoopBeats {};
     std::array<Strip, numStrips> strips;
     std::array<StripFx, numStrips> fx;
+    std::array<StripFx, RigLooper::kLayers> loopFx;
     juce::MidiBuffer noMidi;
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;
 
