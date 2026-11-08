@@ -329,6 +329,7 @@ void SamplerScreen::pressPad (int padInBank)
 void SamplerScreen::pressBank (int bank)
 {
     engine.getMpc().padBankOnScreen = juce::jlimit (0, 3, bank);
+    engine.getRouting().padBank = juce::jlimit (0, 3, bank);   // the keyboard's drum pads play this bank
     if (getSelectedPad() / kPadsPerBank != bank)
         selectedSlice = bank * kPadsPerBank + getSelectedPad() % kPadsPerBank;
     flashUntil.fill (0);

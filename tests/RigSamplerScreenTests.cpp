@@ -100,7 +100,8 @@ struct RigSamplerScreenTests : juce::UnitTest
             // Bank B: the picked pad moves with it.
             screen.pressBank (1);
             expectEquals (screen.getSelectedPad(), 18);
-            expectEquals (engine.getMpc().padBankOnScreen.load(), 1, "the keyboard's pads follow");
+            expectEquals (engine.getMpc().padBankOnScreen.load(), 1);
+            expectEquals (engine.getRouting().padBank.load(), 1, "the keyboard's drum pads follow");
 
             // Full level.
             engine.getMpc().fullLevel = true;

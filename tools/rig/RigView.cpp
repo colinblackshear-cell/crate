@@ -8,6 +8,7 @@
 #include "EditorView.h"
 #include "MpcView.h"
 #include "SamplerScreen.h"
+#include "VocoderScreen.h"
 
 namespace Theme = crate::Theme;
 
@@ -461,7 +462,18 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     grooveView->refresh();
     groove = grooveView;
     addPage ("Groove", RigColours::song, grooveView);
-    addPage ("Vocoder", vocoderColour, engine.getVocoder().createEditorAndMakeActive());
+    {
+        // The pedalboard (Easy), over the vocoder's own window (Studio).
+        auto* screen = new VocoderScreen (engine, engine.getVocoder().createEditorAndMakeActive(), devices != nullptr);
+        screen->setLookAndFeel (&vintageLook);
+        screen->onSay = [this] (const juce::String& text) { say (text); };
+        screen->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+        screen->onRecVoice = [this] { toggleSampling(); };
+        screen->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
+        screen->onMic = [this] { if (header.onMic) header.onMic(); };
+        vocoderScreen = screen;
+        addPage ("Vocoder", vocoderColour, screen);
+    }
     auto* looperView = new LooperView (engine);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looper = looperView;
@@ -639,6 +651,8 @@ void RigView::refresh()
         stage->refresh();
     if (samplerScreen != nullptr)
         samplerScreen->refresh();
+    if (vocoderScreen != nullptr)
+        vocoderScreen->refresh();
     if (groove != nullptr)
         groove->refresh();
     updateLearnButtons();

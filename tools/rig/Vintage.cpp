@@ -509,7 +509,7 @@ void Knob::setUp (juce::Colour ring)
 
 void Knob::paint (juce::Graphics& g)
 {
-    engraved (g, name, nameArea, juce::Justification::centred, 16.0f, false, pal().ink);
+    engraved (g, name, nameArea, juce::Justification::centred, 16.0f, inWell, inWell ? pal().wellInk : pal().ink);
     auto box = valueArea.toFloat();
     drawLcd (g, box);
     auto text = slider.getTextFromValue (slider.getValue());

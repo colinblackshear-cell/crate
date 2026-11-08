@@ -100,6 +100,7 @@ public:
 
     juce::Slider slider;
     juce::String name;
+    bool inWell = false;   // on a dark well: the name in light ink
 
 private:
     void setUp (juce::Colour ring);
