@@ -365,7 +365,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         double firedBeat = 0;
         if (scenes.takeDue (transport.getBlockPosition(), transport.isPlayingThisBlock(), scene, firedBeat))
         {
-            applyScene (scene);
+            applyScene (scene, firedBeat);
             controlsMoved = true;
         }
     }
@@ -962,8 +962,12 @@ RigScene::State RigEngine::captureScene()
     return s;
 }
 
-void RigEngine::applyScene (const RigScene::State& s)
+void RigEngine::applyScene (const RigScene::State& s, double beat)
 {
+    // A loop that comes in with a part starts from its top, on the part's first beat.
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+        if (s.loopMutes[(size_t) l] == 0 && looper.getLayer (l).mute.load())
+            looper.restartAt (l, beat);
     for (int st = 0; st < numStrips && st < RigScene::kMaxStrips; ++st)
         if (s.stripMutes[(size_t) st] >= 0)
             strips[(size_t) st].mute = s.stripMutes[(size_t) st] == 1;

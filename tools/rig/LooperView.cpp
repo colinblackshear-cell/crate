@@ -2,6 +2,7 @@
 
 #include "core/AudioFiles.h"
 #include "core/SoundFx.h"
+#include "RigColours.h"
 
 namespace Theme = crate::Theme;
 
@@ -406,6 +407,11 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     help.setColour (juce::Label::textColourId, Theme::textDim);
     help.setFont (juce::FontOptions (13.0f));
     addAndMakeVisible (help);
+    songButton.setClickingTogglesState (false);
+    songButton.setColour (juce::TextButton::buttonOnColourId, RigColours::song);
+    songButton.setTooltip ("Build the song: which loops (and tools) play in each part, and for how many bars.");
+    songButton.onClick = [this] { showSongGrid (songGrid == nullptr); };
+    addAndMakeVisible (songButton);
     startTimerHz (30);
 }
 
@@ -415,6 +421,8 @@ void LooperView::refresh()
 {
     for (auto* r : rows)
         r->refresh();
+    if (songGrid != nullptr)
+        songGrid->refresh();
 }
 
 void LooperView::timerCallback()
@@ -423,12 +431,32 @@ void LooperView::timerCallback()
         r->tick();
     if (fxPanel != nullptr)
         fxPanel->tick();
+    if (songGrid != nullptr)
+        songGrid->tick();
     if (editor != nullptr)
     {
         editor->tick();
         if (! editor->isValid())
             closeEditor();   // the loop was cleared (from a key, a scene, or the keyboard)
     }
+}
+
+void LooperView::showSongGrid (bool show)
+{
+    if (songGrid != nullptr)
+        removeChildComponent (songGrid.get());
+    songGrid.reset();
+    if (show)
+    {
+        closeEditor();
+        songGrid = std::make_unique<SongGrid> (engine);
+        songGrid->onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
+        songGrid->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
+                                                                     { if (safe != nullptr) safe->showSongGrid (false); }); };
+        addAndMakeVisible (*songGrid);
+    }
+    songButton.setToggleState (show, juce::dontSendNotification);
+    resized();
 }
 
 void LooperView::showFx (int layer)
@@ -451,6 +479,8 @@ void LooperView::showFx (int layer)
 
 void LooperView::editLoop (int layer)
 {
+    if (songGrid != nullptr)
+        showSongGrid (false);
     if (editor != nullptr && editor->getLayer() == layer)
         return;
     closeEditor();
@@ -488,6 +518,8 @@ void LooperView::resized()
     auto area = getLocalBounds().reduced (10, 8);
     auto top = area.removeFromTop (26);
     top.removeFromLeft (100);
+    songButton.setBounds (top.removeFromRight (100));
+    top.removeFromRight (8);
     help.setBounds (top);
     area.removeFromTop (6);
     if (fxPanel != nullptr)
@@ -500,6 +532,12 @@ void LooperView::resized()
     {
         r->setBounds (area.removeFromTop (h));
         area.removeFromTop (6);
+    }
+    if (songGrid != nullptr)
+    {
+        auto bounds = getLocalBounds().reduced (10, 8).withTrimmedTop (32);
+        songGrid->setBounds (bounds);
+        songGrid->toFront (false);
     }
     // The editor sits over the layers, leaving its own row (and the ones above) in view.
     if (editor != nullptr)

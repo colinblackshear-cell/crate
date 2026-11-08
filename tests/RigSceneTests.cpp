@@ -3,6 +3,7 @@
 #include "RigEngine.h"
 #include "StageView.h"
 #include "RigView.h"
+#include "SongGrid.h"
 
 namespace
 {
@@ -219,6 +220,75 @@ struct RigSceneTests : juce::UnitTest
             RigView view (engine, &devices);
             view.restoreWindows();
             expect (view.isInOwnWindow ("MPC") && ! view.isInOwnWindow ("Stage"));
+        }
+
+        beginTest ("the song grid: parts switch loops on and off, and a loop that comes in starts from its top");
+        {
+            RigEngine engine;
+            engine.prepare (kSceneRate, kSceneBlock);
+            engine.vocoderOn = false;
+            engine.getTransport().setBpm (120.0);
+            // An 8-beat loop whose sound tells which beat of it is playing (1 to 8).
+            const int perBeat = (int) (kSceneRate / 2);
+            juce::AudioBuffer<float> audio (2, 8 * perBeat);
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+                for (int ch = 0; ch < 2; ++ch)
+                    audio.setSample (ch, i, (float) (i / perBeat + 1) / 20.0f);
+            engine.getLooper().setLayerAudio (0, audio, 8.0);
+            engine.getLooper().getLayer (0).level = 1.0f;
+            // Only the loops are heard (the tools' own idle sounds stay out of the measurement).
+            for (int st : { RigEngine::mpcStrip, RigEngine::samplerStrip, RigEngine::vocoderStrip, RigEngine::bassStrip,
+                            RigEngine::synthStrip, RigEngine::inputStrip })
+                engine.getStrip (st).mute = true;
+
+            SongGrid grid (engine);
+            grid.setBounds (0, 0, 1100, 560);
+            grid.addPart();
+            grid.addPart();
+            auto& parts = engine.getScenes().getScenes();
+            expectEquals ((int) parts.size(), 2);
+            expectEquals (SongGrid::cellValue (parts[0], { true, 0 }), 1, "a new part keeps the playing loop on");
+            grid.clickCell (0, 0);
+            expectEquals (SongGrid::cellValue (parts[0], { true, 0 }), 0, "a click mutes it in part A");
+            expectEquals (SongGrid::cellValue (parts[1], { true, 0 }), 1);
+            parts[0].bars = 1;
+            parts[1].bars = 2;
+
+            engine.tickScenes();
+            grid.playSong();
+            expect (engine.getScenes().songMode);
+            juce::AudioBuffer<float> out (2, kSceneBlock);
+            std::vector<float> heard;
+            const int blocks = (int) std::round (8.0 * 60.0 / 120.0 * kSceneRate / kSceneBlock);
+            for (int b = 0; b < blocks; ++b)
+            {
+                engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kSceneBlock);
+                engine.tickScenes();
+                for (int i = 0; i < kSceneBlock; ++i)
+                    heard.push_back (out.getSample (0, i));
+            }
+            const auto at = [&] (double beat) { return std::abs (heard[(size_t) (beat * perBeat)]); };
+            expectLessThan (at (2.5), 1.0e-4f, "part A: the loop is muted");
+            expectEquals (engine.getScenes().getCurrent(), 1, "part B after part A's bar");
+            expectGreaterThan (at (4.5), 1.0e-3f, "part B: the loop plays");
+            expectWithinAbsoluteError (at (5.5) / at (4.5), 2.0f, 0.05f, "from its first beat, not the middle");
+            expectWithinAbsoluteError (at (7.5) / at (4.5), 4.0f, 0.1f);
+
+            // Clicking a cell in the part that's playing changes it now.
+            grid.clickCell (1, 0);
+            expect (engine.getLooper().getLayer (0).mute.load());
+
+            if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_SONG_GRID_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                grid.clickCell (1, 0);
+                grid.addPart();
+                grid.clickCell (2, 8);
+                const auto image = grid.createComponentSnapshot (grid.getLocalBounds(), true, 2.0f);
+                juce::File file (path);
+                file.deleteFile();
+                juce::FileOutputStream stream (file);
+                juce::PNGImageFormat().writeImageToStream (image, stream);
+            }
         }
 
         beginTest ("song mode: a part with a length moves on by itself");
