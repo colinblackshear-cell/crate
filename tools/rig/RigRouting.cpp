@@ -274,7 +274,16 @@ void RigRouting::route (const juce::MidiBuffer& in, std::array<juce::MidiBuffer*
         const bool isNote = m.isNoteOnOrOff() || m.isAftertouch();
         if (isNote && pads > 0 && m.getChannel() == pads)
         {
-            const int note = mpcNoteForPad (m.getNoteNumber());
+            auto& held = padSounding[(size_t) m.getNoteNumber()];
+            int note = mpcNoteForPad (m.getNoteNumber());
+            if (m.isNoteOn())
+                held = (juce::int16) (note + 1);
+            else if (held > 0)
+            {
+                note = held - 1;   // the pad it started, whatever bank is showing now
+                if (m.isNoteOff())
+                    held = 0;
+            }
             if (note >= 0)
                 m.setNoteNumber (note);
             send ((int) Dest::mpc, m, at);

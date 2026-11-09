@@ -17,6 +17,7 @@ void Engine::reset()
     amp.kill();
     filterEnv.kill();
     numHeld = 0;
+    keyNote = false;
     lastStepIndex = -1;
     currentStep = -1;
     stepGateOpen = false;
@@ -70,6 +71,7 @@ void Engine::handleMidi (const juce::MidiMessage& m, bool sequencing)
             tapNote = -1;
         }
         numHeld = 0;
+        keyNote = false;
         noteOff();
         return;
     }
@@ -83,7 +85,10 @@ void Engine::handleMidi (const juce::MidiMessage& m, bool sequencing)
         if (sequencing && settings.keysTranspose)
             transpose = juce::jlimit (-24, 24, note - settings.root);
         else
+        {
             noteOn (note, m.getFloatVelocity(), m.getFloatVelocity() > 0.85f, numHeld > 1);
+            keyNote = true;
+        }
         return;
     }
 
@@ -100,13 +105,25 @@ void Engine::handleMidi (const juce::MidiMessage& m, bool sequencing)
             }
 
         if (sequencing && settings.keysTranspose)
-            return;   // the pattern stays where the last key put it
+        {
+            // The pattern stays where the last key put it. A note the keys started before the
+            // pattern took over (held as Play was pressed) still ends when you let go.
+            if (keyNote && numHeld == 0)
+            {
+                noteOff();
+                keyNote = false;
+            }
+            return;
+        }
 
         // Mono, last note wins: go back to the key still held, or stop.
         if (numHeld > 0)
             noteOn (heldKeys[(size_t) numHeld - 1], velocity, false, true);
         else
+        {
             noteOff();
+            keyNote = false;
+        }
     }
 }
 
@@ -200,6 +217,7 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 if (step.on)
                 {
                     noteOn (settings.root + step.note + transpose, 1.0f, step.accent, slideIn);
+                    keyNote = false;
                     stepGateOpen = true;
                     stepEndBeat = (double) index * stepBeats + settings.gate * stepBeats;
                 }

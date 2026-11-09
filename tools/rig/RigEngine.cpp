@@ -189,8 +189,15 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
     capture.prepare (sampleRate);
-    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi })
+    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &vocoderMissed, &midiScratch })
         m->ensureSize (4096);
+    vocoderFade.reset (sampleRate, 0.015);
+    vocoderFade.setCurrentAndTargetValue (vocoderOn.load() ? 1.0f : 0.0f);
+    inputFade.reset (sampleRate, 0.015);
+    inputFade.setCurrentAndTargetValue (0.0f);
+    micFade.reset (sampleRate, 0.015);
+    micFade.setCurrentAndTargetValue (micOn.load() ? 1.0f : 0.0f);
+    vocoderMissed.clear();
 
     for (int s = 0; s < numStrips; ++s)
     {
@@ -438,16 +445,52 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     // The vocoder shapes its synth with your voice from the input.
     const bool hearMic = micOn.load();
-    if (vocoderOn.load())
+    // Switched off, it fades out and then stops (it uses the most processor time); the keys
+    // you let go meanwhile are kept for it, so a note can't hang when it comes back on.
+    vocoderFade.setTargetValue (vocoderOn.load() ? 1.0f : 0.0f);
+    if (vocoderFade.getCurrentValue() > 0.0f || vocoderFade.isSmoothing())
     {
-        if (hearMic)
+        if (! vocoderMissed.isEmpty())
+        {
+            midiScratch.clear();
+            midiScratch.addEvents (vocoderMissed, 0, -1, 0);
+            midiScratch.addEvents (vocoderMidi, 0, -1, 0);
+            vocoderMidi.swapWith (midiScratch);
+            vocoderMissed.clear();
+        }
+        micFade.setTargetValue (hearMic ? 1.0f : 0.0f);
+        if (micFade.getCurrentValue() > 0.0f || micFade.isSmoothing())
+        {
             copyInput (vocoderBlock);
+            if (micFade.isSmoothing())
+            {
+                const float from = micFade.getCurrentValue();
+                micFade.skip (n);
+                for (int ch = 0; ch < 2; ++ch)
+                    vocoderBlock.applyGainRamp (ch, 0, n, from, micFade.getCurrentValue());
+            }
+        }
         else
+        {
             vocoderBlock.clear();
+        }
         vocoder.processBlock (vocoderBlock, vocoderMidi);
+        if (vocoderFade.isSmoothing())
+        {
+            const float from = vocoderFade.getCurrentValue();
+            vocoderFade.skip (n);
+            for (int ch = 0; ch < 2; ++ch)
+                vocoderBlock.applyGainRamp (ch, 0, n, from, vocoderFade.getCurrentValue());
+        }
     }
     else
     {
+        for (const auto m : vocoderMidi)
+        {
+            const auto message = m.getMessage();
+            if (message.isNoteOff() || message.isAllNotesOff() || message.isAllSoundOff())
+                vocoderMissed.addEvent (message, 0);
+        }
         vocoderBlock.clear();
     }
 
@@ -467,7 +510,8 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     // The Input strip: a guitar or another mic, through its effects.
     juce::AudioBuffer<float> inputBlock (inputBuffer.getArrayOfWritePointers(), 2, n);
-    if (inputOn.load() && hearMic && numInputs > 0)
+    inputFade.setTargetValue (inputOn.load() && hearMic && numInputs > 0 ? 1.0f : 0.0f);
+    if (numInputs > 0 && (inputFade.getCurrentValue() > 0.0f || inputFade.isSmoothing()))
     {
         const auto jack = (InputJack) inputJack.load();
         if (jack == InputJack::both)
@@ -479,6 +523,13 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             if (const auto* in = inputs[ch])
                 for (int side = 0; side < 2; ++side)
                     inputBlock.copyFrom (side, 0, in + offset, n);
+        }
+        if (inputFade.isSmoothing())
+        {
+            const float from = inputFade.getCurrentValue();
+            inputFade.skip (n);
+            for (int ch = 0; ch < 2; ++ch)
+                inputBlock.applyGainRamp (ch, 0, n, from, inputFade.getCurrentValue());
         }
     }
     else

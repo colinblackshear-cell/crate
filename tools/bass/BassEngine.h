@@ -106,6 +106,7 @@ private:
     std::array<int, 16> heldKeys {};
     int numHeld = 0;
     int transpose = 0;
+    bool keyNote = false;   // the note sounding was played on the keys (not by a step)
 
     // Sequencer.
     long long lastStepIndex = -1;

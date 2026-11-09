@@ -31,6 +31,37 @@ void Engine::reset()
     arpStep = arpPlaying = -1;
 }
 
+void Engine::setSettings (const Settings& s)
+{
+    const bool arpWasOn = settings.arpOn, latchWasOn = settings.arpOn && settings.latch;
+    settings = s;
+    auto arpTheHeldKeys = [this]
+    {
+        std::copy (held.begin(), held.begin() + numHeld, arpNotes.begin());
+        numArp = numHeld;
+    };
+
+    if (s.arpOn && ! arpWasOn)
+    {
+        for (int i = 0; i < numHeld; ++i)
+            voiceOff (held[(size_t) i]);
+        arpTheHeldKeys();
+    }
+    else if (! s.arpOn && arpWasOn)
+    {
+        if (arpPlaying >= 0)
+            voiceOff (arpPlaying);
+        arpPlaying = arpStep = -1;
+        numArp = 0;
+        for (int i = 0; i < numHeld; ++i)
+            voiceOn (held[(size_t) i], 0.8f);
+    }
+    else if (s.arpOn && latchWasOn && ! s.latch)
+    {
+        arpTheHeldKeys();
+    }
+}
+
 int Engine::getActiveVoices() const
 {
     int n = 0;

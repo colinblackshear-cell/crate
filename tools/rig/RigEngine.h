@@ -252,6 +252,10 @@ private:
     juce::MidiBuffer bassTap, synthTap;
     juce::MidiBuffer noMidi;
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;
+    // The vocoder and Input switches fade (so they never click), and keys let go while the
+    // vocoder is off reach it when it's back on (so they can't come back as stuck notes).
+    juce::LinearSmoothedValue<float> vocoderFade, inputFade, micFade;
+    juce::MidiBuffer vocoderMissed, midiScratch;
 
     const juce::MidiBuffer* hostMidi = nullptr;
     std::atomic<bool> notesOffRequested { false };
