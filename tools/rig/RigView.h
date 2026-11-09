@@ -91,6 +91,8 @@ private:
     void say (const juce::String&);
     juce::File currentShow;
     std::unique_ptr<class HelpPanel> helpPanel;
+    // Hover over a button for a moment and it says what it does.
+    juce::SharedResourcePointer<juce::TooltipWindow> tooltips;
 public:
     // Opens (or closes) the how-to guide, on the current screen's guide.
     void showHelp (bool show);

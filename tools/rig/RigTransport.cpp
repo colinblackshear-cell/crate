@@ -25,6 +25,8 @@ void RigTransport::beginBlock()
         default:
             break;
     }
+    if (const double seek = seekRequest.exchange (-1.0); seek >= 0 && ! hostValid)
+        jumpTo (seek);
 
     // (Only the first block after the host's position: a long host block played in pieces
     // moves on by itself.)
@@ -47,6 +49,14 @@ void RigTransport::beginBlock()
         hostWasPlaying = hostPlaying;
     }
     playingNow = playing;
+}
+
+void RigTransport::jumpTo (double beat)
+{
+    ppq = juce::jmax (0.0, beat);
+    samplePosition = (long long) std::round (ppq * 60.0 / bpm.load() * sampleRate);
+    clickActive = false;
+    ppqNow = ppq;
 }
 
 void RigTransport::setHostPosition (const juce::Optional<PositionInfo>& info)

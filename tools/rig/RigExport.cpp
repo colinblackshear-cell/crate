@@ -179,6 +179,49 @@ juce::AudioBuffer<float> RigExport::renderSongStem (RigEngine& engine, int layer
     return out;
 }
 
+int RigExport::timelineBars (RigEngine& engine)
+{
+    return (int) std::ceil (engine.getTimeline().lengthBars() - 1.0e-6);
+}
+
+juce::AudioBuffer<float> RigExport::renderTimelineStem (RigEngine& engine, int layer, double bpm, double rate, bool withEffects)
+{
+    const auto& timeline = engine.getTimeline();
+    const auto audio = engine.getLooper().copyLayerAudio (layer);
+    const double beats = engine.getLooper().getLayer (layer).lengthBeats.load();
+    const int lane = RigTimeline::laneForLoop (layer);
+    if (timeline.isEmpty() || audio.getNumSamples() == 0 || beats <= 0)
+        return {};
+    const int bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
+    const double samplesPerBeat = rate * 60.0 / bpm;
+    const int total = (int) std::round (timelineBars (engine) * bpb * samplesPerBeat);
+    juce::AudioBuffer<float> out (2, juce::jmax (1, total));
+    out.clear();
+    const float level = withEffects ? engine.getLooper().getLayer (layer).level.load() : 1.0f;
+    const auto& blocks = timeline.getBlocks();
+    const bool used = timeline.laneUsed (lane);
+    // Like the Rig: the loop starts from its top at each block, and moves smoothly to a new
+    // level (a few milliseconds where a block starts or stops without a fade, so it can't click).
+    const float slew = 1.0f / 96.0f;
+    float gain = 0;
+    for (int i = 0; i < total; ++i)
+    {
+        const double beat = i / samplesPerBeat;
+        const double bar = beat / bpb;
+        const float target = RigTimeline::gainAt (blocks.data(), (int) blocks.size(), lane, bar, used);
+        gain = target > gain ? juce::jmin (target, gain + slew) : juce::jmax (target, gain - slew);
+        if (gain <= 0.0f)
+            continue;
+        const double start = RigTimeline::blockStartAt (blocks.data(), (int) blocks.size(), lane, bar);
+        const double from = start >= 0 ? start * bpb : 0.0;
+        for (int ch = 0; ch < 2; ++ch)
+            out.setSample (ch, i, sampleAt (audio, beats, ch, beat - from) * level * gain);
+    }
+    if (withEffects)
+        applyEffects (engine, layer, bpm, rate, out, nullptr);
+    return out;
+}
+
 RigExport::Result RigExport::exportForLogic (RigEngine& engine, const juce::File& parent)
 {
     Result result;
@@ -221,7 +264,36 @@ RigExport::Result RigExport::exportForLogic (RigEngine& engine, const juce::File
     }
 
     const auto& parts = engine.getScenes().getScenes();
-    if (! parts.empty())
+    const auto& timeline = engine.getTimeline();
+    const bool useTimeline = ! timeline.isEmpty();
+    if (useTimeline)
+    {
+        const auto song = result.folder.getChildFile ("Song");
+        song.createDirectory();
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+        {
+            if (! hasLoop (engine, i) || ! timeline.laneUsed (RigTimeline::laneForLoop (i)))
+                continue;
+            ok = writeWav (song.getChildFile ("Song - Loop " + juce::String (i + 1) + " - " + tempoText + ".wav"),
+                           renderTimelineStem (engine, i, bpm, rate, true), rate) && ok;
+            ++result.files;
+        }
+        juce::MidiMessageSequence track;
+        const int ppq = 960;
+        track.addEvent (juce::MidiMessage::tempoMetaEvent ((int) std::round (60000000.0 / bpm)), 0);
+        track.addEvent (juce::MidiMessage::timeSignatureMetaEvent (bpb, 4), 0);
+        for (const auto& m : timeline.getMarkers())
+            track.addEvent (juce::MidiMessage::textMetaEvent (6, m.name), m.bar * bpb * ppq);
+        track.addEvent (juce::MidiMessage::endOfTrack(), timelineBars (engine) * bpb * ppq);
+        track.sort();
+        juce::MidiFile midi;
+        midi.setTicksPerQuarterNote (ppq);
+        midi.addTrack (track);
+        if (juce::FileOutputStream stream (song.getChildFile ("Song markers.mid")); stream.openedOk())
+            ok = midi.writeTo (stream) && ok;
+        ++result.files;
+    }
+    else if (! parts.empty())
     {
         const auto song = result.folder.getChildFile ("Song");
         song.createDirectory();
@@ -261,7 +333,16 @@ RigExport::Result RigExport::exportForLogic (RigEngine& engine, const juce::File
           << "Tempo: " << tempoText << ", " << bpb << "/4\n\n"
           << "Set Logic's project to this tempo, then drag the files in at bar 1. Every file starts on bar 1.\n"
           << "Loops: each loop once (as heard, and dry). Loop them in Logic.\n";
-    if (! parts.empty())
+    if (useTimeline)
+    {
+        notes << "Song: each loop on the timeline, the whole song long, playing in its blocks (with their fades).\n"
+              << "Song markers.mid: drag it in too for the tempo and the timeline's markers:\n";
+        for (const auto& m : timeline.getMarkers())
+            notes << "  bar " << juce::String (m.bar + 1.0, std::abs (m.bar - std::round (m.bar)) < 0.01 ? 0 : 2) << ": " << m.name << "\n";
+        notes << "The tools (MPC, Bass, Synth, vocals, Input) play live, so they aren't in these files: in the Timeline, "
+                 "Record song plays the song once and records every tool as its own WAV.\n";
+    }
+    else if (! parts.empty())
     {
         notes << "Song: each loop laid out over the whole song, playing in the parts where it's on.\n"
               << "Song markers.mid: drag it in too for the tempo and a marker for each part:\n";

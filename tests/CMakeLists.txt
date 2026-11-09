@@ -9,6 +9,7 @@ target_sources(CrateTests PRIVATE
     RigFxTests.cpp
     RigLooperTests.cpp
     RigSceneTests.cpp
+    RigTimelineTests.cpp
     RigGrooveTests.cpp
     RigSamplerScreenTests.cpp
     RigVocoderScreenTests.cpp

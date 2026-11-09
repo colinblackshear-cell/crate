@@ -12,7 +12,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
             "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
             "Press Play (or the space bar). Everything plays in time with the Rig's clock.",
-            "Build the song from your loops and parts: Looper > Song grid.",
+            "Build the song: Looper > Timeline (lay it out bar by bar, with fades) or Looper > Song grid (parts you switch between).",
             "Save show (Cmd+S) keeps everything. Export for Logic gives you the WAV files." },
           "Use headphones when the mic is on, so the speakers don't feed back into it." },
 
@@ -50,6 +50,20 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "A loop that comes in with a part starts from its top on the part's first beat." },
           "You can still jump to any part live: click its name, or use the song part buttons along the bottom." },
 
+        { "Compose on the timeline",
+          { "Record your loops and make your patterns first. Then open Looper > Timeline.",
+            "Each loop (1-8) and each tool (MPC, Bass, Synth, Vocoder, Sampler, Input) has a lane. Click a lane to put a block on it: "
+            "that's where it plays.",
+            "Drag a block to move it. Drag its right edge to make it longer (a loop repeats; thin lines show where), its left edge to start it later.",
+            "Click a block, then drag the small squares at its top corners to fade it in or out, or right-click it for fades, copy and delete. "
+            "Fade one layer out while another fades in.",
+            "Click the ruler to pick where Play starts. Drag along the ruler to cycle those bars. Turn the Click on for a click track.",
+            "Name sections in the row above the bars (right-click: Verse, Chorus...). While the song plays, click a section to jump there at the next bar.",
+            "A lane with no blocks says \"live\": the timeline leaves it alone, so you can sing through the vocoder or play your guitar over the song.",
+            "Rec onto song: record a loop while the song plays and it lands on its lane where you played it.",
+            "Record song plays it once and keeps every tool as its own WAV. Export for Logic gives the loops laid out over the song." },
+          "Already built parts in the Song grid? From parts... lays them out on the timeline to shape further. Cmd+Z undoes, Delete removes a block, Cmd+D copies it." },
+
         { "Save and export",
           { "Save show (top bar, or Cmd+S): the show and its loops, together. The first time it asks for a name.",
             "More > Save show as... saves a copy under a new name; More > Open show... opens one.",
@@ -84,8 +98,9 @@ int HelpPanel::guideFor (const juce::String& page)
     if (page == "Vocoder") return 2;
     if (page == "Looper") return 3;
     if (page == "Song") return 4;
-    if (page == "Stage") return 6;
-    if (page == "Mixer") return 7;
+    if (page == "Timeline") return 5;
+    if (page == "Stage") return 7;
+    if (page == "Mixer") return 8;
     return 0;
 }
 

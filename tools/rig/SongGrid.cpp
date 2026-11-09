@@ -335,6 +335,7 @@ void SongGrid::playSong()
         return;
     }
     scenes.songMode = true;
+    engine.getTimeline().on = false;   // the parts run it, not the timeline
     songMode.setToggleState (true, juce::dontSendNotification);
     scenes.launch (0);
     if (! engine.getTransport().isPlaying())

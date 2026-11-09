@@ -8,10 +8,11 @@ class RigEngine;
 // bar 1 and lined up with each other.
 //
 //   Loops/      every loop once, as heard (its effects and level) and dry
-//   Song/       if you've built a song (Song grid): one file per loop, the whole song long,
-//               with the loop playing in the parts where it's on, so the files together are
-//               the song. Also "Song markers.mid": the tempo and a marker where each part
-//               starts (drag it into Logic to get the tempo and the part names).
+//   Song/       if you've built a song: one file per loop, the whole song long, with the loop
+//               playing where the song has it, so the files together are the song. The song
+//               is the Timeline if it has anything on it, otherwise the Song grid's parts.
+//               Also "Song markers.mid": the tempo and a marker for each section or part
+//               (drag it into Logic to get the tempo and the names).
 //   Tempo.txt   the tempo and the time signature
 //
 // The Rig's built-in effects are printed into the "as heard" files; a plugin of your own on a
@@ -37,4 +38,7 @@ juce::AudioBuffer<float> renderLoop (RigEngine&, int layer, double bpm, double s
 juce::AudioBuffer<float> renderSongStem (RigEngine&, int layer, double bpm, double sampleRate, bool withEffects);
 // The song's length in bars (a part that holds counts as 4 bars).
 int songBars (RigEngine&);
+// A loop laid out over the timeline: playing in its lane's blocks, with their fades.
+juce::AudioBuffer<float> renderTimelineStem (RigEngine&, int layer, double bpm, double sampleRate, bool withEffects);
+int timelineBars (RigEngine&);
 }

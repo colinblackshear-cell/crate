@@ -475,9 +475,11 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                     layer.gain = juce::jmin (target, layer.gain + gainStep);
                 else if (layer.gain > target)
                     layer.gain = juce::jmax (target, layer.gain - gainStep);
-                outL[i] += l * layer.gain;
-                outR[i] += r * layer.gain;
-                peak = juce::jmax (peak, std::abs (l * layer.gain), std::abs (r * layer.gain));
+                const float arrange = arrangeFrom[(size_t) index] + (arrangeTo[(size_t) index] - arrangeFrom[(size_t) index]) * (float) i / (float) n;
+                const float g = layer.gain * arrange;
+                outL[i] += l * g;
+                outR[i] += r * g;
+                peak = juce::jmax (peak, std::abs (l * g), std::abs (r * g));
 
                 if (state == State::overdubbing)
                 {
