@@ -25,6 +25,18 @@ void Engine::reset()
 
 void Engine::noteOn (int note, float vel, bool accent, bool legato)
 {
+    if (noteTap != nullptr)
+    {
+        const int n = juce::jlimit (0, 127, note);
+        const int previous = tapNote;
+        // A slide plays the new note before letting the old one go, so the other synth glides.
+        if (previous >= 0 && ! legato)
+            noteTap->addEvent (juce::MidiMessage::noteOff (1, previous), tapSample);
+        noteTap->addEvent (juce::MidiMessage::noteOn (1, n, juce::jlimit (0.05f, 1.0f, accent ? 1.0f : vel * 0.8f)), tapSample);
+        if (previous >= 0 && legato && previous != n)
+            noteTap->addEvent (juce::MidiMessage::noteOff (1, previous), tapSample);
+        tapNote = n;
+    }
     targetNote = (float) juce::jlimit (0, 127, note);
     noteAccent = accent ? settings.accent : 0.0f;
     velocity = vel;
@@ -39,6 +51,11 @@ void Engine::noteOn (int note, float vel, bool accent, bool legato)
 
 void Engine::noteOff()
 {
+    if (noteTap != nullptr && tapNote >= 0)
+    {
+        noteTap->addEvent (juce::MidiMessage::noteOff (1, tapNote), tapSample);
+        tapNote = -1;
+    }
     amp.gateOff();
     filterEnv.gateOff();
 }
@@ -47,6 +64,11 @@ void Engine::handleMidi (const juce::MidiMessage& m, bool sequencing)
 {
     if (m.isAllNotesOff() || m.isAllSoundOff())
     {
+        if (noteTap != nullptr)
+        {
+            noteTap->addEvent (juce::MidiMessage::allNotesOff (1), tapSample);
+            tapNote = -1;
+        }
         numHeld = 0;
         noteOff();
         return;
@@ -158,6 +180,7 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
     auto event = midi.begin();
     for (int i = 0; i < numSamples; ++i, beat += beatsPerSample)
     {
+        tapSample = i;
         for (; event != midi.end() && (*event).samplePosition <= i; ++event)
             handleMidi ((*event).getMessage(), sequencing);
 

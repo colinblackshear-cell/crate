@@ -237,6 +237,7 @@ void RigView::showFx (int strip)
     else
     {
         fxPanel = std::make_unique<FxPanel> (engine, strip);
+        fxPanel->onSay = [this] (const juce::String& text) { say (text); };
         fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
                                                                                  { if (safe != nullptr) { safe->fxPanel.reset(); safe->mixerPage->resized(); } }); };
         mixerPage->addAndMakeVisible (*fxPanel);
@@ -362,6 +363,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto* grooveView = new GrooveView (engine);
     grooveView->setLookAndFeel (&vintageLook);
     grooveView->onOpen = [this] (const juce::String& name) { showTab (name); };
+    grooveView->onSay = [this] (const juce::String& text) { say (text); };
     grooveView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
     grooveView->onSample = [this] { toggleSampling(); };
     grooveView->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };

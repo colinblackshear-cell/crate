@@ -2,6 +2,7 @@
 #include "RigColours.h"
 #include "RigPanels.h"
 #include "RigSounds.h"
+#include "PluginSlot.h"
 
 using vintage::Lit;
 using vintage::Weight;
@@ -351,14 +352,26 @@ const std::vector<RigSounds::Sound>* soundsFor (int track)
 }
 }
 
+PluginSlot* GrooveView::slotFor (int t) const
+{
+    return t == bass ? &engine.getBassPlugin() : t == synth ? &engine.getSynthPlugin() : nullptr;
+}
+
 int GrooveView::numSounds() const
 {
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+        return slot->numPrograms();
     const auto* sounds = soundsFor (track);
     return sounds != nullptr ? (int) sounds->size() : 0;
 }
 
 juce::String GrooveView::soundName() const
 {
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+    {
+        const auto program = slot->numPrograms() > 1 ? slot->programName (slot->currentProgram()).trim() : juce::String();
+        return slot->getName() + (program.isNotEmpty() ? ": " + program : juce::String());
+    }
     if (track == bass)
         return RigSounds::nameOf (engine.getBass().params, RigSounds::bass());
     if (track == synth)
@@ -371,6 +384,9 @@ void GrooveView::pickSound (int index)
     const auto* sounds = soundsFor (track);
     if (sounds == nullptr)
         return;
+    // A built-in sound puts the track's own synth back.
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+        slot->clear();
     auto& params = track == bass ? engine.getBass().params : engine.getSynth().params;
     const auto& sound = (*sounds)[(size_t) juce::jlimit (0, (int) sounds->size() - 1, index)];
     RigSounds::apply (params, sound);
@@ -380,6 +396,15 @@ void GrooveView::pickSound (int index)
 
 void GrooveView::stepSound (int delta)
 {
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+    {
+        // A plugin: its own sounds.
+        const int n = slot->numPrograms();
+        if (n > 1)
+            slot->setProgram ((slot->currentProgram() + delta + n) % n);
+        updateButtons();
+        return;
+    }
     const auto* sounds = soundsFor (track);
     if (sounds == nullptr)
         return;
@@ -391,26 +416,101 @@ void GrooveView::stepSound (int delta)
 void GrooveView::showSoundMenu()
 {
     const auto* sounds = soundsFor (track);
-    if (sounds == nullptr)
+    auto* slot = slotFor (track);
+    if (sounds == nullptr || slot == nullptr)
         return;
+    juce::SharedResourcePointer<PluginHost> host;
+    const auto plugins = host->instruments();
+    const bool external = slot->isLoaded();
+
     juce::PopupMenu menu;
+    // The plugin's own sounds and window first, when there's one.
+    if (external)
+    {
+        menu.addSectionHeader (slot->getName());
+        menu.addItem (2001, "Open " + slot->getName() + "'s window");
+        const int n = slot->numPrograms();
+        if (n > 1)
+        {
+            juce::PopupMenu programs;
+            for (int i = 0; i < juce::jmin (n, 512); ++i)
+                programs.addItem (3000 + i, slot->programName (i).isNotEmpty() ? slot->programName (i) : "Sound " + juce::String (i + 1), true,
+                                  i == slot->currentProgram());
+            menu.addSubMenu (slot->getName() + "'s sounds", programs);
+        }
+        menu.addSeparator();
+    }
+
+    // The track's own sounds, by kind.
+    menu.addSectionHeader ("Built-in " + trackName (track));
     juce::StringArray kinds;
     for (const auto& s : *sounds)
         kinds.addIfNotAlreadyThere (s.kind);
-    const auto current = soundName();
+    const auto current = external ? juce::String() : soundName();
     for (const auto& kind : kinds)
     {
-        menu.addSectionHeader (kind);
+        juce::PopupMenu sub;
+        bool ticked = false;
         for (int i = 0; i < (int) sounds->size(); ++i)
             if (kind == (*sounds)[(size_t) i].kind)
-                menu.addItem (1 + i, (*sounds)[(size_t) i].name, true, current == (*sounds)[(size_t) i].name);
+            {
+                const bool here = current == (*sounds)[(size_t) i].name;
+                ticked = ticked || here;
+                sub.addItem (1 + i, (*sounds)[(size_t) i].name, true, here);
+            }
+        menu.addSubMenu (kind, sub, true, nullptr, ticked);
     }
+
+    // Your plugins.
+    menu.addSeparator();
+    menu.addSectionHeader ("Your instrument plugins");
+    if (plugins.empty())
+        menu.addItem (-1, host->hasScanned() ? "No instrument plugins found" : "Arturia and the rest show here after a scan", false, false);
+    else
+        PluginMenu::addPlugins (menu, plugins, 5000);
+    menu.addItem (2002, host->hasScanned() ? "Scan for plugins again" : "Scan for plugins (Arturia, Quake...)");
+
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (soundButton),
-                        [safe = juce::Component::SafePointer<GrooveView> (this)] (int result)
+                        [safe = juce::Component::SafePointer<GrooveView> (this), plugins, t = track] (int result)
                         {
-                            if (safe != nullptr && result > 0)
+                            if (safe == nullptr || result == 0 || safe->track != t)
+                                return;
+                            auto* s = safe->slotFor (t);
+                            if (result == 2001)
+                                s->showWindow();
+                            else if (result == 2002)
+                                PluginMenu::scan ([safe] (const juce::String& text) { if (safe != nullptr) safe->say (text); },
+                                                  [safe] { if (safe != nullptr) safe->showSoundMenu(); });
+                            else if (result >= 5000)
+                            {
+                                const auto d = plugins[(size_t) (result - 5000)];
+                                safe->say ("Loading " + d.name + "...");
+                                s->load (d, [safe, s, name = d.name] (const juce::String& error)
+                                         {
+                                             if (safe == nullptr)
+                                                 return;
+                                             safe->say (error.isEmpty() ? name + " plays the " + trackName (safe->track)
+                                                                              + " track now: its steps, arp and keys. Its window is open."
+                                                                        : name + " didn't load: " + error);
+                                             if (error.isEmpty())
+                                                 s->showWindow();
+                                             safe->updateButtons();
+                                         });
+                            }
+                            else if (result >= 3000)
+                            {
+                                s->setProgram (result - 3000);
+                                safe->updateButtons();
+                            }
+                            else
                                 safe->pickSound (result - 1);
                         });
+}
+
+void GrooveView::say (const juce::String& text)
+{
+    if (onSay)
+        onSay (text);
 }
 
 void GrooveView::pressPlay()

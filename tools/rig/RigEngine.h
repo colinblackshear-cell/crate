@@ -142,6 +142,11 @@ public:
     // Silences every tool's notes at the next block (stuck notes, a latched arp). Stop does it.
     void allNotesOff() { notesOffRequested = true; }
 
+    // An instrument plugin of your own (an Arturia synth...) that the Bass or Synth track plays
+    // instead of its own sound: its steps, arp and keys all play the plugin. Empty: its own sound.
+    PluginSlot& getBassPlugin() { return bassPlugin; }
+    PluginSlot& getSynthPlugin() { return synthPlugin; }
+
     // Plays a note into the Rig as if it came from a keyboard (tests, the window).
     void addMidi (const juce::MidiMessage&);
 
@@ -218,6 +223,8 @@ private:
     std::array<Strip, numStrips> strips;
     std::array<StripFx, numStrips> fx;
     std::array<StripFx, RigLooper::kLayers> loopFx;
+    PluginSlot bassPlugin { true }, synthPlugin { true };
+    juce::MidiBuffer bassTap, synthTap;
     juce::MidiBuffer noMidi;
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;
 

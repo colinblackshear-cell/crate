@@ -64,6 +64,7 @@ public:
     void refresh();
 
     std::function<void (const juce::String& tab)> onOpen;
+    std::function<void (const juce::String&)> onSay;
     std::function<float (int strip)> meterOf;
     std::function<void()> onSample;
     std::function<bool()> isSampling;
@@ -84,6 +85,8 @@ private:
     void handleNoteOn (juce::MidiKeyboardState*, int channel, int note, float velocity) override;
     void handleNoteOff (juce::MidiKeyboardState*, int channel, int note, float velocity) override;
     void showSoundMenu();
+    void say (const juce::String&);
+    class PluginSlot* slotFor (int track) const;
     void buildTrack();
     void updateButtons();
     void setFollowKnobs();
