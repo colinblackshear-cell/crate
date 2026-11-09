@@ -1,4 +1,6 @@
 #include "RigView.h"
+#include "RigExport.h"
+#include "HelpPanel.h"
 #include "LooperView.h"
 #include "SongView.h"
 #include "StageView.h"
@@ -301,6 +303,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     // The screens, and More.
     screenBar.onScreen = [this] (const juce::String& page) { showTab (page); };
     screenBar.more.onClick = [this] { showMoreMenu(); };
+    screenBar.help.onClick = [this] { showHelp (helpPanel == nullptr); };
 
     // The song parts and Live now.
     footer.onTrack = [this] (int strip)
@@ -353,7 +356,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     knobButton.onClick = [this] { showKnobMenu(); };
 
     audioButton.onClick = [this] { showAudioSettings(); };
-    saveButton.onClick = [this] { saveShowAs(); };
+    saveButton.onClick = [this] { saveShow(); };
+    saveButton.setTooltip ("Saves everything: the show (sounds, patterns, mixer, song parts) and your loops, together. "
+                           "The first time it asks for a name; after that it saves straight away (Cmd+S). More > Save show as... for a copy.");
     openButton.onClick = [this] { openShow(); };
 
     // The five screens first (F1-F5), then what More shows. The tab bar is hidden: the screen
@@ -1163,11 +1168,64 @@ void RigView::saveShowAs()
                               auto file = fc.getResult();
                               if (file == juce::File())
                                   return;
-                              file = file.withFileExtension ("crateshow");
-                              if (auto xml = engine.saveShow().createXml())
-                                  if (! xml->writeTo (file) || ! engine.writeLoopAudio (file))
-                                      say ("Couldn't save all of " + file.getFileName() + ".");
+                              writeShowTo (file.withFileExtension ("crateshow"));
                           });
+}
+
+bool RigView::writeShowTo (const juce::File& file)
+{
+    bool ok = false;
+    if (auto xml = engine.saveShow().createXml())
+        ok = xml->writeTo (file) && engine.writeLoopAudio (file);
+    if (! ok)
+    {
+        say ("Couldn't save all of " + file.getFileName() + ".");
+        return false;
+    }
+    currentShow = file;
+    int loops = 0;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (engine.getLooper().copyLayerAudio (i).getNumSamples() > 0)
+            ++loops;
+    say ("Saved " + file.getFileNameWithoutExtension() + ": the show" + (loops > 0 ? " and " + juce::String (loops) + (loops == 1 ? " loop" : " loops") : juce::String())
+         + ", in " + file.getParentDirectory().getFullPathName() + ". Cmd+S saves it again.");
+    return true;
+}
+
+void RigView::saveShow()
+{
+    if (currentShow != juce::File() && currentShow.getParentDirectory().isDirectory())
+        writeShowTo (currentShow);
+    else
+        saveShowAs();
+}
+
+void RigView::showHelp (bool show)
+{
+    if (helpPanel != nullptr)
+        removeChildComponent (helpPanel.get());
+    helpPanel.reset();
+    if (show)
+    {
+        helpPanel = std::make_unique<HelpPanel> (currentPage());
+        helpPanel->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
+                                                                      { if (safe != nullptr) safe->showHelp (false); }); };
+        addAndMakeVisible (*helpPanel);
+        helpPanel->grabKeyboardFocus();
+    }
+    resized();
+}
+
+void RigView::exportForLogic()
+{
+    const auto result = RigExport::exportForLogic (engine, RigExport::defaultFolder());
+    if (result.files == 0)
+    {
+        say (result.error);
+        return;
+    }
+    say ("Exported " + juce::String (result.files) + " files for Logic to " + result.folder.getFullPathName() + ". Drag them in at bar 1.");
+    result.folder.revealToUser();
 }
 
 void RigView::openShow()
@@ -1183,6 +1241,7 @@ void RigView::openShow()
                               {
                                   engine.loadShow (juce::ValueTree::fromXml (*xml));
                                   engine.readLoopAudio (file);
+                                  currentShow = file;
                                   refresh();
                                   restoreWindows();
                               }
@@ -1194,6 +1253,11 @@ bool RigView::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress::spaceKey)
     {
         engine.getTransport().togglePlay();
+        return true;
+    }
+    if (key == juce::KeyPress ('s', juce::ModifierKeys::commandModifier, 0))
+    {
+        saveShow();
         return true;
     }
     // Esc leaves the Stage.
@@ -1265,8 +1329,10 @@ void RigView::showMoreMenu()
     menu.addItem (3, "Dark panel (for dark rooms)", true, vintage::isStage());
     menu.addItem (4, "Click (metronome)", true, engine.getTransport().metronome.load());
     menu.addSeparator();
-    menu.addItem (5, "Save show...");
+    menu.addItem (8, "Save show");
+    menu.addItem (5, "Save show as...");
     menu.addItem (6, "Open show...");
+    menu.addItem (9, "Export loops for Logic...");
     if (devices != nullptr)
         menu.addItem (7, "Audio and MIDI set-up...");
 
@@ -1298,6 +1364,10 @@ void RigView::showMoreMenu()
                             }
                             else if (result == 5)
                                 safe->saveShowAs();
+                            else if (result == 8)
+                                safe->saveShow();
+                            else if (result == 9)
+                                safe->exportForLogic();
                             else if (result == 6)
                                 safe->openShow();
                             else if (result == 7)
@@ -1327,6 +1397,11 @@ void RigView::resized()
     if (! stageShown)
         footer.setBounds (area.removeFromBottom (compact ? 108 : 118));
     tabs.setBounds (area.reduced (0, 4));
+    if (helpPanel != nullptr)
+    {
+        helpPanel->setBounds (area.reduced (juce::jmax (12, area.getWidth() / 10), 12));
+        helpPanel->toFront (true);
+    }
 }
 
 void RigView::layoutMixer (juce::Rectangle<int> page)

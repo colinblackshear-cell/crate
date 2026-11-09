@@ -421,7 +421,15 @@ private:
         menu.addSectionHeader ("Layer " + juce::String (index + 1) + " records");
         const bool canChange = engine.getLooper().getState (index) != RigLooper::State::recording;
         for (int s = 0; s < RigLooper::numSources; ++s)
-            menu.addItem (RigLooper::sourceName (s), canChange, layer.source.load() == s, [this, s] { engine.getLooper().getLayer (index).source = s; });
+            menu.addItem (RigLooper::sourceName (s), canChange, layer.source.load() == s, [this, s]
+                          {
+                              engine.getLooper().getLayer (index).source = s;
+                              if (s == RigLooper::line)
+                              {
+                                  engine.inputOn = true;   // Line in is the Input strip: switch it on
+                                  engine.micOn = true;
+                              }
+                          });
         menu.addSectionHeader ("For");
         for (int b : RigLooper::barChoices())
             menu.addItem (b == 0 ? "Until you press again" : juce::String (b) + (b == 1 ? " bar" : " bars"), true, layer.bars.load() == b,
@@ -538,8 +546,8 @@ private:
 namespace
 {
 const std::array<int, 5> lengthChoices { 0, 1, 2, 4, 8 };
-const std::array<std::pair<int, const char*>, 3> sourceChoices { { { RigLooper::input, "Mic" }, { RigLooper::vocoder, "Vocoder" },
-                                                                   { RigLooper::mix, "Master" } } };
+const std::array<std::pair<int, const char*>, 4> sourceChoices { { { RigLooper::input, "Mic" }, { RigLooper::line, "Line in" },
+                                                                   { RigLooper::vocoder, "Vocoder" }, { RigLooper::mix, "Master" } } };
 }
 
 LooperView::LooperView (RigEngine& e) : engine (e)
@@ -676,6 +684,15 @@ void LooperView::setNextBars (int bars)
 
 void LooperView::setNextSource (int source)
 {
+    // Line in is the Input strip: switch it (and the audio input) on so you hear what you play.
+    if (source == RigLooper::line && ! (engine.inputOn.load() && engine.micOn.load()))
+    {
+        engine.inputOn = true;
+        engine.micOn = true;
+        if (onSay)
+            onSay ("Line in: the Input strip is on. Plug your guitar or keytar into your interface "
+                   "(the strip's menu picks input 1, 2 or both).");
+    }
     for (int i = 0; i < RigLooper::kLayers; ++i)
         if (engine.getLooper().getState (i) == RigLooper::State::empty)
             engine.getLooper().getLayer (i).source = source;
@@ -904,11 +921,12 @@ void LooperView::resized()
     controlsArea = top;
     {
         auto t = top;
-        recNext.setBounds (t.removeFromLeft (200));
+        const bool narrow = getWidth() < 1320;   // a small window: tighter buttons, so the LCD still fits
+        recNext.setBounds (t.removeFromLeft (narrow ? 150 : 200));
         t.removeFromLeft (12);
-        overdub.setBounds (t.removeFromLeft (110).reduced (0, 6));
+        overdub.setBounds (t.removeFromLeft (narrow ? 96 : 110).reduced (0, 6));
         t.removeFromLeft (8);
-        undoButton.setBounds (t.removeFromLeft (84).reduced (0, 6));
+        undoButton.setBounds (t.removeFromLeft (narrow ? 70 : 84).reduced (0, 6));
         t.removeFromLeft (18);
         auto lengths = t.removeFromLeft (5 * 46 + 4 * 6);
         lengthLabel = lengths.removeFromTop (16);
@@ -918,15 +936,16 @@ void LooperView::resized()
             lengths.removeFromLeft (6);
         }
         t.removeFromLeft (14);
-        auto sources = t.removeFromLeft (3 * 86 + 2 * 6);
+        const int sw = narrow ? 66 : 76;
+        auto sources = t.removeFromLeft (4 * sw + 3 * 6);
         sourceLabel = sources.removeFromTop (16);
         for (auto* b : sourceButtons)
         {
-            b->setBounds (sources.removeFromLeft (86).reduced (0, 1));
+            b->setBounds (sources.removeFromLeft (sw).reduced (0, 1));
             sources.removeFromLeft (6);
         }
         t.removeFromLeft (14);
-        songButton.setBounds (t.removeFromRight (96).reduced (0, 6));
+        songButton.setBounds (t.removeFromRight (narrow ? 90 : 110).reduced (0, 6));
         t.removeFromRight (10);
         statusArea = t.removeFromRight (juce::jmin (260, juce::jmax (180, t.getWidth() / 2))).reduced (0, 6);
         t.removeFromRight (10);

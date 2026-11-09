@@ -122,6 +122,7 @@ bool RigEngine::playMpcSong (int song)
 
 RigEngine::~RigEngine()
 {
+    loopRoom.stopTimer();
     mpc.setPlayHead (nullptr);
     sampler.setPlayHead (nullptr);
     vocoder.setPlayHead (nullptr);
@@ -180,6 +181,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     rawInputBuffer.setSize (2, maxBlock);
     loopsBuffer.setSize (2, maxBlock);
     looper.prepare (sampleRate, maxBlock);
+    loopRoom.startTimerHz (10);
     performFx.prepare (sampleRate);
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
@@ -518,6 +520,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     sources[RigLooper::mpc] = &mpcBlock;
     sources[RigLooper::sampler] = &samplerBlock;
     sources[RigLooper::mix] = &mix;
+    sources[RigLooper::line] = &inputBlock;
     if (looper.process (clock, sources, loopsBlock))
     {
         transport.play();
