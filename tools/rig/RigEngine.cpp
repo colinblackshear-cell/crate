@@ -520,6 +520,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     sources[RigLooper::mpc] = &mpcBlock;
     sources[RigLooper::sampler] = &samplerBlock;
     sources[RigLooper::mix] = &mix;
+    sources[RigLooper::line] = &inputBlock;
     if (looper.process (clock, sources, loopsBlock))
     {
         transport.play();

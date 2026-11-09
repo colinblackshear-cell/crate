@@ -33,7 +33,9 @@ public:
     static constexpr double kGrowAheadSeconds = 12.0;   // grows when less than this is left
 
     enum class State { empty, armed, recording, playing, overdubbing };
-    enum Source { input, vocoder, bass, synth, mpc, sampler, mix, numSources };
+    // line: the Input strip (a guitar, keytar... on your interface, through its effects). New
+    // sources go at the end, so saved shows keep theirs.
+    enum Source { input, vocoder, bass, synth, mpc, sampler, mix, line, numSources };
     static juce::String sourceName (int);
     static const std::array<int, 6>& barChoices();   // 0 (until you press again), 1, 2, 4, 8, 16
 

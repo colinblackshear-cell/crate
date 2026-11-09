@@ -16,6 +16,7 @@ juce::String RigLooper::sourceName (int s)
         case mpc:     return "MPC";
         case sampler: return "Sampler";
         case mix:     return "Rig mix";
+        case line:    return "Line in";
         default:      return {};
     }
 }

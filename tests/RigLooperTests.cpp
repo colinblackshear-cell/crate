@@ -377,6 +377,30 @@ struct RigLooperTests : juce::UnitTest
             expectWithinAbsoluteError (other.getLoopFx (2).params.getRawParameterValue ("reverbMix")->load(), 0.5f, 0.01f);
         }
 
+        beginTest ("Line in: a layer records the Input strip (a guitar on the interface)");
+        {
+            RigEngine engine;
+            engine.prepare (kLoopRate, kBlock);
+            engine.vocoderOn = false;
+            engine.micOn = true;
+            engine.inputOn = true;
+            engine.getTransport().setBpm (120.0);
+            expectEquals (RigLooper::sourceName (RigLooper::line), juce::String ("Line in"));
+            auto& layer = engine.getLooper().getLayer (0);
+            layer.source = RigLooper::line;
+            layer.bars = 1;
+            engine.getLooper().pressRecord (0);
+            juce::AudioBuffer<float> in (2, kBlock), out (2, kBlock);
+            for (int i = 0; i < kBlock; ++i)
+                for (int ch = 0; ch < 2; ++ch)
+                    in.setSample (ch, i, 0.3f * std::sin (i * 0.1f));
+            const int bar = (int) (2.0 * kLoopRate / kBlock);
+            for (int b = 0; b < bar + 10; ++b)
+                engine.process (in.getArrayOfReadPointers(), 2, out.getArrayOfWritePointers(), 2, kBlock);
+            expect (engine.getLooper().getState (0) == RigLooper::State::playing);
+            expectGreaterThan (engine.getLooper().copyLayerAudio (0).getMagnitude (0, 0, 4800), 0.05f, "the guitar is in the loop");
+        }
+
         beginTest ("in the Rig: the looper records the bass, plays it through the Loops strip, and saves with the show");
         {
             RigEngine engine;
