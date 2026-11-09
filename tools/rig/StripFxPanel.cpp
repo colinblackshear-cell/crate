@@ -38,6 +38,27 @@ StripFxPanel::StripFxPanel (StripFx& f, const juce::String& t, juce::Colour c)
     addAndMakeVisible (closeButton);
     resetButton.setTooltip ("Turns every effect here off.");
     resetButton.onClick = [this] { fx.reset(); };
+
+    // Your own effect plugin, after the rack.
+    for (auto* b : { &pluginButton, &pluginOpen })
+    {
+        vintage::setInWell (*b, true);
+        b->getProperties().set ("fontSize", 14.0f);
+        addAndMakeVisible (*b);
+    }
+    pluginButton.setTooltip ("Your own effect plugin after these effects: Quake, or any Audio Unit on this Mac.");
+    pluginButton.onClick = [this]
+    {
+        PluginMenu::showForEffect (fx.plugin, pluginButton, [safe = juce::Component::SafePointer<StripFxPanel> (this)] (const juce::String& text)
+                                   {
+                                       if (safe != nullptr && safe->onSay)
+                                           safe->onSay (text);
+                                       if (safe != nullptr)
+                                           safe->tick();
+                                   });
+    };
+    pluginOpen.setTooltip ("Opens the plugin's own window.");
+    pluginOpen.onClick = [this] { fx.plugin.showWindow(); };
     tick();
 }
 
@@ -57,6 +78,12 @@ void StripFxPanel::tick()
     const int current = (int) fx.params.getRawParameterValue ("repeat")->load();
     for (int i = 0; i < repeatButtons.size(); ++i)
         repeatButtons[i]->setToggleState (i == current && i > 0, juce::dontSendNotification);
+    const auto text = fx.plugin.isLoaded() ? fx.plugin.getName() + juce::String::fromUTF8 (" \xe2\x96\xbe")
+                                           : juce::String::fromUTF8 ("+ Plugin \xe2\x96\xbe");
+    if (pluginButton.getButtonText() != text)
+        pluginButton.setButtonText (text);
+    pluginButton.setToggleState (fx.plugin.isLoaded() && ! fx.plugin.bypassed.load(), juce::dontSendNotification);
+    pluginOpen.setEnabled (fx.plugin.isLoaded());
 }
 
 void StripFxPanel::paint (juce::Graphics& g)
@@ -90,6 +117,11 @@ void StripFxPanel::resized()
     const int w = row.getWidth() / juce::jmax (1, repeatButtons.size());
     for (auto* b : repeatButtons)
         b->setBounds (row.removeFromLeft (w).reduced (1, 0));
+    repeatArea.removeFromTop (6);
+    auto pluginRow = repeatArea.removeFromTop (juce::jmin (28, repeatArea.getHeight()));
+    pluginOpen.setBounds (pluginRow.removeFromRight (56));
+    pluginRow.removeFromRight (4);
+    pluginButton.setBounds (pluginRow);
 
     area.removeFromLeft (16);
     const int count = (int) knobs.size() + 1;

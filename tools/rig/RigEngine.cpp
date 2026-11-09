@@ -161,6 +161,13 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
         f.setRateAndBufferSizeDetails (sampleRate, maxBlock);
         f.prepareToPlay (sampleRate, maxBlock);
     }
+    for (auto* slot : { &bassPlugin, &synthPlugin })
+    {
+        slot->setPlayHead (&transport);
+        slot->prepare (sampleRate, maxBlock);
+    }
+    bassTap.ensureSize (2048);
+    synthTap.ensureSize (2048);
     transport.prepare (sampleRate);
     incoming.reset (sampleRate);
 
@@ -173,6 +180,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     rawInputBuffer.setSize (2, maxBlock);
     loopsBuffer.setSize (2, maxBlock);
     looper.prepare (sampleRate, maxBlock);
+    performFx.prepare (sampleRate);
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
     capture.prepare (sampleRate);
@@ -405,10 +413,21 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     mpcBlock.clear();
     mpc.processBlock (mpcBlock, mpcMidi);
-    bassBlock.clear();
-    bass.processBlock (bassBlock, bassMidi);
-    synthBlock.clear();
-    synthTool.processBlock (synthBlock, synthMidi);
+    // A plugin in the Bass's or Synth's slot plays the notes the tool plays (its steps, arp and
+    // keys) instead of the tool's own sound.
+    auto playTool = [] (juce::AudioProcessor& tool, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi, PluginSlot& slot,
+                        juce::MidiBuffer& tap, auto setTap)
+    {
+        block.clear();
+        const bool external = slot.isLoaded() && ! slot.bypassed.load();
+        tap.clear();
+        setTap (external ? &tap : nullptr);
+        tool.processBlock (block, midi);
+        if (external && ! slot.process (block, tap))
+            block.clear();
+    };
+    playTool (bass, bassBlock, bassMidi, bassPlugin, bassTap, [this] (juce::MidiBuffer* t) { bass.setNoteTap (t); });
+    playTool (synthTool, synthBlock, synthMidi, synthPlugin, synthTap, [this] (juce::MidiBuffer* t) { synthTool.setNoteTap (t); });
 
     // The vocoder shapes its synth with your voice from the input.
     const bool hearMic = micOn.load();
@@ -523,6 +542,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     transport.endBlock (n, &click);
 
     fx[masterStrip].processBlock (mix, noMidi);
+    performFx.process (mix, transport.getBlockPosition(), transport.getBpm(), transport.isPlayingThisBlock());
 
     auto& master = strips[masterStrip];
     auto& masterGain = gains[masterStrip];
@@ -808,6 +828,14 @@ juce::ValueTree RigEngine::saveShow() const
         t.setProperty ("state", state.toBase64Encoding(), nullptr);
         show.appendChild (t, nullptr);
     }
+    for (auto [name, slot] : { std::pair<const char*, const PluginSlot*> { "Bass", &bassPlugin }, { "Synth", &synthPlugin } })
+        if (slot->isLoaded())
+        {
+            juce::ValueTree t ("Instrument");
+            t.setProperty ("tool", name, nullptr);
+            t.appendChild (slot->toTree(), nullptr);
+            show.appendChild (t, nullptr);
+        }
     return show;
 }
 
@@ -828,6 +856,9 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     routing.clearParameterKnobs();
     sampleSource = juce::jlimit (0, 2, (int) show.getProperty ("sampleSource", 0));
     inputOn = (bool) show.getProperty ("inputOn", false);
+    // The show's own instruments (or none: the tools' own sounds).
+    bassPlugin.fromTree (show.getChildWithProperty ("tool", "Bass").getChildWithName ("Plugin"));
+    synthPlugin.fromTree (show.getChildWithProperty ("tool", "Synth").getChildWithName ("Plugin"));
     inputJack = juce::jlimit (0, 2, (int) show.getProperty ("inputJack", 0));
 
     for (int c = 0; c < RigRouting::numControls; ++c)

@@ -822,6 +822,7 @@ void LooperView::showFx (int layer)
     {
         fxLayer = layer;
         fxPanel = std::make_unique<StripFxPanel> (engine.getLoopFx (layer), "Loop " + juce::String (layer + 1) + " effects", vintage::colours::loops);
+        fxPanel->onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
         fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
                                                                                { if (safe != nullptr && safe->fxPanel != nullptr) safe->showFx (safe->fxLayer); }); };
         addAndMakeVisible (*fxPanel);

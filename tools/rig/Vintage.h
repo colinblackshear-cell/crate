@@ -101,6 +101,7 @@ public:
     juce::Slider slider;
     juce::String name;
     bool inWell = false;   // on a dark well: the name in light ink
+    float nameSize = 16.0f;
 
 private:
     void setUp (juce::Colour ring);

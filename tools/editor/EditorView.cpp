@@ -346,6 +346,9 @@ EditorView::~EditorView()
 //==============================================================================
 void EditorView::paint (juce::Graphics& g)
 {
+    if (hostPaint != nullptr)
+        return hostPaint (g, toolsArea, keysArea);
+
     g.fillAll (crate::Theme::background);
 
     // the tools panel under the waveform, and the keys along the bottom

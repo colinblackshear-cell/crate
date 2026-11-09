@@ -20,7 +20,7 @@ struct RigVocoderScreenTests : juce::UnitTest
             RigEngine engine;
             engine.prepare (48000.0, 480);
             VocoderScreen screen (engine, nullptr, true);
-            screen.setSize (1400, 560);
+            screen.setSize (1400, 600);
 
             for (int i = 0; i < VocoderScreen::numPedals; ++i)
                 expect (! screen.isOn (i), "a new vocoder is just your voice: " + VocoderScreen::pedalName (i));
@@ -28,19 +28,19 @@ struct RigVocoderScreenTests : juce::UnitTest
             screen.stomp (VocoderScreen::robot);
             expect (param (engine, ParamIDs::robotOn) > 0.5f, "Robot");
             screen.turnKnob (VocoderScreen::robot, 3.0);
-            expectWithinAbsoluteError (param (engine, ParamIDs::sharpness), 3.0f, 0.01f, "Beep-ness");
+            expectWithinAbsoluteError (param (engine, ParamIDs::sharpness), 3.0f, 0.01f, "Beep");
 
-            screen.turnKnob (VocoderScreen::monster, 10.0);
-            expectWithinAbsoluteError (param (engine, ParamIDs::formant), 0.0f, 0.01f, "Growl waits for the switch");
-            screen.stomp (VocoderScreen::monster);
-            expectWithinAbsoluteError (param (engine, ParamIDs::formant), -10.0f, 0.01f, "Monster on");
-            screen.turnKnob (VocoderScreen::monster, 5.0);
-            expectWithinAbsoluteError (param (engine, ParamIDs::formant), -5.0f, 0.01f, "Growl while on");
+            screen.stomp (VocoderScreen::character);
+            expectWithinAbsoluteError (param (engine, ParamIDs::formant), -7.0f, 0.01f, "Character comes on as a monster");
+            screen.turnKnob (VocoderScreen::character, 8.0);
+            expectWithinAbsoluteError (param (engine, ParamIDs::formant), 8.0f, 0.01f, "or a chipmunk");
+            screen.stomp (VocoderScreen::character);
+            expect (! screen.isOn (VocoderScreen::character));
+            screen.stomp (VocoderScreen::character);
+            expectWithinAbsoluteError (param (engine, ParamIDs::formant), 8.0f, 0.01f, "comes back as it was");
 
             screen.stomp (VocoderScreen::vintageMic);
             expect (param (engine, ParamIDs::vintageOn) > 0.5f);
-            screen.turnKnob (VocoderScreen::vintageMic, 8.0);
-            expectEquals (juce::roundToInt (param (engine, ParamIDs::vintageEra)), 0, "turned all the way up: the 1900s");
 
             screen.stomp (VocoderScreen::arp);
             expect (screen.isOn (VocoderScreen::arp));
@@ -48,26 +48,111 @@ struct RigVocoderScreenTests : juce::UnitTest
             screen.turnKnob (VocoderScreen::arp, 1.0);
             expectEquals (juce::roundToInt (param (engine, ParamIDs::arpRate)), 1, "Speed");
 
-            screen.turnKnob (VocoderScreen::chords, 4.0);
-            screen.stomp (VocoderScreen::chords);
-            expect (param (engine, ParamIDs::tuneOn) > 0.5f);
+            screen.stomp (VocoderScreen::harmony);
+            expect (param (engine, ParamIDs::tuneOn) > 0.5f, "Harmony sits on Tune");
             expectEquals (juce::roundToInt (param (engine, ParamIDs::singToPlay)), 3, "one note, a whole chord");
-            expectEquals (juce::roundToInt (param (engine, ParamIDs::tuneScale)), 2, "Sad is minor");
+
+            screen.stomp (VocoderScreen::filter);
+            expect (screen.isOn (VocoderScreen::filter));
+            expect (param (engine, ParamIDs::cutoff) < 19000.0f, "the filter comes on closed enough to hear");
+
+            for (int pedal : { (int) VocoderScreen::dirt, (int) VocoderScreen::chorus, (int) VocoderScreen::echo, (int) VocoderScreen::space })
+            {
+                screen.stomp (pedal);
+                expect (screen.isOn (pedal), VocoderScreen::pedalName (pedal));
+            }
+            expect (param (engine, ParamIDs::delayMix) > 0.1f && param (engine, ParamIDs::reverbMix) > 0.1f);
+
+            screen.stomp (VocoderScreen::synth);
+            expect (param (engine, ParamIDs::drone) > 0.5f, "Synth's footswitch is Drone");
 
             // Bypass all, and back.
             screen.pressBypassAll();
             for (int i = 0; i < VocoderScreen::numPedals; ++i)
                 expect (! screen.isOn (i), "bypassed: " + VocoderScreen::pedalName (i));
-            expectWithinAbsoluteError (param (engine, ParamIDs::tuneOn), 0.0f, 0.01f);
             screen.pressBypassAll();
-            for (int i = 0; i < VocoderScreen::numPedals; ++i)
+            for (int i : { (int) VocoderScreen::tune, (int) VocoderScreen::harmony, (int) VocoderScreen::robot, (int) VocoderScreen::character,
+                           (int) VocoderScreen::synth, (int) VocoderScreen::arp, (int) VocoderScreen::filter, (int) VocoderScreen::vintageMic,
+                           (int) VocoderScreen::dirt, (int) VocoderScreen::chorus, (int) VocoderScreen::echo, (int) VocoderScreen::space })
                 expect (screen.isOn (i), "back on: " + VocoderScreen::pedalName (i));
-            expectWithinAbsoluteError (param (engine, ParamIDs::formant), -5.0f, 0.01f, "Monster comes back as deep");
+            expectWithinAbsoluteError (param (engine, ParamIDs::formant), 8.0f, 0.01f, "Character comes back as it was");
 
             // Off again.
-            screen.stomp (VocoderScreen::chords);
+            screen.stomp (VocoderScreen::harmony);
             expectEquals (juce::roundToInt (param (engine, ParamIDs::singToPlay)), 0);
-            expectWithinAbsoluteError (param (engine, ParamIDs::tuneOn), 0.0f, 0.01f);
+        }
+
+        beginTest ("the rack shows every setting of the picked pedal");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            VocoderScreen screen (engine, nullptr, true);
+            screen.setSize (1400, 600);
+
+            int total = 0;
+            for (int i = 0; i < VocoderScreen::numPedals; ++i)
+            {
+                expect (screen.numRackKnobs (i) >= 2, VocoderScreen::pedalName (i));
+                total += screen.numRackKnobs (i);
+            }
+            expect (total >= 70, "every setting of the vocoder has a knob somewhere");
+            expectEquals (screen.numRackKnobs (VocoderScreen::synth), 18);
+
+            screen.selectPedal (VocoderScreen::synth);
+            expectEquals (screen.getSelectedPedal(), (int) VocoderScreen::synth);
+            int shown = 0;
+            for (auto* c : screen.getChildren())
+                if (auto* k = dynamic_cast<vintage::Knob*> (c); k != nullptr && k->isVisible() && k->name != "Mic gain")
+                {
+                    ++shown;
+                    expect (k->getWidth() >= 60 && k->getHeight() >= 60, "big enough to turn: " + k->name);
+                }
+            expectEquals (shown, 18, "only the picked pedal's knobs");
+
+            // Turn something deep in the rack, then Reset.
+            engine.getVocoder().params.getParameter (ParamIDs::osc2Level)->setValueNotifyingHost (0.8f);
+            screen.resetPedal (VocoderScreen::synth);
+            expectWithinAbsoluteError (param (engine, ParamIDs::osc2Level), 0.0f, 0.01f, "Reset");
+
+            // Chords: no keys needed.
+            screen.selectPedal (VocoderScreen::chords);
+            screen.pressChord (4);
+            expectEquals (screen.getActiveChord(), 4);
+            expect (screen.isOn (VocoderScreen::chords));
+            expect (param (engine, ParamIDs::robotOn) > 0.5f, "the robot comes on to sing it");
+            screen.pressChord (4);
+            expectEquals (screen.getActiveChord(), -1, "again to stop");
+
+            juce::Image image (juce::Image::ARGB, 1400, 600, true);
+            juce::Graphics g (image);
+            screen.paintEntireComponent (g, false);
+        }
+
+        beginTest ("sounds: step, pick, save your own and load it back");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            VocoderScreen screen (engine, nullptr, true);
+            screen.setSize (1400, 600);
+
+            screen.stepSound (1);
+            expectEquals (engine.getVocoder().getCurrentProgram(), 1);
+            expectEquals (screen.soundName(), engine.getVocoder().getProgramName (1));
+            expect (screen.isOn (VocoderScreen::robot), "a robot sound lights the Robot pedal");
+            screen.stepSound (-2);
+            expectEquals (engine.getVocoder().getCurrentProgram(), engine.getVocoder().getNumPrograms() - 1, "wraps around");
+
+            const juce::String soundName = "Crate test sound " + juce::String (juce::Random::getSystemRandom().nextInt (1000000));
+            screen.turnKnob (VocoderScreen::space, 0.77);
+            expect (screen.saveSound (soundName));
+            auto file = VocoderScreen::userSoundsFolder().getChildFile (soundName + ".xml");
+            expect (file.existsAsFile());
+            screen.pickSound (0);
+            expect (! screen.isOn (VocoderScreen::space));
+            expect (screen.loadSound (file));
+            expectWithinAbsoluteError (param (engine, ParamIDs::reverbMix), 0.77f, 0.01f, "your sound comes back");
+            expectEquals (screen.soundName(), soundName);
+            file.deleteFile();
         }
 
         beginTest ("Raw voice, Out and the screen's switches");
@@ -75,7 +160,7 @@ struct RigVocoderScreenTests : juce::UnitTest
             RigEngine engine;
             engine.prepare (48000.0, 480);
             VocoderScreen screen (engine, new juce::Component(), true);
-            screen.setSize (1400, 560);
+            screen.setSize (1400, 600);
 
             screen.pressMonitor();
             expect (param (engine, ParamIDs::voiceOn) < 0.5f, "Monitor off");
@@ -93,7 +178,7 @@ struct RigVocoderScreenTests : juce::UnitTest
 
             engine.getRouting().keysTo = (int) RigRouting::Dest::bass;
             screen.pressNotesFrom();
-            expectEquals (engine.getRouting().keysTo.load(), (int) RigRouting::Dest::vocoder, "Notes from: the keys go to the vocoder");
+            expectEquals (engine.getRouting().keysTo.load(), (int) RigRouting::Dest::vocoder, "the keys go to the vocoder");
 
             screen.pressToLooper();
             expectEquals (screen.getLooperLayer(), 0, "the first free layer");
