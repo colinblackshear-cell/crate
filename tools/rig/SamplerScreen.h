@@ -39,6 +39,12 @@ public:
     // Re-reads everything (after a show is loaded).
     void refresh();
 
+    // The full sample editor (record, trim, fades, effects, keys, library) lives on this screen
+    // too, a click away: Edit shows it, Chop shows the chop and the pads. Takes ownership.
+    void ownEditor (juce::Component* fullEditor);
+    void setEditMode (bool);
+    bool isEditMode() const { return editMode; }
+
     std::function<void (const juce::String&)> onSay;
     // Opens a page of the Rig ("Sampler editor", "MPC").
     std::function<void (const juce::String&)> onOpen;
@@ -96,6 +102,11 @@ private:
     bool draggingScroll = false;
     double scrollGrab = 0;
     juce::String shownSignature;
+    std::unique_ptr<juce::Component> ownedEditor;
+    bool editMode = false;
+    juce::TextButton chopModeButton { juce::String::fromUTF8 ("Chop \xc2\xb7 Pads") }, editModeButton { juce::String::fromUTF8 ("Edit \xc2\xb7 Effects \xc2\xb7 Keys") },
+        recordButton { "Rec" };
+    juce::Rectangle<int> modeRow;
 
     juce::TextButton chopButtons[3] { juce::TextButton ("Transients"), juce::TextButton ("Even 16"), juce::TextButton ("By hand") };
     juce::TextButton snapButton { "Snap to zero" }, toPadsButton { "To pads" }, openButton { "Open" }, editorButton { "Editor" },

@@ -74,7 +74,23 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     openButton.setTooltip ("Open a sound file (or drop one here).");
     openButton.onClick = [this] { editor.chooseSoundFile(); };
     editorButton.setTooltip ("The full sample editor: record, trim, fades, effects, keys.");
-    editorButton.onClick = [this] { if (onOpen) onOpen ("Sampler editor"); };
+    editorButton.onClick = [this] { setEditMode (true); };
+
+    for (auto* b : { &chopModeButton, &editModeButton })
+    {
+        setLit (*b, Lit::current);
+        b->getProperties().set ("fontSize", 18.0f);
+        addAndMakeVisible (*b);
+    }
+    chopModeButton.setTooltip ("Chop the sound and play it from the MPC's pads.");
+    editModeButton.setTooltip ("Every tool of the sample editor: record, trim, cut and paste, fades, effects, keys and your library.");
+    chopModeButton.onClick = [this] { setEditMode (false); };
+    editModeButton.onClick = [this] { setEditMode (true); };
+    setLit (recordButton, Lit::arm);
+    recordButton.getProperties().set ("fontSize", 18.0f);
+    recordButton.setTooltip ("Record from your audio input into the Sampler. Press again to stop. (To sample a tool of the Rig, use More > Sample.)");
+    recordButton.onClick = [this] { editor.toggleRecord(); };
+    addAndMakeVisible (recordButton);
 
     toPadsButton.getProperties().set ("fontSize", 16.0f);
     toPadsButton.setTooltip ("Puts the slices on the MPC's pads as a new kit, slice 1 on A01.");
@@ -201,6 +217,32 @@ SamplerScreen::~SamplerScreen()
 }
 
 //==============================================================================
+void SamplerScreen::ownEditor (juce::Component* fullEditor)
+{
+    ownedEditor.reset (fullEditor);
+    if (ownedEditor != nullptr)
+        addChildComponent (*ownedEditor);
+    setEditMode (editMode);
+}
+
+void SamplerScreen::setEditMode (bool on)
+{
+    editMode = on && ownedEditor != nullptr;
+    for (auto* c : getChildren())
+        if (c != ownedEditor.get() && c != &chopModeButton && c != &editModeButton && c != &recordButton && c != &openButton)
+            c->setVisible (! editMode);
+    if (ownedEditor != nullptr)
+        ownedEditor->setVisible (editMode);
+    openButton.setVisible (! editMode);
+    recordButton.setVisible (! editMode);
+    chopModeButton.setToggleState (! editMode, juce::dontSendNotification);
+    editModeButton.setToggleState (editMode, juce::dontSendNotification);
+    if (! editMode)
+        refresh();
+    resized();
+    repaint();
+}
+
 size_t SamplerScreen::capacityOf (int m)
 {
     if (m == 1) return (size_t) 100 * 1000 * 1000;   // Zip 100
@@ -500,6 +542,16 @@ void SamplerScreen::timerCallback()
     if (! isShowing())
         return;
 
+    {
+        const bool recording = engine.getSampler().isRecording();
+        recordButton.setToggleState (recording, juce::dontSendNotification);
+        const auto text = recording ? "Stop " + juce::String (engine.getSampler().getRecordedSeconds(), 1) + "s" : juce::String ("Rec");
+        if (recordButton.getButtonText() != text)
+            recordButton.setButtonText (text);
+    }
+    if (editMode)
+        return;
+
     auto& sampler = engine.getSampler();
     const auto& doc = sampler.getDocument();
     auto& project = engine.getMpc().getProject();
@@ -586,6 +638,8 @@ void SamplerScreen::paint (juce::Graphics& g)
 {
     rebuildPeaks();
     drawFace (g, getLocalBounds());
+    if (editMode)
+        return;
     const auto& p = pal();
     auto& sampler = engine.getSampler();
     const auto& doc = sampler.getDocument();
@@ -820,7 +874,17 @@ void SamplerScreen::paint (juce::Graphics& g)
 void SamplerScreen::resized()
 {
     auto r = getLocalBounds().withTrimmedLeft (22).withTrimmedRight (22).withTrimmedTop (6).withTrimmedBottom (14);
-    const float scale = juce::jlimit (0.7f, 1.0f, r.getHeight() / 560.0f);
+    modeRow = r.removeFromTop (42);
+    {
+        auto m = modeRow;
+        chopModeButton.setBounds (m.removeFromLeft (150));
+        editModeButton.setBounds (m.removeFromLeft (230));
+        recordButton.setBounds (m.removeFromRight (90));
+    }
+    r.removeFromTop (10);
+    if (ownedEditor != nullptr)
+        ownedEditor->setBounds (r.withTrimmedLeft (-10).withTrimmedRight (-10).withTrimmedBottom (-8));
+    const float scale = juce::jlimit (0.7f, 1.0f, r.getHeight() / 500.0f);
 
     auto right = r.removeFromRight (juce::jlimit (300, 430, getWidth() * 30 / 100));
     r.removeFromRight (16);
