@@ -180,6 +180,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     rawInputBuffer.setSize (2, maxBlock);
     loopsBuffer.setSize (2, maxBlock);
     looper.prepare (sampleRate, maxBlock);
+    performFx.prepare (sampleRate);
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
     capture.prepare (sampleRate);
@@ -541,6 +542,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     transport.endBlock (n, &click);
 
     fx[masterStrip].processBlock (mix, noMidi);
+    performFx.process (mix, transport.getBlockPosition(), transport.getBpm(), transport.isPlayingThisBlock());
 
     auto& master = strips[masterStrip];
     auto& masterGain = gains[masterStrip];

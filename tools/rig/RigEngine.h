@@ -11,6 +11,7 @@
 #include "RigRouting.h"
 #include "RigTransport.h"
 #include "StripFx.h"
+#include "PerformFx.h"
 #include "RigLooper.h"
 #include "RigScenes.h"
 #include "RigRecorder.h"
@@ -146,6 +147,8 @@ public:
     // instead of its own sound: its steps, arp and keys all play the plugin. Empty: its own sound.
     PluginSlot& getBassPlugin() { return bassPlugin; }
     PluginSlot& getSynthPlugin() { return synthPlugin; }
+    // The FX pad on the whole mix (before the master fader, so it's in the recorded set).
+    PerformFx& getPerformFx() { return performFx; }
 
     // Plays a note into the Rig as if it came from a keyboard (tests, the window).
     void addMidi (const juce::MidiMessage&);
@@ -224,6 +227,7 @@ private:
     std::array<StripFx, numStrips> fx;
     std::array<StripFx, RigLooper::kLayers> loopFx;
     PluginSlot bassPlugin { true }, synthPlugin { true };
+    PerformFx performFx;
     juce::MidiBuffer bassTap, synthTap;
     juce::MidiBuffer noMidi;
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;

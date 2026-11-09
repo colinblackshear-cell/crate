@@ -4,13 +4,15 @@
 
 #include "RigEngine.h"
 #include "RigPanels.h"
+#include "PerformPad.h"
 
 // The Stage (F5): the screen for playing a show, on a black panel, readable from across a room.
 // Giant Play, Stop and Rec; the tempo big on an amber LCD with -, Tap and +; the part playing as
 // a big green letter with its name, the bar in the part, a row of bar lamps and what's next.
 // Below, a channel for each track (lamp and word, a tall LED meter, a big Mute), the loop
 // layers as round lamps (press one to record, stop or overdub it; right-click to mute it), the
-// vocoder's parts as switches, and the master VU meters with a clip lamp. The song parts run
+// vocoder's parts as switches, and the master VU meters with a clip lamp. FX pad swaps the
+// channels for the performance pad (filter sweeps, repeat, tape stop, gate, riser on the mix). The song parts run
 // along the bottom as huge buttons that switch on the next bar.
 class StageView : public juce::Component,
                   private juce::Timer
@@ -45,10 +47,14 @@ public:
     void pressMute (int channel);
     void pressLayer (int layer, bool mute);
     void pressVocoderPart (int part);
+    // The FX pad in place of the channels (the button under them switches).
+    void setShowPad (bool);
+    bool isShowingPad() const { return showPad; }
+    PerformPad& getPad() { return pad; }
     juce::Rectangle<int> channelArea (int channel) const { return channelAreas[(size_t) juce::jlimit (0, kChannels - 1, channel)]; }
 
     rigpanels::PanelButton play { "Play" }, stop { "Stop" }, rec { "Rec" }, minus { juce::String::fromUTF8 ("\xe2\x88\x92") },
-        tap { "Tap" }, plus { "+" };
+        tap { "Tap" }, plus { "+" }, padToggle { "FX pad" };
     juce::OwnedArray<rigpanels::PanelButton> parts, mutes;
 
 private:
@@ -62,6 +68,8 @@ private:
     juce::Rectangle<int> transportArea, tempoArea, tempoLcd, partArea, channelsArea, loopsArea, masterArea, partsLabel;
     std::array<juce::Rectangle<int>, kChannels> channelAreas;
     juce::String shownSignature;
+    PerformPad pad;
+    bool showPad = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StageView)
 };
