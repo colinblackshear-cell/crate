@@ -82,6 +82,9 @@ float RigEngine::faderGain (float level)
 
 RigEngine::RigEngine()
 {
+    arrangeFrom.fill (1.0f);
+    arrangeTo.fill (1.0f);
+    arrangeRestart.fill (-1.0);
     // The Rig is the host, so the tools follow its clock the way they follow Logic's.
     mpc.setPlayHead (&transport);
     sampler.setPlayHead (&transport);
@@ -213,7 +216,8 @@ void RigEngine::process (const float* const* inputs, int numInputs, float* const
 
     for (int offset = 0; offset < numSamples;)
     {
-        const int n = juce::jmin (maxBlock, numSamples - offset);
+        // (Up to the timeline's next jump or the end of its cycle, so it lands exactly.)
+        const int n = samplesToTimelineEvent (juce::jmin (maxBlock, numSamples - offset));
         processChunk (inputs, numInputs, offset, n);
 
         // Mono outputs get both sides; stereo gets left and right.
@@ -379,6 +383,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             controlsMoved = true;
         }
     }
+    arrange (n);
 
     // Recording the set: what's played, by tool, before the tools see it.
     RigRecorder::Clock recClock;
@@ -683,6 +688,10 @@ void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
     auto& strip = strips[(size_t) id];
     auto& gain = gains[(size_t) id];
     const int n = buffer.getNumSamples();
+    // The timeline brings the tool in and out (before its effects, so they ring out).
+    if (const float from = arrangeFrom[(size_t) id], to = arrangeTo[(size_t) id]; from < 1.0f || to < 1.0f)
+        for (int ch = 0; ch < 2; ++ch)
+            buffer.applyGainRamp (ch, 0, n, from, to);
     fx[(size_t) id].processBlock (buffer, noMidi);
     gain.setTargetValue (strip.mute.load() ? 0.0f : faderGain (strip.level.load()));
     if (gain.isSmoothing())
@@ -796,6 +805,7 @@ juce::ValueTree RigEngine::saveShow() const
     }
 
     show.setProperty ("songMode", scenes.songMode, nullptr);
+    show.appendChild (timeline.toTree(), nullptr);
     for (const auto& scene : scenes.getScenes())
         show.appendChild (scene.toTree(), nullptr);
 
@@ -868,6 +878,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         routing.forget (c);
     scenes.clear();
     scenes.songMode = (bool) show.getProperty ("songMode", false);
+    timeline.fromTree (show.getChildWithName (RigTimeline::kTreeType));
     {
         // Older shows only had what the Sampler records.
         const int older = (int) show.getProperty ("sampleSource", 0);
@@ -1016,6 +1027,100 @@ void RigEngine::applyScene (const RigScene::State& s, double beat)
         setParameter (bass.params, "sequencer", (float) s.bassSequencer);
     if (s.arp >= 0)
         setParameter (synthTool.params, "arpOn", (float) s.arp);
+}
+
+void RigEngine::arrange (int n)
+{
+    timeline.update();
+    const bool running = timeline.on.load() && transport.isPlayingThisBlock() && ! timeline.liveEmpty();
+    if (! running)
+    {
+        arrangeFrom.fill (1.0f);
+        arrangeTo.fill (1.0f);
+        arrangeRestart.fill (-1.0);
+        for (int l = 0; l < RigLooper::kLayers; ++l)
+            looper.setArrangeGain (l, 1.0f, 1.0f);
+        return;
+    }
+    const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+    if (! transport.isHosted())   // (in Logic, Logic's clock goes where it likes)
+    {
+        if (const double jump = timeline.takeJump (transport.getBlockPosition(), bpb); jump >= 0)
+        {
+            transport.jumpTo (jump);
+            controlsMoved = true;
+        }
+        else if (timeline.stopAtEnd.load() && ! timeline.cycle.load()
+                 && transport.getBlockPosition() >= (timeline.liveEnd() + 1.0) * bpb)
+        {
+            transport.stop();   // a bar after the end, so echoes ring out
+            notesOffRequested = true;
+            controlsMoved = true;
+        }
+    }
+
+    const double beat0 = transport.getBlockPosition();
+    const double beat1 = beat0 + n * transport.getBpm() / (60.0 * sampleRate);
+    const auto& lanes = RigTimeline::lanes();
+    for (int lane = 0; lane < RigTimeline::kLanes; ++lane)
+    {
+        const auto& info = lanes[(size_t) lane];
+        const float from = timeline.liveGain (lane, beat0 / bpb), to = timeline.liveGain (lane, beat1 / bpb);
+        if (! info.isLoop)
+        {
+            arrangeFrom[(size_t) info.index] = from;
+            arrangeTo[(size_t) info.index] = to;
+            continue;
+        }
+        looper.setArrangeGain (info.index, from, to);
+        // A block starts its loop from the top on the block's first beat.
+        const double start = timeline.liveBlockStart (lane, beat1 / bpb);
+        if (start >= 0 && std::abs (start * bpb - arrangeRestart[(size_t) info.index]) > 1.0e-6)
+        {
+            looper.restartAt (info.index, start * bpb);
+            arrangeRestart[(size_t) info.index] = start * bpb;
+        }
+    }
+}
+
+int RigEngine::samplesToTimelineEvent (int n) const
+{
+    if (! timeline.on.load() || ! transport.isPlayingThisBlock() || transport.isHosted() || sampleRate <= 0)
+        return n;
+    const double beats = timeline.beatsToNextEvent (transport.getBlockPosition(), transport.getBeatsPerBar());
+    const double samples = std::ceil (beats * 60.0 / transport.getBpm() * sampleRate - 1.0e-6);
+    return samples >= 1.0 && samples < n ? (int) samples : n;
+}
+
+void RigEngine::playTimeline (double bar)
+{
+    timeline.on = true;
+    scenes.songMode = false;
+    const auto& lanes = RigTimeline::lanes();
+    for (int lane = 0; lane < RigTimeline::kLanes; ++lane)
+    {
+        if (! timeline.laneUsed (lane))
+            continue;
+        const auto& info = lanes[(size_t) lane];
+        if (info.isLoop)
+            looper.getLayer (info.index).mute = false;
+        else
+            strips[(size_t) info.index].mute = false;
+        if (! info.isLoop && info.index == vocoderStrip)
+            vocoderOn = true;
+        if (! info.isLoop && info.index == inputStrip)
+            inputOn = true;
+    }
+    if (transport.isPlaying())
+    {
+        timeline.jumpTo (bar);
+    }
+    else
+    {
+        transport.setPosition (bar * juce::jmax (1, transport.getBeatsPerBar()));
+        transport.play();
+    }
+    controlsMoved = true;
 }
 
 void RigEngine::tickScenes()

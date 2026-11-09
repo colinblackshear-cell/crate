@@ -14,6 +14,7 @@
 #include "PerformFx.h"
 #include "RigLooper.h"
 #include "RigScenes.h"
+#include "RigTimeline.h"
 #include "RigRecorder.h"
 #include "RigCapture.h"
 
@@ -54,6 +55,12 @@ public:
     RigTransport& getTransport() { return transport; }
     RigLooper& getLooper() { return looper; }
     RigScenes& getScenes() { return scenes; }
+    // The song on a timeline (lanes of blocks over the bar ruler). While it's on and the clock
+    // plays, it brings loops and tools in and out, with their fades.
+    RigTimeline& getTimeline() { return timeline; }
+    // Plays the timeline from `bar` (message thread): turns it on, song mode off, and unmutes
+    // the loops and tools it uses (it brings them in and out itself).
+    void playTimeline (double bar);
 
     // Record the set (message thread): every strip and the mix as WAVs, and what's played on
     // the keys and pads as MIDI, into `folder`; it starts at the next bar. Call stopRecording()
@@ -217,6 +224,13 @@ private:
         RigLooper& looper;
     } loopRoom { looper };
     RigScenes scenes;
+    RigTimeline timeline;
+    // Audio thread: the timeline's level for each strip over this block, and where each loop
+    // was last started from (so a block starts its loop once).
+    std::array<float, numStrips> arrangeFrom {}, arrangeTo {};
+    std::array<double, RigLooper::kLayers> arrangeRestart {};
+    void arrange (int numSamples);
+    int samplesToTimelineEvent (int numSamples) const;
     RigRecorder recorder;
     RigCapture capture;
     // The preview: the window holds the sounds (so they're never freed here); the audio thread

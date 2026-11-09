@@ -1207,7 +1207,12 @@ void RigView::showHelp (bool show)
     helpPanel.reset();
     if (show)
     {
-        helpPanel = std::make_unique<HelpPanel> (currentPage());
+        auto page = currentPage();
+        if (page == "Looper" && looper != nullptr && looper->getTimeline() != nullptr)
+            page = "Timeline";
+        else if (page == "Looper" && looper != nullptr && looper->getSongGrid() != nullptr)
+            page = "Song";
+        helpPanel = std::make_unique<HelpPanel> (page);
         helpPanel->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
                                                                       { if (safe != nullptr) safe->showHelp (false); }); };
         addAndMakeVisible (*helpPanel);

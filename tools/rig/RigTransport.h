@@ -17,6 +17,8 @@ public:
     void play();
     void stop();             // stops and goes back to the start
     void togglePlay() { isPlaying() ? stop() : play(); }
+    // Moves the clock to `beat` at the next block (playing or not), so Play starts there.
+    void setPosition (double beat) { seekRequest = juce::jmax (0.0, beat); }
 
     void setBpm (double);
     double getBpm() const { return bpm.load(); }
@@ -49,6 +51,9 @@ public:
     juce::Optional<PositionInfo> getPosition() const override;
     // Where this block starts, and whether it plays (between beginBlock and endBlock).
     double getBlockPosition() const { return ppq; }
+    // Moves the clock to `beat` now, before the tools play this block (the timeline's jumps
+    // and cycle). Audio thread, after beginBlock.
+    void jumpTo (double beat);
     bool isPlayingThisBlock() const { return playing; }
 
 private:
@@ -56,6 +61,7 @@ private:
     std::atomic<double> bpm { 90.0 };
     std::atomic<int> beatsPerBar { 4 };
     std::atomic<int> request { 0 };     // 0 none, 1 play, 2 stop
+    std::atomic<double> seekRequest { -1.0 };
 
     // Audio thread.
     bool playing = false;

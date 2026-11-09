@@ -117,6 +117,9 @@ public:
     void prepare (double sampleRate, int maxBlock = 4096);
     // Before prepare: the effects each layer plays through (null for none). Not owned.
     void setEffects (int layer, StripFx* fx) { effects[(size_t) layer] = fx; }
+    // The song timeline's level for a layer over the next block, from `from` to `to` (1 when
+    // the timeline isn't playing it). Before its effects, so an echo rings out after a fade.
+    void setArrangeGain (int layer, float from, float to) { arrangeFrom[(size_t) layer] = from; arrangeTo[(size_t) layer] = to; }
 
     struct Clock
     {
@@ -141,6 +144,7 @@ private:
     juce::AudioBuffer<float> undoAudio;
     int undoLayer = -1, undoLength = 0;
     std::array<StripFx*, kLayers> effects {};
+    std::array<float, kLayers> arrangeFrom { 1, 1, 1, 1, 1, 1, 1, 1 }, arrangeTo { 1, 1, 1, 1, 1, 1, 1, 1 };
     std::array<juce::AudioBuffer<float>, kLayers> layerOut;   // a layer's sound, before its effects
     std::array<int, kLayers> fxTail {};                        // samples left of an effect's tail
     std::array<Trim, kLayers> trims;

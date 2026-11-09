@@ -597,6 +597,11 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     songButton.setTooltip ("Build the song: which loops (and tools) play in each part, and for how many bars.");
     songButton.onClick = [this] { showSongGrid (songGrid == nullptr); };
     addAndMakeVisible (songButton);
+    setLit (timelineButton, Lit::current);
+    timelineButton.getProperties().set ("fontSize", 17.0f);
+    timelineButton.setTooltip ("Compose the song: lanes for your loops and tools over a bar ruler. Place blocks, stretch them, fade them.");
+    timelineButton.onClick = [this] { showTimeline (timeline == nullptr); };
+    addAndMakeVisible (timelineButton);
     updateTop();
     startTimerHz (30);
 }
@@ -791,6 +796,8 @@ void LooperView::refresh()
         r->refresh();
     if (songGrid != nullptr)
         songGrid->refresh();
+    if (timeline != nullptr)
+        timeline->refresh();
 }
 
 void LooperView::timerCallback()
@@ -802,6 +809,8 @@ void LooperView::timerCallback()
         fxPanel->tick();
     if (songGrid != nullptr)
         songGrid->tick();
+    if (timeline != nullptr)
+        timeline->tick();
     if (editor != nullptr)
     {
         editor->tick();
@@ -818,6 +827,7 @@ void LooperView::showSongGrid (bool show)
     if (show)
     {
         closeEditor();
+        showTimeline (false);
         songGrid = std::make_unique<SongGrid> (engine);
         songGrid->onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
         songGrid->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
@@ -826,6 +836,27 @@ void LooperView::showSongGrid (bool show)
     }
     songButton.setToggleState (show, juce::dontSendNotification);
     resized();
+}
+
+void LooperView::showTimeline (bool show)
+{
+    if (timeline != nullptr)
+        removeChildComponent (timeline.get());
+    timeline.reset();
+    if (show)
+    {
+        closeEditor();
+        showSongGrid (false);
+        timeline = std::make_unique<TimelineView> (engine);
+        timeline->onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
+        timeline->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
+                                                                     { if (safe != nullptr) safe->showTimeline (false); }); };
+        addAndMakeVisible (*timeline);
+    }
+    timelineButton.setToggleState (show, juce::dontSendNotification);
+    resized();
+    if (timeline != nullptr)
+        timeline->grabKeyboardFocus();
 }
 
 void LooperView::showFx (int layer)
@@ -851,6 +882,8 @@ void LooperView::editLoop (int layer)
 {
     if (songGrid != nullptr)
         showSongGrid (false);
+    if (timeline != nullptr)
+        showTimeline (false);
     if (editor != nullptr && editor->getLayer() == layer)
         return;
     closeEditor();
@@ -945,7 +978,21 @@ void LooperView::resized()
             sources.removeFromLeft (6);
         }
         t.removeFromLeft (14);
-        songButton.setBounds (t.removeFromRight (narrow ? 90 : 110).reduced (0, 6));
+        if (narrow)
+        {
+            // One above the other, so the LCD keeps its room.
+            auto column = t.removeFromRight (100);
+            timelineButton.setBounds (column.removeFromTop (column.getHeight() / 2).reduced (0, 2));
+            songButton.setBounds (column.reduced (0, 2));
+        }
+        else
+        {
+            songButton.setBounds (t.removeFromRight (110).reduced (0, 6));
+            t.removeFromRight (8);
+            timelineButton.setBounds (t.removeFromRight (110).reduced (0, 6));
+        }
+        for (auto* b : { &songButton, &timelineButton })
+            b->getProperties().set ("fontSize", narrow ? 14.0f : 17.0f);
         t.removeFromRight (10);
         statusArea = t.removeFromRight (juce::jmin (260, juce::jmax (180, t.getWidth() / 2))).reduced (0, 6);
         t.removeFromRight (10);
@@ -970,6 +1017,12 @@ void LooperView::resized()
         auto bounds = getLocalBounds().reduced (22, 8).withTrimmedTop (86);
         songGrid->setBounds (bounds);
         songGrid->toFront (false);
+    }
+    if (timeline != nullptr)
+    {
+        // The whole screen below the top row: the song needs the room.
+        timeline->setBounds (getLocalBounds().reduced (12, 8).withTrimmedTop (86));
+        timeline->toFront (false);
     }
     // The editor sits over the layers, leaving its own row (and the ones above) in view.
     if (editor != nullptr)
