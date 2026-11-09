@@ -4,6 +4,7 @@
 #include "StageView.h"
 #include "RigView.h"
 #include "SongGrid.h"
+#include "RigExport.h"
 
 namespace
 {
@@ -237,6 +238,84 @@ struct RigSceneTests : juce::UnitTest
             RigView view (engine, &devices);
             view.restoreWindows();
             expect (view.isInOwnWindow ("MPC") && ! view.isInOwnWindow ("Stage"));
+        }
+
+        beginTest ("export for Logic: each loop, and each loop laid out over the song, starting on bar 1");
+        {
+            RigEngine engine;
+            engine.prepare (kSceneRate, kSceneBlock);
+            engine.getTransport().setBpm (120.0);
+            const int perBeat = (int) (kSceneRate / 2);
+            const auto makeLoop = [perBeat] (int beats)
+            {
+                juce::AudioBuffer<float> a (2, beats * perBeat);
+                for (int i = 0; i < a.getNumSamples(); ++i)
+                    for (int ch = 0; ch < 2; ++ch)
+                        a.setSample (ch, i, (float) (i / perBeat + 1) / 20.0f);
+                return a;
+            };
+            engine.getLooper().setLayerAudio (0, makeLoop (8), 8.0);
+            engine.getLooper().setLayerAudio (1, makeLoop (4), 4.0);
+            engine.getLooper().getLayer (0).level = 1.0f;
+            engine.getLooper().getLayer (1).level = 0.5f;
+
+            const auto dry = RigExport::renderLoop (engine, 1, 120.0, kSceneRate, false);
+            expectEquals (dry.getNumSamples(), 4 * perBeat, "one pass of the loop");
+            expectWithinAbsoluteError (dry.getSample (0, perBeat * 2 + 10), 0.15f, 1.0e-4f);
+            const auto heard = RigExport::renderLoop (engine, 1, 120.0, kSceneRate, true);
+            expectWithinAbsoluteError (heard.getSample (0, perBeat * 2 + 10), 0.075f, 1.0e-4f, "as heard: at its level");
+
+            // Part A (1 bar): loop 2 muted. Part B (2 bars): it comes in from its top.
+            RigScene a, b;
+            a.name = "Intro";
+            a.bars = 1;
+            a.state.loopMutes[0] = 0;
+            a.state.loopMutes[1] = 1;
+            b.name = "Verse";
+            b.bars = 2;
+            b.state.loopMutes[0] = 0;
+            b.state.loopMutes[1] = 0;
+            engine.getScenes().getScenes() = { a, b };
+            expectEquals (RigExport::songBars (engine), 3);
+            const auto stem = RigExport::renderSongStem (engine, 1, 120.0, kSceneRate, false);
+            expectEquals (stem.getNumSamples(), 12 * perBeat, "the whole song long");
+            expectLessThan (std::abs (stem.getSample (0, perBeat * 2)), 1.0e-6f, "muted in the intro");
+            expectWithinAbsoluteError (stem.getSample (0, perBeat * 4 + 10), 0.05f, 1.0e-4f, "starts from its top in the verse");
+            expectWithinAbsoluteError (stem.getSample (0, perBeat * 9 + 10), 0.10f, 1.0e-4f, "and goes round");
+            const auto long0 = RigExport::renderSongStem (engine, 0, 120.0, kSceneRate, false);
+            expectWithinAbsoluteError (long0.getSample (0, perBeat * 9 + 10), 0.10f, 1.0e-4f, "loop 1 plays straight through: beat 10 is its 2nd beat");
+
+            // With an effect, the "as heard" file is different from the dry one.
+            engine.getLoopFx (0).params.getParameter ("crush")->setValueNotifyingHost (0.9f);
+            const auto crushed = RigExport::renderLoop (engine, 0, 120.0, kSceneRate, true);
+            const auto plain = RigExport::renderLoop (engine, 0, 120.0, kSceneRate, false);
+            float diff = 0;
+            for (int i = 0; i < plain.getNumSamples(); i += 97)
+                diff = juce::jmax (diff, std::abs (crushed.getSample (0, i) - plain.getSample (0, i)));
+            expectGreaterThan (diff, 0.001f, "the loop's effects are printed");
+
+            const auto parent = juce::File::createTempFile ("rigexport");
+            parent.createDirectory();
+            const auto result = RigExport::exportForLogic (engine, parent);
+            expect (result.error.isEmpty(), result.error);
+            expectEquals (result.files, 2 * 2 + 2 + 1);
+            expectEquals (result.folder.getChildFile ("Loops").findChildFiles (juce::File::findFiles, false, "*.wav").size(), 2);
+            expectEquals (result.folder.getChildFile ("Loops").getChildFile ("Dry").findChildFiles (juce::File::findFiles, false, "*.wav").size(), 2);
+            expectEquals (result.folder.getChildFile ("Song").findChildFiles (juce::File::findFiles, false, "*.wav").size(), 2);
+            expect (result.folder.getChildFile ("Read me.txt").loadFileAsString().contains ("bar 2: Verse"));
+            juce::MidiFile midi;
+            juce::FileInputStream in (result.folder.getChildFile ("Song").getChildFile ("Song markers.mid"));
+            expect (midi.readFrom (in));
+            int markers = 0;
+            if (midi.getNumTracks() > 0)
+                for (auto* e : *midi.getTrack (0))
+                    if (e->message.isTextMetaEvent() && e->message.getMetaEventType() == 6)
+                        ++markers;
+            expectEquals (markers, 2, "a marker for each part");
+            parent.deleteRecursively();
+
+            RigEngine empty;
+            expect (RigExport::exportForLogic (empty, parent).error.isNotEmpty(), "nothing to export");
         }
 
         beginTest ("the song grid: parts switch loops on and off, and a loop that comes in starts from its top");

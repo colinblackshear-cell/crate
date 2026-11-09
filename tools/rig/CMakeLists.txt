@@ -42,6 +42,7 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/LooperView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/LoopEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SongGrid.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RigExport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigScenes.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SongView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/StageView.cpp
@@ -55,7 +56,7 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/RigPanels.cpp
     PARENT_SCOPE)
 
-target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigScenes.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp Vintage.cpp RigPanels.cpp
+target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp RigScenes.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp Vintage.cpp RigPanels.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -111,7 +112,7 @@ juce_add_plugin(CrateRigPlugin
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigScenes.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp Vintage.cpp RigPanels.cpp
+target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp RigScenes.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp Vintage.cpp RigPanels.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
