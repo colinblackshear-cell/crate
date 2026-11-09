@@ -9,12 +9,15 @@ target_sources(CrateTests PRIVATE
     RigFxTests.cpp
     RigLooperTests.cpp
     RigSceneTests.cpp
+    RigTimelineTests.cpp
     RigGrooveTests.cpp
     RigSamplerScreenTests.cpp
     RigVocoderScreenTests.cpp
     RigRecorderTests.cpp
     RigPluginTests.cpp
     RigSwitchTests.cpp
+    RigPluginSlotTests.cpp
+    RigPerformFxTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
     SoundBankTests.cpp
     SynthTests.cpp
@@ -38,6 +41,7 @@ target_link_libraries(CrateTests PRIVATE
     crate_core
     mpc_format
     rig_fonts
+    rig_hosting
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 add_test(NAME crate_tests COMMAND CrateTests)

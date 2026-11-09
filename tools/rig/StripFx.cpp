@@ -78,9 +78,15 @@ StripFx::StripFx()
     repeat = params.getRawParameterValue ("repeat");
 }
 
+void StripFx::setPlayHead (juce::AudioPlayHead* head)
+{
+    AudioProcessor::setPlayHead (head);
+    plugin.setPlayHead (head);
+}
+
 bool StripFx::isActive() const
 {
-    return std::abs (filter->load()) >= 0.02f || drive->load() > 0.01f || crush->load() > 0.01f
+    return plugin.isLoaded() || std::abs (filter->load()) >= 0.02f || drive->load() > 0.01f || crush->load() > 0.01f
         || delayMix->load() > 0.01f || reverbMix->load() > 0.01f || repeat->load() > 0.5f;
 }
 
@@ -103,6 +109,7 @@ double StripFx::currentBpm() const
 void StripFx::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     rate = sampleRate > 0 ? sampleRate : 44100.0;
+    plugin.prepare (rate, samplesPerBlock);
     for (auto& s : svf)
         s.clear();
     filterSmooth.reset (rate, 0.03);
@@ -314,11 +321,18 @@ void StripFx::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
     reverb.processStereo (wet.getWritePointer (0), wet.getWritePointer (1), n);
     buffer.addFrom (0, 0, wet, 0, 0, n);
     buffer.addFrom (1, 0, wet, 1, 0, n);
+
+    // Your own plugin last.
+    plugin.process (buffer, noPluginMidi);
 }
 
 void StripFx::getStateInformation (juce::MemoryBlock& data)
 {
-    if (auto xml = params.copyState().createXml())
+    auto state = params.copyState();
+    state.removeChild (state.getChildWithName ("Plugin"), nullptr);
+    if (plugin.isLoaded())
+        state.appendChild (plugin.toTree(), nullptr);
+    if (auto xml = state.createXml())
         copyXmlToBinary (*xml, data);
 }
 
@@ -326,5 +340,11 @@ void StripFx::setStateInformation (const void* data, int size)
 {
     if (auto xml = getXmlFromBinary (data, size))
         if (xml->hasTagName (params.state.getType()))
-            params.replaceState (juce::ValueTree::fromXml (*xml));
+        {
+            auto state = juce::ValueTree::fromXml (*xml);
+            const auto pluginTree = state.getChildWithName ("Plugin").createCopy();
+            state.removeChild (state.getChildWithName ("Plugin"), nullptr);
+            params.replaceState (state);
+            plugin.fromTree (pluginTree);
+        }
 }

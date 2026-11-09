@@ -5,6 +5,7 @@
 #include "LoopEditor.h"
 #include "StripFxPanel.h"
 #include "SongGrid.h"
+#include "TimelineView.h"
 #include "RigEngine.h"
 #include "core/ui/Theme.h"
 #include "Vintage.h"
@@ -44,6 +45,9 @@ public:
     // Opens (or closes) the song grid: loops and tools down the side, song parts across.
     void showSongGrid (bool show);
     SongGrid* getSongGrid() const { return songGrid.get(); }
+    // Opens (or closes) the timeline: the song composer, lanes of blocks over a bar ruler.
+    void showTimeline (bool show);
+    TimelineView* getTimeline() const { return timeline.get(); }
 
     // Status messages for the Rig's message line.
     std::function<void (const juce::String&)> onSay;
@@ -82,6 +86,8 @@ private:
     int fxLayer = -1;
     std::unique_ptr<SongGrid> songGrid;
     juce::TextButton songButton { "Song grid" };
+    std::unique_ptr<TimelineView> timeline;
+    juce::TextButton timelineButton { "Timeline" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LooperView)
 };

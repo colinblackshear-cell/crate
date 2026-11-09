@@ -69,7 +69,12 @@ public:
     int getArpStep() const { return arpStep; }
     int getActiveVoices() const;
 
+    // Optional: every note the synth plays (keys and arp) is also written here, at its sample
+    // in the block, so another instrument can play them (the Rig's plugin slot).
+    juce::MidiBuffer* noteTap = nullptr;
+
 private:
+    int tapSample = 0;
     struct Voice
     {
         int note = -1;

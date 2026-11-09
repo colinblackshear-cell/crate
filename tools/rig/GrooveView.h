@@ -17,7 +17,8 @@
 // accents; the vocoder's parts, the sampler's pads, the loop layers as big tiles), a row of
 // patterns (or sounds, modes, layers) under them, and eight knobs below.
 class GrooveView : public juce::Component,
-                   private juce::Timer
+                   private juce::Timer,
+                   private juce::MidiKeyboardState::Listener
 {
 public:
     explicit GrooveView (RigEngine&);
@@ -50,10 +51,20 @@ public:
     // The setting knob `index` (0-7) of the picked track turns: the tool and its parameter ID.
     std::pair<int, juce::String> knobFor (int index) const;
 
+    // Bass and Synth: their named sounds, Play/Stop, and keys on the screen.
+    void pickSound (int index);
+    void stepSound (int delta);
+    juce::String soundName() const;
+    int numSounds() const;
+    void pressPlay();   // the Bass's pattern: on (and the Rig plays) or off
+    bool hasKeys() const { return track == bass || track == synth; }
+    juce::MidiKeyboardState& getScreenKeys() { return keysState; }
+
     // Re-reads everything (after a show is loaded).
     void refresh();
 
     std::function<void (const juce::String& tab)> onOpen;
+    std::function<void (const juce::String&)> onSay;
     std::function<float (int strip)> meterOf;
     std::function<void()> onSample;
     std::function<bool()> isSampling;
@@ -71,6 +82,11 @@ public:
 
 private:
     void timerCallback() override;
+    void handleNoteOn (juce::MidiKeyboardState*, int channel, int note, float velocity) override;
+    void handleNoteOff (juce::MidiKeyboardState*, int channel, int note, float velocity) override;
+    void showSoundMenu();
+    void say (const juce::String&);
+    class PluginSlot* slotFor (int track) const;
     void buildTrack();
     void updateButtons();
     void setFollowKnobs();
@@ -115,7 +131,11 @@ private:
     std::array<bool, RigEngine::numStrips> mutesBeforeSolo {};
 
     juce::OwnedArray<TrackCard> cards;
-    juce::TextButton openButton, micButton { "Mic off" }, extraButton, barButton, clearButton { "Clear" };
+    juce::TextButton openButton, micButton { "Mic off" }, extraButton, barButton, clearButton { "Clear" }, soundButton,
+        soundPrev { "<" }, soundNext { ">" };
+    juce::MidiKeyboardState keysState;
+    juce::MidiKeyboardComponent screenKeys { keysState, juce::MidiKeyboardComponent::horizontalKeyboard };
+    juce::Rectangle<int> keysArea;
     juce::OwnedArray<juce::TextButton> patternButtons;
     std::vector<std::unique_ptr<vintage::Knob>> knobs;
     juce::Rectangle<int> tracksArea, wellArea, headerArea, numbersArea, gridArea, patternArea, knobBox, knobHeader;

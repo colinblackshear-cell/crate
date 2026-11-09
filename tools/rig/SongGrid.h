@@ -44,6 +44,7 @@ public:
     void clickCell (int part, int row);
     void addPart();
     void playSong();
+    void exportForLogic();
 
 private:
     class Cells;
@@ -53,7 +54,8 @@ private:
     std::unique_ptr<Cells> cells;
     juce::Viewport viewport;
     juce::Label title, help;
-    juce::TextButton addButton { "+ Part" }, songMode { "Song mode" }, playButton { "Play song" }, close { "Close" };
+    juce::TextButton addButton { "+ Part" }, songMode { "Song mode" }, playButton { "Play song" }, exportButton { "Export for Logic" }, close { "Close" };
+    juce::Label steps;
     int knownParts = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SongGrid)

@@ -77,7 +77,12 @@ public:
     int getCurrentStep() const { return currentStep; }
     int getTranspose() const { return transpose; }
 
+    // Optional: every note the bass plays (keys and pattern) is also written here, at its
+    // sample in the block, so another instrument can play them (the Rig's plugin slot).
+    juce::MidiBuffer* noteTap = nullptr;
+
 private:
+    int tapSample = 0, tapNote = -1;
     void noteOn (int note, float velocity, bool accent, bool legato);
     void noteOff();
     void handleMidi (const juce::MidiMessage&, bool sequencing);

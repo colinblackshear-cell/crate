@@ -1,6 +1,7 @@
 #include "SongGrid.h"
 
 #include "RigColours.h"
+#include "RigExport.h"
 #include "core/ui/Theme.h"
 
 namespace Theme = crate::Theme;
@@ -245,6 +246,12 @@ SongGrid::SongGrid (RigEngine& e) : engine (e)
     help.setText ("Lit plays, dark is muted, a dash leaves it. Click a part's name to play it; "
                   "click its length to change it, delete it or copy it.",
                   juce::dontSendNotification);
+    steps.setText (juce::String::fromUTF8 ("How to build a song:  1 Record a few loops   2 + Part keeps what's playing   "
+                                           "3 Click cells to switch loops on or off in each part   4 Click a part's length to set its bars   "
+                                           "5 Play song   6 Export for Logic"),
+                   juce::dontSendNotification);
+    steps.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    steps.setColour (juce::Label::textColourId, Theme::text);
     help.setFont (juce::FontOptions (13.0f));
     help.setColour (juce::Label::textColourId, Theme::textDim);
 
@@ -256,8 +263,11 @@ SongGrid::SongGrid (RigEngine& e) : engine (e)
     songMode.onClick = [this] { engine.getScenes().songMode = songMode.getToggleState(); };
     playButton.setTooltip ("Plays the song from part A, in song mode.");
     playButton.onClick = [this] { playSong(); };
+    exportButton.setTooltip ("Saves every loop as WAV files for Logic, all starting on bar 1: each loop on its own, and (if you've "
+                             "built a song) each loop laid out over the whole song, with a tempo and part-marker MIDI file.");
+    exportButton.onClick = [this] { exportForLogic(); };
     close.onClick = [this] { if (onClose) onClose(); };
-    for (auto* c : std::initializer_list<juce::Component*> { &title, &help, &addButton, &songMode, &playButton, &close })
+    for (auto* c : std::initializer_list<juce::Component*> { &title, &help, &steps, &addButton, &songMode, &playButton, &exportButton, &close })
         addAndMakeVisible (c);
     refresh();
 }
@@ -325,11 +335,25 @@ void SongGrid::playSong()
         return;
     }
     scenes.songMode = true;
+    engine.getTimeline().on = false;   // the parts run it, not the timeline
     songMode.setToggleState (true, juce::dontSendNotification);
     scenes.launch (0);
     if (! engine.getTransport().isPlaying())
         engine.getTransport().play();
     say (engine.getTransport().isPlaying() ? "The song starts from part A at the next bar." : "Playing the song from part A.");
+}
+
+void SongGrid::exportForLogic()
+{
+    const auto result = RigExport::exportForLogic (engine, RigExport::defaultFolder());
+    if (result.error.isNotEmpty() && result.files == 0)
+    {
+        say (result.error);
+        return;
+    }
+    say ("Exported " + juce::String (result.files) + " files to " + result.folder.getFullPathName()
+         + (result.error.isNotEmpty() ? " (" + result.error + ")" : juce::String()) + ". Drag them into Logic at bar 1.");
+    result.folder.revealToUser();
 }
 
 void SongGrid::paint (juce::Graphics& g)
@@ -346,6 +370,8 @@ void SongGrid::resized()
     title.setBounds (top.removeFromLeft (70));
     close.setBounds (top.removeFromRight (80));
     top.removeFromRight (8);
+    exportButton.setBounds (top.removeFromRight (140));
+    top.removeFromRight (8);
     playButton.setBounds (top.removeFromRight (100));
     top.removeFromRight (8);
     songMode.setBounds (top.removeFromRight (100));
@@ -353,6 +379,8 @@ void SongGrid::resized()
     addButton.setBounds (top.removeFromRight (80));
     top.removeFromRight (8);
     help.setBounds (top);
-    area.removeFromTop (8);
+    area.removeFromTop (6);
+    steps.setBounds (area.removeFromTop (22));
+    area.removeFromTop (6);
     viewport.setBounds (area);
 }

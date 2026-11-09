@@ -421,7 +421,15 @@ private:
         menu.addSectionHeader ("Layer " + juce::String (index + 1) + " records");
         const bool canChange = engine.getLooper().getState (index) != RigLooper::State::recording;
         for (int s = 0; s < RigLooper::numSources; ++s)
-            menu.addItem (RigLooper::sourceName (s), canChange, layer.source.load() == s, [this, s] { engine.getLooper().getLayer (index).source = s; });
+            menu.addItem (RigLooper::sourceName (s), canChange, layer.source.load() == s, [this, s]
+                          {
+                              engine.getLooper().getLayer (index).source = s;
+                              if (s == RigLooper::line)
+                              {
+                                  engine.inputOn = true;   // Line in is the Input strip: switch it on
+                                  engine.micOn = true;
+                              }
+                          });
         menu.addSectionHeader ("For");
         for (int b : RigLooper::barChoices())
             menu.addItem (b == 0 ? "Until you press again" : juce::String (b) + (b == 1 ? " bar" : " bars"), true, layer.bars.load() == b,
@@ -538,8 +546,8 @@ private:
 namespace
 {
 const std::array<int, 5> lengthChoices { 0, 1, 2, 4, 8 };
-const std::array<std::pair<int, const char*>, 3> sourceChoices { { { RigLooper::input, "Mic" }, { RigLooper::vocoder, "Vocoder" },
-                                                                   { RigLooper::mix, "Master" } } };
+const std::array<std::pair<int, const char*>, 4> sourceChoices { { { RigLooper::input, "Mic" }, { RigLooper::line, "Line in" },
+                                                                   { RigLooper::vocoder, "Vocoder" }, { RigLooper::mix, "Master" } } };
 }
 
 LooperView::LooperView (RigEngine& e) : engine (e)
@@ -589,6 +597,11 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     songButton.setTooltip ("Build the song: which loops (and tools) play in each part, and for how many bars.");
     songButton.onClick = [this] { showSongGrid (songGrid == nullptr); };
     addAndMakeVisible (songButton);
+    setLit (timelineButton, Lit::current);
+    timelineButton.getProperties().set ("fontSize", 17.0f);
+    timelineButton.setTooltip ("Compose the song: lanes for your loops and tools over a bar ruler. Place blocks, stretch them, fade them.");
+    timelineButton.onClick = [this] { showTimeline (timeline == nullptr); };
+    addAndMakeVisible (timelineButton);
     updateTop();
     startTimerHz (30);
 }
@@ -676,6 +689,15 @@ void LooperView::setNextBars (int bars)
 
 void LooperView::setNextSource (int source)
 {
+    // Line in is the Input strip: switch it (and the audio input) on so you hear what you play.
+    if (source == RigLooper::line && ! (engine.inputOn.load() && engine.micOn.load()))
+    {
+        engine.inputOn = true;
+        engine.micOn = true;
+        if (onSay)
+            onSay ("Line in: the Input strip is on. Plug your guitar or keytar into your interface "
+                   "(the strip's menu picks input 1, 2 or both).");
+    }
     for (int i = 0; i < RigLooper::kLayers; ++i)
         if (engine.getLooper().getState (i) == RigLooper::State::empty)
             engine.getLooper().getLayer (i).source = source;
@@ -774,6 +796,8 @@ void LooperView::refresh()
         r->refresh();
     if (songGrid != nullptr)
         songGrid->refresh();
+    if (timeline != nullptr)
+        timeline->refresh();
 }
 
 void LooperView::timerCallback()
@@ -785,6 +809,8 @@ void LooperView::timerCallback()
         fxPanel->tick();
     if (songGrid != nullptr)
         songGrid->tick();
+    if (timeline != nullptr)
+        timeline->tick();
     if (editor != nullptr)
     {
         editor->tick();
@@ -801,6 +827,7 @@ void LooperView::showSongGrid (bool show)
     if (show)
     {
         closeEditor();
+        showTimeline (false);
         songGrid = std::make_unique<SongGrid> (engine);
         songGrid->onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
         songGrid->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
@@ -809,6 +836,27 @@ void LooperView::showSongGrid (bool show)
     }
     songButton.setToggleState (show, juce::dontSendNotification);
     resized();
+}
+
+void LooperView::showTimeline (bool show)
+{
+    if (timeline != nullptr)
+        removeChildComponent (timeline.get());
+    timeline.reset();
+    if (show)
+    {
+        closeEditor();
+        showSongGrid (false);
+        timeline = std::make_unique<TimelineView> (engine);
+        timeline->onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
+        timeline->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
+                                                                     { if (safe != nullptr) safe->showTimeline (false); }); };
+        addAndMakeVisible (*timeline);
+    }
+    timelineButton.setToggleState (show, juce::dontSendNotification);
+    resized();
+    if (timeline != nullptr)
+        timeline->grabKeyboardFocus();
 }
 
 void LooperView::showFx (int layer)
@@ -822,6 +870,7 @@ void LooperView::showFx (int layer)
     {
         fxLayer = layer;
         fxPanel = std::make_unique<StripFxPanel> (engine.getLoopFx (layer), "Loop " + juce::String (layer + 1) + " effects", vintage::colours::loops);
+        fxPanel->onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
         fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
                                                                                { if (safe != nullptr && safe->fxPanel != nullptr) safe->showFx (safe->fxLayer); }); };
         addAndMakeVisible (*fxPanel);
@@ -833,6 +882,8 @@ void LooperView::editLoop (int layer)
 {
     if (songGrid != nullptr)
         showSongGrid (false);
+    if (timeline != nullptr)
+        showTimeline (false);
     if (editor != nullptr && editor->getLayer() == layer)
         return;
     closeEditor();
@@ -903,11 +954,12 @@ void LooperView::resized()
     controlsArea = top;
     {
         auto t = top;
-        recNext.setBounds (t.removeFromLeft (200));
+        const bool narrow = getWidth() < 1320;   // a small window: tighter buttons, so the LCD still fits
+        recNext.setBounds (t.removeFromLeft (narrow ? 150 : 200));
         t.removeFromLeft (12);
-        overdub.setBounds (t.removeFromLeft (110).reduced (0, 6));
+        overdub.setBounds (t.removeFromLeft (narrow ? 96 : 110).reduced (0, 6));
         t.removeFromLeft (8);
-        undoButton.setBounds (t.removeFromLeft (84).reduced (0, 6));
+        undoButton.setBounds (t.removeFromLeft (narrow ? 70 : 84).reduced (0, 6));
         t.removeFromLeft (18);
         auto lengths = t.removeFromLeft (5 * 46 + 4 * 6);
         lengthLabel = lengths.removeFromTop (16);
@@ -917,15 +969,30 @@ void LooperView::resized()
             lengths.removeFromLeft (6);
         }
         t.removeFromLeft (14);
-        auto sources = t.removeFromLeft (3 * 86 + 2 * 6);
+        const int sw = narrow ? 66 : 76;
+        auto sources = t.removeFromLeft (4 * sw + 3 * 6);
         sourceLabel = sources.removeFromTop (16);
         for (auto* b : sourceButtons)
         {
-            b->setBounds (sources.removeFromLeft (86).reduced (0, 1));
+            b->setBounds (sources.removeFromLeft (sw).reduced (0, 1));
             sources.removeFromLeft (6);
         }
         t.removeFromLeft (14);
-        songButton.setBounds (t.removeFromRight (96).reduced (0, 6));
+        if (narrow)
+        {
+            // One above the other, so the LCD keeps its room.
+            auto column = t.removeFromRight (100);
+            timelineButton.setBounds (column.removeFromTop (column.getHeight() / 2).reduced (0, 2));
+            songButton.setBounds (column.reduced (0, 2));
+        }
+        else
+        {
+            songButton.setBounds (t.removeFromRight (110).reduced (0, 6));
+            t.removeFromRight (8);
+            timelineButton.setBounds (t.removeFromRight (110).reduced (0, 6));
+        }
+        for (auto* b : { &songButton, &timelineButton })
+            b->getProperties().set ("fontSize", narrow ? 14.0f : 17.0f);
         t.removeFromRight (10);
         statusArea = t.removeFromRight (juce::jmin (260, juce::jmax (180, t.getWidth() / 2))).reduced (0, 6);
         t.removeFromRight (10);
@@ -950,6 +1017,12 @@ void LooperView::resized()
         auto bounds = getLocalBounds().reduced (22, 8).withTrimmedTop (86);
         songGrid->setBounds (bounds);
         songGrid->toFront (false);
+    }
+    if (timeline != nullptr)
+    {
+        // The whole screen below the top row: the song needs the room.
+        timeline->setBounds (getLocalBounds().reduced (12, 8).withTrimmedTop (86));
+        timeline->toFront (false);
     }
     // The editor sits over the layers, leaving its own row (and the ones above) in view.
     if (editor != nullptr)

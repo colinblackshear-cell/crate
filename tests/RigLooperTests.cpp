@@ -17,6 +17,7 @@ struct LooperRig
     juce::AudioBuffer<float> source { 2, kBlock }, out { 2, kBlock };
     std::function<float (double beat)> signal = [] (double) { return 0.0f; };
     std::vector<float> heard;   // left output, every sample
+    std::function<void()> afterBlock;   // e.g. the engine's timer
 
     LooperRig()
     {
@@ -45,6 +46,8 @@ struct LooperRig
                 heard.push_back (out.getSample (0, i));
             if (clock.playing)
                 clock.beat += kBlock * clock.bpm / (60.0 * kLoopRate);
+            if (afterBlock && b % 10 == 0)
+                afterBlock();
         }
     }
 
@@ -164,6 +167,40 @@ struct RigLooperTests : juce::UnitTest
             rig.clock.playing = true;
             rig.run (8.0);
             expectWithinAbsoluteError (rig.heardAtBeat (4.0), 0.5f, 0.01f);
+        }
+
+        beginTest ("a loop can be much longer than the room a layer starts with: it grows as it records");
+        {
+            LooperRig rig;
+            rig.afterBlock = [&rig] { rig.looper.maintain(); };
+            rig.signal = [] (double beat) { return (float) std::fmod (beat, 64.0) / 100.0f; };
+            const int startRoom = rig.looper.getCapacity (3);
+            expectWithinAbsoluteError ((double) startRoom, RigLooper::kStartSeconds * kLoopRate, 1.0);
+            rig.looper.getLayer (3).source = RigLooper::input;
+            rig.looper.getLayer (3).level = 1.0f;
+            rig.looper.pressRecord (3);   // free: until pressed again
+            rig.run (0.01);
+            rig.run (40 * 4.0);           // 40 bars at 120 BPM: 80 seconds
+            expect (rig.looper.getState (3) == RigLooper::State::recording, "still recording");
+            expectGreaterThan (rig.looper.getCapacity (3), startRoom, "the layer got more room");
+            rig.looper.pressRecord (3);
+            rig.run (4.0);
+            expect (rig.looper.getState (3) == RigLooper::State::playing);
+            expectWithinAbsoluteError (rig.looper.getLayer (3).lengthBeats.load(), 41 * 4.0, 1.0e-6, "41 whole bars");
+            const auto loop = rig.looper.copyLayerAudio (3);
+            expectWithinAbsoluteError ((double) loop.getNumSamples(), 41 * 2.0 * kLoopRate, 2.0 * kBlock);
+            // Nothing got lost on the way: a moment 70 seconds in is what was played then.
+            const int at = (int) (70.0 * kLoopRate);
+            expectWithinAbsoluteError (loop.getSample (0, at), (float) std::fmod (140.0, 64.0) / 100.0f, 0.01f);
+            // Overdub and undo work on a long loop too.
+            rig.looper.maintain();
+            rig.looper.pressRecord (3);
+            rig.run (1.0);
+            expect (rig.looper.getState (3) == RigLooper::State::overdubbing);
+            rig.looper.pressRecord (3);
+            rig.looper.undo (3);
+            rig.run (0.1);
+            expectWithinAbsoluteError (rig.looper.copyLayerAudio (3).getSample (0, at), loop.getSample (0, at), 1.0e-6f, "undo on a long loop");
         }
 
         beginTest ("trimming plays the part between two beats, and can be changed or put back");
@@ -338,6 +375,30 @@ struct RigLooperTests : juce::UnitTest
             expect (other.getLoopFx (2).isActive(), "the loop's reverb comes back with the show");
             expect (! other.getLoopFx (1).isActive());
             expectWithinAbsoluteError (other.getLoopFx (2).params.getRawParameterValue ("reverbMix")->load(), 0.5f, 0.01f);
+        }
+
+        beginTest ("Line in: a layer records the Input strip (a guitar on the interface)");
+        {
+            RigEngine engine;
+            engine.prepare (kLoopRate, kBlock);
+            engine.vocoderOn = false;
+            engine.micOn = true;
+            engine.inputOn = true;
+            engine.getTransport().setBpm (120.0);
+            expectEquals (RigLooper::sourceName (RigLooper::line), juce::String ("Line in"));
+            auto& layer = engine.getLooper().getLayer (0);
+            layer.source = RigLooper::line;
+            layer.bars = 1;
+            engine.getLooper().pressRecord (0);
+            juce::AudioBuffer<float> in (2, kBlock), out (2, kBlock);
+            for (int i = 0; i < kBlock; ++i)
+                for (int ch = 0; ch < 2; ++ch)
+                    in.setSample (ch, i, 0.3f * std::sin (i * 0.1f));
+            const int bar = (int) (2.0 * kLoopRate / kBlock);
+            for (int b = 0; b < bar + 10; ++b)
+                engine.process (in.getArrayOfReadPointers(), 2, out.getArrayOfWritePointers(), 2, kBlock);
+            expect (engine.getLooper().getState (0) == RigLooper::State::playing);
+            expectGreaterThan (engine.getLooper().copyLayerAudio (0).getMagnitude (0, 0, 4800), 0.05f, "the guitar is in the loop");
         }
 
         beginTest ("in the Rig: the looper records the bass, plays it through the Loops strip, and saves with the show");

@@ -5,21 +5,24 @@
 #include "RigEngine.h"
 #include "Vintage.h"
 
-// The Vocoder screen (F2): your voice through a row of stomp boxes.
+// The Vocoder screen (F2): your voice through a pedalboard, with every setting a click away.
 //
-// Easy shows a pedalboard. On the left, Raw voice: the mic's wave, Mic gain, the input level,
-// Monitor (hear your own voice) and Rec voice (sample the mic into the Sampler). Then five
-// pedals in a chain, each with one big knob and a footswitch: Robot (Beep-ness), Monster
-// (Growl), Vintage mic (Old-timey: which decade's microphone), Arp (Speed) and Chords (Happy to
-// sad: sing one note, hear a chord in that mood). On the right, Out: the level, Dry/wet (your
-// voice against the robot) and To looper (record it onto the next free loop layer).
+// Along the top, the sound: step through the vocoder's sounds (or pick one from the list, or
+// Surprise me), save your own, send the keys to the vocoder, Bypass all.
 //
-// Studio shows the vocoder's own full window, every setting.
+// Then the pedalboard: thirteen pedals in the order the sound goes through them. Tune, Harmony,
+// Robot, Character, Synth, Chords, Arp, Filter, Vintage, Dirt, Chorus, Echo and Space. Each has a
+// lamp, one knob for the thing you'll want most, and a footswitch. Click a pedal to open it in
+// the rack below: every one of its settings as a knob, what it does in plain words, Reset. So it
+// starts simple (stomp, turn one knob) and goes as deep as you like (open the rack).
+//
+// Beside the rack: Raw voice (the mic's wave, Mic gain, Monitor, Rec voice) and Out (the level,
+// Dry/wet, To looper). Full window shows the vocoder's own window.
 class VocoderScreen : public juce::Component,
                       private juce::Timer
 {
 public:
-    // Takes `studio` (the vocoder's own window) and shows it in Studio.
+    // Takes `studio` (the vocoder's own window) and shows it in Full window.
     VocoderScreen (RigEngine&, juce::Component* studio, bool standalone);
     ~VocoderScreen() override;
 
@@ -38,7 +41,7 @@ public:
     std::function<void()> onMic;
 
     // The pedals, in the chain's order.
-    enum PedalId { robot, monster, vintageMic, arp, chords, numPedals };
+    enum PedalId { tune, harmony, robot, character, synth, chords, arp, filter, vintageMic, dirt, chorus, echo, space, numPedals };
     static juce::String pedalName (int);
 
     // As a click does (the tests use these).
@@ -46,7 +49,16 @@ public:
     bool isStudio() const { return studioShown; }
     void stomp (int pedal);
     bool isOn (int pedal) const;
-    void turnKnob (int pedal, double value);   // in the knob's own range
+    void turnKnob (int pedal, double value);   // the pedal's own knob, in its setting's range
+    void selectPedal (int pedal);               // opens it in the rack
+    int getSelectedPedal() const { return selected; }
+    int numRackKnobs (int pedal) const;
+    void resetPedal (int pedal);                // its settings back to how they start
+    void pressChord (int degree);               // 0-6: the chords of the key; again to stop
+    int getActiveChord() const { return activeChord; }
+    void pickSound (int index);                 // one of the vocoder's sounds
+    void stepSound (int delta);
+    juce::String soundName() const { return shownSound; }
     void pressBypassAll();
     void pressMonitor();
     void pressToLooper();
@@ -55,11 +67,20 @@ public:
     double getDryWet() const;
     int getLooperLayer() const { return looperLayer; }
 
+    // Your own sounds, saved as files in Music/Crate/Vocoder Sounds.
+    static juce::File userSoundsFolder();
+    bool saveSound (const juce::String& name);
+    bool loadSound (const juce::File&);
+
     class Pedal;
 
 private:
     void timerCallback() override;
     void updateButtons();
+    void layoutRack();
+    void showSoundMenu();
+    void askToSave();
+    juce::Array<int> chordNotes (int degree) const;
     float param (const char* id) const;
     void setParam (const char* id, float value);
 
@@ -69,21 +90,29 @@ private:
     bool studioShown = false;
 
     juce::OwnedArray<Pedal> pedals;
+    std::array<std::vector<std::unique_ptr<vintage::Knob>>, numPedals> rackKnobs;
     std::array<bool, numPedals> beforeBypass {};
     bool bypassed = false;
-    float monsterGrowl = 7.0f;   // how deep Monster goes when it's on (formant down, in semitones)
-    int looperLayer = -1;        // the layer To looper is recording, or -1
+    int selected = robot, activeChord = -1;
 
-    juce::TextButton easyButton { "Easy" }, studioButton { "Studio" }, bypassButton { "Bypass all" }, monitorButton { "Monitor" },
-        recVoiceButton { "Rec voice" }, toLooperButton { "To looper" }, notesButton;
+    // What a pedal comes back as when it's switched on again.
+    float keptFormant = -7.0f, keptDrive = 0.35f, keptCrush = 0.0f, keptChorus = 0.4f, keptEcho = 0.3f, keptSpace = 0.3f, keptCutoff = 1500.0f,
+          keptFilterMode = 1.0f, keptHarmony = 3.0f;
+    int looperLayer = -1;   // the layer To looper is recording, or -1
+    juce::String shownSound { "Raw Voice" };
+
+    juce::TextButton boardButton { "Pedalboard" }, studioButton { "Full window" }, bypassButton { "Bypass all" }, monitorButton { "Monitor" },
+        recVoiceButton { "Rec voice" }, toLooperButton { "To looper" }, notesButton, prevSound { "<" }, nextSound { ">" },
+        soundsButton { "Sounds" }, surpriseButton { "Surprise me" }, rackPower { "On" }, rackReset { "Reset" };
+    juce::TextButton chordButtons[7];
     std::unique_ptr<vintage::Knob> micGain;
     juce::Slider dryWet;
     std::vector<float> inputHistory;
     float inputLevel = 0, outLevel = 0;
-    juce::String shownSignature;
+    juce::String shownSignature, chordSignature;
 
-    juce::Rectangle<int> modeRow, captionArea, notesLabel, rawWell, rawTitle, rawSub, scopeArea, inputLeds, chainLabel, chainArea, outWell,
-        outTitle, outLeds, dryWetLabel, arrow1, arrow2, micLamp;
+    juce::Rectangle<int> modeRow, soundLcd, boardArea, rawWell, rawTitle, rawSub, scopeArea, inputLeds, rackWell, rackTitle, rackText,
+        rackKnobArea, outWell, outTitle, outLeds, dryWetLabel, micLamp;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VocoderScreen)
 };

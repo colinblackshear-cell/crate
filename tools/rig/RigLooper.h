@@ -27,10 +27,15 @@ class RigLooper
 {
 public:
     static constexpr int kLayers = 8;
-    static constexpr double kMaxRecordSeconds = 32.0;
+    // Each layer starts with room for kStartSeconds; while it records, maintain() gives it more
+    // in the background, up to kMaxRecordSeconds (so a long loop only takes memory when you make one).
+    static constexpr double kStartSeconds = 32.0, kMaxRecordSeconds = 600.0;
+    static constexpr double kGrowAheadSeconds = 12.0;   // grows when less than this is left
 
     enum class State { empty, armed, recording, playing, overdubbing };
-    enum Source { input, vocoder, bass, synth, mpc, sampler, mix, numSources };
+    // line: the Input strip (a guitar, keytar... on your interface, through its effects). New
+    // sources go at the end, so saved shows keep theirs.
+    enum Source { input, vocoder, bass, synth, mpc, sampler, mix, line, numSources };
     static juce::String sourceName (int);
     static const std::array<int, 6>& barChoices();   // 0 (until you press again), 1, 2, 4, 8, 16
 
@@ -57,6 +62,7 @@ public:
         int length = 0;
         double startBeat = 0, stopBeat = -1;
         int writeIndex = 0;
+        std::atomic<int> recorded { 0 };      // writeIndex, for the message thread
         float gain = 0.8f;
     };
 
@@ -84,6 +90,10 @@ public:
     void reset (int layer);
     // Message thread: gives an empty layer room to record again after holding a long file.
     void makeRoom (int layer);
+    // Message thread, often (the engine's timer does it ~10 times a second): gives a layer that's
+    // recording more room before it fills up, and the undo room for the longest loop.
+    void maintain();
+    int getCapacity (int layer) const { return layers[(size_t) layer].audio.getNumSamples(); }
 
     // Trimming, on the message thread. The editor always works on the loop as it was before
     // you trimmed it, so you can change your mind: openTrim keeps a copy of the whole loop (or
@@ -107,6 +117,9 @@ public:
     void prepare (double sampleRate, int maxBlock = 4096);
     // Before prepare: the effects each layer plays through (null for none). Not owned.
     void setEffects (int layer, StripFx* fx) { effects[(size_t) layer] = fx; }
+    // The song timeline's level for a layer over the next block, from `from` to `to` (1 when
+    // the timeline isn't playing it). Before its effects, so an echo rings out after a fade.
+    void setArrangeGain (int layer, float from, float to) { arrangeFrom[(size_t) layer] = from; arrangeTo[(size_t) layer] = to; }
 
     struct Clock
     {
@@ -127,9 +140,11 @@ private:
 
     double sampleRate = 44100.0;
     std::array<Layer, kLayers> layers;
+    juce::SpinLock undoLock;              // the undo room, while maintain() makes it bigger
     juce::AudioBuffer<float> undoAudio;
     int undoLayer = -1, undoLength = 0;
     std::array<StripFx*, kLayers> effects {};
+    std::array<float, kLayers> arrangeFrom { 1, 1, 1, 1, 1, 1, 1, 1 }, arrangeTo { 1, 1, 1, 1, 1, 1, 1, 1 };
     std::array<juce::AudioBuffer<float>, kLayers> layerOut;   // a layer's sound, before its effects
     std::array<int, kLayers> fxTail {};                        // samples left of an effect's tail
     std::array<Trim, kLayers> trims;

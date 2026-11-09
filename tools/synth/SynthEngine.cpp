@@ -72,6 +72,8 @@ int Engine::getActiveVoices() const
 
 void Engine::voiceOn (int note, float velocity)
 {
+    if (noteTap != nullptr)
+        noteTap->addEvent (juce::MidiMessage::noteOn (1, juce::jlimit (0, 127, note), juce::jlimit (0.05f, 1.0f, velocity)), tapSample);
     // A free voice, or the one playing this note, or else the oldest.
     Voice* chosen = nullptr;
     for (auto& v : voices)
@@ -110,6 +112,8 @@ void Engine::voiceOn (int note, float velocity)
 
 void Engine::voiceOff (int note)
 {
+    if (noteTap != nullptr)
+        noteTap->addEvent (juce::MidiMessage::noteOff (1, juce::jlimit (0, 127, note)), tapSample);
     for (auto& v : voices)
         if (v.note == note && v.held)
         {
@@ -164,6 +168,8 @@ void Engine::handleMidi (const juce::MidiMessage& m)
         keyUp (m.getNoteNumber());
     else if (m.isAllNotesOff() || m.isAllSoundOff())
     {
+        if (noteTap != nullptr)
+            noteTap->addEvent (juce::MidiMessage::allNotesOff (1), tapSample);
         numHeld = numArp = 0;
         for (auto& v : voices)
             if (v.held)
@@ -273,6 +279,7 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
     auto event = midi.begin();
     for (int i = 0; i < numSamples; ++i, beat += beatsPerSample)
     {
+        tapSample = i;
         for (; event != midi.end() && (*event).samplePosition <= i; ++event)
             handleMidi ((*event).getMessage());
 
