@@ -86,6 +86,15 @@ public:
         else if (action == "clear")        clearChopsButton.triggerClick();
     }
     KeysView& getKeysView() { return keyboard; }
+    // A host with its own look (the Rig): its LookAndFeel for the controls, and a painter for
+    // the background and the tools and keys panels.
+    void useHostLook (juce::LookAndFeel& look, std::function<void (juce::Graphics&, juce::Rectangle<int> tools, juce::Rectangle<int> keys)> paintPanels)
+    {
+        hostPaint = std::move (paintPanels);
+        setLookAndFeel (&look);
+        repaint();
+    }
+
     // After the chops were changed from outside (the Rig's Sampler screen).
     void chopsChanged() { chopsFromHits = false; showChops(); }
     void chooseSoundFile() { chooseFile(); }
@@ -132,6 +141,7 @@ private:
     EditorProcessor& processor;
     EditDocument& document;
     crate::Theme::LookAndFeel lookAndFeel;
+    std::function<void (juce::Graphics&, juce::Rectangle<int>, juce::Rectangle<int>)> hostPaint;
     juce::TooltipWindow tooltips { this, 600 };
 
     // top bar

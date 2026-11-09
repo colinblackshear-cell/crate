@@ -124,6 +124,32 @@ struct RigSamplerScreenTests : juce::UnitTest
             expectEquals (sends, 1, "Send to MPC writes the kits");
             engine.getMpc().fullLevel = false;
         }
+
+        beginTest ("the full editor is on the Sampler screen: Edit shows it, Chop shows the pads");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            expect (full != nullptr);
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            expect (! screen.isEditMode());
+            expect (! full->isVisible(), "Chop · Pads first");
+            screen.setEditMode (true);
+            expect (screen.isEditMode());
+            expect (full->isVisible());
+            expect (full->getWidth() >= 1400 && full->getHeight() > 500, "the editor gets the screen");
+            for (auto* c : screen.getChildren())
+                if (c != full)
+                    if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText() == "Transients")
+                        expect (! b->isVisible(), "the chop tools hide while editing");
+            juce::Image image (juce::Image::ARGB, 1500, 760, true);
+            juce::Graphics g (image);
+            screen.paintEntireComponent (g, false);
+            screen.setEditMode (false);
+            expect (! full->isVisible());
+        }
     }
 };
 

@@ -55,7 +55,7 @@ juce::String StageView::channelPage (int c)
     return pages[juce::jlimit (0, kChannels - 1, c)];
 }
 
-StageView::StageView (RigEngine& e) : engine (e)
+StageView::StageView (RigEngine& e) : engine (e), pad (e.getPerformFx())
 {
     setOpaque (true);
     auto& transport = engine.getTransport();
@@ -111,6 +111,12 @@ StageView::StageView (RigEngine& e) : engine (e)
         addAndMakeVisible (b);
     }
 
+    padToggle.fontSize = 17.0f;
+    padToggle.setTooltip ("Swaps the channels for the FX pad: touch it to sweep a filter, repeat a beat, stop the tape, gate or build a riser over the whole mix.");
+    padToggle.onClick = [this] { setShowPad (! showPad); };
+    addAndMakeVisible (padToggle);
+    addChildComponent (pad);
+
     refresh();
     startTimerHz (30);
 }
@@ -124,6 +130,20 @@ void StageView::refresh()
 {
     shownSignature = {};
     timerCallback();
+    repaint();
+}
+
+void StageView::setShowPad (bool on)
+{
+    showPad = on;
+    pad.setVisible (on);
+    if (! on)
+        pad.release();
+    for (auto* m : mutes)
+        m->setVisible (! on);
+    padToggle.text = on ? "Mixer" : "FX pad";
+    padToggle.lit = on ? vintage::Lit::current : vintage::Lit::none;
+    padToggle.repaint();
     repaint();
 }
 
@@ -395,7 +415,7 @@ void StageView::paint (juce::Graphics& g)
     }
 
     // Channels.
-    for (int c = 0; c < kChannels; ++c)
+    for (int c = 0; c < (showPad ? 0 : kChannels); ++c)
     {
         auto r = channelAreas[(size_t) c];
         vintage::drawWell (g, r.toFloat(), 14.0f);
@@ -529,7 +549,8 @@ void StageView::resized()
 
     // Song parts along the bottom.
     auto partsRow = area.removeFromBottom (juce::roundToInt (132 * scale));
-    partsLabel = area.removeFromBottom (24);
+    partsLabel = area.removeFromBottom (34);
+    padToggle.setBounds (partsLabel.removeFromRight (juce::roundToInt (180 * scale)).reduced (0, 1));
     area.removeFromBottom (4);
     {
         const int gap = 12;
@@ -583,6 +604,7 @@ void StageView::resized()
     loopsArea = area.removeFromRight (sideW);
     area.removeFromRight (20);
     channelsArea = area;
+    pad.setBounds (channelsArea);
     const int gap = 12;
     const int cw = (area.getWidth() - gap * (kChannels - 1)) / kChannels;
     for (int c = 0; c < kChannels; ++c)

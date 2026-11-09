@@ -10,6 +10,8 @@
 class BassProcessor : public juce::AudioProcessor
 {
 public:
+    // Every note it plays is also written here (the Rig's plugin slot plays them). Audio thread.
+    void setNoteTap (juce::MidiBuffer* tap) { engine.noteTap = tap; }
     BassProcessor();
 
     juce::AudioProcessorValueTreeState params;

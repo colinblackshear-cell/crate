@@ -2,6 +2,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "PluginSlot.h"
+
 // A rack of live effects on one of the Rig's mixer strips: a DJ-style filter (one knob: left
 // is low-pass, right is high-pass, the middle is off), drive, bit crush, a delay and a beat
 // repeat in time with the Rig's tempo, and reverb. Every setting is a parameter, so the Rig's
@@ -14,6 +16,10 @@ public:
     StripFx();
 
     juce::AudioProcessorValueTreeState params;
+
+    // A plugin of your own (any installed effect: Quake, a Valhalla...) after the rack.
+    PluginSlot plugin { false };
+    void setPlayHead (juce::AudioPlayHead*) override;
 
     // Anything turned up? (The window lights the strip's FX button.)
     bool isActive() const;
@@ -77,6 +83,7 @@ private:
 
     juce::Reverb reverb;
     juce::AudioBuffer<float> wet;
+    juce::MidiBuffer noPluginMidi;
 
     std::atomic<float>* filter = nullptr;
     std::atomic<float>* resonance = nullptr;

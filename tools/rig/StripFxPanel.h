@@ -15,7 +15,8 @@ public:
     void resized() override;
     void tick();
 
-    juce::TextButton resetButton { "Reset" }, closeButton { "Close" };
+    juce::TextButton resetButton { "Reset" }, closeButton { "Close" }, pluginButton, pluginOpen { "Open" };
+    std::function<void (const juce::String&)> onSay;
 
 private:
     void setRepeat (int choice);

@@ -1,6 +1,8 @@
 #include "GrooveView.h"
 #include "RigColours.h"
 #include "RigPanels.h"
+#include "RigSounds.h"
+#include "PluginSlot.h"
 
 using vintage::Lit;
 using vintage::Weight;
@@ -261,11 +263,30 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     for (int t = 0; t < numTracks; ++t)
         addAndMakeVisible (cards.add (new TrackCard (*this, t)));
 
-    for (auto* b : { &openButton, &micButton, &extraButton, &barButton, &clearButton })
+    for (auto* b : { &openButton, &micButton, &extraButton, &barButton, &clearButton, &soundButton, &soundPrev, &soundNext })
     {
         wellButton (*b);
         addChildComponent (b);
     }
+    soundButton.setTooltip ("The sound: click for every sound, by kind.");
+    soundPrev.setTooltip ("The sound before.");
+    soundNext.setTooltip ("The next sound.");
+    soundButton.onClick = [this] { showSoundMenu(); };
+    soundPrev.onClick = [this] { stepSound (-1); };
+    soundNext.onClick = [this] { stepSound (1); };
+
+    // Keys on the screen: click them, or click them once and play the computer's keys (A W S E D...).
+    screenKeys.setColour (juce::MidiKeyboardComponent::whiteNoteColourId, juce::Colour (0xfff1e7d1));
+    screenKeys.setColour (juce::MidiKeyboardComponent::blackNoteColourId, juce::Colour (0xff1e1a16));
+    screenKeys.setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId, juce::Colour (0xff8a7f6c));
+    screenKeys.setColour (juce::MidiKeyboardComponent::shadowColourId, juce::Colours::black.withAlpha (0.3f));
+    screenKeys.setColour (juce::MidiKeyboardComponent::upDownButtonBackgroundColourId, juce::Colour (0xff2a2622));
+    screenKeys.setColour (juce::MidiKeyboardComponent::upDownButtonArrowColourId, juce::Colour (0xfff1e7d1));
+    screenKeys.setAvailableRange (24, 96);
+    screenKeys.setOctaveForMiddleC (4);
+    screenKeys.setKeyPressBaseOctave (4);
+    addChildComponent (screenKeys);
+    keysState.addListener (this);
     openButton.setVisible (true);
     openButton.onClick = [this] { if (onOpen) onOpen (tabFor (track)); };
 
@@ -279,7 +300,7 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     extraButton.onClick = [this]
     {
         if (track == bass)
-            setParam (engine.getBass().params, "sequencer", extraButton.getToggleState() ? 1.0f : 0.0f);
+            pressPlay();
         else if (track == vocoder)
             engine.vocoderOn = extraButton.getToggleState();
         updateButtons();
@@ -308,6 +329,199 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
 GrooveView::~GrooveView()
 {
     stopTimer();
+    keysState.removeListener (this);
+}
+
+// The screen's keys play the picked track, as a keyboard's keys do (the routing sends them there).
+void GrooveView::handleNoteOn (juce::MidiKeyboardState*, int, int note, float velocity)
+{
+    engine.addMidi (juce::MidiMessage::noteOn (1, note, velocity));
+}
+
+void GrooveView::handleNoteOff (juce::MidiKeyboardState*, int, int note, float)
+{
+    engine.addMidi (juce::MidiMessage::noteOff (1, note));
+}
+
+//==============================================================================
+namespace
+{
+const std::vector<RigSounds::Sound>* soundsFor (int track)
+{
+    return track == GrooveView::bass ? &RigSounds::bass() : track == GrooveView::synth ? &RigSounds::synth() : nullptr;
+}
+}
+
+PluginSlot* GrooveView::slotFor (int t) const
+{
+    return t == bass ? &engine.getBassPlugin() : t == synth ? &engine.getSynthPlugin() : nullptr;
+}
+
+int GrooveView::numSounds() const
+{
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+        return slot->numPrograms();
+    const auto* sounds = soundsFor (track);
+    return sounds != nullptr ? (int) sounds->size() : 0;
+}
+
+juce::String GrooveView::soundName() const
+{
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+    {
+        const auto program = slot->numPrograms() > 1 ? slot->programName (slot->currentProgram()).trim() : juce::String();
+        return slot->getName() + (program.isNotEmpty() ? ": " + program : juce::String());
+    }
+    if (track == bass)
+        return RigSounds::nameOf (engine.getBass().params, RigSounds::bass());
+    if (track == synth)
+        return RigSounds::nameOf (engine.getSynth().params, RigSounds::synth());
+    return {};
+}
+
+void GrooveView::pickSound (int index)
+{
+    const auto* sounds = soundsFor (track);
+    if (sounds == nullptr)
+        return;
+    // A built-in sound puts the track's own synth back.
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+        slot->clear();
+    auto& params = track == bass ? engine.getBass().params : engine.getSynth().params;
+    const auto& sound = (*sounds)[(size_t) juce::jlimit (0, (int) sounds->size() - 1, index)];
+    RigSounds::apply (params, sound);
+    updateButtons();
+    repaint();
+}
+
+void GrooveView::stepSound (int delta)
+{
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+    {
+        // A plugin: its own sounds.
+        const int n = slot->numPrograms();
+        if (n > 1)
+            slot->setProgram ((slot->currentProgram() + delta + n) % n);
+        updateButtons();
+        return;
+    }
+    const auto* sounds = soundsFor (track);
+    if (sounds == nullptr)
+        return;
+    const auto& params = track == bass ? engine.getBass().params : engine.getSynth().params;
+    const int n = (int) sounds->size();
+    pickSound ((RigSounds::indexOf (params, *sounds) + delta + n) % n);
+}
+
+void GrooveView::showSoundMenu()
+{
+    const auto* sounds = soundsFor (track);
+    auto* slot = slotFor (track);
+    if (sounds == nullptr || slot == nullptr)
+        return;
+    juce::SharedResourcePointer<PluginHost> host;
+    const auto plugins = host->instruments();
+    const bool external = slot->isLoaded();
+
+    juce::PopupMenu menu;
+    // The plugin's own sounds and window first, when there's one.
+    if (external)
+    {
+        menu.addSectionHeader (slot->getName());
+        menu.addItem (2001, "Open " + slot->getName() + "'s window");
+        const int n = slot->numPrograms();
+        if (n > 1)
+        {
+            juce::PopupMenu programs;
+            for (int i = 0; i < juce::jmin (n, 512); ++i)
+                programs.addItem (3000 + i, slot->programName (i).isNotEmpty() ? slot->programName (i) : "Sound " + juce::String (i + 1), true,
+                                  i == slot->currentProgram());
+            menu.addSubMenu (slot->getName() + "'s sounds", programs);
+        }
+        menu.addSeparator();
+    }
+
+    // The track's own sounds, by kind.
+    menu.addSectionHeader ("Built-in " + trackName (track));
+    juce::StringArray kinds;
+    for (const auto& s : *sounds)
+        kinds.addIfNotAlreadyThere (s.kind);
+    const auto current = external ? juce::String() : soundName();
+    for (const auto& kind : kinds)
+    {
+        juce::PopupMenu sub;
+        bool ticked = false;
+        for (int i = 0; i < (int) sounds->size(); ++i)
+            if (kind == (*sounds)[(size_t) i].kind)
+            {
+                const bool here = current == (*sounds)[(size_t) i].name;
+                ticked = ticked || here;
+                sub.addItem (1 + i, (*sounds)[(size_t) i].name, true, here);
+            }
+        menu.addSubMenu (kind, sub, true, nullptr, ticked);
+    }
+
+    // Your plugins.
+    menu.addSeparator();
+    menu.addSectionHeader ("Your instrument plugins");
+    if (plugins.empty())
+        menu.addItem (-1, host->hasScanned() ? "No instrument plugins found" : "Arturia and the rest show here after a scan", false, false);
+    else
+        PluginMenu::addPlugins (menu, plugins, 5000);
+    menu.addItem (2002, host->hasScanned() ? "Scan for plugins again" : "Scan for plugins (Arturia, Quake...)");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (soundButton),
+                        [safe = juce::Component::SafePointer<GrooveView> (this), plugins, t = track] (int result)
+                        {
+                            if (safe == nullptr || result == 0 || safe->track != t)
+                                return;
+                            auto* s = safe->slotFor (t);
+                            if (result == 2001)
+                                s->showWindow();
+                            else if (result == 2002)
+                                PluginMenu::scan ([safe] (const juce::String& text) { if (safe != nullptr) safe->say (text); },
+                                                  [safe] { if (safe != nullptr) safe->showSoundMenu(); });
+                            else if (result >= 5000)
+                            {
+                                const auto d = plugins[(size_t) (result - 5000)];
+                                safe->say ("Loading " + d.name + "...");
+                                s->load (d, [safe, s, name = d.name] (const juce::String& error)
+                                         {
+                                             if (safe == nullptr)
+                                                 return;
+                                             safe->say (error.isEmpty() ? name + " plays the " + trackName (safe->track)
+                                                                              + " track now: its steps, arp and keys. Its window is open."
+                                                                        : name + " didn't load: " + error);
+                                             if (error.isEmpty())
+                                                 s->showWindow();
+                                             safe->updateButtons();
+                                         });
+                            }
+                            else if (result >= 3000)
+                            {
+                                s->setProgram (result - 3000);
+                                safe->updateButtons();
+                            }
+                            else
+                                safe->pickSound (result - 1);
+                        });
+}
+
+void GrooveView::say (const juce::String& text)
+{
+    if (onSay)
+        onSay (text);
+}
+
+void GrooveView::pressPlay()
+{
+    auto& params = engine.getBass().params;
+    const bool on = getParam (params, "sequencer") > 0.5f;
+    setParam (params, "sequencer", on ? 0.0f : 1.0f);
+    // Play means you hear it: start the Rig if it's stopped.
+    if (! on && ! engine.getTransport().isPlaying())
+        engine.getTransport().play();
+    updateButtons();
 }
 
 void GrooveView::refresh()
@@ -482,6 +696,10 @@ void GrooveView::buildTrack()
     openButton.setTooltip ("Everything " + trackName (track) + " can do, on its own page.");
     micButton.setVisible (track == vocoder && showMic);
     extraButton.setVisible (track == bass || track == vocoder);
+    for (auto* b : { &soundButton, &soundPrev, &soundNext })
+        b->setVisible (hasKeys());
+    screenKeys.setVisible (hasKeys());
+    keysState.allNotesOff (1);
     barButton.setVisible (track == drums);
     clearButton.setVisible (track == drums || track == bass || track == synth);
     clearButton.setTooltip (track == drums ? "Clears the shown bar of the beat, for the four sounds here."
@@ -504,6 +722,12 @@ void GrooveView::updateButtons()
             b->repaint();
     };
     const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
+    if (hasKeys())
+    {
+        const auto text = soundName() + juce::String::fromUTF8 (" \xe2\x96\xbe");
+        if (soundButton.getButtonText() != text)
+            soundButton.setButtonText (text);
+    }
     switch (track)
     {
         case drums:
@@ -524,8 +748,8 @@ void GrooveView::updateButtons()
                 setLit (patternButtons[i], i == selected, Lit::current);
             const bool on = getParam (engine.getBass().params, "sequencer") > 0.5f;
             extraButton.setToggleState (on, juce::dontSendNotification);
-            extraButton.setButtonText (on ? "Pattern on" : "Pattern off");
-            extraButton.setTooltip ("On, the bass plays its pattern while the Rig plays. Off, it only plays what you play on the keys.");
+            extraButton.setButtonText (juce::String::fromUTF8 (on ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
+            extraButton.setTooltip ("Play: the bass plays its pattern (and the Rig starts if it's stopped). Stop: it only plays what you play on the keys.");
             break;
         }
         case synth:
@@ -1470,7 +1694,15 @@ void GrooveView::resized()
         };
         place (openButton, 132);
         place (clearButton, 76);
-        place (extraButton, 128);
+        place (extraButton, 110);
+        if (soundButton.isVisible())
+        {
+            right.removeFromRight (4);
+            soundNext.setBounds (right.removeFromRight (36).withSizeKeepingCentre (36, 44));
+            soundButton.setBounds (right.removeFromRight (190).withSizeKeepingCentre (190, 44));
+            soundPrev.setBounds (right.removeFromRight (36).withSizeKeepingCentre (36, 44));
+            right.removeFromRight (8);
+        }
         place (barButton, 112);
         place (micButton, 92);
         headerArea = headerArea.withRight (right.getRight());
@@ -1478,6 +1710,15 @@ void GrooveView::resized()
     c.removeFromTop (8);
     patternArea = c.removeFromBottom (44);
     c.removeFromBottom (12);
+    keysArea = {};
+    if (hasKeys())
+    {
+        keysArea = c.removeFromBottom (juce::jlimit (48, 72, c.getHeight() / 3));
+        screenKeys.setBounds (keysArea);
+        screenKeys.setKeyWidth (juce::jmax (12.0f, keysArea.getWidth() / 36.0f));
+        screenKeys.setLowestVisibleKey (track == bass ? 24 : 48);
+        c.removeFromBottom (10);
+    }
     {
         auto row = patternArea;
         const int count = juce::jmax (1, patternButtons.size());

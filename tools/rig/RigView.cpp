@@ -237,6 +237,7 @@ void RigView::showFx (int strip)
     else
     {
         fxPanel = std::make_unique<FxPanel> (engine, strip);
+        fxPanel->onSay = [this] (const juce::String& text) { say (text); };
         fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
                                                                                  { if (safe != nullptr) { safe->fxPanel.reset(); safe->mixerPage->resized(); } }); };
         mixerPage->addAndMakeVisible (*fxPanel);
@@ -362,6 +363,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto* grooveView = new GrooveView (engine);
     grooveView->setLookAndFeel (&vintageLook);
     grooveView->onOpen = [this] (const juce::String& name) { showTab (name); };
+    grooveView->onSay = [this] (const juce::String& text) { say (text); };
     grooveView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
     grooveView->onSample = [this] { toggleSampling(); };
     grooveView->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
@@ -404,6 +406,18 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
             if (auto* mpcView = dynamic_cast<MpcView*> (pages[(size_t) pageIndex ("MPC")].content.get()))
                 mpcView->exportToCard();
         };
+        // The full editor lives on the Sampler screen too (Edit · Effects · Keys), in a dark
+        // well on the panel, so every one of its tools is on the one screen.
+        samplerEditor->useHostLook (vintageLook, [samplerEditor] (juce::Graphics& g, juce::Rectangle<int> tools, juce::Rectangle<int> keys)
+        {
+            vintage::drawFace (g, samplerEditor->getLocalBounds());
+            vintage::drawWell (g, samplerEditor->getLocalBounds().reduced (2).toFloat());
+            g.setColour (juce::Colours::white.withAlpha (0.05f));
+            g.fillRoundedRectangle (tools.toFloat(), 8.0f);
+            g.fillRoundedRectangle (keys.toFloat(), 8.0f);
+        });
+        screen->ownEditor (samplerView);
+        samplerView = nullptr;
         samplerScreen = screen;
         addPage ("Sampler", samplerColour, screen);
     }
@@ -424,7 +438,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     stage = stageView;
     addPage ("Stage", Theme::text, stageView);
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
-    addPage (samplerEditor != nullptr ? "Sampler editor" : "Sampler", samplerColour, samplerView);
+    if (samplerView != nullptr)
+        addPage ("Sampler", samplerColour, samplerView);
     addPage ("Bass", bassColour, engine.getBass().createEditorAndMakeActive());
     addPage ("Synth", synthColour, engine.getSynth().createEditorAndMakeActive());
     auto* songView = new SongView (engine);
@@ -568,6 +583,12 @@ void RigView::refresh()
 
 void RigView::showTab (const juce::String& name)
 {
+    // The full sample editor is the Sampler screen's Edit side.
+    if (name == "Sampler editor" && samplerScreen != nullptr)
+    {
+        samplerScreen->setEditMode (true);
+        return showTab ("Sampler");
+    }
     const int i = pageIndex (name);
     if (i < 0)
         return;
