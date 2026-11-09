@@ -5,6 +5,7 @@
 #include "RigView.h"
 #include "SongGrid.h"
 #include "RigExport.h"
+#include "HelpPanel.h"
 
 namespace
 {
@@ -238,6 +239,34 @@ struct RigSceneTests : juce::UnitTest
             RigView view (engine, &devices);
             view.restoreWindows();
             expect (view.isInOwnWindow ("MPC") && ! view.isInOwnWindow ("Stage"));
+        }
+
+        beginTest ("the how-to guide opens on the screen you're on");
+        {
+            RigEngine engine;
+            engine.prepare (kSceneRate, kSceneBlock);
+            RigView view (engine, nullptr);
+            view.setSize (1440, 960);
+            view.showHelp (true);
+            expect (view.getHelp() != nullptr && view.getHelp()->isVisible());
+            expectEquals (HelpPanel::guides()[(size_t) HelpPanel ("Looper").getShown()].title, juce::String ("Looper (F3): record loops"));
+            if (view.getHelp() != nullptr)
+            {
+                expectEquals (HelpPanel::guides()[(size_t) view.getHelp()->getShown()].title, juce::String ("Groove (F1): patterns"), "it opens on the Groove screen's guide");
+                for (const auto& g : HelpPanel::guides())
+                    expect (g.steps.size() >= 3, g.title);
+                if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_HELP_SNAPSHOT", {}); path.isNotEmpty())
+                {
+                    view.getHelp()->show (4);
+                    const auto image = view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f);
+                    juce::File file (path);
+                    file.deleteFile();
+                    juce::FileOutputStream stream (file);
+                    juce::PNGImageFormat().writeImageToStream (image, stream);
+                }
+            }
+            view.showHelp (false);
+            expect (view.getHelp() == nullptr);
         }
 
         beginTest ("export for Logic: each loop, and each loop laid out over the song, starting on bar 1");

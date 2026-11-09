@@ -73,6 +73,7 @@ public:
 
     juce::OwnedArray<PanelButton> tabs;
     PanelButton more { "More" };
+    PanelButton help { "?" };   // the how-to guide
     std::function<void (const juce::String& page)> onScreen;
 };
 

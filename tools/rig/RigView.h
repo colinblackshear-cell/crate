@@ -29,6 +29,11 @@ public:
 
     // Shows a file chooser and saves or opens a show.
     void saveShowAs();
+    // Saves to the show you opened or last saved (asks for a name the first time): the show
+    // and its loops, together.
+    void saveShow();
+    void exportForLogic();
+    juce::File getCurrentShow() const { return currentShow; }
     void openShow();
     // Opens newly plugged-in keyboards. Runs every couple of seconds.
     void openMidiInputs();
@@ -84,6 +89,14 @@ private:
     void showKnobMenu();
     void finishKnobLearn();
     void say (const juce::String&);
+    juce::File currentShow;
+    std::unique_ptr<class HelpPanel> helpPanel;
+public:
+    // Opens (or closes) the how-to guide, on the current screen's guide.
+    void showHelp (bool show);
+    HelpPanel* getHelp() const { return helpPanel.get(); }
+private:
+    bool writeShowTo (const juce::File&);
 
     // Knob Learn watches for a setting being touched on screen.
     void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
