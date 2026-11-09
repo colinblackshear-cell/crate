@@ -258,6 +258,60 @@ struct RigGrooveTests : juce::UnitTest
             other.loadShow (show);
             expect ((bool) other.screens.getProperty ("dark", false));
         }
+
+        beginTest ("bass and synth: named sounds, Play, and keys on the screen");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            GrooveView view (engine);
+            view.setSize (1400, 740);
+
+            view.selectTrack (GrooveView::synth);
+            expect (view.hasKeys());
+            expect (view.numSounds() >= 16, "plenty of synth sounds");
+            expectEquals (view.soundName(), juce::String ("Init Supersaw"));
+            view.stepSound (1);
+            expectEquals (view.soundName(), juce::String ("Big Supersaw"));
+            expectWithinAbsoluteError (param (engine.getSynth().params, "detune"), 0.55f, 0.01f, "the sound's settings");
+            engine.getSynth().params.getParameter ("volume")->setValueNotifyingHost (0.3f);
+            view.pickSound (6);   // Pluck
+            expectEquals (view.soundName(), juce::String ("Pluck"));
+            expectWithinAbsoluteError (param (engine.getSynth().params, "detune"), 0.4f, 0.01f, "the last sound's settings don't leak in");
+            expectWithinAbsoluteError (param (engine.getSynth().params, "volume"), 0.3f, 0.01f, "the level stays");
+
+            // The screen's keys play it.
+            juce::AudioBuffer<float> out (2, kBlock);
+            for (int b = 0; b < 4; ++b)
+                engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
+            view.getScreenKeys().noteOn (1, 60, 0.9f);
+            float peak = 0;
+            for (int b = 0; b < 10; ++b)
+            {
+                engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
+                peak = juce::jmax (peak, out.getMagnitude (0, kBlock));
+            }
+            expect (peak > 0.01f, "a key on the screen makes the synth sound");
+            view.getScreenKeys().noteOff (1, 60, 0.0f);
+
+            view.selectTrack (GrooveView::bass);
+            expect (view.numSounds() >= 10, "plenty of bass sounds");
+            view.pickSound (1);
+            expectEquals (view.soundName(), juce::String ("Acid 303"));
+            expect (engine.getBass().params.state.getProperty ("soundName").toString() == "Acid 303", "kept with the bass");
+
+            engine.getBass().params.getParameter ("sequencer")->setValueNotifyingHost (0.0f);
+            engine.getTransport().stop();
+            runBlocks (engine, 1);
+            view.pressPlay();
+            expect (param (engine.getBass().params, "sequencer") > 0.5f, "Play: the pattern is on");
+            runBlocks (engine, 1);
+            expect (engine.getTransport().isPlaying(), "and the Rig plays, so you hear it");
+            view.pressPlay();
+            expect (param (engine.getBass().params, "sequencer") < 0.5f, "Stop");
+
+            view.selectTrack (GrooveView::drums);
+            expect (! view.hasKeys());
+        }
     }
 };
 
