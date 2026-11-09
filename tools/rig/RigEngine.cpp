@@ -122,6 +122,7 @@ bool RigEngine::playMpcSong (int song)
 
 RigEngine::~RigEngine()
 {
+    loopRoom.stopTimer();
     mpc.setPlayHead (nullptr);
     sampler.setPlayHead (nullptr);
     vocoder.setPlayHead (nullptr);
@@ -173,6 +174,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     rawInputBuffer.setSize (2, maxBlock);
     loopsBuffer.setSize (2, maxBlock);
     looper.prepare (sampleRate, maxBlock);
+    loopRoom.startTimerHz (10);
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
     capture.prepare (sampleRate);

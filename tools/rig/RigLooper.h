@@ -27,7 +27,10 @@ class RigLooper
 {
 public:
     static constexpr int kLayers = 8;
-    static constexpr double kMaxRecordSeconds = 32.0;
+    // Each layer starts with room for kStartSeconds; while it records, maintain() gives it more
+    // in the background, up to kMaxRecordSeconds (so a long loop only takes memory when you make one).
+    static constexpr double kStartSeconds = 32.0, kMaxRecordSeconds = 600.0;
+    static constexpr double kGrowAheadSeconds = 12.0;   // grows when less than this is left
 
     enum class State { empty, armed, recording, playing, overdubbing };
     enum Source { input, vocoder, bass, synth, mpc, sampler, mix, numSources };
@@ -57,6 +60,7 @@ public:
         int length = 0;
         double startBeat = 0, stopBeat = -1;
         int writeIndex = 0;
+        std::atomic<int> recorded { 0 };      // writeIndex, for the message thread
         float gain = 0.8f;
     };
 
@@ -84,6 +88,10 @@ public:
     void reset (int layer);
     // Message thread: gives an empty layer room to record again after holding a long file.
     void makeRoom (int layer);
+    // Message thread, often (the engine's timer does it ~10 times a second): gives a layer that's
+    // recording more room before it fills up, and the undo room for the longest loop.
+    void maintain();
+    int getCapacity (int layer) const { return layers[(size_t) layer].audio.getNumSamples(); }
 
     // Trimming, on the message thread. The editor always works on the loop as it was before
     // you trimmed it, so you can change your mind: openTrim keeps a copy of the whole loop (or
@@ -127,6 +135,7 @@ private:
 
     double sampleRate = 44100.0;
     std::array<Layer, kLayers> layers;
+    juce::SpinLock undoLock;              // the undo room, while maintain() makes it bigger
     juce::AudioBuffer<float> undoAudio;
     int undoLayer = -1, undoLength = 0;
     std::array<StripFx*, kLayers> effects {};

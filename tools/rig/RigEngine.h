@@ -201,6 +201,13 @@ private:
     RigTransport transport;
     RigRouting routing;
     RigLooper looper;
+    // Gives the looper's recording layers more room as they go (message thread).
+    struct LoopRoom : juce::Timer
+    {
+        explicit LoopRoom (RigLooper& l) : looper (l) {}
+        void timerCallback() override { looper.maintain(); }
+        RigLooper& looper;
+    } loopRoom { looper };
     RigScenes scenes;
     RigRecorder recorder;
     RigCapture capture;
