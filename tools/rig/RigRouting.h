@@ -117,6 +117,9 @@ private:
     // Where each key that's down went (by channel and note; 0 = not down), so its release goes
     // to the same tool even if the keys were sent somewhere else meanwhile. Audio thread.
     std::array<std::array<juce::uint8, 128>, 16> sounding {};
+    // The MPC note each drum pad held down is playing (+1; 0: none), so letting go stops that
+    // pad even if the pad bank changed meanwhile. Audio thread.
+    std::array<juce::int16, 128> padSounding {};
     void handleController (int channel, int cc, int value, Result&);
 
     std::atomic<int> learning { -1 };

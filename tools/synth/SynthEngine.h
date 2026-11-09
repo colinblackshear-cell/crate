@@ -58,7 +58,10 @@ class Engine
 public:
     void prepare (double sampleRate);
     void reset();
-    void setSettings (const Settings& s) { settings = s; }
+    // Switching the arp or latch while keys are held hands the keys over: arp on, the
+    // chord you hold becomes its notes; arp off, the chord plays; latch off, the arp keeps
+    // only the keys still held (nothing, once you've let go).
+    void setSettings (const Settings&);
     void setRhythm (const Rhythm& r) { rhythm = r; }
 
     void render (float* left, float* right, int numSamples, const juce::MidiBuffer&, const Clock&);

@@ -14,6 +14,7 @@ target_sources(CrateTests PRIVATE
     RigVocoderScreenTests.cpp
     RigRecorderTests.cpp
     RigPluginTests.cpp
+    RigSwitchTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
     SoundBankTests.cpp
     SynthTests.cpp

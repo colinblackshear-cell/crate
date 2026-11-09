@@ -151,14 +151,15 @@ struct RigPluginTests : juce::UnitTest
             expectEquals (plugin.getTotalNumInputChannels(), 2);
             juce::MidiBuffer midi;
             float stemPeak = 0, mainPeak = 0;
-            for (int b = 0; b < 4; ++b)
+            for (int b = 0; b < 8; ++b)
             {
                 buffer.clear();
                 for (int i = 0; i < kBlock; ++i)
                     for (int ch = 0; ch < 2; ++ch)
                         buffer.setSample (ch, i, 0.3f * std::sin (i * 0.05f));   // the mic, on the side chain
                 plugin.processBlock (buffer, midi);
-                mainPeak = juce::jmax (mainPeak, buffer.getMagnitude (0, 0, kBlock));
+                if (b >= 2)   // (the vocoder, switched off, takes a moment to fade out)
+                    mainPeak = juce::jmax (mainPeak, buffer.getMagnitude (0, 0, kBlock));
                 stemPeak = juce::jmax (stemPeak, buffer.getMagnitude (2, 0, kBlock));
             }
             expectGreaterThan (stemPeak, 0.1f);
