@@ -126,6 +126,9 @@ public:
     // interface (so laptop speakers can't feed back). Sampling and looping from the mic still
     // work. Off when the app starts; on in Logic (its Side Chain is the switch there).
     std::atomic<bool> micOn { false };
+    // The loudest the mic / audio input came in since the window last looked, whether or not
+    // anything is listening to it (so you can see the mic works before you switch it on).
+    std::atomic<float> micPeak { 0.0f };
 
     // The vocoder runs only while it's on (it uses the most processor time).
     std::atomic<bool> vocoderOn { true };

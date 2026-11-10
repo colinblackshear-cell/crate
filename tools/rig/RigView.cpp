@@ -283,7 +283,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         engine.micOn = ! engine.micOn.load();
         refresh();
         if (engine.micOn.load())
-            say ("Mic on: use headphones, or your speakers can feed back into the mic.");
+            sayMicOn();
     };
     header.tap.onClick = [this]
     {
@@ -333,7 +333,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         engine.micOn = micButton.getToggleState();
         refresh();
         if (engine.micOn.load())
-            say ("Mic on: use headphones, or your speakers can feed back into the mic.");
+            sayMicOn();
     };
     micButton.setTooltip ("Hear your mic (the vocoder and the Input strip). Use headphones with it on, so the speakers don't feed back. "
                           "Sampling and looping from the mic work either way. The Mic lamp at the top right switches it too.");
@@ -382,6 +382,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         screen->setLookAndFeel (&vintageLook);
         screen->onSay = [this] (const juce::String& text) { say (text); };
         screen->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+        screen->micLevel = [this] { return micMeter; };
         screen->onRecVoice = [this] { toggleSampling(); };
         screen->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
         screen->onMic = [this] { if (header.onMic) header.onMic(); };
@@ -866,6 +867,7 @@ void RigView::timerCallback()
         const float peak = engine.getStrip (st).peak.exchange (0.0f);
         meters[(size_t) st] = juce::jmax (peak, meters[(size_t) st] * 0.85f);
     }
+    micMeter = juce::jmax (engine.micPeak.exchange (0.0f), micMeter * 0.85f);
     for (auto& s : stripViews)
         s->tick (meters[(size_t) s->strip]);
 
@@ -1140,6 +1142,20 @@ void RigView::openMidiInputs()
         keyboardName = keyboardFound ? shown : "No keyboard";
         header.setTooltip (names.isEmpty() ? "No MIDI keyboard found" : "MIDI: " + names.joinIntoString (", "));
     }
+}
+
+void RigView::sayMicOn()
+{
+    const auto* device = devices != nullptr ? devices->getCurrentAudioDevice() : nullptr;
+    if (devices != nullptr && (device == nullptr || device->getActiveInputChannels().isZero()))
+    {
+        // Straight to the set-up, where the input is picked (More > Audio and MIDI set-up).
+        say ("Mic on, but no mic is coming in: pick your mic or interface as the Input here. If there's none to pick, "
+             "allow Crate Rig in System Settings > Privacy & Security > Microphone, then quit and reopen it.");
+        showAudioSettings();
+    }
+    else
+        say ("Mic on: use headphones, or your speakers can feed back into the mic.");
 }
 
 void RigView::showAudioSettings()

@@ -34,6 +34,8 @@ public:
 
     std::function<void (const juce::String&)> onSay;
     std::function<float (int strip)> meterOf;
+    // The mic's own level, as it comes in (before the Mic switch).
+    std::function<float()> micLevel;
     // Rec voice: start or stop sampling (RigView's Sample, set to the mic and the Sampler).
     std::function<void()> onRecVoice;
     std::function<bool()> isSampling;

@@ -34,6 +34,12 @@ public:
         {
             const auto saved = settings->getXmlValue ("audio");
             devices.initialise (granted ? 2 : 0, 2, saved.get(), true);
+            if (granted)
+                makeSureTheMicIsOpen();
+            else
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "The mic is blocked",
+                    "macOS isn't letting Crate Rig hear your mic. Turn Crate Rig on in System Settings > "
+                    "Privacy & Security > Microphone, then quit and reopen the Rig.");
             devices.addAudioCallback (engine.get());
             devices.addMidiInputDeviceCallback ({}, engine.get());
         });
@@ -61,6 +67,28 @@ public:
     void systemRequestedQuit() override { quit(); }
 
 private:
+    // The saved audio set-up can have no input in it (from a time the mic was blocked, or a
+    // mic that was unplugged), and then nothing would ever come in. Open the Mac's own input.
+    void makeSureTheMicIsOpen()
+    {
+        auto setup = devices.getAudioDeviceSetup();
+        const auto* device = devices.getCurrentAudioDevice();
+        if (device != nullptr && ! device->getActiveInputChannels().isZero())
+            return;
+        auto* type = devices.getCurrentDeviceTypeObject();
+        if (type == nullptr)
+            return;
+        type->scanForDevices();
+        const auto inputs = type->getDeviceNames (true);
+        if (inputs.isEmpty())
+            return;
+        if (setup.inputDeviceName.isEmpty() || ! inputs.contains (setup.inputDeviceName))
+            setup.inputDeviceName = inputs[juce::jmax (0, type->getDefaultDeviceIndex (true))];
+        setup.useDefaultInputChannels = true;
+        setup.inputChannels.clear();
+        devices.setAudioDeviceSetup (setup, true);
+    }
+
     static juce::File lastShowFile()
     {
         return juce::File::getSpecialLocation (juce::File::userMusicDirectory)
