@@ -83,6 +83,8 @@ private:
 
     void timerCallback() override;
     void showAudioSettings();
+    // After the mic is switched on: a reminder about headphones, or why nothing comes in.
+    void sayMicOn();
     void startLearning (int control, juce::Button&);
     void updateLearnButtons();
     void toggleSampling();
@@ -107,6 +109,7 @@ private:
 
     RigEngine& engine;
     juce::AudioDeviceManager* devices;
+    float micMeter = 0.0f;
     crate::Theme::LookAndFeel lookAndFeel;
 
     // The frame.

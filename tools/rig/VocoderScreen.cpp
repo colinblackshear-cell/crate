@@ -926,7 +926,7 @@ void VocoderScreen::updateButtons()
 
 void VocoderScreen::timerCallback()
 {
-    const float in = meterOf != nullptr ? meterOf (RigEngine::inputStrip) : 0.0f;
+    const float in = micLevel != nullptr ? micLevel() : 0.0f;
     const float out = meterOf != nullptr ? meterOf (RigEngine::vocoderStrip) : 0.0f;
     inputLevel = in;
     outLevel = out;

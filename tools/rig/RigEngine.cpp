@@ -221,6 +221,16 @@ void RigEngine::process (const float* const* inputs, int numInputs, float* const
     if (! prepared)
         return;
 
+    {
+        float peak = 0.0f;
+        for (int ch = 0; ch < juce::jmin (numInputs, 2); ++ch)
+            if (inputs[ch] != nullptr)
+                peak = juce::jmax (peak, juce::FloatVectorOperations::findMaximum (inputs[ch], numSamples),
+                                   -juce::FloatVectorOperations::findMinimum (inputs[ch], numSamples));
+        if (peak > micPeak.load (std::memory_order_relaxed))
+            micPeak.store (peak, std::memory_order_relaxed);
+    }
+
     for (int offset = 0; offset < numSamples;)
     {
         // (Up to the timeline's next jump or the end of its cycle, so it lands exactly.)
