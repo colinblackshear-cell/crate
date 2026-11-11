@@ -142,37 +142,52 @@ float Engine::renderSample (double beatsPerSample)
         currentNote = targetNote;
     }
 
-    const float hz = synth::noteToHz (currentNote);
+    // The LFO, on the filter, the pitch (up to a semitone) or the volume.
+    lfo.setIncrement (beatsPerSample / synth::SyncRates::beats (settings.lfoRate));
+    const float wobble = lfo.next();
+    const float pitchWobble = settings.lfoDest == 1 ? settings.lfoDepth * wobble : 0.0f;
+
+    const float hz = synth::noteToHz (currentNote + pitchWobble);
     const float dt = juce::jmin (0.45f, hz / (float) sampleRate);
+    const float width = juce::jlimit (0.05f, 0.5f, settings.pulseWidth);
     float v = 0.0f;
     switch (settings.wave)
     {
-        case synth::Wave::square:   v = osc.square (dt); break;
+        case synth::Wave::square:   v = osc.square (dt, width); break;
         case synth::Wave::triangle: v = osc.triangle (dt); break;
         default:                    v = osc.saw (dt); break;
+    }
+    if (settings.fat > 0.0f)
+    {
+        // A second oscillator a few cents up: the thick, beating sound.
+        const float dt2 = juce::jmin (0.45f, dt * std::exp2 ((4.0f + settings.fat * 18.0f) / 1200.0f));
+        const float w2 = settings.wave == synth::Wave::square ? fatOsc.square (dt2, width)
+                         : settings.wave == synth::Wave::triangle ? fatOsc.triangle (dt2) : fatOsc.saw (dt2);
+        v = v * (1.0f - 0.35f * settings.fat) + w2 * 0.7f * settings.fat;
     }
     v += settings.sub * 0.8f * subOsc.sine (dt * 0.5f);
 
     // The filter: cutoff, opened by the envelope (more on accents) and moved by the LFO.
     const float env = filterEnv.next();
-    lfo.setIncrement (beatsPerSample / synth::SyncRates::beats (settings.lfoRate));
-    const float wobble = lfo.next();
     if ((filterCounter++ & 7) == 0)
     {
-        const float octaves = (settings.envMod * (1.0f + noteAccent)) * env * 5.0f
-                              + settings.lfoDepth * wobble * 3.0f;
+        filter.setType (settings.filterType);
+        float octaves = (settings.envMod * (1.0f + noteAccent)) * env * 5.0f + settings.keyTrack * (currentNote - 36.0f) / 12.0f;
+        if (settings.lfoDest == 0)
+            octaves += settings.lfoDepth * wobble * 3.0f;
         filter.set (settings.cutoff * std::exp2 (octaves), juce::jmin (1.0f, settings.resonance + noteAccent * 0.15f));
     }
+    const float tremolo = settings.lfoDest == 2 ? 1.0f - settings.lfoDepth * (0.5f + 0.5f * wobble) : 1.0f;
 
     const float drive = 1.0f + settings.drive * 4.0f;
     float out = filter.process (v * 0.5f * drive);
-    out *= amp.next() * (0.7f + 0.3f * velocity) * (1.0f + noteAccent * 0.6f);
+    out *= amp.next() * (0.7f + 0.3f * velocity) * (1.0f + noteAccent * 0.6f) * tremolo;
     return std::tanh (out * 1.2f) * settings.volume;
 }
 
 void Engine::render (float* left, float* right, int numSamples, const juce::MidiBuffer& midi, const Clock& clock)
 {
-    amp.set (0.003f, 1.5f, 0.85f, 0.012f);
+    amp.set (settings.attack, 1.5f, 0.85f, settings.release);
     filterEnv.set (0.001f, settings.decay, 0.0f, settings.decay);
 
     const double beatsPerSample = clock.bpm / (60.0 * sampleRate);

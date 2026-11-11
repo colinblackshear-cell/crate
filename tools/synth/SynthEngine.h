@@ -4,16 +4,25 @@
 
 #include <array>
 
-// The Synth: an 8-voice synth (saw, square, triangle or a fat detuned supersaw) with a resonant
-// filter, envelopes and a tempo-synced LFO, plus an arpeggiator sequencer: hold a chord and it
-// plays the notes up, down, both ways, at random or as played, over 1-3 octaves, on the steps
-// you switch on in its 16-step rhythm.
+// The Synth: an 8-voice analog-style synth. Oscillator 1 (saw, square, triangle or a fat detuned
+// supersaw), oscillator 2 (its own wave, tuning and level), a sub oscillator and noise, into a
+// resonant filter (24 or 12 dB low-pass, band or high) with its own ADSR, key tracking and
+// velocity, then the amp ADSR, drive and stereo width. Poly, mono or legato, with glide. The LFO
+// moves the filter, pitch, volume or pulse width.
+//
+// Plus an arpeggiator sequencer: hold a chord and it plays the notes up, down, both ways, at
+// random, as played, as chords, inside-out or against the top note, over 1-4 octaves, on the steps
+// you switch on in its 16-step rhythm. Its speed runs from 8 bars a note to 1/32 triplets (or
+// free, in Hz), with swing, repeats and a chance per step.
 namespace crate::synthtool
 {
 constexpr int kVoices = 8;
 constexpr int kRhythmSteps = 16;
 
-enum class ArpMode { up, down, upDown, random, asPlayed };
+enum class ArpMode { up, down, upDown, random, asPlayed, chord, converge, pinky };
+enum class VoiceMode { poly, mono, legato };
+enum class LfoDest { filter, pitch, volume, pulseWidth };
+enum class Osc2Wave { off, saw, square, triangle, sine };
 
 struct Rhythm
 {
@@ -28,21 +37,43 @@ struct Settings
     synth::Wave wave = synth::Wave::supersaw;
     float detune = 0.4f;          // 0..1
     int octave = 0;               // -2..2
+    float pulseWidth = 0.5f;      // 0.05..0.5, the squares' width
+    Osc2Wave osc2Wave = Osc2Wave::off;
+    int osc2Semi = 0;             // -24..24
+    float osc2Fine = 7.0f;        // cents, -50..50
+    float osc2Level = 0.5f;
+    float subLevel = 0.0f;        // a square an octave down
+    float noiseLevel = 0.0f;
+    synth::FilterType filterType = synth::FilterType::low24;
     float cutoff = 2000.0f;       // Hz
     float resonance = 0.3f;
     float envMod = 0.4f;
+    float filterAttack = 0.002f;  // s
     float filterDecay = 0.4f;     // s
+    float filterSustain = 0.0f;
+    float keyTrack = 0.0f;        // 0..1: 1 = the cutoff follows the keys an octave per octave
+    float velFilter = 0.0f;       // 0..1: harder notes open the filter
     float attack = 0.005f, decay = 0.3f, sustain = 0.7f, release = 0.3f;
+    VoiceMode voiceMode = VoiceMode::poly;
+    float glide = 0.0f;           // s
     float lfoDepth = 0.0f;
     int lfoRate = 5;              // SyncRates index (1/8)
     synth::LfoShape lfoShape = synth::LfoShape::sine;
+    LfoDest lfoDest = LfoDest::filter;
+    float drive = 0.0f;
+    float width = 0.0f;           // stereo spread of the voices
     float volume = 0.7f;
 
     bool arpOn = false;
     ArpMode arpMode = ArpMode::up;
-    int arpRate = 6;              // SyncRates index (1/16)
-    int arpOctaves = 1;
+    int arpSpeed = synth::ArpRates::sixteenth;   // ArpRates index
+    bool arpSync = true;          // off: arpHz sets the speed
+    float arpHz = 8.0f;
+    int arpOctaves = 1;           // 1..4
     float arpGate = 0.5f;
+    float arpSwing = 0.0f;        // 0..1: every second step later (0.66 is a triplet shuffle)
+    int arpRepeats = 1;           // each note plays this many steps
+    float arpChance = 1.0f;       // the chance a lit step plays
     bool latch = false;
 };
 
@@ -79,8 +110,11 @@ private:
     {
         int note = -1;
         float velocity = 1;
+        float pitch = 60.0f;      // gliding towards `note`
+        float pan = 0.0f;         // -1..1
         std::array<synth::Oscillator, 3> osc;
-        synth::LowPass filter;
+        synth::Oscillator osc2, sub;
+        synth::MultiFilter filter;
         synth::Envelope amp, filterEnv;
         long long started = 0;
         bool held = false;
@@ -93,6 +127,8 @@ private:
     void keyUp (int note);
     int nextArpNote();
     void arpTick (long long stepIndex, double beat, double stepBeats);
+    void arpRelease();
+    void monoKeyUp();
 
     Settings settings;
     Rhythm rhythm;
@@ -113,7 +149,11 @@ private:
     int arpStep = -1;
     int arpPosition = -1;
     int arpDirection = 1;
-    int arpPlaying = -1;
+    std::array<int, 32> arpSounding {};   // the arp's notes now playing (a chord in Chord mode)
+    int numSounding = 0;
+    int arpRepeat = 0, arpLastNote = -1;
+    float lastPitch = -1.0f;              // where the next note glides from
+    int voiceCounter = 0;
     double arpOffBeat = 0;
     double freeClock = 0;
     juce::Random random { 99 };

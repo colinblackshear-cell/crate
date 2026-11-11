@@ -77,7 +77,7 @@ SynthView::SynthView (SynthProcessor& p)
       lfoRate (p.params, "lfoRate", "LFO rate"),
       lfoShape (p.params, "lfoShape", "LFO shape"),
       arpMode (p.params, "arpMode", "Mode"),
-      arpRate (p.params, "arpRate", "Rate"),
+      arpRate (p.params, "arpSpeed", "Rate"),
       arpOn (p.params, "arpOn", "Arp on", synthColour),
       latch (p.params, "latch", "Latch", synthColour),
       rhythm (p),

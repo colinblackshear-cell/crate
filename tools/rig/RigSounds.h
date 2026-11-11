@@ -68,8 +68,8 @@ inline const std::vector<Sound>& bass()
 // The settings a sound never changes.
 inline bool keeps (const juce::String& id)
 {
-    for (auto* kept : { "pattern", "sequencer", "keysTranspose", "stepRate", "gate", "root", "volume", "arpOn", "arpMode", "arpRate", "arpOctaves",
-                        "arpGate", "latch" })
+    for (auto* kept : { "pattern", "sequencer", "keysTranspose", "stepRate", "gate", "root", "volume", "arpOn", "arpMode", "arpSpeed", "arpSync", "arpHz",
+                        "arpOctaves", "arpGate", "arpSwing", "arpRepeats", "arpChance", "latch" })
         if (id == kept)
             return true;
     return false;

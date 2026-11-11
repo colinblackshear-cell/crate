@@ -43,6 +43,14 @@ struct Settings
     int lfoRate = 4;             // index into SyncRates
     synth::LfoShape lfoShape = synth::LfoShape::sine;
     float volume = 0.8f;
+    // The deeper settings (their defaults leave the sound as it was).
+    float pulseWidth = 0.5f;     // 0.05..0.5, the square's width
+    float fat = 0.0f;            // 0..1: a second, detuned oscillator
+    synth::FilterType filterType = synth::FilterType::low24;
+    float keyTrack = 0.0f;       // 0..1: the cutoff follows the notes
+    float attack = 0.003f;       // s, the volume's attack
+    float release = 0.012f;      // s, the volume's release
+    int lfoDest = 0;             // 0 filter, 1 pitch, 2 volume
     int root = 36;               // MIDI note of step note 0 (C2)
     int stepRate = 6;            // index into SyncRates (1/16)
     float gate = 0.55f;          // share of a step a note holds
@@ -92,8 +100,8 @@ private:
     const Pattern* pattern = nullptr;
     double sampleRate = 44100.0;
 
-    synth::Oscillator osc, subOsc;
-    synth::LowPass filter;
+    synth::Oscillator osc, subOsc, fatOsc;
+    synth::MultiFilter filter;
     synth::Envelope amp, filterEnv;
     synth::Lfo lfo;
 

@@ -64,11 +64,49 @@ juce::AudioProcessorValueTreeState::ParameterLayout SynthProcessor::createLayout
     choice ("lfoShape", "LFO shape", { "Sine", "Triangle", "Saw", "Square", "Random" }, 0);
     number ("volume", "Volume", { 0.0f, 1.0f }, 0.7f);
 
+    // The deeper sound settings (added later; their defaults leave the sound as it was).
+    number ("pulseWidth", "Pulse width", { 0.05f, 0.5f }, 0.5f);
+    choice ("osc2Wave", "Osc 2", { "Off", "Saw", "Square", "Triangle", "Sine" }, 0);
+    integer ("osc2Semi", "Osc 2 tune", -24, 24, 0);
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "osc2Fine", 1 }, "Osc 2 fine", NormalisableRange<float> (-50.0f, 50.0f), 7.0f,
+                                                       AudioParameterFloatAttributes().withStringFromValueFunction (
+                                                           [] (float v, int) { return juce::String (juce::roundToInt (v)) + " ct"; })));
+    number ("osc2Level", "Osc 2 level", { 0.0f, 1.0f }, 0.5f);
+    number ("subLevel", "Sub", { 0.0f, 1.0f }, 0.0f);
+    number ("noiseLevel", "Noise", { 0.0f, 1.0f }, 0.0f);
+    choice ("filterType", "Filter type", { "Low 24", "Low 12", "Band", "High" }, 0);
+    number ("filterAttack", "Filter attack", logRange (0.001f, 3.0f), 0.002f, "s");
+    number ("filterSustain", "Filter sustain", { 0.0f, 1.0f }, 0.0f);
+    number ("keyTrack", "Key track", { 0.0f, 1.0f }, 0.0f);
+    number ("velFilter", "Velocity", { 0.0f, 1.0f }, 0.0f);
+    choice ("voiceMode", "Voices", { "Poly", "Mono", "Legato" }, 0);
+    {
+        NormalisableRange<float> glide (0.0f, 1.5f);
+        glide.setSkewForCentre (0.15f);
+        number ("glide", "Glide", glide, 0.0f, "s");
+    }
+    choice ("lfoDest", "LFO to", { "Filter", "Pitch", "Volume", "Pulse width" }, 0);
+    number ("drive", "Drive", { 0.0f, 1.0f }, 0.0f);
+    number ("width", "Width", { 0.0f, 1.0f }, 0.0f);
+
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "arpOn", 1 }, "Arp", false));
-    choice ("arpMode", "Arp mode", { "Up", "Down", "Up and down", "Random", "As played" }, 0);
-    choice ("arpRate", "Arp rate", synth::SyncRates::names(), 6);
-    integer ("arpOctaves", "Arp octaves", 1, 3, 1);
+    choice ("arpMode", "Arp mode", { "Up", "Down", "Up and down", "Random", "As played", "Chord", "Converge", "Pinky" }, 0);
+    // Slowest first, so the knob turns down to slow. (Replaces the old "arpRate"; old shows
+    // are moved over as they load.)
+    choice ("arpSpeed", "Arp speed", synth::ArpRates::names(), synth::ArpRates::sixteenth);
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "arpSync", 1 }, "Arp sync", true));
+    {
+        NormalisableRange<float> hz (0.1f, 30.0f);
+        hz.setSkewForCentre (4.0f);
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "arpHz", 1 }, "Arp free rate", hz, 8.0f,
+                                                           AudioParameterFloatAttributes().withStringFromValueFunction (
+                                                               [] (float v, int) { return juce::String (v, v < 10.0f ? 1 : 0) + " Hz"; })));
+    }
+    integer ("arpOctaves", "Arp octaves", 1, 4, 1);
     number ("arpGate", "Arp gate", { 0.05f, 1.0f }, 0.5f);
+    number ("arpSwing", "Arp swing", { 0.0f, 1.0f }, 0.0f);
+    integer ("arpRepeats", "Arp repeats", 1, 4, 1);
+    number ("arpChance", "Arp chance", { 0.0f, 1.0f }, 1.0f);
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "latch", 1 }, "Latch", false));
     return layout;
 }
@@ -109,11 +147,33 @@ synthtool::Settings SynthProcessor::readSettings() const
     s.lfoRate = (int) get (params, "lfoRate");
     s.lfoShape = (synth::LfoShape) (int) get (params, "lfoShape");
     s.volume = get (params, "volume");
+    s.pulseWidth = get (params, "pulseWidth");
+    s.osc2Wave = (synthtool::Osc2Wave) (int) get (params, "osc2Wave");
+    s.osc2Semi = (int) get (params, "osc2Semi");
+    s.osc2Fine = get (params, "osc2Fine");
+    s.osc2Level = get (params, "osc2Level");
+    s.subLevel = get (params, "subLevel");
+    s.noiseLevel = get (params, "noiseLevel");
+    s.filterType = (synth::FilterType) (int) get (params, "filterType");
+    s.filterAttack = get (params, "filterAttack");
+    s.filterSustain = get (params, "filterSustain");
+    s.keyTrack = get (params, "keyTrack");
+    s.velFilter = get (params, "velFilter");
+    s.voiceMode = (synthtool::VoiceMode) (int) get (params, "voiceMode");
+    s.glide = get (params, "glide");
+    s.lfoDest = (synthtool::LfoDest) (int) get (params, "lfoDest");
+    s.drive = get (params, "drive");
+    s.width = get (params, "width");
     s.arpOn = get (params, "arpOn") > 0.5f;
     s.arpMode = (synthtool::ArpMode) (int) get (params, "arpMode");
-    s.arpRate = (int) get (params, "arpRate");
+    s.arpSpeed = (int) get (params, "arpSpeed");
+    s.arpSync = get (params, "arpSync") > 0.5f;
+    s.arpHz = get (params, "arpHz");
     s.arpOctaves = (int) get (params, "arpOctaves");
     s.arpGate = get (params, "arpGate");
+    s.arpSwing = get (params, "arpSwing");
+    s.arpRepeats = (int) get (params, "arpRepeats");
+    s.arpChance = get (params, "arpChance");
     s.latch = get (params, "latch") > 0.5f;
     return s;
 }
@@ -203,6 +263,25 @@ void SynthProcessor::setStateInformation (const void* data, int size)
         r.length = juce::jlimit (1, synthtool::kRhythmSteps, (int) t.getProperty ("length", synthtool::kRhythmSteps));
         setRhythm (r);
         state.removeChild (t, nullptr);
+    }
+    // Shows from before the arp's speed knob kept "arpRate" (an older list of speeds): move it over.
+    auto paramNamed = [&state] (const juce::String& id)
+    {
+        for (auto child : state)
+            if (child.hasType ("PARAM") && child.getProperty ("id").toString() == id)
+                return child;
+        return juce::ValueTree();
+    };
+    if (auto old = paramNamed ("arpRate"); old.isValid())
+    {
+        if (! paramNamed ("arpSpeed").isValid())
+        {
+            juce::ValueTree speed ("PARAM");
+            speed.setProperty ("id", "arpSpeed", nullptr);
+            speed.setProperty ("value", synth::ArpRates::fromSyncRate (juce::roundToInt ((float) old.getProperty ("value"))), nullptr);
+            state.appendChild (speed, nullptr);
+        }
+        state.removeChild (old, nullptr);
     }
     params.replaceState (state);
 }

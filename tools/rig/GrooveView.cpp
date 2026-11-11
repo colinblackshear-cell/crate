@@ -359,7 +359,7 @@ PluginSlot* GrooveView::slotFor (int t) const
 
 int GrooveView::numSounds() const
 {
-    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isPlaying())
         return slot->numPrograms();
     const auto* sounds = soundsFor (track);
     return sounds != nullptr ? (int) sounds->size() : 0;
@@ -367,7 +367,7 @@ int GrooveView::numSounds() const
 
 juce::String GrooveView::soundName() const
 {
-    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isPlaying())
     {
         const auto program = slot->numPrograms() > 1 ? slot->programName (slot->currentProgram()).trim() : juce::String();
         return slot->getName() + (program.isNotEmpty() ? ": " + program : juce::String());
@@ -385,7 +385,7 @@ void GrooveView::pickSound (int index)
     if (sounds == nullptr)
         return;
     // A built-in sound puts the track's own synth back.
-    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isPlaying())
         slot->clear();
     auto& params = track == bass ? engine.getBass().params : engine.getSynth().params;
     const auto& sound = (*sounds)[(size_t) juce::jlimit (0, (int) sounds->size() - 1, index)];
@@ -396,7 +396,7 @@ void GrooveView::pickSound (int index)
 
 void GrooveView::stepSound (int delta)
 {
-    if (auto* slot = slotFor (track); slot != nullptr && slot->isLoaded())
+    if (auto* slot = slotFor (track); slot != nullptr && slot->isPlaying())
     {
         // A plugin: its own sounds.
         const int n = slot->numPrograms();
@@ -421,7 +421,7 @@ void GrooveView::showSoundMenu()
         return;
     juce::SharedResourcePointer<PluginHost> host;
     const auto plugins = host->instruments();
-    const bool external = slot->isLoaded();
+    const bool external = slot->isPlaying();
 
     juce::PopupMenu menu;
     // The plugin's own sounds and window first, when there's one.
@@ -493,7 +493,10 @@ void GrooveView::showSoundMenu()
                                                                               + " track now: its steps, arp and keys. Its window is open."
                                                                         : name + " didn't load: " + error);
                                              if (error.isEmpty())
+                                             {
+                                                 s->bypassed = false;   // it may have been switched off on the Synth or Bass page
                                                  s->showWindow();
+                                             }
                                              safe->updateButtons();
                                          });
                             }
@@ -652,6 +655,8 @@ void GrooveView::buildTrack()
             for (auto* m : arpModes)
                 add (m, "The arp plays the chord you hold, in this order, on the steps that are lit.");
             add ("Hold", "On, the arp keeps playing after you let go of the keys. Press a new chord to change it.");
+            add ("Slower", "The arp goes slower (down to a note every 8 bars). More arp settings on the Synth page.");
+            add ("Faster", "The arp goes faster (up to 1/32 triplets).");
             break;
         case vocoder:
             for (auto* name : vocoderSounds)
@@ -757,10 +762,13 @@ void GrooveView::updateButtons()
             auto& params = engine.getSynth().params;
             const bool arp = getParam (params, "arpOn") > 0.5f;
             const int mode = (int) getParam (params, "arpMode");
-            for (int i = 0; i < patternButtons.size() - 1; ++i)
+            const int modes = 1 + (int) std::size (arpModes);
+            for (int i = 0; i < juce::jmin (modes, patternButtons.size()); ++i)
                 setLit (patternButtons[i], i == 0 ? ! arp : arp && mode == i - 1, Lit::current);
-            if (auto* hold = patternButtons.getLast())
+            if (auto* hold = patternButtons[modes])
                 setLit (hold, getParam (params, "latch") > 0.5f, Lit::play);
+            for (int i = modes + 1; i < patternButtons.size(); ++i)
+                setLit (patternButtons[i], false, Lit::current);
             break;
         }
         case vocoder:
@@ -887,7 +895,13 @@ juce::String GrooveView::detailOf (int t) const
             auto& params = engine.getSynth().params;
             if (getParam (params, "arpOn") < 0.5f)
                 return "Keys";
-            return juce::String ("Arp ") + arpModes[juce::jlimit (0, (int) std::size (arpModes) - 1, (int) getParam (params, "arpMode"))];
+            // The mode (as the parameter names it, so the newer modes read right) and the speed.
+            juce::String mode = "Up";
+            if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (params.getParameter ("arpMode")))
+                mode = choice->getCurrentChoiceName();
+            const auto speed = getParam (params, "arpSync") > 0.5f ? crate::synth::ArpRates::names()[juce::roundToInt (getParam (params, "arpSpeed"))]
+                                                                   : juce::String (getParam (params, "arpHz"), 1) + " Hz";
+            return "Arp " + mode + " " + speed;
         }
         case vocoder:
         {
@@ -1306,8 +1320,17 @@ void GrooveView::pressPattern (int i)
                 setParam (params, "arpMode", (float) (i - 1));
                 setParam (params, "arpOn", 1.0f);
             }
-            else
+            else if (i == (int) std::size (arpModes) + 1)
                 setParam (params, "latch", getParam (params, "latch") > 0.5f ? 0.0f : 1.0f);
+            else
+            {
+                // Slower / Faster: one speed along (the speeds run slowest first).
+                const int speed = juce::jlimit (0, crate::synth::ArpRates::count - 1,
+                                                juce::roundToInt (getParam (params, "arpSpeed")) + (i == (int) std::size (arpModes) + 2 ? -1 : 1));
+                setParam (params, "arpSpeed", (float) speed);
+                setParam (params, "arpSync", 1.0f);
+                say ("Arp speed: " + crate::synth::ArpRates::names()[speed] + ".");
+            }
             break;
         }
         case vocoder:

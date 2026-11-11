@@ -11,6 +11,7 @@
 #include "MpcView.h"
 #include "SamplerScreen.h"
 #include "VocoderScreen.h"
+#include "SynthScreens.h"
 
 namespace Theme = crate::Theme;
 
@@ -446,8 +447,14 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
     if (samplerView != nullptr)
         addPage ("Sampler", samplerColour, samplerView);
-    addPage ("Bass", bassColour, engine.getBass().createEditorAndMakeActive());
-    addPage ("Synth", synthColour, engine.getSynth().createEditorAndMakeActive());
+    // The Bass and Synth as old analog synths, each with its instrument shell (your Arturia synths).
+    for (auto* screen : std::initializer_list<AnalogScreen*> { new BassScreen (engine), new SynthScreen (engine) })
+    {
+        screen->setLookAndFeel (&vintageLook);
+        screen->onSay = [this] (const juce::String& text) { say (text); };
+        const bool isBass = dynamic_cast<BassScreen*> (screen) != nullptr;
+        addPage (isBass ? "Bass" : "Synth", isBass ? bassColour : synthColour, screen);
+    }
     auto* songView = new SongView (engine);
     songView->onSay = [this] (const juce::String& text) { say (text); };
     song = songView;
