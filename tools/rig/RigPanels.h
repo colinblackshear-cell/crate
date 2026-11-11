@@ -99,7 +99,7 @@ public:
     std::function<void()> onEditParts;
 
     // The tracks Live now shows: their mixer strips.
-    static constexpr int kChips = 6;
+    static constexpr int kChips = 6, kChipWidth = 94;   // six chips fit beside the parts
     static int chipStrip (int chip);
     static juce::String chipName (int chip);
 

@@ -47,7 +47,6 @@ public:
     void bringBack (const juce::String& tab);
     bool isInOwnWindow (const juce::String& tab) const;
     void restoreWindows();
-
     // The page showing ("Guide", "Groove", "MPC"...), and going to one.
     juce::String getPage() const { return currentPage(); }
     void goTo (const juce::String& page) { showTab (page); }
@@ -123,6 +122,8 @@ private:
     rigpanels::ScreenBar screenBar;
     rigpanels::Footer footer;
     void showMoreMenu();
+    void showPopOutMenu();
+    class MoreView* moreView = nullptr;   // owned by its page
     void setDarkPanel (bool);
     juce::String currentPage() const;
     void nudgeTempo (double);

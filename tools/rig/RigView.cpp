@@ -3,6 +3,7 @@
 #include "HelpPanel.h"
 #include "LooperView.h"
 #include "SongView.h"
+#include "MoreView.h"
 #include "StageView.h"
 #include "GrooveView.h"
 #include "SoundsView.h"
@@ -304,7 +305,14 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
     // The screens, and More.
     screenBar.onScreen = [this] (const juce::String& page) { showTab (page); };
-    screenBar.more.onClick = [this] { showMoreMenu(); };
+    // More opens the More page (right-click: the quick menu).
+    screenBar.more.onClick = [this]
+    {
+        if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
+            showMoreMenu();
+        else
+            showTab ("More");
+    };
     screenBar.help.onClick = [this] { showHelp (helpPanel == nullptr); };
 
     // The song parts and Live now.
@@ -394,6 +402,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto* looperView = new LooperView (engine);
     looperView->setLookAndFeel (&vintageLook);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
+    looperView->onSongBuilder = [this] { showTab ("Song"); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
     // The Sampler · MPC screen, over the full sample editor (a page of its own, in More).
@@ -458,13 +467,40 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         addPage (isBass ? "Bass" : "Synth", isBass ? bassColour : synthColour, screen);
     }
     auto* songView = new SongView (engine);
+    songView->setLookAndFeel (&vintageLook);
     songView->onSay = [this] (const juce::String& text) { say (text); };
+    songView->onExport = [this] { exportForLogic(); };
     song = songView;
     addPage ("Song", RigColours::song, songView);
     auto* soundsView = new SoundsView (engine);
     soundsView->onSay = [this] (const juce::String& text) { say (text); };
     addPage ("Sounds", juce::Colour (0xffa1887f), soundsView);
     addPage ("Mixer", Theme::text, mixerPage);
+    {
+        // The More page: the tools in full, your show and the set-up, as big buttons.
+        auto* view = new MoreView (devices != nullptr);
+        view->setLookAndFeel (&vintageLook);
+        view->onOpen = [this] (const juce::String& name) { showTab (name); };
+        view->onSave = [this] { saveShow(); };
+        view->onSaveAs = [this] { saveShowAs(); };
+        view->onOpenShow = [this] { openShow(); };
+        view->onExport = [this] { exportForLogic(); };
+        view->onAudio = [this] { showAudioSettings(); };
+        view->onClick = [this]
+        {
+            auto& t = engine.getTransport();
+            t.metronome = ! t.metronome.load();
+            refresh();
+        };
+        view->onDark = [this] { setDarkPanel (! (bool) engine.screens.getProperty ("dark", false)); };
+        view->onPopOut = [this] { showPopOutMenu(); };
+        view->isClickOn = [this] { return engine.getTransport().metronome.load(); };
+        view->isDark = [this] { return (bool) engine.screens.getProperty ("dark", false); };
+        view->showName = [this] { return currentShow.getFileNameWithoutExtension(); };
+        view->hasPage = [this] (const juce::String& name) { return pageIndex (name) >= 0; };
+        moreView = view;
+        addPage ("More", Theme::text, view);
+    }
 
     // The Guide: the front page, with an entry for every tool above (the ones the Rig has).
     auto* guideView = new GuideView ([this] (const juce::String& name)
@@ -639,6 +675,7 @@ void RigView::showTab (const juce::String& name)
 // screen buttons go dark too. Leaving it puts the panel back as it was.
 void RigView::pageChanged()
 {
+    screenBar.setCurrent (currentPage());
     // The Guide is a night sky: it fills the window the same way.
     const bool onStage = currentPage() == "Stage" || currentPage() == "Guide";
     if (onStage == stageShown)
@@ -853,6 +890,8 @@ void RigView::timerCallback()
     }
     screenBar.setCurrent (currentPage());
     pageChanged();
+    if (moreView != nullptr && moreView->isShowing())
+        moreView->tick();
 
     // The Main screen sends the keys to the track you pick.
     if (keysTo.getSelectedId() != engine.getRouting().keysTo.load() + 1)
@@ -1366,6 +1405,28 @@ void RigView::setDarkPanel (bool dark)
         groove->repaint();
 }
 
+void RigView::showPopOutMenu()
+{
+    // Any screen or tool, into its own window (or to the front, if it's out already).
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Put a screen in its own window");
+    for (int i = 0; i < (int) pages.size(); ++i)
+        if (pages[(size_t) i].name != "More")
+            menu.addItem (i + 1, (pages[(size_t) i].name == "Song" ? juce::String ("Song builder") : pages[(size_t) i].name)
+                                     + (pages[(size_t) i].window != nullptr ? " (out: bring to front)" : ""));
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (moreView),
+                        [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+                        {
+                            if (safe == nullptr || result <= 0 || result > (int) safe->pages.size())
+                                return;
+                            const int i = result - 1;
+                            if (safe->pages[(size_t) i].window != nullptr)
+                                safe->pages[(size_t) i].window->toFront (true);
+                            else
+                                safe->popOut (i);
+                        });
+}
+
 void RigView::showMoreMenu()
 {
     juce::PopupMenu menu;
@@ -1373,7 +1434,7 @@ void RigView::showMoreMenu()
     menu.addSectionHeader ("Tools in full");
     const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Drum machine", "Drum machine: analog sounds and patterns" },
                                { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
-                               { "Synth", "Synth: sound and arp" }, { "Song", "Song: parts in order, lengths, names" },
+                               { "Synth", "Synth: sound and arp" }, { "Song", "Song builder: parts in order, lengths, names" },
                                { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer, effects and keyboard set-up" } };
     const auto here = currentPage();
     for (int i = 0; i < (int) std::size (tools); ++i)

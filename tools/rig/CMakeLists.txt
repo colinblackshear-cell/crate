@@ -48,6 +48,7 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/RigTimeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TimelineView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SongView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/MoreView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/StageView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SamplerScreen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/VocoderScreen.cpp
@@ -63,7 +64,7 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/SynthScreens.cpp
     PARENT_SCOPE)
 
-target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
+target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp MoreView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -120,7 +121,7 @@ juce_add_plugin(CrateRigPlugin
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
+target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp MoreView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}

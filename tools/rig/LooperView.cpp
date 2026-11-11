@@ -595,7 +595,14 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     setLit (songButton, Lit::current);
     songButton.getProperties().set ("fontSize", 17.0f);
     songButton.setTooltip ("Build the song: which loops (and tools) play in each part, and for how many bars.");
-    songButton.onClick = [this] { showSongGrid (songGrid == nullptr); };
+    songButton.onClick = [this]
+    {
+        // In the Rig, the song is built on the Song builder page (the same parts, in full).
+        if (onSongBuilder)
+            onSongBuilder();
+        else
+            showSongGrid (songGrid == nullptr);
+    };
     addAndMakeVisible (songButton);
     setLit (timelineButton, Lit::current);
     timelineButton.getProperties().set ("fontSize", 17.0f);

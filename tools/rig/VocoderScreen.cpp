@@ -90,28 +90,6 @@ const std::vector<PedalInfo>& pedalInfo()
     return info;
 }
 
-// A value as a person reads it: "35%", "1.2 kHz", "40 ms", "+7 st", a choice's name.
-juce::String readable (juce::RangedAudioParameter* p, double v)
-{
-    if (p == nullptr)
-        return juce::String (v, 2);
-    if (dynamic_cast<juce::AudioParameterFloat*> (p) == nullptr)
-        return p->getText (p->convertTo0to1 ((float) v), 32);
-    const auto range = p->getNormalisableRange();
-    juce::String unit = p->getLabel();
-    if (unit.isEmpty() && range.start >= 0.0f && range.end <= 1.0f)
-        return juce::String (juce::roundToInt (v * 100.0)) + "%";
-    if (unit == "cents")
-        unit = "ct";
-    if (unit == "Hz" && std::abs (v) >= 1000.0)
-        return juce::String (v / 1000.0, std::abs (v) >= 10000.0 ? 0 : 1) + " kHz";
-    if (unit == "ms" && v >= 1000.0)
-        return juce::String (v / 1000.0, 2) + " s";
-    const int decimals = std::abs (v) >= 100.0 ? 0 : std::abs (v) >= 10.0 ? (unit == "ms" ? 0 : 1) : (unit == "st" || unit == "oct" ? 1 : 2);
-    const bool signedValue = range.start < 0.0f;
-    return (signedValue && v > 0.004 ? "+" : "") + juce::String (v, decimals) + (unit.isNotEmpty() ? " " + unit : juce::String());
-}
-
 juce::String characterName (float semitones)
 {
     if (semitones <= -9.0f) return "Giant";

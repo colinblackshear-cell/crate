@@ -12,7 +12,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
             "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
             "Press Play (or the space bar). Everything plays in time with the Rig's clock.",
-            "Build the song: Looper > Timeline (lay it out bar by bar, with fades) or Looper > Song grid (parts you switch between).",
+            "Build the song: More > Song builder (parts you switch between, in order) or Looper > Timeline (lay it out bar by bar, with fades).",
             "Save show (Cmd+S) keeps everything. Export for Logic gives you the WAV files." },
           "Use headphones when the mic is on, so the speakers don't feed back into it." },
 
@@ -41,14 +41,19 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
           "Loops can be up to 10 minutes long. A short loop and a long one play together in time." },
 
         { "Build a song",
-          { "Record a few loops (and/or make patterns on the Groove screen).",
-            "Open Looper > Song grid.",
-            "+ Part keeps what's playing now as a part. Make a few: intro, verse, chorus...",
-            "Click the cells: lit plays in that part, dark is muted. Loops and tools are both in the grid.",
-            "Click a part's length to set how many bars it plays (or copy, update or delete it).",
-            "Press Play song. In song mode each part plays its bars, then the next one starts by itself.",
+          { "Open the Song builder: More > Song builder, or the Song button on the Looper.",
+            "Get something playing: a beat on the Groove screen, the Bass or Synth, loops on the Looper. Mute what shouldn't play yet.",
+            "Press + New part. It keeps what's playing now as the next column: which tracks and loops play, the MPC sequence, "
+            "the bass pattern and the arp.",
+            "Each column is a part, each row a track. Click a cell: ON plays in that part, OFF is muted. Right-click it for "
+            "AS IS (the part leaves that track alone).",
+            "Click a part's length (the amber LCD) to set how many bars it plays. Hold stays until you move on.",
+            "Double-click a part's name to rename it. Its menu moves it earlier or later, copies it, saves what's playing into it, or deletes it.",
+            "Press Play song: it plays from part A, each part for its length, then the next one. The strip at the top shows the "
+            "whole song to scale and where you are.",
             "A loop that comes in with a part starts from its top on the part's first beat." },
-          "You can still jump to any part live: click its name, or use the song part buttons along the bottom." },
+          "Jump to any part live: click its letter or its place in the strip, press keys 1-8, or the A-H buttons along the bottom. "
+          "Keys puts Next and Back on your keyboard's buttons." },
 
         { "Compose on the timeline",
           { "Record your loops and make your patterns first. Then open Looper > Timeline.",
@@ -62,12 +67,12 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "A lane with no blocks says \"live\": the timeline leaves it alone, so you can sing through the vocoder or play your guitar over the song.",
             "Rec onto song: record a loop while the song plays and it lands on its lane where you played it.",
             "Record song plays it once and keeps every tool as its own WAV. Export for Logic gives the loops laid out over the song." },
-          "Already built parts in the Song grid? From parts... lays them out on the timeline to shape further. Cmd+Z undoes, Delete removes a block, Cmd+D copies it." },
+          "Already built parts in the Song builder? From parts... lays them out on the timeline to shape further. Cmd+Z undoes, Delete removes a block, Cmd+D copies it." },
 
         { "Save and export",
           { "Save show (top bar, or Cmd+S): the show and its loops, together. The first time it asks for a name.",
             "More > Save show as... saves a copy under a new name; More > Open show... opens one.",
-            "Export for Logic (Song grid, or More): every loop as a WAV (with its effects and dry), each loop laid out over "
+            "Export for Logic (Song builder, or More): every loop as a WAV (with its effects and dry), each loop laid out over "
             "your song, and a MIDI file with the tempo and a marker per part. Every file starts on bar 1.",
             "Rec (top bar) records the whole set as you play it: a WAV per tool, the mix, and the notes as MIDI, in Music > Crate > Rig > Recordings.",
             "In Logic: set the same tempo and drag the files in at bar 1." },

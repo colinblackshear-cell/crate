@@ -509,7 +509,8 @@ void Knob::setUp (juce::Colour ring)
 
 void Knob::paint (juce::Graphics& g)
 {
-    engraved (g, name, nameArea, juce::Justification::centred, nameSize, inWell, inWell ? pal().wellInk : pal().ink);
+    engraved (g, name, nameArea, sideways ? juce::Justification::bottomLeft : juce::Justification::centred, nameSize, inWell,
+              inWell ? pal().wellInk : pal().ink);
     auto box = valueArea.toFloat();
     drawLcd (g, box);
     auto text = slider.getTextFromValue (slider.getValue());
@@ -519,11 +520,46 @@ void Knob::paint (juce::Graphics& g)
 void Knob::resized()
 {
     auto r = getLocalBounds();
-    nameArea = r.removeFromTop (20);
-    valueArea = r.removeFromBottom (juce::jlimit (20, 28, r.getHeight() / 4)).withSizeKeepingCentre (juce::jmin (r.getWidth(), 104),
-                                                                                                     juce::jlimit (20, 28, r.getHeight() / 4));
-    r.removeFromBottom (6);
-    r.removeFromTop (4);
+    if (sideways)
+    {
+        const int side = juce::jmin (r.getHeight(), r.getWidth() / 2);
+        slider.setBounds (r.removeFromLeft (side).withSizeKeepingCentre (side, side));
+        r.removeFromLeft (6);
+        auto text = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), 44));
+        nameArea = text.removeFromTop (text.getHeight() / 2 - 1);
+        text.removeFromTop (2);
+        valueArea = text.withWidth (juce::jmin (text.getWidth(), 104));
+        return;
+    }
+    // A short knob squeezes its name and value a little, so the knob itself stays big enough to grab.
+    const bool small = r.getHeight() < 100;
+    nameArea = r.removeFromTop (small ? 15 : 20);
+    const int valueHeight = small ? 18 : juce::jlimit (20, 28, r.getHeight() / 4);
+    valueArea = r.removeFromBottom (valueHeight).withSizeKeepingCentre (juce::jmin (r.getWidth(), 104), valueHeight);
+    r.removeFromBottom (small ? 3 : 6);
+    r.removeFromTop (small ? 2 : 4);
     slider.setBounds (r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight()), juce::jmin (r.getWidth(), r.getHeight())));
+}
+
+// A value as a person reads it: "35%", "1.2 kHz", "40 ms", "+7 st", a choice's name.
+juce::String readable (juce::RangedAudioParameter* p, double v)
+{
+    if (p == nullptr)
+        return juce::String (v, 2);
+    if (dynamic_cast<juce::AudioParameterFloat*> (p) == nullptr)
+        return p->getText (p->convertTo0to1 ((float) v), 32);
+    const auto range = p->getNormalisableRange();
+    juce::String unit = p->getLabel();
+    if (unit.isEmpty() && range.start >= 0.0f && range.end <= 1.0f)
+        return juce::String (juce::roundToInt (v * 100.0)) + "%";
+    if (unit == "cents")
+        unit = "ct";
+    if (unit == "Hz" && std::abs (v) >= 1000.0)
+        return juce::String (v / 1000.0, std::abs (v) >= 10000.0 ? 0 : 1) + " kHz";
+    if (unit == "ms" && v >= 1000.0)
+        return juce::String (v / 1000.0, 2) + " s";
+    const int decimals = std::abs (v) >= 100.0 ? 0 : std::abs (v) >= 10.0 ? (unit == "ms" ? 0 : 1) : (unit == "st" || unit == "oct" ? 1 : 2);
+    const bool signedValue = range.start < 0.0f;
+    return (signedValue && v > 0.004 ? "+" : "") + juce::String (v, decimals) + (unit.isNotEmpty() ? " " + unit : juce::String());
 }
 }

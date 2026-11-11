@@ -57,6 +57,13 @@ public:
     void next();
     void back();
     void clear();   // no scenes (loading a show)
+    // Editing the list while it plays: the part that's playing (and the one coming up) stay
+    // the same parts, wherever they move to.
+    void move (int from, int to);
+    // Deletes a part. If it was coming up next, it no longer is.
+    void remove (int index);
+    // A copy of a part, put right after it. Returns its index (-1 when the song is full).
+    int duplicate (int index);
     int getCurrent() const { return current; }
     int getQueued() const { return queued; }
     double getQueuedBeat() const { return queuedBeat; }

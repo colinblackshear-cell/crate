@@ -322,6 +322,68 @@ struct RigGrooveTests : juce::UnitTest
             view.selectTrack (GrooveView::drums);
             expect (! view.hasKeys());
         }
+
+        beginTest ("the vocoder's parts: a switch each, and under it how much of it and what shapes it");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            GrooveView view (engine);
+            view.setBounds (0, 0, 1392, 640);
+            view.selectTrack (GrooveView::vocoder);
+            auto& params = engine.getVocoder().params;
+            expectEquals (view.numSteps(), 5, "Robot, Voice, Effects, Arp, Vintage");
+            for (int part = 0; part < view.numSteps(); ++part)
+            {
+                expect (view.numPartKnobs (part) >= 3, "every part has its own knobs");
+                for (int k = 0; k < view.numPartKnobs (part); ++k)
+                {
+                    auto* knob = view.partKnob (part, k);
+                    expect (knob != nullptr && knob->isVisible() && knob->slider.getWidth() >= 36,
+                            "part " + juce::String (part) + " knob " + juce::String (k) + " is on screen at a usable size");
+                }
+            }
+            expect (view.partKnob (0, 0)->name == "Level" && view.partKnob (4, 0)->name == "Wet/dry", "how much of it comes first");
+            expect (view.partKnob (0, 0)->getBottom() <= view.getHeight() && view.partKnob (0, 0)->getY() > 0);
+
+            // The knobs turn the vocoder's own settings.
+            view.partKnob (4, 0)->slider.setValue (0.25, juce::sendNotificationSync);
+            expectWithinAbsoluteError (param (params, "vintageAmount"), 0.25f, 0.011f, "Vintage's wet/dry");
+            view.partKnob (2, 0)->slider.setValue (0.6, juce::sendNotificationSync);
+            expectWithinAbsoluteError (param (params, "reverbMix"), 0.6f, 0.011f, "Effects: the reverb's mix");
+            expect (view.partKnob (0, 1)->slider.getTextFromValue (view.partKnob (0, 1)->slider.getValue()).endsWith ("x"),
+                    "values read in their units");
+
+            // Reaching for an Effects knob while Effects is off switches it on.
+            params.getParameter ("fxOn")->setValueNotifyingHost (0.0f);
+            view.partKnob (2, 1)->slider.onDragStart();
+            expect (param (params, "fxOn") > 0.5f, "Effects comes on when you grab its knob");
+
+            // Other tracks don't get them.
+            view.selectTrack (GrooveView::sampler);
+            expectEquals (view.numPartKnobs (0), 0);
+            view.selectTrack (GrooveView::vocoder);
+            expect (view.numPartKnobs (0) == 4);
+            // A short screen (a laptop) and a tall one: every knob fits inside its part.
+            for (int height : { 590, 760 })
+            {
+                view.setBounds (0, 0, 1392, height);
+                for (int part = 0; part < view.numSteps(); ++part)
+                    for (int k = 0; k < view.numPartKnobs (part); ++k)
+                    {
+                        auto* knob = view.partKnob (part, k);
+                        expect (knob->slider.getWidth() >= 36 && knob->getBottom() < height - 150,
+                                "at " + juce::String (height) + " high, part " + juce::String (part) + " knob " + juce::String (k) + " fits");
+                    }
+                if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_GROOVE_PARTS_SNAPSHOT", {}); path.isNotEmpty())
+                {
+                    const auto image = view.createComponentSnapshot (view.getLocalBounds(), true, 2.0f);
+                    juce::File file (path.replace (".png", "-" + juce::String (height) + ".png"));
+                    file.deleteFile();
+                    juce::FileOutputStream stream (file);
+                    juce::PNGImageFormat().writeImageToStream (image, stream);
+                }
+            }
+        }
     }
 };
 
