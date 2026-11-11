@@ -28,6 +28,7 @@ struct RigScene
         int bassSequencer = -1;   // 0 off, 1 on
         int arp = -1;             // 0 off, 1 on
         int vocoderOn = -1, inputOn = -1;
+        int drumPattern = -1, drumSequencer = -1;   // the drum machine
         std::array<int, kMaxStrips> stripMutes {};   // 0 playing, 1 muted, -1 leave
         std::array<int, kLayers> loopMutes {};
         State() { stripMutes.fill (-1); loopMutes.fill (-1); }

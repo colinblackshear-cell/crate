@@ -249,6 +249,8 @@ void Header::paint (juce::Graphics& g)
 
 void Header::mouseUp (const juce::MouseEvent& e)
 {
+    if (e.mouseWasClicked() && wordmarkArea.contains (e.getPosition()) && onWordmark)
+        return onWordmark();
     if (standalone && e.mouseWasClicked() && micLampArea.contains (e.getPosition()) && onMic)
         onMic();
 }
@@ -297,7 +299,7 @@ void ScreenBar::setCurrent (const juce::String& page)
             tabs[i]->repaint();
         }
     }
-    const auto moreLit = screens().contains (page) ? Lit::none : Lit::current;
+    const auto moreLit = screens().contains (page) || page == "Guide" ? Lit::none : Lit::current;
     if (more.lit != moreLit)
     {
         more.lit = moreLit;
@@ -325,13 +327,13 @@ void ScreenBar::resized()
 //==============================================================================
 int Footer::chipStrip (int chip)
 {
-    const int strips[] = { RigEngine::mpcStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
+    const int strips[] = { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
     return strips[juce::jlimit (0, kChips - 1, chip)];
 }
 
 juce::String Footer::chipName (int chip)
 {
-    const char* names[] = { "Drums", "Bass", "Synth", "Vocoder", "Loops" };
+    const char* names[] = { "Drums", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
     return names[juce::jlimit (0, kChips - 1, chip)];
 }
 

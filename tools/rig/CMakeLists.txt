@@ -55,6 +55,7 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/RigRecorder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigCapture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SoundsView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/GuideView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Vintage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigPanels.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Analog.cpp
@@ -62,17 +63,18 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/SynthScreens.cpp
     PARENT_SCOPE)
 
-target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
+target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
     ${SYNTH_SOURCES}
+    ${DRUMS_SOURCES}
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
 target_include_directories(CrateRig PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
-    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth)
+    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
 # The sampler is the Sample Editor's code and the vocoder is the Vocoder's; they use the plugin's
 # name in a few places.
 target_compile_definitions(CrateRig PRIVATE
@@ -118,17 +120,18 @@ juce_add_plugin(CrateRigPlugin
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
+target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
     ${SYNTH_SOURCES}
+    ${DRUMS_SOURCES}
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
 target_include_directories(CrateRigPlugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
-    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth)
+    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
 target_link_libraries(CrateRigPlugin
     PRIVATE
         crate_core

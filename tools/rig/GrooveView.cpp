@@ -49,6 +49,8 @@ const KnobSpec bassKnobs[] = { { "cutoff", "Cutoff" }, { "resonance", "Reso" }, 
                                { "accent", "Accent" }, { "glide", "Glide" }, { "drive", "Drive" }, { "volume", "Level" } };
 const KnobSpec synthKnobs[] = { { "cutoff", "Cutoff" }, { "resonance", "Reso" }, { "envMod", "Env" }, { "attack", "Attack" },
                                 { "release", "Release" }, { "detune", "Detune" }, { "lfoDepth", "LFO" }, { "volume", "Level" } };
+const KnobSpec machineKnobs[] = { { "kickTune", "Kick tune" }, { "kickDecay", "Boom" }, { "snareTone", "Snap" }, { "closedHatDecay", "Hat decay" },
+                                  { "accent", "Accent" }, { "swing", "Swing" }, { "drive", "Drive" }, { "volume", "Level" } };
 const KnobSpec vocoderKnobs[] = { { "robotLevel", "Robot" }, { "voiceLevel", "Voice" }, { "formant", "Formant" }, { "cutoff", "Cutoff" },
                                   { "resonance", "Reso" }, { "chorusMix", "Chorus" }, { "delayMix", "Delay" }, { "reverbMix", "Reverb" } };
 // The tracks without their own knobs get their mixer strip's effects.
@@ -60,6 +62,7 @@ int destFor (int track)
     switch (track)
     {
         case GrooveView::drums:   return (int) RigRouting::Dest::mpc;
+        case GrooveView::machine: return (int) RigRouting::Dest::drums;
         case GrooveView::bass:    return (int) RigRouting::Dest::bass;
         case GrooveView::synth:   return (int) RigRouting::Dest::synth;
         case GrooveView::vocoder: return (int) RigRouting::Dest::vocoder;
@@ -222,6 +225,7 @@ juce::String GrooveView::trackName (int t)
     switch (t)
     {
         case drums:   return "Drums";
+        case machine: return "Machine";
         case bass:    return "Bass";
         case synth:   return "Synth";
         case vocoder: return "Vocoder";
@@ -238,6 +242,7 @@ int GrooveView::stripFor (int t)
     switch (t)
     {
         case drums:   return RigEngine::mpcStrip;
+        case machine: return RigEngine::drumsStrip;
         case bass:    return RigEngine::bassStrip;
         case synth:   return RigEngine::synthStrip;
         case vocoder: return RigEngine::vocoderStrip;
@@ -250,8 +255,9 @@ juce::String GrooveView::tabFor (int t)
 {
     switch (t)
     {
-        case drums: return "MPC";
-        case loops: return "Looper";
+        case drums:   return "MPC";
+        case machine: return "Drum machine";
+        case loops:   return "Looper";
         default:    return trackName (t);
     }
 }
@@ -299,7 +305,7 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     vintage::setLit (extraButton, Lit::play);
     extraButton.onClick = [this]
     {
-        if (track == bass)
+        if (track == bass || track == machine)
             pressPlay();
         else if (track == vocoder)
             engine.vocoderOn = extraButton.getToggleState();
@@ -309,6 +315,13 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     barButton.setTooltip ("Which bar of the beat the steps show. Click for the next one.");
     barButton.onClick = [this]
     {
+        if (track == machine)
+        {
+            machinePage = machinePage == 0 ? 1 : 0;
+            updateButtons();
+            repaint();
+            return;
+        }
         const auto& s = engine.getMpc().getProject().currentSequence();
         drumBar = (drumBar + 1) % juce::jmax (1, s.bars);
         updateButtons();
@@ -518,7 +531,7 @@ void GrooveView::say (const juce::String& text)
 
 void GrooveView::pressPlay()
 {
-    auto& params = engine.getBass().params;
+    auto& params = track == machine ? engine.getDrums().params : engine.getBass().params;
     const bool on = getParam (params, "sequencer") > 0.5f;
     setParam (params, "sequencer", on ? 0.0f : 1.0f);
     // Play means you hear it: start the Rig if it's stopped.
@@ -545,6 +558,9 @@ void GrooveView::selectTrack (int t)
     // The keys play the track you're on (the loops have no notes, so the keys stay put).
     if (const int dest = destFor (t); dest >= 0)
         engine.getRouting().keysTo = dest;
+    // The keyboard's drum pads play the drums you're on: the MPC's pads or the drum machine.
+    if (t == drums || t == machine)
+        engine.getRouting().padsTo = (int) (t == machine ? RigRouting::Dest::drums : RigRouting::Dest::mpc);
     heldCell = dragStep = -1;
     buildTrack();
     setFollowKnobs();
@@ -585,6 +601,7 @@ juce::AudioProcessorValueTreeState* GrooveView::paramsOf (int tool) const
         case RigEngine::bassTool:    return &engine.getBass().params;
         case RigEngine::synthTool_:  return &engine.getSynth().params;
         case RigEngine::vocoderTool: return &engine.getVocoder().params;
+        case RigEngine::drumsTool:   return &engine.getDrums().params;
         default:
             if (tool >= RigEngine::fxTool && tool < RigEngine::numTools)
                 return &engine.getFx (tool - RigEngine::fxTool).params;
@@ -601,6 +618,7 @@ std::pair<int, juce::String> GrooveView::knobFor (int index) const
         case bass:    return { RigEngine::bassTool, bassKnobs[index].id };
         case synth:   return { RigEngine::synthTool_, synthKnobs[index].id };
         case vocoder: return { RigEngine::vocoderTool, vocoderKnobs[index].id };
+        case machine: return { RigEngine::drumsTool, machineKnobs[index].id };
         default:      return { RigEngine::fxTool + stripFor (track), fxKnobs[index].id };
     }
 }
@@ -646,6 +664,13 @@ void GrooveView::buildTrack()
                 add ("Beat " + juce::String (i + 1), "Plays the MPC's sequence " + juce::String (i + 1)
                                                      + ". Playing, it comes in at the next bar. The steps edit the beat that's on.");
             break;
+        case machine:
+            for (int i = 0; i < 8; ++i)
+                add ("Pattern " + juce::String (i + 1), "Drum machine pattern " + juce::String (i + 1)
+                                                        + ". Playing, it changes at the next bar. All 16 are on its page.");
+            add ("Fill", "Plays the fill once, the next time the beat comes round (pick the fill pattern on the drum machine's page).");
+            vintage::setLit (*patternButtons.getLast(), Lit::next);
+            break;
         case bass:
             for (int i = 0; i < crate::bass::kPatterns; ++i)
                 add ("Pattern " + juce::String (i + 1), "Bass pattern " + juce::String (i + 1) + ". Playing, it changes at the next bar.");
@@ -683,7 +708,8 @@ void GrooveView::buildTrack()
         auto* params = paramsOf (tool);
         if (params == nullptr || params->getParameter (id) == nullptr)
             continue;
-        const auto* specs = track == bass ? bassKnobs : track == synth ? synthKnobs : track == vocoder ? vocoderKnobs : fxKnobs;
+        const auto* specs = track == bass ? bassKnobs : track == synth ? synthKnobs : track == vocoder ? vocoderKnobs
+                            : track == machine ? machineKnobs : fxKnobs;
         auto knob = std::make_unique<vintage::Knob> (*params, id, specs[i].name, colour);
         knob->slider.setTooltip (juce::String (specs[i].name) + ". Knob " + juce::String (i + 1)
                                  + " on your keyboard turns it too. Drag up or down; double-click for the default.");
@@ -700,14 +726,15 @@ void GrooveView::buildTrack()
     openButton.setButtonText ("Open " + tabFor (track) + juce::String::fromUTF8 (" \xe2\x80\xba"));
     openButton.setTooltip ("Everything " + trackName (track) + " can do, on its own page.");
     micButton.setVisible (track == vocoder && showMic);
-    extraButton.setVisible (track == bass || track == vocoder);
+    extraButton.setVisible (track == bass || track == vocoder || track == machine);
     for (auto* b : { &soundButton, &soundPrev, &soundNext })
         b->setVisible (hasKeys());
     screenKeys.setVisible (hasKeys());
     keysState.allNotesOff (1);
-    barButton.setVisible (track == drums);
-    clearButton.setVisible (track == drums || track == bass || track == synth);
+    barButton.setVisible (track == drums || (track == machine && machineLength() > 16));
+    clearButton.setVisible (track == drums || track == bass || track == synth || track == machine);
     clearButton.setTooltip (track == drums ? "Clears the shown bar of the beat, for the four sounds here."
+                            : track == machine ? "Clears the drum machine's pattern (every sound, not just these rows)."
                                            : track == bass ? "Clears the bass pattern's steps." : "Lights every arp step again, no accents.");
     drumBar = 0;
     updateButtons();
@@ -744,6 +771,24 @@ void GrooveView::updateButtons()
             const auto& s = mpc.getProject().currentSequence();
             drumBar = juce::jlimit (0, juce::jmax (0, s.bars - 1), drumBar);
             barButton.setButtonText ("Bar " + juce::String (drumBar + 1) + " of " + juce::String (s.bars));
+            break;
+        }
+        case machine:
+        {
+            auto& d = engine.getDrums();
+            const int selected = d.getSelectedPattern(), playing = d.getPlayingPattern();
+            for (int i = 0; i < patternButtons.size() - 1; ++i)
+                setLit (patternButtons[i], i == selected || (i == playing && pulse), i == selected ? Lit::current : Lit::next);
+            if (auto* fill = patternButtons.getLast())
+                setLit (fill, d.isPlayingFill(), Lit::next);
+            const bool on = getParam (d.params, "sequencer") > 0.5f;
+            extraButton.setToggleState (on, juce::dontSendNotification);
+            extraButton.setButtonText (juce::String::fromUTF8 (on ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
+            extraButton.setTooltip ("Play: the drum machine plays its pattern (and the Rig starts if it's stopped). Stop: only the pads and keys play it.");
+            barButton.setVisible (machineLength() > 16);
+            if (machineLength() <= 16)
+                machinePage = 0;
+            barButton.setButtonText (machinePage == 0 ? "Steps 1-16" : "Steps 17-32");
             break;
         }
         case bass:
@@ -822,6 +867,16 @@ juce::String GrooveView::stateOf (int t) const
             const auto name = "Beat " + juce::String (project.getCurrentSequenceIndex() + 1);
             return playing ? "Playing " + name : name + " ready: press Play";
         }
+        case machine:
+        {
+            auto& d = engine.getDrums();
+            const auto name = "Pattern " + juce::String (d.getSelectedPattern() + 1);
+            if (getParam (d.params, "sequencer") < 0.5f)
+                return "Pattern off: press Play, or play the pads";
+            if (d.getPattern (d.getSelectedPattern()).isEmpty())
+                return name + " is empty: light some steps";
+            return playing ? "Playing " + name : name + " ready: press Play";
+        }
         case bass:
         {
             auto& b = engine.getBass();
@@ -887,6 +942,9 @@ juce::String GrooveView::detailOf (int t) const
             const auto kit = project.currentBank().name;
             return kit.isNotEmpty() ? kit : "Beat " + juce::String (project.getCurrentSequenceIndex() + 1);
         }
+        case machine:
+            return getParam (engine.getDrums().params, "sequencer") > 0.5f
+                       ? "Pattern " + juce::String (engine.getDrums().getSelectedPattern() + 1) : juce::String ("Pads");
         case bass:
             return getParam (engine.getBass().params, "sequencer") > 0.5f
                        ? "Pattern " + juce::String (engine.getBass().getSelectedPattern() + 1) : juce::String ("Keys");
@@ -933,6 +991,10 @@ juce::String GrooveView::patternText() const
             auto& project = engine.getMpc().getProject();
             return "BEAT " + juce::String (project.getCurrentSequenceIndex() + 1) + "/" + juce::String ((int) project.getSequences().size());
         }
+        case machine:
+            return engine.getDrums().isPlayingFill() ? juce::String ("FILL")
+                                                     : "PATTERN " + juce::String (engine.getDrums().getSelectedPattern() + 1) + "/"
+                                                           + juce::String (crate::drums::kPatterns);
         case bass:
             return "PATTERN " + juce::String (engine.getBass().getSelectedPattern() + 1) + "/" + juce::String (crate::bass::kPatterns);
         case synth:
@@ -964,6 +1026,7 @@ int GrooveView::numRows() const
     switch (track)
     {
         case drums: return kDrumRows;
+        case machine: return kMachineRows;
         case bass:  return 4;
         case synth: return 2;
         default:    return 1;
@@ -1035,6 +1098,15 @@ void GrooveView::clearPattern()
                     if (drumHit (drumPad (row), step))
                         setDrumHit (drumPad (row), step, false);
             break;
+        case machine:
+        {
+            auto& d = engine.getDrums();
+            auto p = d.getPattern (d.getSelectedPattern());
+            p.hits = {};
+            p.accent = {};
+            d.setPattern (d.getSelectedPattern(), p);
+            break;
+        }
         case bass:
         {
             auto& b = engine.getBass();
@@ -1062,6 +1134,7 @@ juce::String GrooveView::rowName (int row) const
             const auto& p = engine.getMpc().getProject().currentBank().pads[(size_t) pad];
             return shortSound (p.isEmpty() ? juce::String() : p.name, pad);
         }
+        case machine: return crate::drums::voiceName (machineRows[(size_t) juce::jlimit (0, kMachineRows - 1, row)]);
         case bass:  { const char* names[] = { "Steps", "Note", "Accent", "Slide" }; return names[juce::jlimit (0, 3, row)]; }
         case synth: return row == 0 ? "Arp" : "Accent";
         default:    return {};
@@ -1078,6 +1151,20 @@ GrooveView::Cell GrooveView::cellAt (int row, int i) const
             const int pad = drumPad (row);
             c.lit = drumHit (pad, i);
             c.dim = engine.getMpc().getProject().currentBank().pads[(size_t) pad].isEmpty();
+            break;
+        }
+        case machine:
+        {
+            auto& d = engine.getDrums();
+            const auto p = d.getPattern (d.getSelectedPattern());
+            const int step = i + machinePage * 16;
+            const int h = p.hits[(size_t) machineRows[(size_t) row]][(size_t) step];
+            c.lit = h > 0;
+            c.dim = step >= p.length;
+            if (h >= 2)
+                c.label = juce::String::fromUTF8 ("\xc3\x97") + juce::String (h);
+            else if (h == 1 && p.accent[(size_t) step])
+                c.label = ">";
             break;
         }
         case bass:
@@ -1162,6 +1249,14 @@ int GrooveView::playheadStep() const
             const double pos = mpc.getSequencer().getPosition() - drumBar * s.ticksPerBar();
             return pos >= 0 && pos < s.ticksPerBar() ? (int) (pos / kDrumStepTicks) : -1;
         }
+        case machine:
+        {
+            auto& d = engine.getDrums();
+            if (getParam (d.params, "sequencer") < 0.5f || d.getSelectedPattern() != d.getPlayingPattern() || d.isPlayingFill())
+                return -1;
+            const int step = d.getCurrentStep() - machinePage * 16;
+            return juce::isPositiveAndBelow (step, 16) ? step : -1;
+        }
         case bass:
             return getParam (engine.getBass().params, "sequencer") > 0.5f ? engine.getBass().getCurrentStep() : -1;
         case synth:
@@ -1187,6 +1282,26 @@ void GrooveView::pressCell (int row, int i)
             setDrumHit (pad, i, add);
             if (add && ! engine.getTransport().isPlaying())
                 engine.getMpc().playPad (pad, 100 / 127.0f);
+            break;
+        }
+        case machine:
+        {
+            auto& d = engine.getDrums();
+            const int index = d.getSelectedPattern();
+            auto p = d.getPattern (index);
+            const int step = i + machinePage * 16, voice = machineRows[(size_t) row];
+            auto& h = p.hits[(size_t) voice][(size_t) step];
+            h = (std::uint8_t) (h == 0 ? 1 : 0);
+            if (step >= p.length && h != 0)
+                p.length = step < 16 ? 16 : crate::drums::kMaxSteps;
+            d.setPattern (index, p);
+            // A lit step means you want to hear the pattern; stopped, you hear the sound.
+            if (h != 0)
+            {
+                setParam (d.params, "sequencer", 1.0f);
+                if (! engine.getTransport().isPlaying())
+                    d.playVoice (voice, 0.8f);
+            }
             break;
         }
         case bass:
@@ -1256,6 +1371,29 @@ void GrooveView::pressCell (int row, int i)
     repaint();
 }
 
+void GrooveView::pressRoll (int row, int i)
+{
+    if (track != machine || ! juce::isPositiveAndBelow (i, numSteps()) || ! juce::isPositiveAndBelow (row, numRows()))
+        return;
+    auto& d = engine.getDrums();
+    const int index = d.getSelectedPattern();
+    auto p = d.getPattern (index);
+    const int step = i + machinePage * 16;
+    if (step >= p.length)
+        return;
+    auto& h = p.hits[(size_t) machineRows[(size_t) row]][(size_t) step];
+    h = (std::uint8_t) (h <= 1 ? 2 : h >= 4 ? 1 : h + 1);
+    d.setPattern (index, p);
+    setParam (d.params, "sequencer", 1.0f);
+    repaint();
+}
+
+int GrooveView::machineLength() const
+{
+    auto& d = engine.getDrums();
+    return d.getPattern (d.getSelectedPattern()).length;
+}
+
 void GrooveView::releaseCell()
 {
     if (track == sampler && heldCell >= 0)
@@ -1304,6 +1442,20 @@ void GrooveView::pressPattern (int i)
                 project.addSequence();
             engine.playMpcSequence (i);
             drumBar = 0;
+            break;
+        }
+        case machine:
+        {
+            auto& d = engine.getDrums();
+            if (i >= 8)
+            {
+                d.fillNow();
+                say ("The fill plays the next time the beat comes round.");
+                break;
+            }
+            d.selectPattern (i);
+            setParam (d.params, "sequencer", 1.0f);
+            machinePage = 0;
             break;
         }
         case bass:
@@ -1383,6 +1535,23 @@ void GrooveView::showDrumRowMenu (int row)
                                 return;
                             safe->drumRows[(size_t) row] = result - 1;
                             safe->engine.getMpc().playPad (safe->drumPad (row), 100 / 127.0f);
+                            safe->repaint();
+                        });
+}
+
+void GrooveView::showMachineRowMenu (int row)
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Sound for this row");
+    for (int v = 0; v < crate::drums::kVoices; ++v)
+        menu.addItem (v + 1, crate::drums::voiceName (v), true, machineRows[(size_t) row] == v);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (cellRect (row, 0).toNearestInt().withX (gridArea.getX()))),
+                        [safe = juce::Component::SafePointer<GrooveView> (this), row] (int result)
+                        {
+                            if (safe == nullptr || result == 0)
+                                return;
+                            safe->machineRows[(size_t) row] = result - 1;
+                            safe->engine.getDrums().playVoice (result - 1, 0.8f);
                             safe->repaint();
                         });
 }
@@ -1473,11 +1642,18 @@ void GrooveView::mouseDown (const juce::MouseEvent& e)
     {
         if (track == drums)
             showDrumRowMenu (row);
+        else if (track == machine)
+            showMachineRowMenu (row);
         return;
     }
     const auto [row, step] = cellAt (e.getPosition());
     if (step < 0)
         return;
+    if ((e.mods.isPopupMenu() || e.mods.isAltDown()) && track == machine)
+    {
+        pressRoll (row, step);
+        return;
+    }
     if ((e.mods.isPopupMenu() || e.mods.isShiftDown()) && (track == bass || track == synth))
     {
         toggleAccent (step);
@@ -1565,6 +1741,7 @@ void GrooveView::paint (juce::Graphics& g)
             switch (track)
             {
                 case drums:   return juce::String ("Click a sound's name to change it");
+                case machine: return juce::String ("Right-click a step for a roll; click a name to change the sound");
                 case bass:    return juce::String ("Drag a note up or down");
                 case synth:   return juce::String ("Hold a chord; it plays on the lit steps");
                 case vocoder: return juce::String ("Switch the parts on and off");
@@ -1599,7 +1776,7 @@ void GrooveView::paint (juce::Graphics& g)
             g.setColour (p.wellInk);
             g.setFont (vintage::cond (20.0f, Weight::extra, 0.08f));
             g.drawFittedText (rowName (row).toUpperCase(), label, juce::Justification::centredLeft, 1, 0.6f);
-            if (track == drums)
+            if (track == drums || track == machine)
             {
                 g.setColour (p.wellInk2);
                 g.setFont (vintage::barlow (11.0f));

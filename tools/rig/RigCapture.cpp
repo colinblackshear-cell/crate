@@ -13,6 +13,7 @@ juce::String RigCapture::sourceName (int s)
         case sampler: return "Sampler";
         case loops:   return "Loops";
         case mix:     return "Rig mix";
+        case drums:   return "Drum machine";
         default:      return {};
     }
 }

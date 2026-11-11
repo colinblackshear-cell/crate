@@ -22,8 +22,8 @@
 class RigRouting
 {
 public:
-    enum class Dest { off, mpc, sampler, vocoder, bass, synth };
-    static constexpr int kNumDests = 6;
+    enum class Dest { off, mpc, sampler, vocoder, bass, synth, drums };
+    static constexpr int kNumDests = 7;
     static juce::String destName (int);
 
     // Things a knob, fader or button can control.
@@ -43,10 +43,12 @@ public:
         loopRecord1, loopRecord8 = loopRecord1 + 7, // buttons: record / stop / overdub each layer
         loopMute1, loopMute8 = loopMute1 + 7,       // buttons: mute each layer
         nextScene, previousScene,                  // buttons
+        drumsLevel,                                // a fader (the drum machine)
+        drumsMute,                                 // a button
         numControls
     };
     static juce::String controlName (int control);
-    static bool isFader (int control) { return control <= masterLevel || control == vocoderLevel || control == bassLevel || control == synthLevel || control == inputLevel || control == loopsLevel; }
+    static bool isFader (int control) { return control <= masterLevel || control == vocoderLevel || control == bassLevel || control == synthLevel || control == inputLevel || control == loopsLevel || control == drumsLevel; }
 
     // What a block of incoming MIDI turned into.
     struct Result
@@ -65,6 +67,9 @@ public:
 
     std::atomic<int> padChannel { 10 };              // 1-16; 0 = the pads don't play the MPC
     std::atomic<int> padBank { 0 };                  // 0-3 = A-D
+    // What the pads play: the MPC (Dest::mpc), or the drum machine (Dest::drums: pad 1 the
+    // kick, then a sound per pad up the octave).
+    std::atomic<int> padsTo { (int) Dest::mpc };
     std::atomic<int> keysTo { (int) Dest::vocoder };
     std::atomic<int> splitNote { 0 };                 // 0 = no split; else keys below it play lowerKeysTo
     std::atomic<int> lowerKeysTo { (int) Dest::bass };

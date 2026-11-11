@@ -187,7 +187,7 @@ struct RigSceneTests : juce::UnitTest
             expectEquals ((int) engine.getScenes().getScenes().size(), 2, "an empty part saves what's playing");
 
             // Mutes, loop layers, the vocoder's parts.
-            stage.pressMute (1);
+            stage.pressMute (2);   // (the drum machine is channel 1)
             expect (engine.getStrip (RigEngine::bassStrip).mute.load());
             stage.pressLayer (2, true);
             expect (engine.getLooper().getLayer (2).mute.load());
@@ -247,6 +247,7 @@ struct RigSceneTests : juce::UnitTest
             engine.prepare (kSceneRate, kSceneBlock);
             RigView view (engine, nullptr);
             view.setSize (1440, 960);
+            view.goTo ("Groove");   // the Rig opens on the Guide; its ? opens Getting started
             view.showHelp (true);
             expect (view.getHelp() != nullptr && view.getHelp()->isVisible());
             expectEquals (HelpPanel::guides()[(size_t) HelpPanel ("Looper").getShown()].title, juce::String ("Looper (F3): record loops"));

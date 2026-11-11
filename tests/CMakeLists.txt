@@ -2,6 +2,7 @@
 juce_add_console_app(CrateTests PRODUCT_NAME "CrateTests")
 target_sources(CrateTests PRIVATE
     CoreTests.cpp
+    DrumMachineTests.cpp
     EditorTests.cpp
     KeysTests.cpp
     MpcTests.cpp
@@ -19,6 +20,7 @@ target_sources(CrateTests PRIVATE
     RigPluginSlotTests.cpp
     RigPerformFxTests.cpp
     RigSynthScreenTests.cpp
+    RigGuideTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
     SoundBankTests.cpp
     SynthTests.cpp
@@ -29,11 +31,12 @@ target_sources(CrateTests PRIVATE
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
     ${SYNTH_SOURCES}
+    ${DRUMS_SOURCES}
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
 target_include_directories(CrateTests PRIVATE ${PROJECT_SOURCE_DIR}/tools/editor ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/rig ${VOCODER_INCLUDE}
-    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth)
+    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
 target_compile_definitions(CrateTests PRIVATE
     JucePlugin_Name="Sample Editor"
     JUCE_APPLICATION_NAME_STRING="CrateTests"
