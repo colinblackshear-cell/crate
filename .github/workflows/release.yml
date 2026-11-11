@@ -95,9 +95,11 @@ jobs:
           ditto "$STAGE/$NAME.component" "$ROOT/Library/Audio/Plug-Ins/Components/$NAME.component"
           ditto "$STAGE/$NAME.vst3" "$ROOT/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
           pkgbuild --analyze --root "$ROOT" components.plist
+          plutil -p components.plist
           i=0
           while /usr/libexec/PlistBuddy -c "Print :$i" components.plist >/dev/null 2>&1; do
-            /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" components.plist
+            /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" components.plist 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Add :$i:BundleIsRelocatable bool false" components.plist
             i=$((i+1))
           done
           pkgbuild --root "$ROOT" --component-plist components.plist \
