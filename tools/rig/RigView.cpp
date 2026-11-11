@@ -447,6 +447,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
     if (samplerView != nullptr)
         addPage ("Sampler", samplerColour, samplerView);
+    addPage ("Drum machine", RigColours::drums, engine.getDrums().createEditorAndMakeActive());
     addPage ("Bass", bassColour, engine.getBass().createEditorAndMakeActive());
     addPage ("Synth", synthColour, engine.getSynth().createEditorAndMakeActive());
     auto* songView = new SongView (engine);
@@ -489,7 +490,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     padBank.onChange = [this] { engine.getRouting().padBank = padBank.getSelectedItemIndex(); };
     padBank.setTooltip ("Your keyboard's 16 drum pads (MIDI channel 10) play these MPC pads.");
     for (auto d : { RigRouting::Dest::vocoder, RigRouting::Dest::synth, RigRouting::Dest::bass, RigRouting::Dest::sampler,
-                    RigRouting::Dest::mpc, RigRouting::Dest::off })
+                    RigRouting::Dest::mpc, RigRouting::Dest::drums, RigRouting::Dest::off })
     {
         keysTo.addItem (RigRouting::destName ((int) d), 1 + (int) d);
         lowerKeysTo.addItem (RigRouting::destName ((int) d), 1 + (int) d);
@@ -535,6 +536,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     sampleBars.setTooltip ("How long: a number of bars (it stops by itself, in time, ready to loop), or Free (until you press Sample again).");
 
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::mpcStrip, RigRouting::mpcLevel, RigRouting::mpcMute));
+    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::drumsStrip, RigRouting::drumsLevel, RigRouting::drumsMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::vocoderStrip, RigRouting::vocoderLevel, RigRouting::vocoderMute, &engine.vocoderOn));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::bassStrip, RigRouting::bassLevel, RigRouting::bassMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::synthStrip, RigRouting::synthLevel, RigRouting::synthMute));
@@ -542,7 +544,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::samplerStrip, RigRouting::samplerLevel, RigRouting::samplerMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::loopsStrip, RigRouting::loopsLevel, RigRouting::loopsMute));
     stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::masterStrip, RigRouting::masterLevel, -1));
-    const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
+    const int faders[] = { RigRouting::mpcLevel, RigRouting::drumsLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
                            RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::loopsLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
     {
@@ -826,7 +828,7 @@ void RigView::updateLearnButtons()
     };
     show (learnPlay, RigRouting::play);
     show (learnStop, RigRouting::stop);
-    const int faders[] = { RigRouting::mpcLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
+    const int faders[] = { RigRouting::mpcLevel, RigRouting::drumsLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
                            RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::loopsLevel, RigRouting::masterLevel };
     for (size_t i = 0; i < stripViews.size(); ++i)
         show (stripViews[i]->learn, faders[i]);
@@ -1362,7 +1364,8 @@ void RigView::showMoreMenu()
     juce::PopupMenu menu;
     menu.addItem (1, "The Guide: every tool, and what it's for", true, currentPage() == "Guide");
     menu.addSectionHeader ("Tools in full");
-    const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
+    const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Drum machine", "Drum machine: analog sounds and patterns" },
+                               { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
                                { "Synth", "Synth: sound and arp" }, { "Song", "Song: parts in order, lengths, names" },
                                { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer, effects and keyboard set-up" } };
     const auto here = currentPage();
@@ -1381,7 +1384,7 @@ void RigView::showMoreMenu()
         menu.addItem (7, "Audio and MIDI set-up...");
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.more),
-                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer" }] (int result)
+                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer" }] (int result)
                         {
                             if (safe == nullptr || result == 0)
                                 return;

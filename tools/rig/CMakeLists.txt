@@ -65,12 +65,13 @@ target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTranspo
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
     ${SYNTH_SOURCES}
+    ${DRUMS_SOURCES}
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
 target_include_directories(CrateRig PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
-    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth)
+    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
 # The sampler is the Sample Editor's code and the vocoder is the Vocoder's; they use the plugin's
 # name in a few places.
 target_compile_definitions(CrateRig PRIVATE
@@ -121,12 +122,13 @@ target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
     ${SYNTH_SOURCES}
+    ${DRUMS_SOURCES}
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
 target_include_directories(CrateRigPlugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
-    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth)
+    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
 target_link_libraries(CrateRigPlugin
     PRIVATE
         crate_core

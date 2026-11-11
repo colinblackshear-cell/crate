@@ -35,7 +35,7 @@ public:
     enum class State { empty, armed, recording, playing, overdubbing };
     // line: the Input strip (a guitar, keytar... on your interface, through its effects). New
     // sources go at the end, so saved shows keep theirs.
-    enum Source { input, vocoder, bass, synth, mpc, sampler, mix, line, numSources };
+    enum Source { input, vocoder, bass, synth, mpc, sampler, mix, line, drums, numSources };
     static juce::String sourceName (int);
     static const std::array<int, 6>& barChoices();   // 0 (until you press again), 1, 2, 4, 8, 16
 

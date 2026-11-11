@@ -187,7 +187,7 @@ struct RigSceneTests : juce::UnitTest
             expectEquals ((int) engine.getScenes().getScenes().size(), 2, "an empty part saves what's playing");
 
             // Mutes, loop layers, the vocoder's parts.
-            stage.pressMute (1);
+            stage.pressMute (2);   // (the drum machine is channel 1)
             expect (engine.getStrip (RigEngine::bassStrip).mute.load());
             stage.pressLayer (2, true);
             expect (engine.getLooper().getLayer (2).mute.load());

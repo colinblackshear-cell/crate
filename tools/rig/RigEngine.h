@@ -8,6 +8,7 @@
 #include "PluginProcessor.h"   // the vocoder
 #include "BassProcessor.h"
 #include "SynthProcessor.h"
+#include "DrumProcessor.h"
 #include "RigRouting.h"
 #include "RigTransport.h"
 #include "StripFx.h"
@@ -45,11 +46,13 @@ public:
     VocoderProcessor& getVocoder() { return vocoder; }
     BassProcessor& getBass() { return bass; }
     SynthProcessor& getSynth() { return synthTool; }
+    // The analog drum machine: its own sounds, patterns and track, beside the MPC.
+    DrumProcessor& getDrums() { return drums; }
 
     // Every tool, by the number knob Learn and shows use for it.
     // Each mixer strip's effects rack is a tool too (fxTool + the strip's StripId), so its knobs
     // can be learned and it's saved with the show.
-    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, fxTool, numTools = fxTool + 8 };
+    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, drumsTool, fxTool, numTools = fxTool + 9 };
     juce::AudioProcessor& getTool (int id);
     static juce::String toolName (int id);
     RigTransport& getTransport() { return transport; }
@@ -105,7 +108,7 @@ public:
     RigRouting& getRouting() { return routing; }
 
     // (The vocoder came later, so it's last: saved shows keep their strip order.)
-    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, loopsStrip, numStrips };
+    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, loopsStrip, drumsStrip, numStrips };
     static_assert (numTools == fxTool + numStrips);
     struct Strip
     {
@@ -173,7 +176,8 @@ public:
     // As a plugin: a tool's own stereo output (Logic's multi-output tracks). A tool sent to
     // its own output plays there, after its strip, and no longer in the main mix. Null puts it
     // back in the mix. Audio thread, before process().
-    enum Stem { mpcStem, vocoderStem, bassStem, synthStem, inputStem, samplerStem, loopsStem, numStems };
+    // (The drum machine came last, so its output is last.)
+    enum Stem { mpcStem, vocoderStem, bassStem, synthStem, inputStem, samplerStem, loopsStem, drumsStem, numStems };
     static juce::String stemName (int);
     void setStemOutput (int stem, float* const* stereo) { stemOut[(size_t) stem] = stereo; }
     // Plays queued MIDI at the start of the next block, without timestamps (tests).
@@ -216,6 +220,7 @@ private:
     VocoderProcessor vocoder;
     BassProcessor bass;
     SynthProcessor synthTool;
+    DrumProcessor drums;
     RigTransport transport;
     RigRouting routing;
     RigLooper looper;
@@ -269,8 +274,8 @@ private:
     juce::MidiBuffer nowMidi;          // addMidiNow, under nowLock
 
     // Audio-thread buffers, sized in prepare().
-    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, inputBuffer, rawInputBuffer, loopsBuffer, mixBuffer, clickBuffer;
-    juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi;
+    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, drumsBuffer, inputBuffer, rawInputBuffer, loopsBuffer, mixBuffer, clickBuffer;
+    juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi, drumsMidi;
     double sampleRate = 0;
     int maxBlock = 0;
     bool prepared = false;
