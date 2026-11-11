@@ -11,6 +11,7 @@
 #include "MpcView.h"
 #include "SamplerScreen.h"
 #include "VocoderScreen.h"
+#include "GuideView.h"
 
 namespace Theme = crate::Theme;
 
@@ -456,7 +457,27 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     soundsView->onSay = [this] (const juce::String& text) { say (text); };
     addPage ("Sounds", juce::Colour (0xffa1887f), soundsView);
     addPage ("Mixer", Theme::text, mixerPage);
-    screenBar.setCurrent ("Groove");
+
+    // The Guide: the front page, with an entry for every tool above (the ones the Rig has).
+    auto* guideView = new GuideView ([this] (const juce::String& name)
+                                     { return pageIndex (name) >= 0 || (name == "Sampler editor" && samplerScreen != nullptr); });
+    guideView->onOpen = [this] (const juce::String& name) { showTab (name); };
+    guideView->onHelp = [this] { showHelp (true); };
+    guideView->startsHere = [this] { return ! (bool) engine.screens.getProperty ("skipGuide", false); };
+    guideView->setStartsHere = [this] (bool start)
+    {
+        if (start)
+            engine.screens.removeProperty ("skipGuide", nullptr);
+        else
+            engine.screens.setProperty ("skipGuide", true, nullptr);
+    };
+    guide = guideView;
+    addPage ("Guide", RigColours::master, guideView);
+    header.onWordmark = [this] { showTab ("Guide"); };
+
+    // The Rig opens on the Guide (unless it was switched off there), else on the Groove.
+    showTab (engine.screens.getProperty ("skipGuide", false) ? "Groove" : "Guide");
+    screenBar.setCurrent (currentPage());
 
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).addListener (this);
@@ -609,7 +630,8 @@ void RigView::showTab (const juce::String& name)
 // screen buttons go dark too. Leaving it puts the panel back as it was.
 void RigView::pageChanged()
 {
-    const bool onStage = currentPage() == "Stage";
+    // The Guide is a night sky: it fills the window the same way.
+    const bool onStage = currentPage() == "Stage" || currentPage() == "Guide";
     if (onStage == stageShown)
         return;
     stageShown = onStage;
@@ -1338,6 +1360,7 @@ void RigView::setDarkPanel (bool dark)
 void RigView::showMoreMenu()
 {
     juce::PopupMenu menu;
+    menu.addItem (1, "The Guide: every tool, and what it's for", true, currentPage() == "Guide");
     menu.addSectionHeader ("Tools in full");
     const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
                                { "Synth", "Synth: sound and arp" }, { "Song", "Song: parts in order, lengths, names" },
@@ -1364,6 +1387,8 @@ void RigView::showMoreMenu()
                                 return;
                             if (result >= 10)
                                 safe->showTab (names[(size_t) (result - 10)]);
+                            else if (result == 1)
+                                safe->showTab ("Guide");
                             else if (result == 2)
                             {
                                 const int i = safe->tabs.getCurrentTabIndex();
