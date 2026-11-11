@@ -42,6 +42,33 @@ const std::pair<const char*, const char*> vocoderSwitches[] = { { "robotOn", "Ro
                                                                 { "fxOn", "Effects" }, { "arpOn", "Arp" },
                                                                 { "vintageOn", "Vintage" } };
 
+// Under each part, its own knobs: how much of it first (its level, or how wet), then what
+// shapes its sound. In the same order as vocoderSwitches.
+struct PartKnob { const char* id; const char* name; const char* tip; };
+const std::vector<PartKnob> vocoderPartKnobs[] = {
+    { { "robotLevel", "Level", "How loud the robot is. With your voice on too, this is the robot's side of the dry/wet." },
+      { "sharpness", "Beep", "Low is smooth and breathy; high rings like a machine." },
+      { "bands", "Bands", "More bands make the words clearer; fewer sound older and rougher." },
+      { "formant", "Character", "Down for giants and monsters, up for cartoons and chipmunks." } },
+    { { "voiceLevel", "Level", "How loud your own voice is (dry). Robot level and this are the dry/wet." },
+      { "tuneAmount", "Tune", "How far auto-tune pulls your voice onto the notes (when Tune is on)." },
+      { "tuneSpeed", "Snap", "How fast auto-tune snaps: fast is the hard robotic step, slow sounds natural." },
+      { "gateThreshold", "Gate", "Mutes the mic below this level, so the room's hum stays out between phrases." } },
+    { { "reverbMix", "Reverb", "How much room: dry at 0, all reverb at the top." },
+      { "delayMix", "Echo", "How loud the echoes are, in time with the Rig." },
+      { "chorusMix", "Chorus", "How much shimmer: a group of voices instead of one." },
+      { "drive", "Drive", "Warms it up, then distorts it." } },
+    { { "arpRate", "Speed", "How fast the notes (or the chops) go, in time with the Rig." },
+      { "arpGate", "Length", "Short and choppy, or long and smooth." },
+      { "arpSwing", "Swing", "Pushes every other step late, for a shuffle." },
+      { "arpOctaves", "Octaves", "How many octaves the note arp climbs." } },
+    { { "vintageAmount", "Wet/dry", "How much of the old mic: your clean sound at 0, all old record at the top." },
+      { "vintageEra", "Era", "Which old mic: a 1900s phonograph up to a 90s cassette, a phone or a megaphone." },
+      { "vintageWear", "Wear", "The crackle and hiss of a worn record or tape." } },
+};
+// Each part's colour, as on the Stage.
+const juce::uint32 vocoderPartColours[] = { 0xff5fb3c4, 0xfff1e7d1, 0xff9cc27a, 0xffe0816f, 0xffc9a26b };
+
 const char* const arpModes[] = { "Up", "Down", "Up + down", "Random", "As played" };
 
 struct KnobSpec { const char* id; const char* name; };
@@ -690,6 +717,48 @@ void GrooveView::buildTrack()
         }
         addAndMakeVisible (*knob);
         knobs.push_back (std::move (knob));
+    }
+
+    partKnobs.clear();
+    partOfKnob.clear();
+    if (track == vocoder)
+    {
+        auto& params = engine.getVocoder().params;
+        for (int part = 0; part < (int) std::size (vocoderPartKnobs); ++part)
+            for (const auto& spec : vocoderPartKnobs[part])
+            {
+                auto* param = params.getParameter (spec.id);
+                if (param == nullptr)
+                    continue;
+                auto knob = std::make_unique<vintage::Knob> (params, spec.id, spec.name, juce::Colour (vocoderPartColours[part]));
+                knob->inWell = true;
+                knob->nameSize = 13.0f;
+                // An era's name is long ("1940s Ribbon"): its year fits the box.
+                const bool era = juce::String (spec.id) == "vintageEra";
+                knob->slider.textFromValueFunction = [param, era] (double v)
+                {
+                    const auto text = vintage::readable (param, v);
+                    return era ? text.upToFirstOccurrenceOf (" ", false, false) : text;
+                };
+                knob->slider.updateText();
+                knob->slider.setTooltip (juce::String (vocoderSwitches[part].second) + ": " + spec.tip
+                                         + " Drag up or down; double-click for the default.");
+                // Reaching for Effects or Vintage while it's off switches it on, so you hear the knob.
+                knob->slider.onDragStart = [this, part]
+                {
+                    auto& p = engine.getVocoder().params;
+                    const char* id = vocoderSwitches[part].first;
+                    if ((juce::String (id) == "fxOn" || juce::String (id) == "vintageOn") && getParam (p, id) < 0.5f)
+                    {
+                        setParam (p, id, 1.0f);
+                        engine.vocoderOn = true;
+                        say (juce::String (vocoderSwitches[part].second) + " is on, so you hear it.");
+                    }
+                };
+                addAndMakeVisible (*knob);
+                partKnobs.push_back (std::move (knob));
+                partOfKnob.push_back (part);
+            }
     }
 
     openButton.setButtonText ("Open " + tabFor (track) + juce::String::fromUTF8 (" \xe2\x80\xba"));
@@ -1383,6 +1452,12 @@ void GrooveView::timerCallback()
                 break;
             }
 
+    for (size_t k = 0; k < partKnobs.size(); ++k)
+    {
+        const bool on = engine.vocoderOn.load() && getParam (engine.getVocoder().params, vocoderSwitches[partOfKnob[k]].first) > 0.5f;
+        partKnobs[k]->setAlpha (on ? 1.0f : 0.5f);
+    }
+
     juce::String sig;
     sig << track << "/" << playheadStep() << "/" << stateOf (track) << "/" << heldCell << "/" << drumBar << "/" << patternText()
         << (vintage::isStage() ? "d" : "l");
@@ -1544,7 +1619,7 @@ void GrooveView::paint (juce::Graphics& g)
                 case drums:   return juce::String ("Click a sound's name to change it");
                 case bass:    return juce::String ("Drag a note up or down");
                 case synth:   return juce::String ("Hold a chord; it plays on the lit steps");
-                case vocoder: return juce::String ("Switch the parts on and off");
+                case vocoder: return juce::String ("Switch a part on, then set how much of it underneath");
                 case sampler: return juce::String ("Press a pad to play it; the keys play it too");
                 case loops:   return juce::String ("Press a layer: records from the next bar");
                 default:      return juce::String();
@@ -1614,7 +1689,16 @@ void GrooveView::paint (juce::Graphics& g)
             auto text = r.withTrimmedBottom (3.0f).reduced (6.0f, 8.0f).toNearestInt();
             const auto ink = c.lit && alpha > 0.5f ? juce::Colour (0xff1e1a16) : p.wellInk.withAlpha (c.dim ? 0.5f : 0.9f);
             g.setColour (ink);
-            if (bigCells())
+            if (bigCells() && r.getHeight() < 72.0f)
+            {
+                // A short switch: the name, and On or Off beside it.
+                auto line = text.withSizeKeepingCentre (text.getWidth(), juce::jmin (text.getHeight(), 30));
+                g.setFont (vintage::cond (14.0f, Weight::bold, 0.12f));
+                g.drawText (c.sub.toUpperCase(), line.removeFromRight (34), juce::Justification::centredRight, false);
+                g.setFont (vintage::cond (24.0f, Weight::extra, 0.06f));
+                g.drawFittedText (c.label.toUpperCase(), line.withTrimmedLeft (34), juce::Justification::centred, 1, 0.6f);
+            }
+            else if (bigCells())
             {
                 g.setFont (vintage::cond (track == sampler ? 24.0f : 26.0f, Weight::extra, 0.06f));
                 g.drawFittedText (c.label.toUpperCase(), text, juce::Justification::centredTop, 1, 0.6f);
@@ -1629,6 +1713,22 @@ void GrooveView::paint (juce::Graphics& g)
             }
         }
     }
+
+    // Under each of the vocoder's parts, a panel for its knobs, lit in its colour while it's on.
+    if (! partsArea.isEmpty())
+        for (int part = 0; part < (int) std::size (vocoderPartKnobs); ++part)
+        {
+            const auto cell = cellRect (0, part);
+            const auto panel = juce::Rectangle<float> (cell.getX(), (float) partsArea.getY(), cell.getWidth(), (float) partsArea.getHeight());
+            const bool on = cellAt (0, part).lit && engine.vocoderOn.load();
+            const juce::Colour tint (vocoderPartColours[part]);
+            g.setColour (tint.withAlpha (on ? 0.13f : 0.04f));
+            g.fillRoundedRectangle (panel, 10.0f);
+            g.setColour (tint.withAlpha (on ? 0.55f : 0.18f));
+            g.drawRoundedRectangle (panel.reduced (0.75f), 10.0f, 1.5f);
+            // A short cable from the switch down to its knobs.
+            g.fillRect (juce::Rectangle<float> (cell.getCentreX() - 2.0f, cell.getBottom() - 2.0f, 4.0f, panel.getY() - cell.getBottom() + 4.0f));
+        }
 
     // The knobs' box.
     g.setColour (p.line);
@@ -1669,7 +1769,9 @@ void GrooveView::resized()
     area.removeFromLeft (16);
 
     // The knobs below, the steps above.
-    knobBox = area.removeFromBottom (juce::jlimit (150, 214, area.getHeight() * 36 / 100));
+    // The vocoder's parts have knobs of their own up top, so its eight knobs give them a little room.
+    knobBox = area.removeFromBottom (track == vocoder ? juce::jlimit (144, 214, area.getHeight() * 27 / 100)
+                                                      : juce::jlimit (150, 214, area.getHeight() * 36 / 100));
     area.removeFromBottom (14);
     wellArea = area;
     {
@@ -1732,5 +1834,60 @@ void GrooveView::resized()
     numbersArea = bigCells() ? juce::Rectangle<int>() : c.removeFromTop (20);
     if (! bigCells())
         c.removeFromTop (4);
+    partsArea = {};
+    if (track == vocoder && ! partKnobs.empty())
+    {
+        // The switches on top, each part's knobs under its switch.
+        gridArea = c.removeFromTop (juce::jlimit (46, 84, c.getHeight() / 4));
+        c.removeFromTop (8);
+        partsArea = c;
+        layoutPartKnobs();
+        return;
+    }
     gridArea = c;
+}
+
+void GrooveView::layoutPartKnobs()
+{
+    const int parts = (int) std::size (vocoderPartKnobs);
+    for (int part = 0; part < parts; ++part)
+    {
+        const auto cell = cellRect (0, part);
+        auto column = juce::Rectangle<int> ((int) cell.getX(), partsArea.getY(), (int) cell.getWidth(), partsArea.getHeight()).reduced (6, 8);
+        std::vector<vintage::Knob*> mine;
+        for (size_t k = 0; k < partKnobs.size(); ++k)
+            if (partOfKnob[k] == part)
+                mine.push_back (partKnobs[k].get());
+        const int n = (int) mine.size();
+        if (n == 0)
+            continue;
+        // Two by two: each knob with its name above and its value below. The same rows in every
+        // part, so the knobs line up across.
+        const int perRow = 2, rows = 2;
+        const int kh = juce::jmin (130, column.getHeight() / rows);
+        const int kw = column.getWidth() / perRow;
+        for (int k = 0; k < n; ++k)
+        {
+            const int row = k / perRow, col = k % perRow;
+            const int inRow = juce::jmin (perRow, n - row * perRow);
+            const int x0 = column.getX() + (column.getWidth() - inRow * kw) / 2;
+            mine[(size_t) k]->setBounds (juce::Rectangle<int> (x0 + col * kw, column.getY() + row * kh, kw, kh).reduced (2, 1));
+        }
+    }
+}
+
+int GrooveView::numPartKnobs (int part) const
+{
+    int n = 0;
+    for (int p : partOfKnob)
+        n += p == part ? 1 : 0;
+    return n;
+}
+
+vintage::Knob* GrooveView::partKnob (int part, int index) const
+{
+    for (size_t k = 0; k < partKnobs.size(); ++k)
+        if (partOfKnob[k] == part && index-- == 0)
+            return partKnobs[k].get();
+    return nullptr;
 }

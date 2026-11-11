@@ -48,6 +48,11 @@ public:
     int numSteps() const;
     int numRows() const;
 
+    // The vocoder's parts: the knobs under each part's switch (its level or wet/dry first, then what
+    // shapes it). `part` is the switch's index.
+    int numPartKnobs (int part) const;
+    vintage::Knob* partKnob (int part, int index) const;
+
     // The setting knob `index` (0-7) of the picked track turns: the tool and its parameter ID.
     std::pair<int, juce::String> knobFor (int index) const;
 
@@ -88,6 +93,7 @@ private:
     void say (const juce::String&);
     class PluginSlot* slotFor (int track) const;
     void buildTrack();
+    void layoutPartKnobs();
     void updateButtons();
     void setFollowKnobs();
     juce::AudioProcessorValueTreeState* paramsOf (int tool) const;
@@ -138,6 +144,9 @@ private:
     juce::Rectangle<int> keysArea;
     juce::OwnedArray<juce::TextButton> patternButtons;
     std::vector<std::unique_ptr<vintage::Knob>> knobs;
+    std::vector<std::unique_ptr<vintage::Knob>> partKnobs;   // the vocoder's parts' own knobs
+    std::vector<int> partOfKnob;
+    juce::Rectangle<int> partsArea;
     juce::Rectangle<int> tracksArea, wellArea, headerArea, numbersArea, gridArea, patternArea, knobBox, knobHeader;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GrooveView)

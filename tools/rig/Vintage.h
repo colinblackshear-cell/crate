@@ -87,6 +87,9 @@ public:
 void setLit (juce::Button&, Lit);
 void setInWell (juce::Button&, bool);
 
+// A value as a person reads it: "35%", "1.2 kHz", "40 ms", "+7 st", a choice's name.
+juce::String readable (juce::RangedAudioParameter*, double value);
+
 // A knob for a plugin setting, as on the Groove screen: its name above, an amber LCD with the
 // value below.
 class Knob : public juce::Component
@@ -102,6 +105,7 @@ public:
     juce::String name;
     bool inWell = false;   // on a dark well: the name in light ink
     float nameSize = 16.0f;
+    bool sideways = false;   // the knob on the left, its name and value beside it (for a short row)
 
 private:
     void setUp (juce::Colour ring);
