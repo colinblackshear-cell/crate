@@ -39,19 +39,19 @@ juce::String partName (const RigScene& s, int i)
 //==============================================================================
 int StageView::channelStrip (int c)
 {
-    const int strips[] = { RigEngine::mpcStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
+    const int strips[] = { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
     return strips[juce::jlimit (0, kChannels - 1, c)];
 }
 
 juce::String StageView::channelName (int c)
 {
-    const char* names[] = { "Drums", "Bass", "Synth", "Vocoder", "Loops" };
+    const char* names[] = { "Drums", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
     return names[juce::jlimit (0, kChannels - 1, c)];
 }
 
 juce::String StageView::channelPage (int c)
 {
-    const char* pages[] = { "MPC", "Bass", "Synth", "Vocoder", "Looper" };
+    const char* pages[] = { "MPC", "Drum machine", "Bass", "Synth", "Vocoder", "Looper" };
     return pages[juce::jlimit (0, kChannels - 1, c)];
 }
 

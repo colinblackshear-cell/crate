@@ -325,13 +325,13 @@ void ScreenBar::resized()
 //==============================================================================
 int Footer::chipStrip (int chip)
 {
-    const int strips[] = { RigEngine::mpcStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
+    const int strips[] = { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
     return strips[juce::jlimit (0, kChips - 1, chip)];
 }
 
 juce::String Footer::chipName (int chip)
 {
-    const char* names[] = { "Drums", "Bass", "Synth", "Vocoder", "Loops" };
+    const char* names[] = { "Drums", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
     return names[juce::jlimit (0, kChips - 1, chip)];
 }
 

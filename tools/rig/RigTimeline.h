@@ -32,7 +32,7 @@ public:
         bool isLoop;
         int index;   // looper layer, or RigEngine::StripId
     };
-    static constexpr int kLanes = 14;
+    static constexpr int kLanes = 15;   // (the drum machine came last)
     static const std::array<Lane, kLanes>& lanes();
     static int laneForLoop (int layer) { return layer; }
     static int laneForStrip (int strip);   // -1 if the strip has no lane

@@ -115,6 +115,40 @@ In Logic, add MPC Bank Builder as an instrument (AU Instruments > Colin Blackshe
 instrument track. The track's MIDI plays the pads, and your kits and their sounds are saved with
 the Logic project.
 
+### Drum Machine
+
+An analog-style rhythm box in the spirit of the early-80s classics: every sound is made from
+oscillators, noise and filters, not samples. It's a Mac app, an Audio Unit instrument for Logic
+(**Crate Drums**), a VST3, and a track of its own in the Crate Rig (beside the MPC, so the drums
+don't have to come from the MPC).
+
+- **Twelve sounds:** a booming kick, snare, clap, rim shot, low, mid and high toms, clave,
+  cowbell, closed and open hats (the closed hat cuts the open one off, as on the old boxes) and a
+  cymbal. Each has **Level**, **Tune**, **Decay**, **Tone** (the kick's click, the snare's snap,
+  the hats' brightness...) and **Pan**, and a pad to hit it.
+- **Steps:** up to 32 steps for all twelve sounds, with the classic red, orange, yellow and cream
+  step keys. Click to add a hit, drag to paint; right-click (or Option-click) a hit to make it a
+  roll of 2, 3 or 4. The top row is the **accent**: the whole step hits harder (**Accent** sets
+  how much).
+- **16 patterns**, the first eight ready-made beats (electro, boom bap, trap, house, funk, latin,
+  a tom fill and a snare fill). **Beats...** loads one into any pattern; **Random** makes a fresh
+  one. A pattern picked while it plays comes in at the next bar.
+- **Fills:** pick a fill pattern and it plays every 2nd, 4th, 8th or 16th time round, or once when
+  you press **Fill**.
+- **Swing**, **Drive** (warm saturation on the kit), **Humanize** (each hit a little softer or
+  harder) and **Volume**; the step length can be 1/8, 1/16, 1/16 triplets or 1/32.
+- **Play it:** MIDI notes from C play the sounds (C kick, C# rim, D snare, D# clap, F# closed hat,
+  A# open hat...), in any octave, so a keyboard's drum pads work as they are. In its own app it
+  has **Start** and a **Tempo**; in Logic and the Rig it follows their clock.
+
+In the Rig it's the **Machine** track on the Groove screen: five rows of its sounds (click a
+name to change one), Pattern 1-8 and **Fill**, **Play**/**Stop**, and eight knobs (kick tune,
+boom, snap, hat decay, accent, swing, drive, level). Picking it sends the keys and your
+keyboard's drum pads to it (picking **Drums** sends the pads back to the MPC). The whole panel is
+**More > Drum machine**. It has its own mixer strip with effects, its own lane on the song
+timeline, a channel on the Stage, its pattern in song parts, and it's a source for the looper,
+Sample and the recorded set (its own stem). Saved with the show.
+
 ### Crate Rig (for playing live)
 
 One window that plays the tools together, on one clock, for a live set. It's a Mac app, and a
@@ -342,6 +376,7 @@ and writes back byte for byte (CI uses the demo kits from [vMPC2000XL](https://g
 core/          shared by every tool: sound files, edits, effects, the sound library, common UI
 tools/editor/  the Sample Editor (app + AU + VST3, plus an AU/VST3 instrument version)
 tools/mpc/     the MPC Bank Builder (app + AU instrument + VST3); mpc/ reads and writes .SND and .PGM
+tools/drums/   the Drum Machine (app + AU instrument + VST3): analog-style sounds and a step sequencer
 tools/rig/     Crate Rig: plays the tools together live, on one clock (app only)
 tools/phone/   Crate on your phone: a web app (plain JavaScript, no build step), published to GitHub Pages
 tests/         headless tests for the core and the tools, the MPC file format tests, and

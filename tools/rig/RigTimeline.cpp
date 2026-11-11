@@ -16,7 +16,8 @@ const std::array<RigTimeline::Lane, RigTimeline::kLanes>& RigTimeline::lanes()
         Lane { true, 0 }, Lane { true, 1 }, Lane { true, 2 }, Lane { true, 3 },
         Lane { true, 4 }, Lane { true, 5 }, Lane { true, 6 }, Lane { true, 7 },
         Lane { false, RigEngine::mpcStrip }, Lane { false, RigEngine::bassStrip }, Lane { false, RigEngine::synthStrip },
-        Lane { false, RigEngine::vocoderStrip }, Lane { false, RigEngine::samplerStrip }, Lane { false, RigEngine::inputStrip }
+        Lane { false, RigEngine::vocoderStrip }, Lane { false, RigEngine::samplerStrip }, Lane { false, RigEngine::inputStrip },
+        Lane { false, RigEngine::drumsStrip }
     };
     return list;
 }
