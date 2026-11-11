@@ -19,6 +19,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void visibilityChanged() override { if (isVisible()) tick(); }
 
     // The tools, as their pages are named, in the order they show.
     struct ToolInfo
