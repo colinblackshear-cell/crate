@@ -6,128 +6,271 @@
 <title>Get Kaleidobox</title>
 <link rel="icon" href="icon.png" type="image/png">
 <meta name="description" content="Install Kaleidobox on your Mac: the app, and the instrument for Logic.">
+<meta name="theme-color" content="#07080f">
 <style>
+  /* The Kaleidobox look: the Field Guide's night sky in a wooden case, cream ink, amber labels,
+     and each step in one of the Rig's track colours. */
+  @font-face { font-family: "Fraunces"; src: url(fonts/Fraunces-ExtraBoldItalic.ttf); font-weight: 800; font-style: italic; font-display: swap; }
+  @font-face { font-family: "Barlow Condensed"; src: url(fonts/BarlowCondensed-SemiBold.ttf); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "Barlow Condensed"; src: url(fonts/BarlowCondensed-Bold.ttf); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "Barlow"; src: url(fonts/Barlow-SemiBold.ttf); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "VT323"; src: url(fonts/VT323-Regular.ttf); font-display: swap; }
+
   :root {
-    --bg: #faf6ef; --card: #ffffff; --ink: #1f1b2e; --dim: #5d5870; --line: #e6dfd2;
-    --accent: #7a3cff; --accent-ink: #ffffff; --code-bg: #1f1b2e; --code-ink: #f4f0ff; --ok: #1d8a55;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #141220; --card: #1e1b2d; --ink: #f1eefa; --dim: #a8a2bd; --line: #2f2b44;
-      --accent: #a77bff; --accent-ink: #141220; --code-bg: #0c0b14; --code-ink: #e9e4ff; --ok: #4fd08e;
-    }
+    color-scheme: dark;
+    --sky: #07080f; --sky2: #121528; --card: #10121d; --card2: #171a2a;
+    --ink: #f1e7d1; --ink2: #a9a4b8; --ink3: #6d6a80; --amber: #ffb54a; --line: #2a2d44;
+    --red: #e85a3a; --orange: #f39b33; --yellow: #efcb45; --teal: #5fb3c4; --green: #9cc27a; --violet: #c58fd6;
+    --wood1: #3a2416; --wood2: #6e3d22; --wood3: #a2643b;
+    --label: "Barlow Condensed", "Avenir Next Condensed", "Arial Narrow", sans-serif;
+    --title: "Fraunces", Georgia, serif;
+    --body: "Barlow", -apple-system, "Helvetica Neue", sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
-  main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
-  header { display: flex; align-items: center; gap: 18px; margin-bottom: 28px; }
-  .mark { width: 88px; height: 88px; flex: none; margin: -8px; display: block; }
-  h1 { font-size: 34px; line-height: 1.1; margin: 0; letter-spacing: -.5px; }
-  .sub { color: var(--dim); margin: 4px 0 0; }
-  h2 { font-size: 21px; margin: 0 0 6px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; margin: 18px 0; }
-  .tag { display: inline-block; font-size: 13px; font-weight: 600; color: var(--ok);
-         border: 1px solid currentColor; border-radius: 999px; padding: 1px 10px; margin-bottom: 10px; }
-  ol { padding-left: 22px; margin: 10px 0 0; }
-  li { margin: 8px 0; }
-  .cmd { display: flex; gap: 8px; align-items: stretch; margin: 12px 0 4px; }
-  code.line { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; display: block;
-              background: var(--code-bg); color: var(--code-ink); border-radius: 10px; padding: 12px 14px;
-              font: 14px/1.4 ui-monospace, Menlo, monospace; }
-  button, .btn { font: inherit; font-weight: 600; border: 0; border-radius: 10px; cursor: pointer;
-                 background: var(--accent); color: var(--accent-ink); padding: 10px 16px; text-decoration: none;
-                 display: inline-block; white-space: nowrap; }
-  kbd { font: 14px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
-        border-radius: 6px; padding: 0 6px; background: var(--bg); }
-  .dim { color: var(--dim); }
-  .small { font-size: 15px; }
-  details { margin: 10px 0; }
-  summary { cursor: pointer; font-weight: 600; }
-  a { color: var(--accent); }
+  html { background: var(--wood1); }
+  body {
+    margin: 0; color: var(--ink); font: 600 16px/1.55 var(--body);
+    background:
+      repeating-linear-gradient(92deg, rgba(0,0,0,.12) 0 3px, transparent 3px 11px),
+      linear-gradient(180deg, var(--wood2), var(--wood1));
+    padding: 14px;
+  }
+  .case {
+    max-width: 980px; margin: 0 auto; border-radius: 14px; overflow: hidden; position: relative;
+    border: 1px solid #000; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04), 0 10px 40px rgba(0,0,0,.5);
+    background:
+      radial-gradient(1px 1px at 12% 18%, #fff8 50%, transparent 51%),
+      radial-gradient(1px 1px at 33% 72%, #fff6 50%, transparent 51%),
+      radial-gradient(1.5px 1.5px at 58% 9%, #fff9 50%, transparent 51%),
+      radial-gradient(1px 1px at 77% 41%, #fff7 50%, transparent 51%),
+      radial-gradient(1px 1px at 91% 83%, #fff5 50%, transparent 51%),
+      radial-gradient(1px 1px at 22% 94%, #fff6 50%, transparent 51%),
+      radial-gradient(1.5px 1.5px at 66% 58%, #fff5 50%, transparent 51%),
+      radial-gradient(1px 1px at 5% 55%, #fff6 50%, transparent 51%),
+      radial-gradient(ellipse at 80% 0%, #2a1f55 0, transparent 55%),
+      linear-gradient(180deg, var(--sky2), var(--sky) 70%);
+    background-size: 420px 420px, 380px 380px, 460px 460px, 400px 400px, 440px 440px, 360px 360px, 500px 500px, 390px 390px, 100% 100%, 100% 100%;
+  }
+  .inner { padding: 40px 44px 48px; }
+  @media (max-width: 640px) { body { padding: 8px; } .inner { padding: 28px 18px 36px; } }
+
+  .kicker { font: 700 13px/1 var(--label); letter-spacing: .32em; text-transform: uppercase; color: var(--amber); margin: 0; }
+  .edition { color: var(--ink3); font-size: 13px; margin: 6px 0 0; }
+
+  .hero { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; }
+  @media (max-width: 640px) { .hero { grid-template-columns: 1fr; } .orbit { order: -1; justify-self: start; } }
+  h1 { font: 800 italic clamp(52px, 11vw, 92px)/.95 var(--title); margin: 18px 0 8px; letter-spacing: -1px;
+       text-shadow: 0 2px 0 rgba(0,0,0,.4); }
+  .tagline { font: 600 clamp(20px, 3.4vw, 26px)/1.2 var(--label); color: var(--ink); margin: 0 0 16px; }
+  .sticker { display: inline-block; font: 700 clamp(14px, 2.6vw, 18px)/1 var(--label); letter-spacing: .14em;
+             color: #1a1206; background: var(--amber); padding: 7px 14px; border-radius: 6px;
+             box-shadow: 0 0 22px rgba(255,181,74,.45); text-transform: uppercase; }
+  .orbit { position: relative; width: 210px; height: 210px; display: grid; place-items: center; }
+  .orbit::before { content: ""; position: absolute; inset: 70px -40px; border-radius: 50%;
+                   border: 2px solid rgba(255,181,74,.55); transform: rotate(-18deg);
+                   box-shadow: 0 0 0 5px rgba(95,179,196,.18); }
+  .orbit::after { content: ""; position: absolute; width: 12px; height: 12px; border-radius: 50%; right: -26px; top: 64px;
+                  background: var(--green); box-shadow: 0 0 12px var(--green); }
+  .orbit img { width: 184px; height: 184px; position: relative; filter: drop-shadow(0 0 28px rgba(139,92,246,.55)); }
+  @media (max-width: 640px) { .orbit { width: 130px; height: 130px; margin-left: 30px; } .orbit img { width: 118px; height: 118px; }
+                              .orbit::before { inset: 44px -26px; } .orbit::after { right: -16px; top: 38px; } }
+
+  .intro { color: var(--ink2); max-width: 640px; margin: 26px 0 0; }
+
+  .rule { display: flex; align-items: baseline; gap: 16px; margin: 44px 0 16px; }
+  .rule h2 { font: 700 14px/1 var(--label); letter-spacing: .3em; text-transform: uppercase; color: var(--amber); margin: 0; white-space: nowrap; }
+  .rule span { color: var(--ink3); font-size: 13px; }
+  .rule::after { content: ""; flex: 1; height: 1px; background: var(--line); align-self: center; }
+  @media (max-width: 640px) { .rule { flex-wrap: wrap; gap: 6px 12px; } .rule::after { display: none; } }
+
+  .entry { position: relative; display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 18px; padding: 22px 24px;
+           margin: 12px 0; background: linear-gradient(180deg, var(--card2), var(--card)); border-radius: 14px;
+           border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
+  @media (max-width: 640px) { .entry { grid-template-columns: 1fr; gap: 6px; padding: 18px; } }
+  .num { font: 400 60px/0.8 "VT323", ui-monospace, monospace; color: var(--c); text-shadow: 0 0 14px color-mix(in srgb, var(--c) 60%, transparent); }
+  @media (max-width: 640px) { .num { font-size: 40px; } }
+  .entry > div { min-width: 0; }
+  .entry .lbl { font: 600 13px/1 var(--label); letter-spacing: .18em; text-transform: uppercase; color: var(--ink2); }
+  .entry h3 { font: 800 italic 30px/1.1 var(--title); margin: 6px 0 4px; }
+  .entry .say { font: 600 18px/1.3 var(--label); color: var(--c); margin: 0 0 8px; }
+  .entry p { margin: 6px 0; color: var(--ink2); }
+  .entry b { color: var(--ink); }
+
+  .btn { display: inline-flex; align-items: center; gap: 10px; margin: 8px 0 4px; padding: 12px 20px; border-radius: 8px;
+         font: 700 18px/1 var(--label); letter-spacing: .14em; text-transform: uppercase; text-decoration: none;
+         color: #1a1206; background: var(--orange); box-shadow: 0 0 22px rgba(243,155,51,.45), inset 0 -3px 0 rgba(0,0,0,.2); }
+  .btn:hover { filter: brightness(1.08); }
+  .btn small { font: 600 12px/1 var(--body); letter-spacing: 0; text-transform: none; opacity: .75; }
+
+  /* Little drawings of what the Mac shows, so friends know they're in the right place. */
+  .mock { margin: 12px 0 4px; max-width: 420px; border-radius: 12px; padding: 14px 16px; background: #ececec; color: #1d1d1f;
+          font: 13px/1.35 -apple-system, "Helvetica Neue", sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+  .mock .t { font-weight: 700; margin-bottom: 6px; }
+  .mock .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .mock .mbtn { flex: none; padding: 4px 12px; border-radius: 6px; background: #fff; border: 1px solid #c8c8c8; font-weight: 500; }
+  .mock .mbtn.hot { outline: 3px solid var(--c); outline-offset: 2px; }
+  .mock .dim { color: #6e6e73; font-size: 12px; }
+  .mock .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+  .lcd { display: flex; gap: 10px; align-items: stretch; margin: 12px 0 6px; }
+  .lcd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; display: block; padding: 10px 14px; border-radius: 8px;
+              background: #0b1408; color: #b8f28a; border: 1px solid #263a1c; box-shadow: inset 0 0 18px rgba(0,0,0,.7);
+              font: 400 21px/1.2 "VT323", ui-monospace, monospace; text-shadow: 0 0 6px rgba(184,242,138,.5); }
+  .copy { flex: none; font: 700 15px/1 var(--label); letter-spacing: .14em; text-transform: uppercase; cursor: pointer;
+          border: 1px solid var(--line); background: var(--card2); color: var(--ink); border-radius: 8px; padding: 0 16px; }
+  kbd { font: 600 13px/1 var(--label); letter-spacing: .06em; padding: 3px 7px; border-radius: 5px; color: var(--ink);
+        background: #23263a; border: 1px solid #383c58; border-bottom-width: 3px; }
+
+  details { border-top: 1px solid var(--line); padding: 12px 0; }
+  details:last-child { border-bottom: 1px solid var(--line); }
+  summary { cursor: pointer; font: 700 19px/1.3 var(--label); color: var(--ink); }
+  summary::marker { color: var(--amber); }
+  details p { color: var(--ink2); margin: 8px 0 0; }
+
+  .foot { margin-top: 40px; color: var(--ink3); font-size: 14px; }
+  .foot b { color: var(--ink2); }
+  a { color: var(--teal); }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <img class="mark" src="icon.png" alt="" width="88" height="88">
+<div class="case"><div class="inner">
+
+  <p class="kicker">The Kaleidobox Field Guide</p>
+  <p class="edition">Installation edition · For Macs on this planet and nearby ones</p>
+
+  <div class="hero">
     <div>
       <h1>Kaleidobox</h1>
-      <p class="sub">A live music rig for your Mac: sampler, looper, drums, synths, vocoder and a song builder.</p>
+      <p class="tagline">Getting the box onto your Mac</p>
+      <span class="sticker">About a minute. Nothing breaks.</span>
     </div>
-  </header>
+    <div class="orbit"><img src="icon.png" alt="Kaleidobox icon" width="184" height="184"></div>
+  </div>
 
-  <p>Thanks for trying it out! You need a Mac with macOS 11 (Big Sur) or newer. Intel and Apple silicon both work.
-     It takes about a minute.</p>
+  <p class="intro">Kaleidobox is a live music rig: drums, bass, synths, a vocoder, a looper, a sampler and a song builder in one window.
+     It runs on its own and inside Logic. You need a Mac with macOS 11 (Big Sur) or newer; Intel and Apple silicon both work.</p>
 
-  <section class="card">
-    <span class="tag">Easiest</span>
-    <h2>Download the installer</h2>
-    <p><a class="btn" href="https://github.com/colinblackshear-cell/crate/releases/latest/download/Install-Kaleidobox.pkg">Download Kaleidobox for Mac</a></p>
-    <ol>
-      <li>Double-click <b>Install-Kaleidobox.pkg</b> in your Downloads.</li>
-      <li>The Mac says it can't check it. Click <b>Done</b> (or <b>OK</b>). This happens once, because Kaleidobox isn't registered with Apple.</li>
-      <li>Open <b>System Settings</b> &gt; <b>Privacy &amp; Security</b>, scroll down, and click <b>Open Anyway</b> next to Install-Kaleidobox.pkg.
-          Type your Mac password if it asks, then click <b>Open Anyway</b> again.</li>
-      <li>The installer opens. Click <b>Continue</b> and <b>Install</b>, and type your Mac password.</li>
-      <li>Open Kaleidobox from Applications or Launchpad.</li>
-    </ol>
-    <p class="dim small">On macOS 14 or older you can instead right-click (or Control-click) the installer, choose <b>Open</b>, then click <b>Open</b>.
-       The installer puts the app in Applications, and the instrument for Logic (AU) and the VST3 in your Plug-Ins folder.
-       To update later, download and run the new installer.</p>
+  <div class="rule"><h2>The install</h2><span>Five steps. Start at the top.</span></div>
+
+  <section class="entry" style="--c: var(--orange)">
+    <div class="num">01</div>
+    <div>
+      <div class="lbl">Entry 01</div>
+      <h3>Get the installer</h3>
+      <p class="say">One file. It lands in your Downloads.</p>
+      <a class="btn" href="https://github.com/colinblackshear-cell/crate/releases/latest/download/Install-Kaleidobox.pkg">Download Kaleidobox <small>for Mac</small></a>
+      <p>Then double-click <b>Install-Kaleidobox.pkg</b> in your Downloads folder.</p>
+    </div>
   </section>
 
-  <section class="card">
-    <h2>Or install with one line in Terminal</h2>
-    <p class="small">Comfortable with Terminal? This skips the security step entirely.</p>
-    <ol>
-      <li>Open <b>Terminal</b>: press <kbd>⌘</kbd> <kbd>Space</kbd>, type <b>Terminal</b>, press <kbd>Return</kbd>.</li>
-      <li>Copy this line, paste it into Terminal (<kbd>⌘</kbd> <kbd>V</kbd>) and press <kbd>Return</kbd>:
-        <div class="cmd">
-          <code class="line" id="cmd">/bin/bash -c "$(curl -fsSL https://github.com/colinblackshear-cell/crate/releases/latest/download/install.sh)"</code>
-          <button id="copy" type="button">Copy</button>
+  <section class="entry" style="--c: var(--teal)">
+    <div class="num">02</div>
+    <div>
+      <div class="lbl">Entry 02</div>
+      <h3>The Mac gets nervous</h3>
+      <p class="say">Totally normal. Click Done.</p>
+      <p>Kaleidobox is made by a friend, not bought from a store, so it isn't registered with Apple. The first time, the Mac stops and says so:</p>
+      <div class="mock">
+        <div class="t">"Install-Kaleidobox.pkg" Not Opened</div>
+        <div class="dim">Apple could not verify "Install-Kaleidobox.pkg" is free of malware…</div>
+        <div class="btns"><span class="mbtn">Move to Trash</span><span class="mbtn hot">Done</span></div>
+      </div>
+      <p>Click <b>Done</b> (on older Macs it says <b>OK</b>). Don't move it to the Trash.</p>
+    </div>
+  </section>
+
+  <section class="entry" style="--c: var(--violet)">
+    <div class="num">03</div>
+    <div>
+      <div class="lbl">Entry 03</div>
+      <h3>Open Anyway</h3>
+      <p class="say">Tell the Mac it's a friend. Only once.</p>
+      <p>Open <b>System Settings</b> (the gear in the Dock, or the Apple menu &gt; System Settings), click <b>Privacy &amp; Security</b>, and scroll down to Security:</p>
+      <div class="mock">
+        <div class="row">
+          <div>"Install-Kaleidobox.pkg" was blocked to protect your Mac.</div>
+          <span class="mbtn hot">Open Anyway</span>
         </div>
-      </li>
-      <li>When it says <b>Done!</b>, open Kaleidobox from Applications.</li>
-    </ol>
+      </div>
+      <p>Click <b>Open Anyway</b>, type your Mac password if it asks, then click <b>Open Anyway</b> once more.</p>
+      <p>On macOS 14 or older there's a shortcut: right-click (or Control-click) the installer, choose <b>Open</b>, then <b>Open</b>.</p>
+    </div>
   </section>
 
-  <section class="card">
-    <h2>Use it in Logic</h2>
-    <ol>
-      <li>Quit and reopen Logic if it was open while you installed.</li>
-      <li>Make a <b>Software Instrument</b> track.</li>
-      <li>Click the instrument slot and pick <b>AU Instruments</b> &gt; <b>Colin Blackshear</b> &gt; <b>Kaleidobox</b>.</li>
-    </ol>
-    <p class="dim small">Other music apps (Ableton Live, Reaper, Bitwig) can use the VST3 version.</p>
+  <section class="entry" style="--c: var(--green)">
+    <div class="num">04</div>
+    <div>
+      <div class="lbl">Entry 04</div>
+      <h3>Install</h3>
+      <p class="say">Continue, Install, password. Done.</p>
+      <p>The Kaleidobox installer opens. Click <b>Continue</b>, then <b>Install</b>, and type your Mac password.
+         It puts the app in <b>Applications</b>, and the instrument for Logic and the VST3 in your <b>Plug-Ins</b> folder.
+         Quit Logic first if it's open.</p>
+    </div>
   </section>
 
-  <section class="card">
-    <h2>If something goes wrong</h2>
-    <details>
-      <summary>Logic doesn't list Kaleidobox</summary>
-      <p>Open <b>Logic Pro</b> &gt; <b>Settings</b> &gt; <b>Plug-in Manager</b>, find Kaleidobox, and click <b>Reset &amp; Rescan Selection</b>.
-         If that doesn't help, restart the Mac and open Logic again.</p>
-    </details>
-    <details>
-      <summary>It can't hear my mic</summary>
-      <p>Open <b>System Settings</b> &gt; <b>Privacy &amp; Security</b> &gt; <b>Microphone</b> and switch on Kaleidobox (or Logic).
-         Then pick your input in Kaleidobox's audio settings.</p>
-    </details>
-    <details>
-      <summary>"Kaleidobox is damaged and can't be opened"</summary>
-      <p>That's the same warning in a scarier form. Run the installer again, or use the one-line Terminal install; both fix it.</p>
-    </details>
+  <section class="entry" style="--c: var(--yellow)">
+    <div class="num">05</div>
+    <div>
+      <div class="lbl">Entry 05</div>
+      <h3>Make some noise</h3>
+      <p class="say">Open it. Press anything.</p>
+      <p>Open <b>Kaleidobox</b> from Applications or Launchpad. The first time it uses your mic, the Mac asks: click <b>Allow</b>.
+         The <b>?</b> button and the Guide inside the app show you around.</p>
+      <p><b>In Logic:</b> make a <b>Software Instrument</b> track, click the instrument slot and pick
+         <b>AU Instruments</b> &gt; <b>Colin Blackshear</b> &gt; <b>Kaleidobox</b>.
+         Ableton Live, Reaper and Bitwig can use the VST3.</p>
+    </div>
   </section>
 
-  <p class="dim small">Found a bug or have an idea? Tell Colin what you did, what you expected, and what happened. A screenshot helps a lot.</p>
-</main>
+  <div class="rule"><h2>The shortcut</h2><span>For people who like Terminal.</span></div>
+
+  <section class="entry" style="--c: var(--red)">
+    <div class="num">⌘</div>
+    <div>
+      <div class="lbl">Optional</div>
+      <h3>One line, no warnings</h3>
+      <p class="say">Skips steps 02 and 03 entirely.</p>
+      <p>Open <b>Terminal</b> (<kbd>⌘</kbd> <kbd>Space</kbd>, type Terminal, <kbd>Return</kbd>), paste this line and press <kbd>Return</kbd>:</p>
+      <div class="lcd">
+        <code id="cmd">/bin/bash -c "$(curl -fsSL https://github.com/colinblackshear-cell/crate/releases/latest/download/install.sh)"</code>
+        <button class="copy" id="copy" type="button">Copy</button>
+      </div>
+      <p>It installs the same three things. Run it again any time to update.</p>
+    </div>
+  </section>
+
+  <div class="rule"><h2>If the universe misbehaves</h2></div>
+
+  <details>
+    <summary>Logic doesn't list Kaleidobox</summary>
+    <p>Quit Logic and open it again. Still missing? Open <b>Logic Pro</b> &gt; <b>Settings</b> &gt; <b>Plug-in Manager</b>, find Kaleidobox,
+       and click <b>Reset &amp; Rescan Selection</b>. If that doesn't do it, restart the Mac.</p>
+  </details>
+  <details>
+    <summary>It can't hear my mic</summary>
+    <p>Open <b>System Settings</b> &gt; <b>Privacy &amp; Security</b> &gt; <b>Microphone</b> and switch on Kaleidobox (or Logic).
+       Then pick your input in Kaleidobox's audio settings.</p>
+  </details>
+  <details>
+    <summary>There's no Open Anyway button</summary>
+    <p>It only appears for about an hour after you try to open the installer. Double-click <b>Install-Kaleidobox.pkg</b> again,
+       click Done, and go straight back to Privacy &amp; Security.</p>
+  </details>
+  <details>
+    <summary>"Kaleidobox is damaged and can't be opened"</summary>
+    <p>That's the same warning in a scarier form. Run the installer again, or use the one line in Terminal; both fix it.</p>
+  </details>
+
+  <p class="foot">Found a bug or have an idea? Tell <b>Colin</b> what you did, what you expected, and what happened. A screenshot helps a lot.</p>
+
+</div></div>
 <script>
   document.getElementById ("copy").addEventListener ("click", async (e) => {
-    const text = document.getElementById ("cmd").textContent;
-    try { await navigator.clipboard.writeText (text); e.target.textContent = "Copied"; }
+    const code = document.getElementById ("cmd");
+    try { await navigator.clipboard.writeText (code.textContent); e.target.textContent = "Copied"; }
     catch (err) {
-      const r = document.createRange(); r.selectNodeContents (document.getElementById ("cmd"));
+      const r = document.createRange(); r.selectNodeContents (code);
       const s = getSelection(); s.removeAllRanges(); s.addRange (r);
       e.target.textContent = "Press ⌘C";
     }

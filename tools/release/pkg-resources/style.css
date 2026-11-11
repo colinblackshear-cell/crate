@@ -1,0 +1,19 @@
+/* The installer's pages in the Kaleidobox look: night sky, cream ink, amber labels. */
+@font-face { font-family: "Fraunces"; src: url(Fraunces-ExtraBoldItalic.ttf); font-weight: 800; font-style: italic; }
+@font-face { font-family: "Barlow Condensed"; src: url(BarlowCondensed-Bold.ttf); font-weight: 700; }
+@font-face { font-family: "Barlow"; src: url(Barlow-SemiBold.ttf); font-weight: 600; }
+html, body { margin: 0; min-height: 100%; }
+body { background: radial-gradient(ellipse at 85% 0%, #2a1f55 0, transparent 60%), linear-gradient(180deg, #121528, #07080f);
+       color: #f1e7d1; font: 600 13px/1.5 "Barlow", -apple-system, sans-serif; padding: 20px 22px; box-sizing: border-box; }
+.top { display: flex; align-items: center; gap: 14px; }
+.top img { width: 64px; height: 64px; filter: drop-shadow(0 0 14px rgba(139,92,246,.6)); }
+.kicker { font: 700 11px/1 "Barlow Condensed", "Avenir Next Condensed", sans-serif; letter-spacing: .3em; text-transform: uppercase; color: #ffb54a; margin: 0; }
+h1 { font: 800 italic 38px/1 "Fraunces", Georgia, serif; margin: 4px 0 0; }
+p { color: #a9a4b8; margin: 10px 0; }
+b { color: #f1e7d1; }
+.list { margin: 14px 0 0; padding: 0; list-style: none; }
+.list li { display: flex; gap: 12px; align-items: baseline; padding: 7px 0; border-top: 1px solid #2a2d44; }
+.list li:last-child { border-bottom: 1px solid #2a2d44; }
+.tag { flex: none; width: 92px; font: 700 12px/1 "Barlow Condensed", "Avenir Next Condensed", sans-serif; letter-spacing: .16em; text-transform: uppercase; }
+.sticker { display: inline-block; margin-top: 12px; font: 700 12px/1 "Barlow Condensed", "Avenir Next Condensed", sans-serif; letter-spacing: .16em;
+           text-transform: uppercase; color: #1a1206; background: #ffb54a; padding: 5px 10px; border-radius: 5px; }
