@@ -206,7 +206,7 @@ void RigRecorder::finish()
     }
 
     const auto readMe = folder.getChildFile ("Open in Logic.txt");
-    readMe.replaceWithText ("Recorded in Crate Rig, " + juce::Time::getCurrentTime().toString (true, true) + ".\n\n"
+    readMe.replaceWithText ("Recorded in Kaleidobox, " + juce::Time::getCurrentTime().toString (true, true) + ".\n\n"
                             "In Logic: set the project tempo to " + juce::String (bpm, 2).trimCharactersAtEnd ("0").trimCharactersAtEnd (".")
                             + " BPM (" + juce::String (bpb) + "/4), then drag every file here in at bar 1. They all start on the same beat.\n"
                             "The WAVs are each tool as you heard it (after its effects and fader); Mix is everything together.\n"

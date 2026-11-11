@@ -112,7 +112,7 @@ const std::vector<GuideView::Entry>& GuideView::entries()
     static const std::vector<Entry> e {
         { "Groove", "The Groove", "Where everyone agrees what time it is.",
           "Drums, bass, synth and friends on sixteen steps each. Light up steps, pick a pattern, turn the eight knobs, "
-          "and the whole Rig falls in behind you. New to this planet? Land here first.",
+          "and all of Kaleidobox falls in behind you. New to this planet? Land here first.",
           RigColours::song, Art::groove, true, "F1" },
         { "Vocoder", "The Vocoder", "Teaches your voice to speak synthesizer.",
           "Sing into the mic and play chords: your words come out as a choir of robots with excellent pitch. "
@@ -257,7 +257,7 @@ public:
         howTo.onClick = [this] { if (guide.onHelp) guide.onHelp(); };
         addAndMakeVisible (howTo);
 
-        startHere.setTooltip ("When lit, the Rig opens on this page. F1-F5 and More still go straight to the tools.");
+        startHere.setTooltip ("When lit, Kaleidobox opens on this page. F1-F5 and More still go straight to the tools.");
         startHere.onClick = [this]
         {
             if (guide.setStartsHere)
@@ -389,7 +389,7 @@ private:
         auto r = heroTextArea.toFloat().withTrimmedTop (34.0f);
         g.setFont (vintage::cond (14.0f, Weight::extra, 0.32f));
         g.setColour (kAmber);
-        g.drawText ("THE CRATE RIG FIELD GUIDE", r.removeFromTop (22.0f), juce::Justification::centredLeft, false);
+        g.drawText ("THE KALEIDOBOX FIELD GUIDE", r.removeFromTop (22.0f), juce::Justification::centredLeft, false);
         g.setFont (vintage::barlow (13.0f));
         g.setColour (kInk3);
         g.drawText (utf8 ("Edition one \xc2\xb7 For use on this planet and nearby ones"), r.removeFromTop (18.0f),
@@ -397,13 +397,19 @@ private:
         r.removeFromTop (4.0f);
 
         // The title, with a little LCD-amber shadow.
-        const float size = juce::jlimit (54.0f, 92.0f, r.getWidth() / 7.0f);
+        float size = juce::jlimit (54.0f, 92.0f, r.getWidth() / 7.0f);
+        {
+            // Kaleidobox is a long word: shrink it until it fits the column.
+            const auto width = juce::GlyphArrangement::getStringWidth (vintage::wordmark (size), "Kaleidobox");
+            if (width > r.getWidth() - 6.0f)
+                size *= (r.getWidth() - 6.0f) / width;
+        }
         auto titleArea = r.removeFromTop (size * 1.05f);
         g.setFont (vintage::wordmark (size));
         g.setColour (kAmber.withAlpha (0.28f));
-        g.drawText ("The Rig", titleArea.translated (3.0f, 4.0f), juce::Justification::centredLeft, false);
+        g.drawText ("Kaleidobox", titleArea.translated (3.0f, 4.0f), juce::Justification::centredLeft, false);
         g.setColour (kInk);
-        g.drawText ("The Rig", titleArea, juce::Justification::centredLeft, false);
+        g.drawText ("Kaleidobox", titleArea, juce::Justification::centredLeft, false);
 
         g.setFont (vintage::cond (24.0f, Weight::semi, 0.01f));
         g.setColour (kInk2);
@@ -506,7 +512,7 @@ private:
     class LampToggle : public juce::Button
     {
     public:
-        LampToggle() : juce::Button ("Open the Rig on this page") { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+        LampToggle() : juce::Button ("Open Kaleidobox on this page") { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
         void paintButton (juce::Graphics& g, bool over, bool) override
         {
             auto r = getLocalBounds().toFloat();

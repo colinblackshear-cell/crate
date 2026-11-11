@@ -7,13 +7,15 @@
 class RigApplication : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return "Crate Rig"; }
+    const juce::String getApplicationName() override { return "Kaleidobox"; }
     const juce::String getApplicationVersion() override { return "0.1.0"; }
     bool moreThanOneInstanceAllowed() override { return false; }
 
     void initialise (const juce::String&) override
     {
         juce::PropertiesFile::Options options;
+        // The settings keep their old Crate Rig file name, so your audio and MIDI setup survive the
+        // rename to Kaleidobox.
         options.applicationName = "Crate Rig";
         options.filenameSuffix = ".settings";
         options.osxLibrarySubFolder = "Application Support";
@@ -38,8 +40,8 @@ public:
                 makeSureTheMicIsOpen();
             else
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "The mic is blocked",
-                    "macOS isn't letting Crate Rig hear your mic. Turn Crate Rig on in System Settings > "
-                    "Privacy & Security > Microphone, then quit and reopen the Rig.");
+                    "macOS isn't letting Kaleidobox hear your mic. Turn Kaleidobox on in System Settings > "
+                    "Privacy & Security > Microphone, then quit and reopen Kaleidobox.");
             devices.addAudioCallback (engine.get());
             devices.addMidiInputDeviceCallback ({}, engine.get());
         });
@@ -108,7 +110,7 @@ private:
     {
     public:
         Window (RigEngine& engine, juce::AudioDeviceManager& devices)
-            : DocumentWindow ("Crate Rig", crate::Theme::background, DocumentWindow::allButtons)
+            : DocumentWindow ("Kaleidobox", crate::Theme::background, DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
             setContentOwned (new RigView (engine, &devices), false);

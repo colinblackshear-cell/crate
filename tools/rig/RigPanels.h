@@ -37,7 +37,7 @@ public:
 
     PanelButton play { "Play" }, stop { "Stop" }, rec { "Rec" }, up { "+" }, down { juce::String::fromUTF8 ("\xe2\x88\x92") }, tap { "Tap" };
     std::function<void()> onMic;
-    std::function<void()> onWordmark;   // a click on "Crate Rig": the Guide
+    std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
 
     // What it shows; RigView sets these on its timer, then calls update().
     struct Shown

@@ -78,7 +78,7 @@ InstrumentShell::InstrumentShell (PluginSlot& s, const juce::String& name, juce:
         return v < 0.001 ? juce::String ("off") : juce::String (juce::Decibels::gainToDecibels (v), 1) + " dB";
     };
     level.slider.onValueChange = [this] { slot.level = (float) level.slider.getValue(); level.repaint(); };
-    level.setTooltip ("The plugin's level in the Rig. Double-click for 0 dB.");
+    level.setTooltip ("The plugin's level in Kaleidobox. Double-click for 0 dB.");
     addAndMakeVisible (level);
 
     refresh();
