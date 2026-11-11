@@ -44,6 +44,8 @@ public:
     StripFxPanel* getFxPanel() const { return fxPanel.get(); }
     // Opens (or closes) the song grid: loops and tools down the side, song parts across.
     void showSongGrid (bool show);
+    // Set by the Rig: the Song button opens the Song builder page instead of the grid here.
+    std::function<void()> onSongBuilder;
     SongGrid* getSongGrid() const { return songGrid.get(); }
     // Opens (or closes) the timeline: the song composer, lanes of blocks over a bar ruler.
     void showTimeline (bool show);
@@ -85,7 +87,7 @@ private:
     std::unique_ptr<StripFxPanel> fxPanel;
     int fxLayer = -1;
     std::unique_ptr<SongGrid> songGrid;
-    juce::TextButton songButton { "Song grid" };
+    juce::TextButton songButton { "Song" };
     std::unique_ptr<TimelineView> timeline;
     juce::TextButton timelineButton { "Timeline" };
 

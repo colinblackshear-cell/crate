@@ -6,6 +6,8 @@
 #include "SongGrid.h"
 #include "RigExport.h"
 #include "HelpPanel.h"
+#include "SongView.h"
+#include "MoreView.h"
 
 namespace
 {
@@ -449,6 +451,152 @@ struct RigSceneTests : juce::UnitTest
             rig.nextPresses += 1;
             runBeats (engine, 0.1);
             expectEquals (rig.getQueued(), 2);
+        }
+
+        beginTest ("moving, copying and deleting parts keeps the one that's playing");
+        {
+            RigEngine engine;
+            engine.prepare (kSceneRate, kSceneBlock);
+            engine.getTransport().setBpm (120.0);
+            auto& scenes = engine.getScenes();
+            for (auto name : { "A", "B", "C", "D" })
+                scenes.getScenes().push_back (sceneWith (engine, name));
+            engine.tickScenes();
+            scenes.launch (1);
+            runBeats (engine, 0.1);
+            expectEquals (scenes.getCurrent(), 1);
+
+            scenes.move (1, 3);   // B goes last: A C D B
+            expectEquals (scenes.getScenes()[3].name, juce::String ("B"));
+            expectEquals (scenes.getCurrent(), 3, "B still plays, at its new place");
+            scenes.move (0, 2);   // C D A B
+            expectEquals (scenes.getScenes()[0].name, juce::String ("C"));
+            expectEquals (scenes.getCurrent(), 3);
+
+            expectEquals (scenes.duplicate (0), 1);   // C "C 2" D A B
+            expectEquals (scenes.getScenes()[1].name, juce::String ("C 2"));
+            expectEquals (scenes.getCurrent(), 4);
+
+            scenes.remove (0);   // "C 2" D A B
+            expectEquals ((int) scenes.getScenes().size(), 4);
+            expectEquals (scenes.getCurrent(), 3);
+            scenes.remove (3);   // the one playing
+            expectEquals (scenes.getCurrent(), -1);
+
+            // A part that's coming up next, deleted, doesn't come.
+            engine.getTransport().play();
+            scenes.launch (0);
+            runBeats (engine, 0.1);
+            const int before = scenes.getCurrent();
+            scenes.remove (scenes.getQueued() >= 0 ? scenes.getQueued() : 0);
+            runBeats (engine, 8.0);
+            expect (scenes.getCurrent() == before || scenes.getCurrent() == -1, "the deleted part never started");
+        }
+
+        beginTest ("the Song builder: + New part, cells on and off, Play song");
+        {
+            RigEngine engine;
+            engine.prepare (kSceneRate, kSceneBlock);
+            engine.getTransport().setBpm (120.0);
+            SongView view (engine);
+            view.setSize (1400, 560);
+            view.addPart();
+            view.addPart();
+            auto& list = engine.getScenes().getScenes();
+            expectEquals ((int) list.size(), 2);
+            expectEquals (list[0].name, juce::String ("Intro"));
+            expectEquals (list[1].name, juce::String ("Verse"));
+            expectEquals (list[0].bars, 8, "a new song's parts start at 8 bars");
+
+            // Row 1 is the bass: on -> off -> on; right-click "as is" leaves it alone.
+            expectEquals (SongView::trackName (SongView::tracks()[1]), juce::String ("Bass"));
+            expectEquals (SongView::cellValue (list[1], SongView::tracks()[1]), 1);
+            view.clickCell (1, 1);
+            expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], 1);
+            view.clickCell (1, 1);
+            expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], 0);
+            view.setCellTo (1, 1, -1);
+            expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], -1);
+            // Loops come after the six tools.
+            expect (SongView::tracks()[6].isLoop && SongView::tracks()[6].index == 0);
+            view.clickCell (0, 6);
+            expectEquals (list[0].state.loopMutes[0], 1);
+
+            expectEquals (SongView::lengthText (0), juce::String ("Hold"));
+            expectEquals (SongView::lengthText (1), juce::String ("1 bar"));
+            expectEquals (SongView::letterFor (2), juce::String ("C"));
+
+            view.playSong();
+            expect (engine.getScenes().songMode);
+            runBeats (engine, 0.2);
+            expect (engine.getTransport().isPlaying());
+            expectEquals (engine.getScenes().getCurrent(), 0);
+            // The part that's playing changes as you click.
+            view.clickCell (0, 1);
+            expect (engine.getStrip (RigEngine::bassStrip).mute.load());
+            engine.getTransport().stop();
+        }
+
+        beginTest ("the More page: a button for every tool, and they open");
+        {
+            MoreView more (true);
+            more.setSize (1400, 560);
+            juce::StringArray opened;
+            more.onOpen = [&opened] (const juce::String& page) { opened.add (page); };
+            expectEquals (more.tiles.size(), (int) MoreView::toolList().size());
+            for (auto* t : more.tiles)
+            {
+                expect (! t->getBounds().isEmpty(), "every tool shows");
+                t->onClick();
+            }
+            for (auto page : { "Song", "MPC", "Sampler editor", "Bass", "Synth", "Sounds", "Mixer" })
+                expect (opened.contains (page), page);
+
+            // In the Rig, More is a page, and its buttons go to the pages.
+            RigEngine engine;
+            engine.prepare (kSceneRate, kSceneBlock);
+            RigView view (engine, nullptr);
+            view.setSize (1440, 900);
+            view.openPage ("More");
+            expectEquals (view.getPage(), juce::String ("More"));
+            view.openPage ("Song");
+            expectEquals (view.getPage(), juce::String ("Song"));
+
+            // Screenshots, for the pull request: CRATE_SONG_SNAPSHOT=<folder>.
+            if (auto folder = juce::SystemStats::getEnvironmentVariable ("CRATE_SONG_SNAPSHOT", {}); folder.isNotEmpty())
+            {
+                const auto shoot = [&view] (const juce::String& file)
+                {
+                    const auto image = view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f);
+                    juce::File f (file);
+                    f.deleteFile();
+                    juce::FileOutputStream stream (f);
+                    juce::PNGImageFormat().writeImageToStream (image, stream);
+                };
+                shoot (folder + "/song-empty.png");
+                view.openPage ("More");
+                shoot (folder + "/more.png");
+                auto& scenes = engine.getScenes().getScenes();
+                for (auto [name, bars] : { std::pair<const char*, int> { "Intro", 4 }, { "Verse", 8 }, { "Chorus", 8 }, { "Break", 4 },
+                                           { "Chorus 2", 8 }, { "Outro", 0 } })
+                {
+                    RigScene s;
+                    s.name = name;
+                    s.bars = bars;
+                    s.state = engine.captureScene();
+                    scenes.push_back (s);
+                }
+                for (int p = 0; p < (int) scenes.size(); ++p)
+                    for (int r = 0; r < (int) SongView::tracks().size(); ++r)
+                        SongView::setCell (scenes[(size_t) p], SongView::tracks()[(size_t) r], (p * 3 + r * 5) % 7 < 2 ? 0 : (r == 9 ? -1 : 1));
+                engine.getTransport().play();
+                engine.getScenes().launch (1);
+                runBeats (engine, 13.0);
+                view.openPage ("Song");
+                view.refresh();
+                shoot (folder + "/song.png");
+                engine.getTransport().stop();
+            }
         }
 
         beginTest ("scenes are saved with the show");
