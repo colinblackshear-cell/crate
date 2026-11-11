@@ -247,6 +247,7 @@ struct RigSceneTests : juce::UnitTest
             engine.prepare (kSceneRate, kSceneBlock);
             RigView view (engine, nullptr);
             view.setSize (1440, 960);
+            view.goTo ("Groove");   // the Rig opens on the Guide; its ? opens Getting started
             view.showHelp (true);
             expect (view.getHelp() != nullptr && view.getHelp()->isVisible());
             expectEquals (HelpPanel::guides()[(size_t) HelpPanel ("Looper").getShown()].title, juce::String ("Looper (F3): record loops"));

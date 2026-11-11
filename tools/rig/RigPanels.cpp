@@ -249,6 +249,8 @@ void Header::paint (juce::Graphics& g)
 
 void Header::mouseUp (const juce::MouseEvent& e)
 {
+    if (e.mouseWasClicked() && wordmarkArea.contains (e.getPosition()) && onWordmark)
+        return onWordmark();
     if (standalone && e.mouseWasClicked() && micLampArea.contains (e.getPosition()) && onMic)
         onMic();
 }
@@ -297,7 +299,7 @@ void ScreenBar::setCurrent (const juce::String& page)
             tabs[i]->repaint();
         }
     }
-    const auto moreLit = screens().contains (page) ? Lit::none : Lit::current;
+    const auto moreLit = screens().contains (page) || page == "Guide" ? Lit::none : Lit::current;
     if (more.lit != moreLit)
     {
         more.lit = moreLit;
