@@ -617,16 +617,16 @@ TimelineView::TimelineView (RigEngine& e) : engine (e), timeline (e.getTimeline(
     zoomIn.onClick = [this] { pxPerBar = juce::jmin (160.0f, pxPerBar * 1.4f); resized(); };
     onButton.setClickingTogglesState (true);
     onButton.setTooltip ("On: while the clock plays, the timeline brings loops and tools in and out. Off: they play as you set them "
-                         "(to jam, or to use the Song grid's parts).");
+                         "(to jam, or to use the Song builder's parts).");
     onButton.onClick = [this] { timeline.on = onButton.getToggleState(); };
     recOnto.setClickingTogglesState (true);
     recOnto.setTooltip ("While the song plays, a loop you record (Looper > Rec next layer) goes on its lane, at the bar you started it.");
     recOnto.onClick = [this] { recordOntoSong = recOnto.getToggleState(); };
-    partsButton.setTooltip ("Lays out the Song grid's parts (A, B, C...) on the timeline, with a marker for each, so you can shape them here.");
+    partsButton.setTooltip ("Lays out the Song builder's parts (A, B, C...) on the timeline, with a marker for each, so you can shape them here.");
     partsButton.onClick = [this]
     {
         juce::PopupMenu menu;
-        menu.addItem ("Replace the timeline with the Song grid's parts", ! engine.getScenes().getScenes().empty(), false, [this] { fromParts(); });
+        menu.addItem ("Replace the timeline with the Song builder's parts", ! engine.getScenes().getScenes().empty(), false, [this] { fromParts(); });
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&partsButton));
     };
     recordButton.setTooltip ("Plays the song once from bar 1 and records it: every tool (MPC, Bass, Synth, vocals, Input, Loops) "
@@ -887,7 +887,7 @@ void TimelineView::fromParts()
     const auto& parts = engine.getScenes().getScenes();
     if (parts.empty())
     {
-        say ("The Song grid has no parts yet.");
+        say ("The Song builder has no parts yet.");
         return;
     }
     pushUndo();

@@ -472,7 +472,7 @@ void Footer::resized()
     auto content = r.withSizeKeepingCentre (r.getWidth(), 76 + 22);
 
     // Parts on the left, Live now on the right; on a small screen the chips go first.
-    const int chipsWidth = 5 * 104 + 4 * 8;
+    const int chipsWidth = kChips * kChipWidth + (kChips - 1) * 8;
     showChips = content.getWidth() >= 8 * 64 + 7 * 8 + 22 + chipsWidth;
     if (showChips)
     {
@@ -526,7 +526,7 @@ void Footer::paint (juce::Graphics& g)
     auto r = chipsArea.withHeight (76);
     for (int c = 0; c < kChips; ++c)
     {
-        auto chip = r.removeFromLeft (104).toFloat();
+        auto chip = r.removeFromLeft (kChipWidth).toFloat();
         r.removeFromLeft (8);
         drawWell (g, chip);
         auto inner = chip.reduced (10.0f, 8.0f);
@@ -547,7 +547,7 @@ void Footer::mouseUp (const juce::MouseEvent& e)
 {
     if (! e.mouseWasClicked() || ! showChips || ! chipsArea.contains (e.getPosition()))
         return;
-    const int c = (e.x - chipsArea.getX()) / 112;
+    const int c = (e.x - chipsArea.getX()) / (kChipWidth + 8);
     if (juce::isPositiveAndBelow (c, kChips) && onTrack)
         onTrack (chipStrip (c));
 }

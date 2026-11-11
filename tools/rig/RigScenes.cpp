@@ -98,6 +98,55 @@ void RigScenes::clear()
     pending = false;
 }
 
+void RigScenes::move (int from, int to)
+{
+    const int count = (int) scenes.size();
+    if (! juce::isPositiveAndBelow (from, count) || ! juce::isPositiveAndBelow (to, count) || from == to)
+        return;
+    auto scene = scenes[(size_t) from];
+    scenes.erase (scenes.begin() + from);
+    scenes.insert (scenes.begin() + to, scene);
+    const auto remap = [from, to] (int i)
+    {
+        if (i == from) return to;
+        if (from < to && i > from && i <= to) return i - 1;
+        if (to < from && i >= to && i < from) return i + 1;
+        return i;
+    };
+    current = current >= 0 ? remap (current) : current;
+    queued = queued >= 0 ? remap (queued) : queued;
+    const juce::SpinLock::ScopedLockType sl (pendingLock);
+    if (pending)
+        pendingIndex = remap (pendingIndex);
+}
+
+void RigScenes::remove (int index)
+{
+    if (! juce::isPositiveAndBelow (index, (int) scenes.size()))
+        return;
+    scenes.erase (scenes.begin() + index);
+    const auto shift = [index] (int i) { return i < 0 || i < index ? i : (i == index ? -1 : i - 1); };
+    current = shift (current);
+    const bool wasQueued = queued == index;
+    queued = shift (queued);
+    const juce::SpinLock::ScopedLockType sl (pendingLock);
+    if (wasQueued)
+        pending = false;
+    else if (pending)
+        pendingIndex = shift (pendingIndex);
+}
+
+int RigScenes::duplicate (int index)
+{
+    if (! juce::isPositiveAndBelow (index, (int) scenes.size()) || (int) scenes.size() >= kMaxScenes)
+        return -1;
+    auto copy = scenes[(size_t) index];
+    copy.name = copy.name + " 2";
+    scenes.push_back (copy);
+    move ((int) scenes.size() - 1, index + 1);
+    return index + 1;
+}
+
 int RigScenes::tick (double beat, bool playing, int beatsPerBar)
 {
     lastBeat = beat;
