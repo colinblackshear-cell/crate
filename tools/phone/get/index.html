@@ -62,7 +62,24 @@
 
   <section class="card">
     <span class="tag">Easiest</span>
-    <h2>Install with one line</h2>
+    <h2>Download the installer</h2>
+    <p><a class="btn" href="https://github.com/colinblackshear-cell/crate/releases/latest/download/Install-Kaleidobox.pkg">Download Kaleidobox for Mac</a></p>
+    <ol>
+      <li>Double-click <b>Install-Kaleidobox.pkg</b> in your Downloads.</li>
+      <li>The Mac says it can't check it. Click <b>Done</b> (or <b>OK</b>). This happens once, because Kaleidobox isn't registered with Apple.</li>
+      <li>Open <b>System Settings</b> &gt; <b>Privacy &amp; Security</b>, scroll down, and click <b>Open Anyway</b> next to Install-Kaleidobox.pkg.
+          Type your Mac password if it asks, then click <b>Open Anyway</b> again.</li>
+      <li>The installer opens. Click <b>Continue</b> and <b>Install</b>, and type your Mac password.</li>
+      <li>Open Kaleidobox from Applications or Launchpad.</li>
+    </ol>
+    <p class="dim small">On macOS 14 or older you can instead right-click (or Control-click) the installer, choose <b>Open</b>, then click <b>Open</b>.
+       The installer puts the app in Applications, and the instrument for Logic (AU) and the VST3 in your Plug-Ins folder.
+       To update later, download and run the new installer.</p>
+  </section>
+
+  <section class="card">
+    <h2>Or install with one line in Terminal</h2>
+    <p class="small">Comfortable with Terminal? This skips the security step entirely.</p>
     <ol>
       <li>Open <b>Terminal</b>: press <kbd>⌘</kbd> <kbd>Space</kbd>, type <b>Terminal</b>, press <kbd>Return</kbd>.</li>
       <li>Copy this line, paste it into Terminal (<kbd>⌘</kbd> <kbd>V</kbd>) and press <kbd>Return</kbd>:
@@ -71,25 +88,8 @@
           <button id="copy" type="button">Copy</button>
         </div>
       </li>
-      <li>When it says <b>Done!</b>, open Kaleidobox from Applications or Launchpad.</li>
+      <li>When it says <b>Done!</b>, open Kaleidobox from Applications.</li>
     </ol>
-    <p class="dim small">This puts the app in Applications, and the instrument for Logic (AU) and the VST3 in your Plug-Ins folder.
-       Installing this way skips the Mac's "unidentified developer" warning. Run the same line again any time to update.</p>
-  </section>
-
-  <section class="card">
-    <h2>Or download and drag it yourself</h2>
-    <p><a class="btn" href="https://github.com/colinblackshear-cell/crate/releases/latest/download/Kaleidobox-mac.dmg">Download Kaleidobox for Mac</a></p>
-    <ol>
-      <li>Open the downloaded <b>Kaleidobox-mac.dmg</b>, and drag <b>Kaleidobox</b> onto <b>Applications</b>.</li>
-      <li>Open it. The Mac says it can't check the app. Click <b>Done</b> (or <b>OK</b>).</li>
-      <li>Open <b>System Settings</b> &gt; <b>Privacy &amp; Security</b>, scroll to the bottom and click <b>Open Anyway</b> next to Kaleidobox.
-          Open it again and click <b>Open</b>. You only do this once.</li>
-      <li>For Logic: in Finder choose <b>Go</b> &gt; <b>Go to Folder…</b>, paste <code>~/Library/Audio/Plug-Ins/Components</code>,
-          and drag <b>Kaleidobox.component</b> from the DMG into it.</li>
-    </ol>
-    <p class="dim small">Why the warning? Kaleidobox is made by a friend, not bought from a store, so it isn't registered with Apple.
-       The Mac is just being careful.</p>
   </section>
 
   <section class="card">
@@ -116,7 +116,7 @@
     </details>
     <details>
       <summary>"Kaleidobox is damaged and can't be opened"</summary>
-      <p>That's the same warning in a scarier form. Use the one-line install above instead; it fixes it.</p>
+      <p>That's the same warning in a scarier form. Run the installer again, or use the one-line Terminal install; both fix it.</p>
     </details>
   </section>
 

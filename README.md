@@ -394,11 +394,13 @@ the library and theme from `core/`.
 
 ## Sharing Kaleidobox with friends
 
-Friends install Kaleidobox (the Rig: app, AU and VST3) from
+Friends install Kaleidobox (app, AU and VST3) from
 https://colinblackshear-cell.github.io/crate/get/ , which points at the latest GitHub Release.
 To make a release, run **Actions > Release > Run workflow** with a version number: it builds a
-universal Mac build and makes a *draft* release (zip, DMG and `install.sh`) that nobody sees until
-you press **Publish release**. Pushing a tag such as `v0.2.0` builds and publishes in one go.
-The builds aren't signed with an Apple Developer ID, so the page's one-line Terminal install
-(`tools/release/install.sh`, downloaded with curl) is the warning-free way in; the DMG needs
-"Open Anyway" in Privacy & Security once.
+universal Mac build, test-installs it, and makes a *draft* release (`Install-Kaleidobox.pkg`, a zip
+and `install.sh`) that nobody sees until you press **Publish release**. Pushing a tag such as
+`v0.2.0` builds and publishes in one go.
+
+The builds aren't signed with an Apple Developer ID, so the first time a friend opens the .pkg
+they click **Open Anyway** in Privacy & Security. The page's one-line Terminal install
+(`tools/release/install.sh`, downloaded with curl) skips that step.

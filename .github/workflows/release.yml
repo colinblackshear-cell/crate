@@ -6,6 +6,8 @@ name: Release
 # - Run it by hand (Actions > Release > Run workflow) to make a DRAFT release. Nobody can see a
 #   draft until you press "Publish release" on it.
 # - Or push a tag such as v0.2.0 to build and publish in one go.
+#
+# Friends get "Install-Kaleidobox.pkg" (a normal Mac installer) or the one-line Terminal install.
 
 on:
   workflow_dispatch:
@@ -16,6 +18,9 @@ on:
         default: "0.1.0"
   push:
     tags: ["v*"]
+  # A pull request that changes the release files builds everything as a check, but makes no release.
+  pull_request:
+    paths: [".github/workflows/release.yml", "tools/release/**"]
 
 permissions:
   contents: write
@@ -34,7 +39,10 @@ jobs:
       - name: Version
         id: v
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
             echo "draft=false" >> "$GITHUB_OUTPUT"
           else
@@ -66,31 +74,59 @@ jobs:
           auval -v aumu CRig Cblk
 
       - name: Package
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
+          mkdir -p pkgs
           STAGE="dist/$NAME"
           mkdir -p "$STAGE"
           ditto "$APP_DIR/$NAME.app" "$STAGE/$NAME.app"
           ditto "$PLUGIN_DIR/AU/$NAME.component" "$STAGE/$NAME.component"
           ditto "$PLUGIN_DIR/VST3/$NAME.vst3" "$STAGE/$NAME.vst3"
           cp tools/release/install.sh "$STAGE/install.sh"
-          cp "tools/release/Read me first.txt" "$STAGE/Read me first.txt"
-          # The zip is what the install line downloads.
+          # The zip is what the Terminal install line downloads.
           (cd dist && ditto -c -k --keepParent "$NAME" "$NAME-mac.zip")
-          # The DMG is for dragging by hand: the app onto Applications.
-          ln -s /Applications "$STAGE/Applications"
-          hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO "dist/$NAME-mac.dmg"
+          # The installer friends double-click: app to /Applications, AU and VST3 to
+          # /Library/Audio/Plug-Ins. Bundles must land exactly there, never "relocated" to an
+          # older copy somewhere else on the Mac.
+          ROOT=pkgroot
+          mkdir -p "$ROOT/Applications" "$ROOT/Library/Audio/Plug-Ins/Components" "$ROOT/Library/Audio/Plug-Ins/VST3"
+          ditto "$STAGE/$NAME.app" "$ROOT/Applications/$NAME.app"
+          ditto "$STAGE/$NAME.component" "$ROOT/Library/Audio/Plug-Ins/Components/$NAME.component"
+          ditto "$STAGE/$NAME.vst3" "$ROOT/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
+          pkgbuild --analyze --root "$ROOT" components.plist
+          i=0
+          while /usr/libexec/PlistBuddy -c "Print :$i" components.plist >/dev/null 2>&1; do
+            /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" components.plist
+            i=$((i+1))
+          done
+          pkgbuild --root "$ROOT" --component-plist components.plist \
+            --identifier com.colinblackshear.kaleidobox.pkg --version "$VERSION" \
+            --scripts tools/release/pkg-scripts --install-location / pkgs/kaleidobox-core.pkg
+          sed "s/{{VERSION}}/$VERSION/g" tools/release/distribution.xml > distribution.xml
+          productbuild --distribution distribution.xml --resources tools/release/pkg-resources \
+            --package-path pkgs "dist/Install-$NAME.pkg"
           cp tools/release/install.sh dist/install.sh
           ls -la dist
+
+      # Install it the way a friend would, then check everything landed and Logic can load it.
+      - name: Try the installer
+        run: |
+          sudo installer -pkg "dist/Install-$NAME.pkg" -target /
+          ls -d "/Applications/$NAME.app" "/Library/Audio/Plug-Ins/Components/$NAME.component" "/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
+          sleep 5
+          auval -v aumu CRig Cblk
 
       - uses: actions/upload-artifact@v4
         with:
           name: Kaleidobox-release
           path: |
             dist/*.zip
-            dist/*.dmg
+            dist/*.pkg
             dist/install.sh
 
       - name: Make the release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.v.outputs.version }}
@@ -101,8 +137,8 @@ jobs:
           FLAGS=""
           [ "$DRAFT" = "true" ] && FLAGS="--draft --target $GITHUB_SHA"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/$NAME-mac.zip dist/$NAME-mac.dmg dist/install.sh --clobber
+            gh release upload "$TAG" dist/$NAME-mac.zip "dist/Install-$NAME.pkg" dist/install.sh --clobber
           else
             gh release create "$TAG" $FLAGS --title "$NAME $VERSION" --notes-file dist/notes.md \
-              dist/$NAME-mac.zip dist/$NAME-mac.dmg dist/install.sh
+              dist/$NAME-mac.zip "dist/Install-$NAME.pkg" dist/install.sh
           fi

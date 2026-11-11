@@ -5,7 +5,7 @@
 #   /bin/bash -c "$(curl -fsSL https://github.com/colinblackshear-cell/crate/releases/latest/download/install.sh)"
 #
 # Downloading with curl means macOS doesn't mark the files as "from the internet", so there are
-# no "unidentified developer" warnings. It can also be run from inside the downloaded DMG or zip
+# no "unidentified developer" warnings. It can also be run from inside the downloaded zip
 # (bash install.sh), and then it installs the copies sitting next to it.
 
 set -euo pipefail
