@@ -48,7 +48,7 @@ public:
     bool isInOwnWindow (const juce::String& tab) const;
     void restoreWindows();
     // Shows a page: a screen, or one under More ("Song", "MPC"...; "More" for the More page).
-    void openPage (const juce::String& name) { showTab (name); }
+    void goTo (const juce::String& name) { showTab (name); }
     juce::String getPage() const { return currentPage(); }
 
 private:

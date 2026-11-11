@@ -17,6 +17,12 @@ const std::vector<MoreView::ToolInfo>& MoreView::toolList()
     return list;
 }
 
+const MoreView::ToolInfo& MoreView::guideInfo()
+{
+    static const ToolInfo info { "Guide", "The Guide", "Every tool, what it's for, and where to start.", juce::Colour (0xff8fb8ff) };
+    return info;
+}
+
 //==============================================================================
 // A tool's module: a picture of what it does, its name and a line about it.
 class MoreView::Tile : public juce::Button
@@ -42,6 +48,20 @@ public:
         g.fillRoundedRectangle (inner.removeFromTop (5.0f), 2.5f);
         inner.removeFromTop (8.0f);
         const bool big = getHeight() > 260;
+        if (index == guideIndex)
+        {
+            // The Guide: a wide banner, a night sky on the left, its name beside it.
+            auto sky = inner.removeFromLeft (juce::jmin (inner.getWidth() * 0.32f, inner.getHeight() * 1.6f));
+            drawIcon (g, sky, over);
+            inner.removeFromLeft (14.0f);
+            g.setColour (p.wellInk);
+            g.setFont (cond (26.0f, Weight::extra, 0.05f));
+            g.drawFittedText (info.title.toUpperCase(), inner.removeFromTop (inner.getHeight() * 0.5f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
+            g.setColour (p.wellInk2);
+            g.setFont (barlow (12.5f));
+            g.drawFittedText (info.blurb, inner.toNearestInt(), juce::Justification::topLeft, 2, 0.9f);
+            return;
+        }
         auto bottom = inner.removeFromBottom (18.0f);
         engraved (g, juce::String::fromUTF8 ("Open \xe2\x96\xb8"), bottom.toNearestInt(), juce::Justification::centredRight, 12.0f, true,
                   over ? info.colour : juce::Colour());
@@ -175,6 +195,23 @@ public:
                 g.fillRoundedRectangle (crate.removeFromBottom (crate.getHeight() * 0.35f), 4.0f);
                 break;
             }
+            case guideIndex:   // The Guide: stars and a ringed planet
+            {
+                juce::Random rnd (42);
+                for (int i = 0; i < 26; ++i)
+                {
+                    const float d = 1.0f + rnd.nextFloat() * 2.2f;
+                    g.setColour (ink.withAlpha (0.4f + rnd.nextFloat() * 0.6f));
+                    g.fillEllipse (area.getX() + rnd.nextFloat() * area.getWidth(), area.getY() + rnd.nextFloat() * area.getHeight(), d, d);
+                }
+                const float s = juce::jmin (area.getWidth(), area.getHeight()) * 0.55f;
+                auto planet = juce::Rectangle<float> (s, s).withCentre (area.getCentre());
+                g.setColour (c);
+                g.fillEllipse (planet);
+                g.setColour (over ? colours::next : ink);
+                g.drawEllipse (planet.withSizeKeepingCentre (s * 1.9f, s * 0.5f), 2.0f);
+                break;
+            }
             default:  // Mixer: faders
             {
                 const int n = 5;
@@ -196,6 +233,7 @@ public:
         }
     }
 
+    static constexpr int guideIndex = 100;
     const ToolInfo info;
     const int index;
 };
@@ -210,6 +248,10 @@ MoreView::MoreView (bool isStandalone) : standalone (isStandalone)
         t->onClick = [this, page = list[(size_t) i].page] { if (onOpen) onOpen (page); };
         addAndMakeVisible (t);
     }
+
+    guideTile = std::make_unique<Tile> (guideInfo(), Tile::guideIndex);
+    guideTile->onClick = [this] { if (onOpen) onOpen ("Guide"); };
+    addChildComponent (*guideTile);
 
     save.sub = "Cmd+S";
     saveAs.sub = "A copy, new name";
@@ -254,6 +296,12 @@ void MoreView::tick()
     if (click.lit != clickLit) { click.lit = clickLit; click.repaint(); }
     if (dark.lit != darkLit) { dark.lit = darkLit; dark.repaint(); }
     repaint (showNameArea);
+    const bool guide = hasPage && hasPage ("Guide");
+    if (guideTile->isVisible() != guide)
+    {
+        guideTile->setVisible (guide);
+        resized();
+    }
 }
 
 void MoreView::paint (juce::Graphics& g)
@@ -285,7 +333,7 @@ void MoreView::resized()
     area.removeFromRight (22);
     const int gap = 10;
     const int bw = (right.getWidth() - gap) / 2;
-    const int bh = juce::jlimit (48, 62, (right.getHeight() - 3 * 24 - 40 - 6 * gap) / 5);
+    const int bh = juce::jlimit (46, 62, (right.getHeight() - 3 * 24 - 40 - 6 * gap - (guideTile->isVisible() ? 100 : 0)) / 5);
     const auto pair = [&] (juce::Rectangle<int>& col, juce::Component& a, juce::Component* b)
     {
         auto row = col.removeFromTop (bh);
@@ -294,6 +342,11 @@ void MoreView::resized()
             b->setBounds (row.withTrimmedLeft (gap));
         col.removeFromTop (gap);
     };
+    if (guideTile->isVisible())
+    {
+        guideTile->setBounds (right.removeFromTop (juce::jlimit (70, 96, right.getHeight() / 6)));
+        right.removeFromTop (gap + 4);
+    }
     showLabel = right.removeFromTop (24);
     showNameArea = right.removeFromTop (40);
     right.removeFromTop (gap);

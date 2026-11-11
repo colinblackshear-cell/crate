@@ -33,12 +33,16 @@ public:
     // What the lamps show.
     std::function<bool()> isClickOn, isDark;
     std::function<juce::String()> showName;
+    // Which pages the Rig has: The Guide's button shows only when it has a "Guide" page.
+    std::function<bool (const juce::String& page)> hasPage;
 
     // Re-reads the lamps (RigView's timer).
     void tick();
 
     class Tile;
     juce::OwnedArray<juce::Button> tiles;   // the tools' Tiles; public for the tests
+    std::unique_ptr<juce::Button> guideTile;   // The Guide (the front page), top right
+    static const ToolInfo& guideInfo();
 
 private:
     const bool standalone;

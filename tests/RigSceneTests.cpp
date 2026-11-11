@@ -557,9 +557,9 @@ struct RigSceneTests : juce::UnitTest
             engine.prepare (kSceneRate, kSceneBlock);
             RigView view (engine, nullptr);
             view.setSize (1440, 900);
-            view.openPage ("More");
+            view.goTo ("More");
             expectEquals (view.getPage(), juce::String ("More"));
-            view.openPage ("Song");
+            view.goTo ("Song");
             expectEquals (view.getPage(), juce::String ("Song"));
 
             // Screenshots, for the pull request: CRATE_SONG_SNAPSHOT=<folder>.
@@ -574,7 +574,7 @@ struct RigSceneTests : juce::UnitTest
                     juce::PNGImageFormat().writeImageToStream (image, stream);
                 };
                 shoot (folder + "/song-empty.png");
-                view.openPage ("More");
+                view.goTo ("More");
                 shoot (folder + "/more.png");
                 auto& scenes = engine.getScenes().getScenes();
                 for (auto [name, bars] : { std::pair<const char*, int> { "Intro", 4 }, { "Verse", 8 }, { "Chorus", 8 }, { "Break", 4 },
@@ -592,7 +592,7 @@ struct RigSceneTests : juce::UnitTest
                 engine.getTransport().play();
                 engine.getScenes().launch (1);
                 runBeats (engine, 13.0);
-                view.openPage ("Song");
+                view.goTo ("Song");
                 view.refresh();
                 shoot (folder + "/song.png");
                 engine.getTransport().stop();

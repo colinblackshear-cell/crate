@@ -488,6 +488,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         view->isClickOn = [this] { return engine.getTransport().metronome.load(); };
         view->isDark = [this] { return (bool) engine.screens.getProperty ("dark", false); };
         view->showName = [this] { return currentShow.getFileNameWithoutExtension(); };
+        view->hasPage = [this] (const juce::String& name) { return pageIndex (name) >= 0; };
         moreView = view;
         addPage ("More", Theme::text, view);
     }
