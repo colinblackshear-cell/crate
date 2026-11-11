@@ -67,6 +67,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout BassProcessor::createLayout(
     number ("gate", "Gate", { 0.1f, 1.0f }, 0.55f);
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "root", 1 }, "Root note", 24, 60, 36));
     number ("volume", "Volume", { 0.0f, 1.0f }, 0.8f);
+    // The deeper settings (added later; their defaults leave the sound as it was).
+    number ("pulseWidth", "Pulse width", { 0.05f, 0.5f }, 0.5f);
+    number ("fat", "Fat", { 0.0f, 1.0f }, 0.0f);
+    choice ("filterType", "Filter type", { "Low 24", "Low 12", "Band", "High" }, 0);
+    number ("keyTrack", "Key track", { 0.0f, 1.0f }, 0.0f);
+    number ("attack", "Attack", logRange (0.001f, 1.0f), 0.003f, "s");
+    number ("release", "Release", logRange (0.005f, 2.0f), 0.012f, "s");
+    choice ("lfoDest", "LFO to", { "Filter", "Pitch", "Volume" }, 0);
     return layout;
 }
 
@@ -146,6 +154,13 @@ bass::Settings BassProcessor::readSettings() const
     s.gate = get (params, "gate");
     s.root = (int) get (params, "root");
     s.volume = get (params, "volume");
+    s.pulseWidth = get (params, "pulseWidth");
+    s.fat = get (params, "fat");
+    s.filterType = (synth::FilterType) (int) get (params, "filterType");
+    s.keyTrack = get (params, "keyTrack");
+    s.attack = get (params, "attack");
+    s.release = get (params, "release");
+    s.lfoDest = (int) get (params, "lfoDest");
     s.keysTranspose = get (params, "keysTranspose") > 0.5f;
     s.sequencerOn = get (params, "sequencer") > 0.5f;
     return s;

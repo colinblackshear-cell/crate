@@ -46,6 +46,7 @@ class PluginSlot
 {
 public:
     explicit PluginSlot (bool instrument);
+    bool isInstrumentSlot() const { return isInstrument; }
     ~PluginSlot();
 
     // Message thread.
@@ -56,6 +57,8 @@ public:
     void setInstance (std::unique_ptr<juce::AudioPluginInstance>);
     void clear();
     bool isLoaded() const { return loaded.load(); }
+    // Loaded and not switched off: it's what you hear.
+    bool isPlaying() const { return loaded.load() && ! bypassed.load(); }
     juce::String getName() const;
     juce::AudioPluginInstance* getInstance() const { return instance.get(); }
 
@@ -78,6 +81,18 @@ public:
     // works on `buffer` in place. False (and nothing done) when empty, bypassed or busy.
     bool process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     std::atomic<bool> bypassed { false };
+    // The plugin's level in the Rig (0..2, 1 = as it comes), saved with the show.
+    std::atomic<float> level { 1.0f };
+
+    // The instrument shell's 8 macro knobs: each turns one of the plugin's settings (its index
+    // in getParameters(), or -1 for none). Saved with the show. Message thread.
+    static constexpr int kMacros = 8;
+    int getMacro (int knob) const;
+    void setMacro (int knob, int parameterIndex);
+    juce::AudioProcessorParameter* macroParameter (int knob) const;
+    // Puts the plugin's most useful settings on the knobs: Arturia's own macros (Brightness,
+    // Timbre, Time, Movement) and the usual cutoff, resonance, attack, release... first.
+    void autoMapMacros();
 
     std::function<void()> onChange;   // loaded, cleared (message thread)
 
@@ -93,6 +108,7 @@ private:
     double rate = 44100.0;
     int block = 512;
     std::unique_ptr<juce::DocumentWindow> window;
+    std::array<int, kMacros> macros;
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);
 
     JUCE_DECLARE_NON_COPYABLE (PluginSlot)

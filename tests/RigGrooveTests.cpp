@@ -157,6 +157,16 @@ struct RigGrooveTests : juce::UnitTest
             view.pressStep (3);
             expect (engine.getSynth().getRhythm().on[3]);
             expect (param (params, "arpOn") > 0.5f, "lighting a step turns the arp on");
+
+            // Slower and Faster, after Hold, step the arp's speed.
+            const int speed = (int) param (params, "arpSpeed");
+            view.pressPattern (7);
+            expectEquals ((int) param (params, "arpSpeed"), speed - 1, "slower");
+            view.pressPattern (8);
+            view.pressPattern (8);
+            expectEquals ((int) param (params, "arpSpeed"), speed + 1, "faster");
+            view.pressPattern (6);
+            expect (param (params, "latch") > 0.5f, "Hold is still Hold");
         }
 
         beginTest ("song parts: an empty one saves what's playing, a full one plays it");

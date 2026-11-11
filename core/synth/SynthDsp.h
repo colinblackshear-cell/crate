@@ -120,6 +120,58 @@ private:
     Stage first, second;
 };
 
+// The resonant filter in four flavours: the smooth 24 dB low-pass above (the classic sound),
+// a brighter 12 dB low-pass, a band-pass and a high-pass (one state-variable stage).
+enum class FilterType { low24, low12, band, high };
+
+class MultiFilter
+{
+public:
+    void prepare (double rate) { sampleRate = (float) rate; lp24.prepare (rate); reset(); }
+    void reset() { lp24.reset(); ic1 = ic2 = 0.0f; }
+    void setType (FilterType t) { type = t; }
+
+    void set (float cutoffHz, float resonance)
+    {
+        if (type == FilterType::low24)
+        {
+            lp24.set (cutoffHz, resonance);
+            return;
+        }
+        cutoffHz = juce::jlimit (20.0f, sampleRate * 0.45f, cutoffHz);
+        const float g = std::tan (juce::MathConstants<float>::pi * cutoffHz / sampleRate);
+        k = 2.0f - 1.9f * juce::jlimit (0.0f, 1.0f, resonance);
+        a1 = 1.0f / (1.0f + g * (g + k));
+        a2 = g * a1;
+        a3 = g * a2;
+    }
+
+    float process (float x)
+    {
+        if (type == FilterType::low24)
+            return lp24.process (x);
+        x = std::tanh (x);
+        const float v3 = x - ic2;
+        const float v1 = a1 * ic1 + a2 * v3;
+        const float v2 = ic2 + a2 * ic1 + a3 * v3;
+        ic1 = 2.0f * v1 - ic1;
+        ic2 = 2.0f * v2 - ic2;
+        switch (type)
+        {
+            case FilterType::low12: return v2;
+            case FilterType::band:  return v1 * 1.4f;
+            case FilterType::high:  return x - k * v1 - v2;
+            case FilterType::low24: break;
+        }
+        return v2;
+    }
+
+private:
+    FilterType type = FilterType::low24;
+    LowPass lp24;
+    float sampleRate = 44100.0f, k = 1.4f, a1 = 1, a2 = 0, a3 = 0, ic1 = 0, ic2 = 0;
+};
+
 // Attack, decay, sustain, release. Times in seconds.
 class Envelope
 {
@@ -239,6 +291,31 @@ struct SyncRates
     {
         static constexpr double values[] = { 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 2.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0 };
         return values[juce::jlimit (0, 10, index)];
+    }
+};
+
+// The arp's speeds, slowest first (so turning the knob left always slows it down): whole
+// bars, straight notes, dotted (D) and triplets (T).
+struct ArpRates
+{
+    static constexpr int count = 17;
+    static constexpr int sixteenth = 13;   // the default
+    static juce::StringArray names()
+    {
+        return { "8 bars", "4 bars", "2 bars", "1 bar", "1/2", "1/4 D", "1/2 T", "1/4", "1/8 D", "1/4 T",
+                 "1/8", "1/16 D", "1/8 T", "1/16", "1/16 T", "1/32", "1/32 T" };
+    }
+    static double beats (int index)
+    {
+        static constexpr double values[count] = { 32.0, 16.0, 8.0, 4.0, 2.0, 1.5, 4.0 / 3.0, 1.0, 0.75, 2.0 / 3.0,
+                                                  0.5, 0.375, 1.0 / 3.0, 0.25, 1.0 / 6.0, 0.125, 1.0 / 12.0 };
+        return values[juce::jlimit (0, count - 1, index)];
+    }
+    // The old arp rate (a SyncRates index) as one of these.
+    static int fromSyncRate (int syncIndex)
+    {
+        static constexpr int map[] = { 1, 2, 3, 4, 7, 10, 13, 15, 6, 12, 14 };
+        return map[juce::jlimit (0, 10, syncIndex)];
     }
 };
 }

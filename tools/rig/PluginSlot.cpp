@@ -147,7 +147,7 @@ void PluginHost::save()
 }
 
 //==============================================================================
-PluginSlot::PluginSlot (bool instrument) : isInstrument (instrument) {}
+PluginSlot::PluginSlot (bool instrument) : isInstrument (instrument) { macros.fill (-1); }
 
 PluginSlot::~PluginSlot()
 {
@@ -210,6 +210,10 @@ void PluginSlot::setInstance (std::unique_ptr<juce::AudioPluginInstance> made)
     if (made != nullptr)
         made->releaseResources();
     made.reset();   // the old one, outside the lock
+    // A new plugin gets its knobs mapped (a show's own mapping comes back after, in fromTree).
+    macros.fill (-1);
+    if (instance != nullptr)
+        autoMapMacros();
     if (onChange)
         onChange();
 }
@@ -269,6 +273,11 @@ juce::ValueTree PluginSlot::toTree() const
     instance->getStateInformation (state);
     tree.setProperty ("state", state.toBase64Encoding(), nullptr);
     tree.setProperty ("bypassed", bypassed.load(), nullptr);
+    tree.setProperty ("level", level.load(), nullptr);
+    juce::StringArray knobs;
+    for (int m : macros)
+        knobs.add (juce::String (m));
+    tree.setProperty ("macros", knobs.joinIntoString (" "), nullptr);
     return tree;
 }
 
@@ -283,14 +292,24 @@ void PluginSlot::fromTree (const juce::ValueTree& tree)
     if (auto xml = juce::XmlDocument::parse (tree.getProperty ("description").toString()); xml == nullptr || ! description.loadFromXml (*xml))
         return;
     bypassed = (bool) tree.getProperty ("bypassed", false);
+    level = juce::jlimit (0.0f, 2.0f, (float) tree.getProperty ("level", 1.0f));
     const auto stateText = tree.getProperty ("state").toString();
-    load (description, [this, stateText, weak = std::weak_ptr<bool> (alive)] (const juce::String& error)
+    const auto knobs = tree.getProperty ("macros").toString();
+    load (description, [this, stateText, knobs, weak = std::weak_ptr<bool> (alive)] (const juce::String& error)
           {
               if (weak.expired() || error.isNotEmpty() || instance == nullptr)
                   return;
               juce::MemoryBlock state;
               if (state.fromBase64Encoding (stateText) && ! state.isEmpty())
                   instance->setStateInformation (state.getData(), (int) state.getSize());
+              if (knobs.isNotEmpty())
+              {
+                  const auto list = juce::StringArray::fromTokens (knobs, " ", {});
+                  for (int i = 0; i < kMacros; ++i)
+                      setMacro (i, i < list.size() ? list[i].getIntValue() : -1);
+                  if (onChange)
+                      onChange();
+              }
           });
 }
 
@@ -313,9 +332,77 @@ bool PluginSlot::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
     instance->processBlock (work, isInstrument ? midi : noMidi);
     if (outs <= 0)
         return false;
+    const float gain = level.load();
     for (int ch = 0; ch < juce::jmin (2, buffer.getNumChannels()); ++ch)
+    {
         buffer.copyFrom (ch, 0, work, juce::jmin (ch, outs - 1), 0, n);
+        if (gain != 1.0f)
+            buffer.applyGain (ch, 0, n, gain);
+    }
     return true;
+}
+
+int PluginSlot::getMacro (int knob) const
+{
+    return juce::isPositiveAndBelow (knob, kMacros) ? macros[(size_t) knob] : -1;
+}
+
+void PluginSlot::setMacro (int knob, int parameterIndex)
+{
+    if (! juce::isPositiveAndBelow (knob, kMacros))
+        return;
+    const int count = instance != nullptr ? instance->getParameters().size() : 0;
+    macros[(size_t) knob] = juce::isPositiveAndBelow (parameterIndex, count) ? parameterIndex : -1;
+}
+
+juce::AudioProcessorParameter* PluginSlot::macroParameter (int knob) const
+{
+    const int index = getMacro (knob);
+    if (instance == nullptr || index < 0)
+        return nullptr;
+    const auto& list = instance->getParameters();
+    return juce::isPositiveAndBelow (index, list.size()) ? list[index] : nullptr;
+}
+
+void PluginSlot::autoMapMacros()
+{
+    macros.fill (-1);
+    if (instance == nullptr)
+        return;
+    const auto& list = instance->getParameters();
+    // Words to look for, best first. Arturia's V Collection and Pigments name their four
+    // macros Brightness, Timbre, Time and Movement.
+    static const char* const wanted[] = { "brightness", "timbre", "time", "movement", "cutoff", "resonance", "attack", "release",
+                                          "decay", "sustain", "drive", "mix", "macro 1", "macro 2", "macro 3", "macro 4" };
+    std::vector<int> picked;
+    auto usable = [&] (int i)
+    {
+        auto* p = list[i];
+        return p != nullptr && p->isAutomatable() && ! p->isMetaParameter()
+               && std::find (picked.begin(), picked.end(), i) == picked.end();
+    };
+    for (auto* word : wanted)
+    {
+        if ((int) picked.size() >= kMacros)
+            break;
+        for (int i = 0; i < list.size(); ++i)
+            if (usable (i))
+            {
+                const auto name = list[i]->getName (64).toLowerCase();
+                if (name == word || name.startsWith (juce::String (word) + " ") || name.endsWith (" " + juce::String (word))
+                    || (juce::String (word).length() > 4 && name.contains (word)))
+                {
+                    picked.push_back (i);
+                    break;
+                }
+            }
+    }
+    // Then simply the first ones it has.
+    for (int i = 0; i < list.size() && (int) picked.size() < kMacros; ++i)
+        if (usable (i) && list[i]->getName (64).isNotEmpty())
+            picked.push_back (i);
+    for (size_t k = 0; k < picked.size() && k < (size_t) kMacros; ++k)
+        macros[k] = picked[k];
 }
 
 //==============================================================================
