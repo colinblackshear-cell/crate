@@ -8,6 +8,7 @@ const std::vector<MoreView::ToolInfo>& MoreView::toolList()
     static const std::vector<ToolInfo> list {
         { "Song", "Song builder", "Save what's playing as parts, switch tracks on and off in each, and play them in order.", RigColours::song },
         { "MPC", "MPC", "Pads, programs and sequences. Sends kits to your 2000XL.", RigColours::mpc },
+        { "Drum machine", "Drum machine", "Analog drums: sixteen steps, accents and swing.", RigColours::drums },
         { "Sampler editor", "Sampler editor", "Record, trim, chop, effects, and play a sample across the keys.", RigColours::sampler },
         { "Bass", "Bass", "The bass synth in full: its sound, and its patterns.", RigColours::bass },
         { "Synth", "Synth", "The synth in full: oscillators, filter, LFO and the arp.", RigColours::synth },
@@ -48,7 +49,7 @@ public:
         g.fillRoundedRectangle (inner.removeFromTop (5.0f), 2.5f);
         inner.removeFromTop (8.0f);
         const bool big = getHeight() > 260;
-        if (index == guideIndex)
+        if (index == guideIndex && getWidth() > getHeight() * 2)
         {
             // The Guide: a wide banner, a night sky on the left, its name beside it.
             auto sky = inner.removeFromLeft (juce::jmin (inner.getWidth() * 0.32f, inner.getHeight() * 1.6f));
@@ -68,8 +69,8 @@ public:
         auto blurb = inner.removeFromBottom (big ? 64.0f : 36.0f);
         auto name = inner.removeFromBottom (big ? 38.0f : 28.0f);
         g.setColour (p.wellInk);
-        g.setFont (cond (big ? 34.0f : 24.0f, Weight::extra, 0.05f));
-        g.drawFittedText (info.title.toUpperCase(), name.toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
+        g.setFont (cond (big ? 34.0f : 22.0f, Weight::extra, 0.03f));
+        g.drawFittedText (info.title.toUpperCase(), name.toNearestInt(), juce::Justification::bottomLeft, 1, 0.55f);
         g.setColour (p.wellInk2);
         g.setFont (barlow (big ? 15.0f : 12.5f));
         g.drawFittedText (info.blurb, blurb.toNearestInt(), juce::Justification::topLeft, big ? 3 : 2, 0.9f);
@@ -86,7 +87,10 @@ public:
         const auto ink = juce::Colour (0xfff1e7d1);
         if (area.getHeight() < 16.0f)
             return;
-        switch (index)
+        // Which picture: by the tool's page, so the order can change.
+        static const juce::StringArray pages { "Song", "MPC", "Sampler editor", "Bass", "Synth", "Sounds", "Mixer", "Drum machine" };
+        const int art = index == guideIndex ? guideIndex : pages.indexOf (info.page);
+        switch (art)
         {
             case 0:   // Song builder: parts in a row, to scale, with a play head
             {
@@ -193,6 +197,37 @@ public:
                 }
                 g.setColour (c.darker (0.5f));
                 g.fillRoundedRectangle (crate.removeFromBottom (crate.getHeight() * 0.35f), 4.0f);
+                break;
+            }
+            case 7:   // Drum machine: a row of sixteen step keys, in four colour groups
+            {
+                const juce::Colour groups[] = { juce::Colour (0xffd8452c), juce::Colour (0xfff39b33), juce::Colour (0xffefcb45), ink };
+                auto row = area.withSizeKeepingCentre (area.getWidth(), juce::jmin (area.getHeight(), area.getWidth() / 5.0f));
+                auto top = row.removeFromTop (row.getHeight() * 0.45f);
+                // Two knobs over the keys.
+                for (int k = 0; k < 4; ++k)
+                {
+                    const float d = top.getHeight() * 0.8f;
+                    auto knob = juce::Rectangle<float> (d, d).withCentre ({ top.getX() + top.getWidth() * (k + 0.5f) / 4.0f, top.getCentreY() });
+                    g.setColour (dim.brighter (0.3f));
+                    g.fillEllipse (knob);
+                    g.setColour (ink);
+                    g.drawLine (knob.getCentreX(), knob.getCentreY(), knob.getCentreX() + d * 0.3f, knob.getY() + d * 0.15f, 2.0f);
+                }
+                row.removeFromTop (row.getHeight() * 0.15f);
+                const float w = row.getWidth() / 16.0f;
+                for (int i = 0; i < 16; ++i)
+                {
+                    const bool lit = i % 4 == 0 || i == 10 || (over && i == 14);
+                    auto key = juce::Rectangle<float> (row.getX() + i * w, row.getY(), w, row.getHeight()).reduced (1.2f, 0.0f);
+                    g.setColour (groups[i / 4].withAlpha (lit ? 1.0f : 0.55f));
+                    g.fillRoundedRectangle (key, 2.0f);
+                    if (lit)
+                    {
+                        g.setColour (colours::arm);
+                        g.fillEllipse (key.getCentreX() - 2.0f, key.getY() + 3.0f, 4.0f, 4.0f);
+                    }
+                }
                 break;
             }
             case guideIndex:   // The Guide: stars and a ringed planet
@@ -329,11 +364,11 @@ void MoreView::resized()
     auto area = getLocalBounds().reduced (22, 14);
 
     // The right column: your show, then set-up.
-    auto right = area.removeFromRight (juce::jlimit (300, 380, area.getWidth() / 4));
+    auto right = area.removeFromRight (juce::jlimit (280, 340, area.getWidth() / 4));
     area.removeFromRight (22);
     const int gap = 10;
     const int bw = (right.getWidth() - gap) / 2;
-    const int bh = juce::jlimit (46, 62, (right.getHeight() - 3 * 24 - 40 - 6 * gap - (guideTile->isVisible() ? 100 : 0)) / 5);
+    const int bh = juce::jlimit (46, 62, (right.getHeight() - 3 * 24 - 40 - 6 * gap ) / 5);
     const auto pair = [&] (juce::Rectangle<int>& col, juce::Component& a, juce::Component* b)
     {
         auto row = col.removeFromTop (bh);
@@ -342,11 +377,6 @@ void MoreView::resized()
             b->setBounds (row.withTrimmedLeft (gap));
         col.removeFromTop (gap);
     };
-    if (guideTile->isVisible())
-    {
-        guideTile->setBounds (right.removeFromTop (juce::jlimit (70, 96, right.getHeight() / 6)));
-        right.removeFromTop (gap + 4);
-    }
     showLabel = right.removeFromTop (24);
     showNameArea = right.removeFromTop (40);
     right.removeFromTop (gap);
@@ -365,18 +395,24 @@ void MoreView::resized()
         pair (right, popOut, nullptr);
     }
 
-    // The tools: the Song builder big on the left, the rest in a 3 x 2 grid.
+    // The tools: the Song builder big on the left, the rest (and The Guide) in a grid of two rows.
     toolsLabel = area.removeFromTop (24);
     toolsArea = area;
-    const int tgap = 14;
-    const int colW = (area.getWidth() - 3 * tgap) / 4;
-    const int rowH = (area.getHeight() - tgap) / 2;
-    tiles[0]->setBounds (area.removeFromLeft (colW + colW / 3));
-    area.removeFromLeft (tgap);
-    const int smallW = (area.getWidth() - 2 * tgap) / 3;
+    std::vector<juce::Component*> small;
     for (int i = 1; i < tiles.size(); ++i)
+        small.push_back (tiles[i]);
+    if (guideTile->isVisible())
+        small.push_back (guideTile.get());
+    const int cols = juce::jmax (1, ((int) small.size() + 1) / 2);
+    const int tgap = 14;
+    const int colW = (area.getWidth() - cols * tgap) / (cols + 1);
+    const int rowH = (area.getHeight() - tgap) / 2;
+    tiles[0]->setBounds (area.removeFromLeft (colW + colW / 4));
+    area.removeFromLeft (tgap);
+    const int smallW = (area.getWidth() - (cols - 1) * tgap) / cols;
+    for (int i = 0; i < (int) small.size(); ++i)
     {
-        const int c = (i - 1) % 3, r = (i - 1) / 3;   // six of them: 3 x 2
-        tiles[i]->setBounds (area.getX() + c * (smallW + tgap), area.getY() + r * (rowH + tgap), smallW, rowH);
+        const int c = i % cols, r = i / cols;
+        small[(size_t) i]->setBounds (area.getX() + c * (smallW + tgap), area.getY() + r * (rowH + tgap), smallW, rowH);
     }
 }

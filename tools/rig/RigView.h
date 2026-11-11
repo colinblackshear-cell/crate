@@ -47,9 +47,10 @@ public:
     void bringBack (const juce::String& tab);
     bool isInOwnWindow (const juce::String& tab) const;
     void restoreWindows();
-    // Shows a page: a screen, or one under More ("Song", "MPC"...; "More" for the More page).
-    void goTo (const juce::String& name) { showTab (name); }
+    // The page showing ("Guide", "Groove", "MPC"...), and going to one.
     juce::String getPage() const { return currentPage(); }
+    void goTo (const juce::String& page) { showTab (page); }
+    class GuideView* getGuide() const { return guide; }
 
 private:
     // One mixer channel: name, level fader, mute, meter, and Learn for its fader.
@@ -167,6 +168,7 @@ private:
     class SamplerScreen* samplerScreen = nullptr;
     class VocoderScreen* vocoderScreen = nullptr;   // owned by the tabs
     class GrooveView* groove = nullptr;
+    class GuideView* guide = nullptr;   // the front page
     void showTab (const juce::String& name);
 
     // Each tab's page. A page can pop out into its own window (to put it on a second screen);

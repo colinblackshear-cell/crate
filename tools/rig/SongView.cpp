@@ -21,7 +21,7 @@ const std::vector<SongView::Track>& SongView::tracks()
     static const std::vector<Track> list = []
     {
         std::vector<Track> t;
-        for (int s : { RigEngine::mpcStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip,
+        for (int s : { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip,
                        RigEngine::samplerStrip, RigEngine::inputStrip })
             t.push_back ({ false, s });
         for (int l = 0; l < RigLooper::kLayers; ++l)
@@ -37,7 +37,8 @@ juce::String SongView::trackName (const Track& t)
         return "Loop " + juce::String (t.index + 1);
     switch (t.index)
     {
-        case RigEngine::mpcStrip:     return "Drums";
+        case RigEngine::mpcStrip:     return "MPC";
+        case RigEngine::drumsStrip:   return "Drum machine";
         case RigEngine::bassStrip:    return "Bass";
         case RigEngine::synthStrip:   return "Synth";
         case RigEngine::vocoderStrip: return "Vocoder";
@@ -87,6 +88,14 @@ public:
         addChildComponent (nameEditor);
     }
 
+    static int numTools()
+    {
+        int n = 0;
+        for (const auto& t : tracks())
+            n += t.isLoop ? 0 : 1;
+        return n;
+    }
+
     int parts() const { return (int) scenes().getScenes().size(); }
 
     void updateSize()
@@ -98,7 +107,7 @@ public:
     // Where things are.
     int rowY (int row) const
     {
-        const int tools = 6;
+        const int tools = numTools();
         return kHead + 6 + kGroup + row * (kRow + kRowGap) + (row >= tools ? kGroup : 0);
     }
     juce::Rectangle<int> column (int part) const { return { kNames + part * (kCol + kColGap), 0, kCol, getHeight() }; }
@@ -136,7 +145,7 @@ public:
 
         // Track names, in two groups.
         engraved (g, "Tools", { 6, kHead + 6, kNames - 12, kGroup }, juce::Justification::centredLeft, 12.0f);
-        engraved (g, "Loops", { 6, rowY (6) - kGroup, kNames - 12, kGroup }, juce::Justification::centredLeft, 12.0f);
+        engraved (g, "Loops", { 6, rowY (numTools()) - kGroup, kNames - 12, kGroup }, juce::Justification::centredLeft, 12.0f);
         for (int r = 0; r < (int) rows.size(); ++r)
         {
             const auto& t = rows[(size_t) r];
@@ -158,7 +167,7 @@ public:
             }
             g.setColour (status == "empty" ? p.ink2 : p.ink);
             g.setFont (cond (17.0f, Weight::bold, 0.03f));
-            g.drawText (trackName (t).toUpperCase(), area.removeFromLeft (100), juce::Justification::centredLeft);
+            g.drawFittedText (trackName (t).toUpperCase(), area.removeFromLeft (118), juce::Justification::centredLeft, 1, 0.75f);
             g.setColour (p.ink2);
             g.setFont (barlow (12.0f));
             g.drawText (status, area, juce::Justification::centredRight);

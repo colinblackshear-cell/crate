@@ -28,6 +28,8 @@ juce::ValueTree RigScene::toTree() const
     t.setProperty ("bassPattern", state.bassPattern, nullptr);
     t.setProperty ("bassSequencer", state.bassSequencer, nullptr);
     t.setProperty ("arp", state.arp, nullptr);
+    t.setProperty ("drumPattern", state.drumPattern, nullptr);
+    t.setProperty ("drumSequencer", state.drumSequencer, nullptr);
     t.setProperty ("vocoderOn", state.vocoderOn, nullptr);
     t.setProperty ("inputOn", state.inputOn, nullptr);
     t.setProperty ("stripMutes", joinInts (state.stripMutes.data(), kMaxStrips), nullptr);
@@ -44,6 +46,8 @@ RigScene RigScene::fromTree (const juce::ValueTree& t)
     s.state.bassPattern = t.getProperty ("bassPattern", -1);
     s.state.bassSequencer = t.getProperty ("bassSequencer", -1);
     s.state.arp = t.getProperty ("arp", -1);
+    s.state.drumPattern = t.getProperty ("drumPattern", -1);
+    s.state.drumSequencer = t.getProperty ("drumSequencer", -1);
     s.state.vocoderOn = t.getProperty ("vocoderOn", -1);
     s.state.inputOn = t.getProperty ("inputOn", -1);
     splitInts (t.getProperty ("stripMutes").toString(), s.state.stripMutes);

@@ -16,7 +16,7 @@
 class RigCapture
 {
 public:
-    enum Source { mic, mpc, vocoder, bass, synth, input, sampler, loops, mix, numSources };
+    enum Source { mic, mpc, vocoder, bass, synth, input, sampler, loops, mix, drums, numSources };
     static juce::String sourceName (int);
     enum Dest { toSampler, toMpcPad, numDests };
     static juce::String destName (int);

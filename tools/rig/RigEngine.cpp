@@ -17,6 +17,7 @@ juce::String RigEngine::stripName (int id)
         case synthStrip:   return "Synth";
         case inputStrip:   return "Input";
         case loopsStrip:   return "Loops";
+        case drumsStrip:   return "Drum machine";
         default:           return {};
     }
 }
@@ -30,6 +31,7 @@ juce::String RigEngine::toolName (int id)
         case vocoderTool: return "Vocoder";
         case bassTool:    return "Bass";
         case synthTool_:  return "Synth";
+        case drumsTool:   return "Drum machine";
         default:          return id >= fxTool && id < numTools ? "FX " + stripName (id - fxTool) : juce::String();
     }
 }
@@ -42,6 +44,7 @@ juce::AudioProcessor& RigEngine::getTool (int id)
         case vocoderTool: return vocoder;
         case bassTool:    return bass;
         case synthTool_:  return synthTool;
+        case drumsTool:   return drums;
         default:          return id >= fxTool && id < numTools ? (juce::AudioProcessor&) fx[(size_t) (id - fxTool)] : mpc;
     }
 }
@@ -91,6 +94,7 @@ RigEngine::RigEngine()
     vocoder.setPlayHead (&transport);
     bass.setPlayHead (&transport);
     synthTool.setPlayHead (&transport);
+    drums.setPlayHead (&transport);
     for (auto& f : fx)
         f.setPlayHead (&transport);
     for (int i = 0; i < RigLooper::kLayers; ++i)
@@ -102,6 +106,9 @@ RigEngine::RigEngine()
     // The MPC changes sequence (and moves through its songs) on the Rig's bar lines.
     mpc.getSequencer().switchWhileFollowing = true;
     mpc.switchAtBar = true;
+    // The drum machine waits for its Play (on the Groove screen), so a new Rig starts quiet.
+    if (auto* p = drums.params.getParameter ("sequencer"))
+        p->setValueNotifyingHost (0.0f);
 }
 
 void RigEngine::playMpcSequence (int index)
@@ -131,6 +138,7 @@ RigEngine::~RigEngine()
     vocoder.setPlayHead (nullptr);
     bass.setPlayHead (nullptr);
     synthTool.setPlayHead (nullptr);
+    drums.setPlayHead (nullptr);
     for (auto& f : fx)
         f.setPlayHead (nullptr);
     for (auto& f : loopFx)
@@ -155,7 +163,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     sampleRate = rate > 0 ? rate : 44100.0;
     maxBlock = juce::jmax (16, maximumBlockSize);
 
-    for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder, &bass, &synthTool })
+    for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder, &bass, &synthTool, &drums })
     {
         p->setRateAndBufferSizeDetails (sampleRate, maxBlock);
         p->prepareToPlay (sampleRate, maxBlock);
@@ -180,6 +188,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     vocoderBuffer.setSize (2, maxBlock);
     bassBuffer.setSize (2, maxBlock);
     synthBuffer.setSize (2, maxBlock);
+    drumsBuffer.setSize (2, maxBlock);
     inputBuffer.setSize (2, maxBlock);
     rawInputBuffer.setSize (2, maxBlock);
     loopsBuffer.setSize (2, maxBlock);
@@ -189,7 +198,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
     capture.prepare (sampleRate);
-    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &vocoderMissed, &midiScratch })
+    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi, &vocoderMissed, &midiScratch })
         m->ensureSize (4096);
     vocoderFade.reset (sampleRate, 0.015);
     vocoderFade.setCurrentAndTargetValue (vocoderOn.load() ? 1.0f : 0.0f);
@@ -209,7 +218,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
 
 juce::String RigEngine::stemName (int s)
 {
-    static const char* names[] = { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops" };
+    static const char* names[] = { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops", "Drum machine" };
     return juce::isPositiveAndBelow (s, (int) numStems) ? names[s] : "";
 }
 
@@ -266,7 +275,8 @@ void RigEngine::applyControls (const RigRouting::Result& r)
                                            { RigRouting::bassLevel, bassStrip },
                                            { RigRouting::synthLevel, synthStrip },
                                            { RigRouting::inputLevel, inputStrip },
-                                           { RigRouting::loopsLevel, loopsStrip } };
+                                           { RigRouting::loopsLevel, loopsStrip },
+                                           { RigRouting::drumsLevel, drumsStrip } };
     for (auto [control, strip] : faders)
         if (r.values[(size_t) control] >= 0.0f)
         {
@@ -289,7 +299,7 @@ void RigEngine::applyControls (const RigRouting::Result& r)
         strips[vocoderStrip].mute = ! strips[vocoderStrip].mute.load();
         moved = true;
     }
-    for (auto [control, strip] : { std::pair<int, int> { RigRouting::bassMute, bassStrip }, { RigRouting::synthMute, synthStrip }, { RigRouting::inputMute, inputStrip }, { RigRouting::loopsMute, loopsStrip } })
+    for (auto [control, strip] : { std::pair<int, int> { RigRouting::bassMute, bassStrip }, { RigRouting::synthMute, synthStrip }, { RigRouting::inputMute, inputStrip }, { RigRouting::loopsMute, loopsStrip }, { RigRouting::drumsMute, drumsStrip } })
         if (r.presses[(size_t) control] % 2 == 1)
         {
             strips[(size_t) strip].mute = ! strips[(size_t) strip].mute.load();
@@ -376,12 +386,13 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     vocoderMidi.clear();
     bassMidi.clear();
     synthMidi.clear();
+    drumsMidi.clear();
     RigRouting::Result controls;
-    std::array<juce::MidiBuffer*, RigRouting::kNumDests> destinations { nullptr, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi };
+    std::array<juce::MidiBuffer*, RigRouting::kNumDests> destinations { nullptr, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi };
     routing.route (midiIn, destinations, controls);
     applyControls (controls);
     if (notesOffRequested.exchange (false))
-        for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi })
+        for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
         {
             m->addEvent (juce::MidiMessage::allNotesOff (1), 0);
             m->addEvent (juce::MidiMessage::allSoundOff (1), 0);
@@ -411,7 +422,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     recClock.playing = transport.isPlayingThisBlock();
     {
         int track = 0;
-        for (auto* buffer : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi })
+        for (auto* buffer : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
         {
             for (const auto m : *buffer)
                 recorder.addMidi (track, m.getMessage(), m.samplePosition, recClock);
@@ -424,6 +435,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     juce::AudioBuffer<float> vocoderBlock (vocoderBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> bassBlock (bassBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> synthBlock (synthBuffer.getArrayOfWritePointers(), 2, n);
+    juce::AudioBuffer<float> drumsBlock (drumsBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> mix (mixBuffer.getArrayOfWritePointers(), 2, n);
 
     // The audio input, on both sides (a mono mic plays in the middle).
@@ -437,6 +449,8 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     mpcBlock.clear();
     mpc.processBlock (mpcBlock, mpcMidi);
+    drumsBlock.clear();
+    drums.processBlock (drumsBlock, drumsMidi);
     // A plugin in the Bass's or Synth's slot plays the notes the tool plays (its steps, arp and
     // keys) instead of the tool's own sound.
     auto playTool = [] (juce::AudioProcessor& tool, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi, PluginSlot& slot,
@@ -517,6 +531,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     applyStrip (vocoderStrip, vocoderBlock);
     applyStrip (bassStrip, bassBlock);
     applyStrip (synthStrip, synthBlock);
+    applyStrip (drumsStrip, drumsBlock);
 
     // The Input strip: a guitar or another mic, through its effects.
     juce::AudioBuffer<float> inputBlock (inputBuffer.getArrayOfWritePointers(), 2, n);
@@ -551,7 +566,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     if (source == SampleSource::mix)
     {
         samplerBlock.clear();
-        for (auto* b : { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock })
+        for (auto* b : { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &drumsBlock, &inputBlock })
             for (int ch = 0; ch < 2; ++ch)
                 samplerBlock.addFrom (ch, 0, *b, ch, 0, n);
     }
@@ -560,11 +575,11 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     applyStrip (samplerStrip, samplerBlock);
 
     // Each tool's strip (in Stem order), for its own output in Logic.
-    const std::array<juce::AudioBuffer<float>*, numStems> stems { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, nullptr };
+    const std::array<juce::AudioBuffer<float>*, numStems> stems { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, nullptr, &drumsBlock };
 
     mix.clear();
-    for (int st = 0; st < loopsStem; ++st)
-        if (stemOut[(size_t) st] == nullptr)
+    for (int st = 0; st < numStems; ++st)
+        if (st != loopsStem && stemOut[(size_t) st] == nullptr)
             for (int ch = 0; ch < 2; ++ch)
                 mix.addFrom (ch, 0, *stems[(size_t) st], ch, 0, n);
 
@@ -587,6 +602,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     sources[RigLooper::sampler] = &samplerBlock;
     sources[RigLooper::mix] = &mix;
     sources[RigLooper::line] = &inputBlock;
+    sources[RigLooper::drums] = &drumsBlock;
     if (looper.process (clock, sources, loopsBlock))
     {
         transport.play();
@@ -623,8 +639,8 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             mix.setSample (ch, i, juce::jlimit (-1.0f, 1.0f, mix.getSample (ch, i) * g));
     }
 
-    recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix }, n);
-    capture.process (recClock, { &rawInput, &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix }, n);
+    recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
+    capture.process (recClock, { &rawInput, &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
 
     const float clickGain = masterGain.getTargetValue();
     for (int ch = 0; ch < 2; ++ch)
@@ -740,8 +756,8 @@ juce::File RigEngine::recordingsFolder()
 
 bool RigEngine::startRecording (const juce::File& folder)
 {
-    return recorder.start (folder, { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops", "Mix" },
-                           { "MPC pads", "Sampler", "Vocoder", "Bass", "Synth" }, sampleRate > 0 ? sampleRate : 44100.0);
+    return recorder.start (folder, { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops", "Mix", "Drum machine" },
+                           { "MPC pads", "Sampler", "Vocoder", "Bass", "Synth", "Drum machine" }, sampleRate > 0 ? sampleRate : 44100.0);
 }
 
 void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
@@ -809,6 +825,7 @@ juce::ValueTree RigEngine::saveShow() const
     show.setProperty ("metronome", transport.metronome.load(), nullptr);
     show.setProperty ("padChannel", routing.padChannel.load(), nullptr);
     show.setProperty ("padBank", routing.padBank.load(), nullptr);
+    show.setProperty ("padsTo", routing.padsTo.load(), nullptr);
     show.setProperty ("keysTo", routing.keysTo.load(), nullptr);
     show.setProperty ("vocoderOn", vocoderOn.load(), nullptr);
     show.setProperty ("splitNote", routing.splitNote.load(), nullptr);
@@ -889,7 +906,7 @@ juce::ValueTree RigEngine::saveShow() const
     auto& self = const_cast<RigEngine&> (*this);
     const std::pair<const char*, juce::AudioProcessor*> tools[] = { { "MPC", &self.mpc }, { "Sampler", &self.sampler },
                                                                     { "Vocoder", &self.vocoder }, { "Bass", &self.bass },
-                                                                    { "Synth", &self.synthTool } };
+                                                                    { "Synth", &self.synthTool }, { "Drum machine", &self.drums } };
     std::vector<std::pair<juce::String, juce::AudioProcessor*>> all (std::begin (tools), std::end (tools));
     for (int st = 0; st < numStrips; ++st)
         all.emplace_back (toolName (fxTool + st), &self.fx[(size_t) st]);
@@ -923,6 +940,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     transport.metronome = (bool) show.getProperty ("metronome", false);
     routing.padChannel = juce::jlimit (0, 16, (int) show.getProperty ("padChannel", 10));
     routing.padBank = juce::jlimit (0, 3, (int) show.getProperty ("padBank", 0));
+    routing.padsTo = (int) show.getProperty ("padsTo", (int) RigRouting::Dest::mpc) == (int) RigRouting::Dest::drums ? (int) RigRouting::Dest::drums : (int) RigRouting::Dest::mpc;
     routing.keysTo = juce::jlimit (0, RigRouting::kNumDests - 1, (int) show.getProperty ("keysTo", (int) RigRouting::Dest::vocoder));
     vocoderOn = (bool) show.getProperty ("vocoderOn", true);
     routing.splitNote = juce::jlimit (0, 127, (int) show.getProperty ("splitNote", 0));
@@ -1027,6 +1045,8 @@ void RigEngine::loadShow (const juce::ValueTree& show)
                 bass.setStateInformation (state.getData(), (int) state.getSize());
             else if (name == "Synth")
                 synthTool.setStateInformation (state.getData(), (int) state.getSize());
+            else if (name == "Drum machine")
+                drums.setStateInformation (state.getData(), (int) state.getSize());
             else
                 for (int st = 0; st < numStrips; ++st)
                     if (name == toolName (fxTool + st))
@@ -1059,6 +1079,8 @@ RigScene::State RigEngine::captureScene()
     s.bassPattern = juce::roundToInt (getParameter (bass.params, "pattern"));
     s.bassSequencer = getParameter (bass.params, "sequencer") > 0.5f ? 1 : 0;
     s.arp = getParameter (synthTool.params, "arpOn") > 0.5f ? 1 : 0;
+    s.drumPattern = juce::roundToInt (getParameter (drums.params, "pattern"));
+    s.drumSequencer = getParameter (drums.params, "sequencer") > 0.5f ? 1 : 0;
     s.vocoderOn = vocoderOn.load() ? 1 : 0;
     s.inputOn = inputOn.load() ? 1 : 0;
     for (int st = 0; st < numStrips && st < RigScene::kMaxStrips; ++st)
@@ -1088,6 +1110,8 @@ void RigEngine::applyScene (const RigScene::State& s, double beat)
         setParameter (bass.params, "sequencer", (float) s.bassSequencer);
     if (s.arp >= 0)
         setParameter (synthTool.params, "arpOn", (float) s.arp);
+    if (s.drumSequencer >= 0)
+        setParameter (drums.params, "sequencer", (float) s.drumSequencer);
 }
 
 void RigEngine::arrange (int n)
@@ -1203,6 +1227,8 @@ void RigEngine::tickScenes()
     }
     if (s.bassPattern >= 0)
         setParameter (bass.params, "pattern", (float) s.bassPattern);
+    if (s.drumPattern >= 0)
+        setParameter (drums.params, "pattern", (float) s.drumPattern);
 }
 
 //==============================================================================

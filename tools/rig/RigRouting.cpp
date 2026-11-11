@@ -28,6 +28,8 @@ juce::String RigRouting::controlName (int c)
         case loopsMute:    return "Loops mute";
         case nextScene:    return "Next scene";
         case previousScene: return "Previous scene";
+        case drumsLevel:   return "Drum machine level";
+        case drumsMute:    return "Drum machine mute";
         default:
             if (c >= loopRecord1 && c <= loopRecord8)
                 return "Loop " + juce::String (c - loopRecord1 + 1) + " record";
@@ -47,6 +49,7 @@ juce::String RigRouting::destName (int d)
         case Dest::vocoder: return "Vocoder";
         case Dest::bass:    return "Bass";
         case Dest::synth:   return "Synth";
+        case Dest::drums:   return "Drum machine";
         default:            return {};
     }
 }
@@ -272,6 +275,12 @@ void RigRouting::route (const juce::MidiBuffer& in, std::array<juce::MidiBuffer*
         }
 
         const bool isNote = m.isNoteOnOrOff() || m.isAftertouch();
+        if (isNote && pads > 0 && m.getChannel() == pads && padsTo.load() == (int) Dest::drums)
+        {
+            // The drum machine plays the pads' notes as they are: from C, a sound a pad.
+            send ((int) Dest::drums, m, at);
+            continue;
+        }
         if (isNote && pads > 0 && m.getChannel() == pads)
         {
             auto& held = padSounding[(size_t) m.getNoteNumber()];

@@ -249,6 +249,8 @@ void Header::paint (juce::Graphics& g)
 
 void Header::mouseUp (const juce::MouseEvent& e)
 {
+    if (e.mouseWasClicked() && wordmarkArea.contains (e.getPosition()) && onWordmark)
+        return onWordmark();
     if (standalone && e.mouseWasClicked() && micLampArea.contains (e.getPosition()) && onMic)
         onMic();
 }
@@ -297,7 +299,7 @@ void ScreenBar::setCurrent (const juce::String& page)
             tabs[i]->repaint();
         }
     }
-    const auto moreLit = screens().contains (page) ? Lit::none : Lit::current;
+    const auto moreLit = screens().contains (page) || page == "Guide" ? Lit::none : Lit::current;
     if (more.lit != moreLit)
     {
         more.lit = moreLit;
@@ -325,13 +327,13 @@ void ScreenBar::resized()
 //==============================================================================
 int Footer::chipStrip (int chip)
 {
-    const int strips[] = { RigEngine::mpcStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
+    const int strips[] = { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
     return strips[juce::jlimit (0, kChips - 1, chip)];
 }
 
 juce::String Footer::chipName (int chip)
 {
-    const char* names[] = { "Drums", "Bass", "Synth", "Vocoder", "Loops" };
+    const char* names[] = { "Drums", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
     return names[juce::jlimit (0, kChips - 1, chip)];
 }
 
@@ -470,7 +472,7 @@ void Footer::resized()
     auto content = r.withSizeKeepingCentre (r.getWidth(), 76 + 22);
 
     // Parts on the left, Live now on the right; on a small screen the chips go first.
-    const int chipsWidth = 5 * 104 + 4 * 8;
+    const int chipsWidth = kChips * kChipWidth + (kChips - 1) * 8;
     showChips = content.getWidth() >= 8 * 64 + 7 * 8 + 22 + chipsWidth;
     if (showChips)
     {
@@ -524,7 +526,7 @@ void Footer::paint (juce::Graphics& g)
     auto r = chipsArea.withHeight (76);
     for (int c = 0; c < kChips; ++c)
     {
-        auto chip = r.removeFromLeft (104).toFloat();
+        auto chip = r.removeFromLeft (kChipWidth).toFloat();
         r.removeFromLeft (8);
         drawWell (g, chip);
         auto inner = chip.reduced (10.0f, 8.0f);
@@ -545,7 +547,7 @@ void Footer::mouseUp (const juce::MouseEvent& e)
 {
     if (! e.mouseWasClicked() || ! showChips || ! chipsArea.contains (e.getPosition()))
         return;
-    const int c = (e.x - chipsArea.getX()) / 112;
+    const int c = (e.x - chipsArea.getX()) / (kChipWidth + 8);
     if (juce::isPositiveAndBelow (c, kChips) && onTrack)
         onTrack (chipStrip (c));
 }

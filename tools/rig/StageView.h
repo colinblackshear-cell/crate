@@ -38,7 +38,7 @@ public:
     std::function<std::pair<juce::String, vintage::Lit>()> recordState;
 
     // The channels: Drums, Bass, Synth, Vocoder, Loops.
-    static constexpr int kChannels = 5;
+    static constexpr int kChannels = 6;
     static int channelStrip (int channel);
     static juce::String channelName (int channel);
     static juce::String channelPage (int channel);

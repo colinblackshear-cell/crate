@@ -189,7 +189,7 @@ struct RigSceneTests : juce::UnitTest
             expectEquals ((int) engine.getScenes().getScenes().size(), 2, "an empty part saves what's playing");
 
             // Mutes, loop layers, the vocoder's parts.
-            stage.pressMute (1);
+            stage.pressMute (2);   // (the drum machine is channel 1)
             expect (engine.getStrip (RigEngine::bassStrip).mute.load());
             stage.pressLayer (2, true);
             expect (engine.getLooper().getLayer (2).mute.load());
@@ -249,6 +249,7 @@ struct RigSceneTests : juce::UnitTest
             engine.prepare (kSceneRate, kSceneBlock);
             RigView view (engine, nullptr);
             view.setSize (1440, 960);
+            view.goTo ("Groove");   // the Rig opens on the Guide; its ? opens Getting started
             view.showHelp (true);
             expect (view.getHelp() != nullptr && view.getHelp()->isVisible());
             expectEquals (HelpPanel::guides()[(size_t) HelpPanel ("Looper").getShown()].title, juce::String ("Looper (F3): record loops"));
@@ -508,18 +509,19 @@ struct RigSceneTests : juce::UnitTest
             expectEquals (list[1].name, juce::String ("Verse"));
             expectEquals (list[0].bars, 8, "a new song's parts start at 8 bars");
 
-            // Row 1 is the bass: on -> off -> on; right-click "as is" leaves it alone.
-            expectEquals (SongView::trackName (SongView::tracks()[1]), juce::String ("Bass"));
-            expectEquals (SongView::cellValue (list[1], SongView::tracks()[1]), 1);
-            view.clickCell (1, 1);
+            // Row 2 is the bass: on -> off -> on; right-click "as is" leaves it alone.
+            expectEquals (SongView::trackName (SongView::tracks()[2]), juce::String ("Bass"));
+            expectEquals (SongView::cellValue (list[1], SongView::tracks()[2]), 1);
+            view.clickCell (1, 2);
             expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], 1);
-            view.clickCell (1, 1);
+            view.clickCell (1, 2);
             expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], 0);
-            view.setCellTo (1, 1, -1);
+            view.setCellTo (1, 2, -1);
             expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], -1);
-            // Loops come after the six tools.
-            expect (SongView::tracks()[6].isLoop && SongView::tracks()[6].index == 0);
-            view.clickCell (0, 6);
+            // Loops come after the seven tools (MPC, drum machine, bass, synth, vocoder, sampler, line in).
+            expectEquals (SongView::trackName (SongView::tracks()[1]), juce::String ("Drum machine"));
+            expect (SongView::tracks()[7].isLoop && SongView::tracks()[7].index == 0);
+            view.clickCell (0, 7);
             expectEquals (list[0].state.loopMutes[0], 1);
 
             expectEquals (SongView::lengthText (0), juce::String ("Hold"));
@@ -532,7 +534,7 @@ struct RigSceneTests : juce::UnitTest
             expect (engine.getTransport().isPlaying());
             expectEquals (engine.getScenes().getCurrent(), 0);
             // The part that's playing changes as you click.
-            view.clickCell (0, 1);
+            view.clickCell (0, 2);
             expect (engine.getStrip (RigEngine::bassStrip).mute.load());
             engine.getTransport().stop();
         }
@@ -549,7 +551,7 @@ struct RigSceneTests : juce::UnitTest
                 expect (! t->getBounds().isEmpty(), "every tool shows");
                 t->onClick();
             }
-            for (auto page : { "Song", "MPC", "Sampler editor", "Bass", "Synth", "Sounds", "Mixer" })
+            for (auto page : { "Song", "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Sounds", "Mixer" })
                 expect (opened.contains (page), page);
 
             // In the Rig, More is a page, and its buttons go to the pages.
