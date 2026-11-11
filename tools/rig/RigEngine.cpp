@@ -55,7 +55,7 @@ juce::String RigEngine::sampleSourceName (int source)
     {
         case SampleSource::mic:     return "Mic";
         case SampleSource::vocoder: return "Vocoder";
-        case SampleSource::mix:     return "Rig mix";
+        case SampleSource::mix:     return "Whole mix";
         default:                    return {};
     }
 }

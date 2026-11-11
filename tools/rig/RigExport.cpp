@@ -329,7 +329,7 @@ RigExport::Result RigExport::exportForLogic (RigEngine& engine, const juce::File
     }
 
     juce::String notes;
-    notes << "Exported from Crate Rig, " << juce::Time::getCurrentTime().toString (true, true) << "\n\n"
+    notes << "Exported from Kaleidobox, " << juce::Time::getCurrentTime().toString (true, true) << "\n\n"
           << "Tempo: " << tempoText << ", " << bpb << "/4\n\n"
           << "Set Logic's project to this tempo, then drag the files in at bar 1. Every file starts on bar 1.\n"
           << "Loops: each loop once (as heard, and dry). Loop them in Logic.\n";

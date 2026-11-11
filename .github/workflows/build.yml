@@ -53,11 +53,11 @@ jobs:
             codesign --force --deep -s - "VST3/Crate $t.vst3"
             codesign --force --deep -s - "Standalone/Crate $t.app"
           done
-          cd "$GITHUB_WORKSPACE/build/tools/rig/CrateRig_artefacts/Release"
-          codesign --force --deep -s - "Crate Rig.app"
-          cd "$GITHUB_WORKSPACE/build/tools/rig/CrateRigPlugin_artefacts/Release"
-          codesign --force --deep -s - "AU/Crate Rig.component"
-          codesign --force --deep -s - "VST3/Crate Rig.vst3"
+          cd "$GITHUB_WORKSPACE/build/tools/rig/Kaleidobox_artefacts/Release"
+          codesign --force --deep -s - "Kaleidobox.app"
+          cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxPlugin_artefacts/Release"
+          codesign --force --deep -s - "AU/Kaleidobox.component"
+          codesign --force --deep -s - "VST3/Kaleidobox.vst3"
 
       - name: Validate the Audio Unit (what Logic checks)
         run: |
@@ -82,7 +82,7 @@ jobs:
           killall -9 AudioComponentRegistrar || true
           sleep 5
           auval -v aumu CDrm Cblk
-          cp -R "build/tools/rig/CrateRigPlugin_artefacts/Release/AU/Crate Rig.component" ~/Library/Audio/Plug-Ins/Components/
+          cp -R "build/tools/rig/KaleidoboxPlugin_artefacts/Release/AU/Kaleidobox.component" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           sleep 5
           auval -v aumu CRig Cblk
@@ -103,11 +103,11 @@ jobs:
           ditto -c -k --keepParent "AU/MPC Bank Builder.component" "$GITHUB_WORKSPACE/dist-mpc/MPC-Bank-Builder-AU.zip"
           ditto -c -k --keepParent "VST3/MPC Bank Builder.vst3" "$GITHUB_WORKSPACE/dist-mpc/MPC-Bank-Builder-VST3.zip"
           mkdir -p "$GITHUB_WORKSPACE/dist-rig"
-          cd "$GITHUB_WORKSPACE/build/tools/rig/CrateRig_artefacts/Release"
-          ditto -c -k --keepParent "Crate Rig.app" "$GITHUB_WORKSPACE/dist-rig/Crate-Rig-App.zip"
-          cd "$GITHUB_WORKSPACE/build/tools/rig/CrateRigPlugin_artefacts/Release"
-          ditto -c -k --keepParent "AU/Crate Rig.component" "$GITHUB_WORKSPACE/dist-rig/Crate-Rig-AU.zip"
-          ditto -c -k --keepParent "VST3/Crate Rig.vst3" "$GITHUB_WORKSPACE/dist-rig/Crate-Rig-VST3.zip"
+          cd "$GITHUB_WORKSPACE/build/tools/rig/Kaleidobox_artefacts/Release"
+          ditto -c -k --keepParent "Kaleidobox.app" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-App.zip"
+          cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxPlugin_artefacts/Release"
+          ditto -c -k --keepParent "AU/Kaleidobox.component" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-AU.zip"
+          ditto -c -k --keepParent "VST3/Kaleidobox.vst3" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-VST3.zip"
           for t in Bass Synth Drums; do
             cd "$GITHUB_WORKSPACE/build/tools/$(echo $t | tr A-Z a-z)/Crate${t}_artefacts/Release"
             ditto -c -k --keepParent "Standalone/Crate $t.app" "$GITHUB_WORKSPACE/dist-rig/Crate-$t-App.zip"
@@ -127,7 +127,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Crate-Rig-mac
+          name: Kaleidobox-mac
           path: dist-rig/*.zip
 
   # The same tests on Linux, which is quicker to start than a Mac runner.

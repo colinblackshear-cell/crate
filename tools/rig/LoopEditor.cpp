@@ -256,7 +256,7 @@ LoopEditor::LoopEditor (RigEngine& e, int l) : engine (e), layer (l)
     info.setFont (juce::FontOptions (14.0f));
     info.setColour (juce::Label::textColourId, Theme::text);
     hint.setText ("Drag the green START and red END handles, or drag the middle to slide. "
-                  "You hear it as you let go. It always stays in time with the Rig.",
+                  "You hear it as you let go. It always stays in time with Kaleidobox.",
                   juce::dontSendNotification);
     hint.setFont (juce::FontOptions (13.0f));
     hint.setColour (juce::Label::textColourId, Theme::textDim);
@@ -299,7 +299,7 @@ LoopEditor::LoopEditor (RigEngine& e, int l) : engine (e), layer (l)
         apply();
     };
     play.setClickingTogglesState (false);
-    play.setTooltip ("Starts or stops the Rig, to hear the loop.");
+    play.setTooltip ("Starts or stops Kaleidobox, to hear the loop.");
     play.onClick = [this] { engine.getTransport().togglePlay(); };
     done.setColour (juce::TextButton::buttonColourId, Theme::accent);
     done.setColour (juce::TextButton::textColourOffId, Theme::background);

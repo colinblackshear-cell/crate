@@ -37,7 +37,7 @@ class RigView::ToolWindow : public juce::DocumentWindow
 {
 public:
     ToolWindow (RigView& v, int p, juce::Component& content)
-        : DocumentWindow ("Crate Rig - " + v.pages[(size_t) p].name, Theme::panel, DocumentWindow::closeButton | DocumentWindow::maximiseButton),
+        : DocumentWindow ("Kaleidobox - " + v.pages[(size_t) p].name, Theme::panel, DocumentWindow::closeButton | DocumentWindow::maximiseButton),
           view (v), page (p)
     {
         setUsingNativeTitleBar (true);
@@ -347,8 +347,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     };
     micButton.setTooltip ("Hear your mic (the vocoder and the Input strip). Use headphones with it on, so the speakers don't feed back. "
                           "Sampling and looping from the mic work either way. The Mic lamp at the top right switches it too.");
-    learnPlay.setTooltip ("Press, then press a button on your keyboard to make it start and stop the Rig.");
-    learnStop.setTooltip ("Press, then press a button on your keyboard to make it stop the Rig.");
+    learnPlay.setTooltip ("Press, then press a button on your keyboard to make it start and stop Kaleidobox.");
+    learnStop.setTooltip ("Press, then press a button on your keyboard to make it stop Kaleidobox.");
     learnPlay.onClick = [this] { startLearning (RigRouting::play, learnPlay); };
     learnStop.onClick = [this] { startLearning (RigRouting::stop, learnStop); };
     for (auto* l : { &learnPlayLabel, &learnStopLabel })
@@ -356,8 +356,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
     sampleButton.setColour (juce::TextButton::buttonOnColourId, Theme::record);
     sampleButton.setTooltip ("Records one tool into another, as picked beside it: the mic, a tool or the "
-                             "Rig mix, into the Sampler or onto the next empty MPC pad. It starts at the next bar (now, if the "
-                             "Rig is stopped) and stops after the bars picked, or when you press again.");
+                             "whole mix, into the Sampler or onto the next empty MPC pad. It starts at the next bar (now, if "
+                             "nothing is playing) and stops after the bars picked, or when you press again.");
     sampleButton.onClick = [this] { toggleSampling(); };
 
     knobButton.setColour (juce::TextButton::buttonOnColourId, Theme::accent);
@@ -567,7 +567,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
             default: break;
         }
     };
-    sampleSource.setTooltip ("What Sample records: the mic, any tool as you hear it (after its effects and level), or the whole Rig mix.");
+    sampleSource.setTooltip ("What Sample records: the mic, any tool as you hear it (after its effects and level), or the whole mix.");
     sampleDest.addItem ("into Sampler", RigCapture::toSampler + 1);
     sampleDest.addItem ("onto MPC pad", RigCapture::toMpcPad + 1);
     sampleDest.onChange = [this] { engine.captureDest = sampleDest.getSelectedId() - 1; };
@@ -1221,7 +1221,7 @@ void RigView::sayMicOn()
     {
         // Straight to the set-up, where the input is picked (More > Audio and MIDI set-up).
         say ("Mic on, but no mic is coming in: pick your mic or interface as the Input here. If there's none to pick, "
-             "allow Crate Rig in System Settings > Privacy & Security > Microphone, then quit and reopen it.");
+             "allow Kaleidobox in System Settings > Privacy & Security > Microphone, then quit and reopen it.");
         showAudioSettings();
     }
     else

@@ -47,7 +47,7 @@ SoundsView::SoundsView (RigEngine& e, juce::File bankHome)
         b->setColour (juce::TextButton::buttonOnColourId, soundsColour);
         b->setColour (juce::TextButton::textColourOnId, Theme::background);
     }
-    nearTempo.setTooltip ("Only loops close to the Rig's tempo (or half or double it), so they stretch without sounding odd.");
+    nearTempo.setTooltip ("Only loops close to Kaleidobox's tempo (or half or double it), so they stretch without sounding odd.");
     nearTempo.onClick = [this] { filter(); };
     hearButton.setToggleState (true, juce::dontSendNotification);
     hearButton.setTooltip ("Plays each sound when you pick it (also with the arrow keys).");
@@ -70,7 +70,7 @@ SoundsView::SoundsView (RigEngine& e, juce::File bankHome)
     toLoop.onClick = [this] { sendToLoop(); };
     toMpc.setTooltip ("Puts the sound on the next empty pad of the MPC (in the bank your keyboard's pads play). Return does it too.");
     toSampler.setTooltip ("Opens the sound in the Sampler, to play from the keys or chop.");
-    toLoop.setTooltip ("Puts the sound on the first empty loop layer. A loop with a tempo in its name is stretched to the Rig's tempo.");
+    toLoop.setTooltip ("Puts the sound on the first empty loop layer. A loop with a tempo in its name is stretched to Kaleidobox's tempo.");
 
     addAndMakeVisible (status);
     status.setColour (juce::Label::textColourId, Theme::textDim);

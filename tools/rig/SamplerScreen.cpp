@@ -88,7 +88,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     editModeButton.onClick = [this] { setEditMode (true); };
     setLit (recordButton, Lit::arm);
     recordButton.getProperties().set ("fontSize", 18.0f);
-    recordButton.setTooltip ("Record from your audio input into the Sampler. Press again to stop. (To sample a tool of the Rig, use More > Sample.)");
+    recordButton.setTooltip ("Record from your audio input into the Sampler. Press again to stop. (To sample a tool of Kaleidobox, use More > Sample.)");
     recordButton.onClick = [this] { editor.toggleRecord(); };
     addAndMakeVisible (recordButton);
 

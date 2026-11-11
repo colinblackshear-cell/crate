@@ -37,7 +37,7 @@ Record from a mic or open a sound file, edit it, and save it to the shared libra
   click the ruler to add one, and Option-click (or drag it off the waveform) to remove one.
   Double-click a slice to select it. The keys then play one slice each from C1 up (**Plays:
   Slices from C1**), and **Save slices** puts each one in the library as its own sound, ready for
-  the MPC pads. In the Crate Rig, **To MPC pads** puts the slices straight onto the MPC in a new
+  the MPC pads. In Kaleidobox, **To MPC pads** puts the slices straight onto the MPC in a new
   kit, so the drum pads play them right away. The markers are saved with your project.
 - **Undo everything:** every edit, recording and opened file can be undone, up to 200 steps.
 - **Save:** **Save to library** writes a WAV to `~/Music/Crate/Sounds`. **Export** saves a WAV or
@@ -119,7 +119,7 @@ the Logic project.
 
 An analog-style rhythm box in the spirit of the early-80s classics: every sound is made from
 oscillators, noise and filters, not samples. It's a Mac app, an Audio Unit instrument for Logic
-(**Crate Drums**), a VST3, and a track of its own in the Crate Rig (beside the MPC, so the drums
+(**Crate Drums**), a VST3, and a track of its own in Kaleidobox (beside the MPC, so the drums
 don't have to come from the MPC).
 
 - **Twelve sounds:** a booming kick, snare, clap, rim shot, low, mid and high toms, clave,
@@ -149,7 +149,10 @@ keyboard's drum pads to it (picking **Drums** sends the pads back to the MPC). T
 timeline, a channel on the Stage, its pattern in song parts, and it's a source for the looper,
 Sample and the recorded set (its own stem). Saved with the show.
 
-### Crate Rig (for playing live)
+### Kaleidobox, the Rig (for playing live)
+
+Kaleidobox was called Crate Rig until November 2026. Only the name and icon changed: your shows,
+settings, recordings (still in `~/Music/Crate/Rig`) and Logic songs that use it all carry on.
 
 One window that plays the tools together, on one clock, for a live set. It's a Mac app, and a
 Logic plugin (see **The Rig in Logic** below).
@@ -278,14 +281,14 @@ Logic plugin (see **The Rig in Logic** below).
 
 #### The Rig in Logic
 
-The whole Rig also runs inside Logic, as an instrument called **Crate Rig**:
+The whole Rig also runs inside Logic, as an instrument called **Kaleidobox**:
 
-1. Make a **Software Instrument** track and pick **AU Instruments > Colin Blackshear > Crate Rig**
+1. Make a **Software Instrument** track and pick **AU Instruments > Colin Blackshear > Kaleidobox**
    (choose **Multi Output** if you want each tool on its own track).
 2. **Your mic:** make an audio track for the mic (or just know its input), then at the top of
-   the Crate Rig window set **Side Chain** to it. The vocoder, the Input strip, sampling and
+   the Kaleidobox window set **Side Chain** to it. The vocoder, the Input strip, sampling and
    the looper hear it from there.
-3. **Your keys:** select the Crate Rig track and play; the Launchkey comes in through Logic and
+3. **Your keys:** select the Kaleidobox track and play; the Launchkey comes in through Logic and
    the Rig splits it between the tools as usual (keys, pads, split, learned knobs).
 4. **The clock is Logic's:** the Rig uses Logic's tempo and time signature, plays when Logic plays,
    from where Logic is, and stops when Logic stops (the MPC's sequences and songs, the bass,
@@ -298,7 +301,7 @@ The whole Rig also runs inside Logic, as an instrument called **Crate Rig**:
 6. Logic saves the show with the song. The loops are kept as WAVs in
    `~/Music/Crate/Rig/In Logic`.
 
-To record: arm the Crate Rig track (and its tool tracks) and record in Logic as usual; you get
+To record: arm the Kaleidobox track (and its tool tracks) and record in Logic as usual; you get
 the MIDI you played, and Bounce in Place or the tool tracks give you audio. **Record set** in the
 Rig works too.
 
@@ -338,7 +341,7 @@ without resampling.
 ## Installing a build
 
 Each GitHub build has a download per tool, **Sample-Editor-mac** and **MPC-Bank-Builder-mac**, each
-with the app, the AU and the VST3, and **Crate-Rig-mac** with the Rig app and its Logic plugin (`Crate-Rig-AU.zip`). Sample-Editor-mac also has the instrument version
+with the app, the AU and the VST3, and **Kaleidobox-mac** with the Rig app and its Logic plugin (`Kaleidobox-AU.zip`). Sample-Editor-mac also has the instrument version
 (**Sample-Editor-Instrument-AU** and **-VST3**).
 
 1. Unzip them. Put the `.app` in Applications, the `.component` in
@@ -350,10 +353,13 @@ with the app, the AU and the VST3, and **Crate-Rig-mac** with the Rig app and it
    sudo xattr -cr "/Applications/Sample Editor.app" ~/Library/Audio/Plug-Ins/Components/"Sample Editor.component"
    sudo xattr -cr ~/Library/Audio/Plug-Ins/Components/"Sample Editor Instrument.component"
    sudo xattr -cr "/Applications/MPC Bank Builder.app" ~/Library/Audio/Plug-Ins/Components/"MPC Bank Builder.component"
-   sudo xattr -cr "/Applications/Crate Rig.app" ~/Library/Audio/Plug-Ins/Components/"Crate Rig.component"
+   sudo xattr -cr "/Applications/Kaleidobox.app" ~/Library/Audio/Plug-Ins/Components/"Kaleidobox.component"
    killall -9 AudioComponentRegistrar
    ```
-3. The first time you press Record, macOS asks for microphone access. In the apps, choose your
+3. **Coming from Crate Rig?** Delete the old `Crate Rig.app`, `Crate Rig.component` and
+   `Crate Rig.vst3` first. Kaleidobox uses the same plugin codes, so Logic opens your old songs
+   with it, but two copies with the same codes confuse Logic.
+4. The first time you press Record, macOS asks for microphone access. In the apps, choose your
    audio devices under **Options > Audio/MIDI Settings**.
 
 ## Building
@@ -377,7 +383,7 @@ core/          shared by every tool: sound files, edits, effects, the sound libr
 tools/editor/  the Sample Editor (app + AU + VST3, plus an AU/VST3 instrument version)
 tools/mpc/     the MPC Bank Builder (app + AU instrument + VST3); mpc/ reads and writes .SND and .PGM
 tools/drums/   the Drum Machine (app + AU instrument + VST3): analog-style sounds and a step sequencer
-tools/rig/     Crate Rig: plays the tools together live, on one clock (app only)
+tools/rig/     Kaleidobox (the Rig): plays the tools together live, on one clock (app only)
 tools/phone/   Crate on your phone: a web app (plain JavaScript, no build step), published to GitHub Pages
 tests/         headless tests for the core and the tools, the MPC file format tests, and
                tests/phone (run with `node --test tests/phone/*.test.mjs`)

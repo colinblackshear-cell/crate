@@ -375,8 +375,8 @@ private:
                       [this] { engine.getLooper().undo (index); });
         menu.addItem ("Clear this layer", state != RigLooper::State::empty, false, [this] { clearLayer(); });
         menu.addSeparator();
-        menu.addItem ("Import a loop, stretched to the Rig's tempo...", [this] { importFile (false); });
-        menu.addItem ("Import a song or loop, and set the Rig's tempo to it...", [this] { importFile (true); });
+        menu.addItem ("Import a loop, stretched to Kaleidobox's tempo...", [this] { importFile (false); });
+        menu.addItem ("Import a song or loop, and set Kaleidobox's tempo to it...", [this] { importFile (true); });
         menu.addItem ("Edit where it starts and ends...", engine.getLooper().getState (index) == RigLooper::State::playing, false,
                       [this] { owner.editLoop (index); });
         menu.addItem ("Save this loop as a WAV...", engine.getLooper().getState (index) == RigLooper::State::playing, false, [this] { exportFile(); });
@@ -486,7 +486,7 @@ private:
                                       engine.getLooper().setLayerAudio (index, juce::AudioBuffer<float> (*audio), beats);
                                       say (file.getFileNameWithoutExtension() + " on loop " + juce::String (index + 1) + ": "
                                            + barsText (beats, bpb) + " at " + juce::String (bpm, 1) + " BPM (" + juce::String (seconds, 1)
-                                           + " s). The Rig's tempo is now " + juce::String (bpm, 1) + ".");
+                                           + " s). Kaleidobox's tempo is now " + juce::String (bpm, 1) + ".");
                                       juce::ignoreUnused (seconds);
                                   }
                                   else
@@ -556,7 +556,7 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     setOpaque (true);
     for (int i = 0; i < RigLooper::kLayers; ++i)
         addAndMakeVisible (rows.add (new Row (*this, engine, i)));
-    help.setText ("Loops stay in time with the Rig. Rec starts at the next bar; press again to finish the bar. "
+    help.setText ("Loops stay in time with Kaleidobox. Rec starts at the next bar; press again to finish the bar. "
                   "Rec on a playing loop overdubs. Keys 1-8 record too.",
                   juce::dontSendNotification);
     addChildComponent (help);   // the headings and tooltips say this now

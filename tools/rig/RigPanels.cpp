@@ -196,9 +196,13 @@ void Header::paint (juce::Graphics& g)
     {
         auto w = wordmarkArea.withSizeKeepingCentre (wordmarkArea.getWidth(), 56);
         g.setColour (p.ink);
-        g.setFont (wordmark (36.0f));
-        g.drawText ("Crate Rig", w.removeFromTop (40), juce::Justification::bottomLeft, false);
-        engraved (g, juce::String::fromUTF8 ("Model CR-1 \xc2\xb7 Groove Station"), w.withTrimmedTop (2), juce::Justification::topLeft, 11.0f);
+        auto mark = wordmark (36.0f);
+        const auto markWidth = juce::GlyphArrangement::getStringWidth (mark, "Kaleidobox");
+        if (markWidth > (float) w.getWidth())
+            mark = wordmark (36.0f * (float) w.getWidth() / markWidth);
+        g.setFont (mark);
+        g.drawText ("Kaleidobox", w.removeFromTop (40), juce::Justification::bottomLeft, false);
+        engraved (g, juce::String::fromUTF8 ("Model KB-1 \xc2\xb7 Groove Station"), w.withTrimmedTop (2), juce::Justification::topLeft, 11.0f);
     }
 
     // Tempo.

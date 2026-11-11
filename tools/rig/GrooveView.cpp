@@ -55,10 +55,10 @@ const std::vector<PartKnob> vocoderPartKnobs[] = {
       { "tuneSpeed", "Snap", "How fast auto-tune snaps: fast is the hard robotic step, slow sounds natural." },
       { "gateThreshold", "Gate", "Mutes the mic below this level, so the room's hum stays out between phrases." } },
     { { "reverbMix", "Reverb", "How much room: dry at 0, all reverb at the top." },
-      { "delayMix", "Echo", "How loud the echoes are, in time with the Rig." },
+      { "delayMix", "Echo", "How loud the echoes are, in time with Kaleidobox." },
       { "chorusMix", "Chorus", "How much shimmer: a group of voices instead of one." },
       { "drive", "Drive", "Warms it up, then distorts it." } },
-    { { "arpRate", "Speed", "How fast the notes (or the chops) go, in time with the Rig." },
+    { { "arpRate", "Speed", "How fast the notes (or the chops) go, in time with Kaleidobox." },
       { "arpGate", "Length", "Short and choppy, or long and smooth." },
       { "arpSwing", "Swing", "Pushes every other step late, for a shuffle." },
       { "arpOctaves", "Octaves", "How many octaves the note arp climbs." } },
@@ -853,7 +853,7 @@ void GrooveView::updateButtons()
             const bool on = getParam (d.params, "sequencer") > 0.5f;
             extraButton.setToggleState (on, juce::dontSendNotification);
             extraButton.setButtonText (juce::String::fromUTF8 (on ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
-            extraButton.setTooltip ("Play: the drum machine plays its pattern (and the Rig starts if it's stopped). Stop: only the pads and keys play it.");
+            extraButton.setTooltip ("Play: the drum machine plays its pattern (and Kaleidobox starts if it's stopped). Stop: only the pads and keys play it.");
             barButton.setVisible (machineLength() > 16);
             if (machineLength() <= 16)
                 machinePage = 0;
@@ -868,7 +868,7 @@ void GrooveView::updateButtons()
             const bool on = getParam (engine.getBass().params, "sequencer") > 0.5f;
             extraButton.setToggleState (on, juce::dontSendNotification);
             extraButton.setButtonText (juce::String::fromUTF8 (on ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
-            extraButton.setTooltip ("Play: the bass plays its pattern (and the Rig starts if it's stopped). Stop: it only plays what you play on the keys.");
+            extraButton.setTooltip ("Play: the bass plays its pattern (and Kaleidobox starts if it's stopped). Stop: it only plays what you play on the keys.");
             break;
         }
         case synth:

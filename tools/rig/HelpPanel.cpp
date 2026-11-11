@@ -11,7 +11,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
           { "Pick your audio interface and keyboard: More > Audio and MIDI set-up.",
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
             "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
-            "Press Play (or the space bar). Everything plays in time with the Rig's clock.",
+            "Press Play (or the space bar). Everything plays in time with Kaleidobox's clock.",
             "Build the song: More > Song builder (parts you switch between, in order) or Looper > Timeline (lay it out bar by bar, with fades).",
             "Save show (Cmd+S) keeps everything. Export for Logic gives you the WAV files." },
           "Use headphones when the mic is on, so the speakers don't feed back into it." },
@@ -91,7 +91,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "In the mixer (More > Mixer), the Input strip plays it: switch it on, and pick input 1, 2 or both.",
             "Give it effects with the strip's FX button.",
             "To loop it: Looper > Record from > Line in. Picking Line in switches the Input strip on for you.",
-            "A keytar with MIDI can also play the Rig's instruments, like any keyboard." },
+            "A keytar with MIDI can also play Kaleidobox's instruments, like any keyboard." },
           "" },
     };
     return list;

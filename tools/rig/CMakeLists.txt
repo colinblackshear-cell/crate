@@ -1,4 +1,4 @@
-# The Rig: plays the Crate tools live in one window, on one clock. An app, and (below) a plugin
+# The Rig, called Kaleidobox (it was Crate Rig): plays the Crate tools live in one window, on one clock. An app, and (below) a plugin
 # for Logic.
 
 # The panel's fonts (all SIL Open Font License; see fonts/LICENSES.txt): Barlow Condensed for
@@ -14,12 +14,13 @@ juce_add_binary_data(rig_fonts
         fonts/VT323-Regular.ttf
         fonts/Fraunces-ExtraBoldItalic.ttf)
 set_target_properties(rig_fonts PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
-juce_add_gui_app(CrateRig
+juce_add_gui_app(Kaleidobox
     COMPANY_NAME "Colin Blackshear"
     BUNDLE_ID "com.colinblackshear.crate.rig"
-    PRODUCT_NAME "Crate Rig"
+    PRODUCT_NAME "Kaleidobox"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/icon/kaleidobox-icon.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "Crate Rig samples from your microphone or audio interface when you record in the Sampler.")
+    MICROPHONE_PERMISSION_TEXT "Kaleidobox samples from your microphone or audio interface when you record in the Sampler.")
 
 # The Rig hosts your own plugins (Audio Units on the Mac, VST3): Arturia synths, effects.
 add_library(rig_hosting INTERFACE)
@@ -64,7 +65,7 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/SynthScreens.cpp
     PARENT_SCOPE)
 
-target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp MoreView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
+target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp MoreView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -73,17 +74,17 @@ target_sources(CrateRig PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTranspo
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
-target_include_directories(CrateRig PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+target_include_directories(Kaleidobox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
     ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
 # The sampler is the Sample Editor's code and the vocoder is the Vocoder's; they use the plugin's
 # name in a few places.
-target_compile_definitions(CrateRig PRIVATE
+target_compile_definitions(Kaleidobox PRIVATE
     JucePlugin_Name="Sample Editor"
-    JUCE_APPLICATION_NAME_STRING="Crate Rig"
+    JUCE_APPLICATION_NAME_STRING="Kaleidobox"
     JUCE_APPLICATION_VERSION_STRING="0.1.0")
 
-target_link_libraries(CrateRig
+target_link_libraries(Kaleidobox
     PRIVATE
         crate_core
         mpc_format
@@ -103,25 +104,26 @@ if(APPLE)
     list(APPEND RIG_PLUGIN_FORMATS AU)
 endif()
 
-juce_add_plugin(CrateRigPlugin
+juce_add_plugin(KaleidoboxPlugin
     COMPANY_NAME "Colin Blackshear"
     BUNDLE_ID "com.colinblackshear.crate.rigplugin"
     PLUGIN_MANUFACTURER_CODE Cblk
     PLUGIN_CODE CRig
     FORMATS ${RIG_PLUGIN_FORMATS}
-    PRODUCT_NAME "Crate Rig"
+    PRODUCT_NAME "Kaleidobox"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/icon/kaleidobox-icon.png"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "Crate Rig hears your microphone through Logic's side chain."
+    MICROPHONE_PERMISSION_TEXT "Kaleidobox hears your microphone through Logic's side chain."
     VST3_CATEGORIES Instrument Sampler
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp MoreView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
+target_sources(KaleidoboxPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp TimelineView.cpp SongView.cpp MoreView.cpp StageView.cpp SamplerScreen.cpp VocoderScreen.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -130,10 +132,10 @@ target_sources(CrateRigPlugin PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
-target_include_directories(CrateRigPlugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+target_include_directories(KaleidoboxPlugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
     ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
-target_link_libraries(CrateRigPlugin
+target_link_libraries(KaleidoboxPlugin
     PRIVATE
         crate_core
         mpc_format

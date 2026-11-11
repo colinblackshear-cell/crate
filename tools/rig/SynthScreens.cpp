@@ -538,7 +538,7 @@ BassScreen::BassScreen (RigEngine& engine)
     knob (*output, "volume", "Volume");
 
     sequencer = &section ("Sequencer", seqColour, false);
-    toggle (*sequencer, "sequencer", "Run").setTooltip ("On: the pattern plays while the Rig (or Logic) plays. Off: the keys play the bass.");
+    toggle (*sequencer, "sequencer", "Run").setTooltip ("On: the pattern plays while Kaleidobox (or Logic) plays. Off: the keys play the bass.");
     toggle (*sequencer, "keysTranspose", "Keys move").setTooltip ("On: while the pattern plays, a key moves the whole pattern to that key.");
     knob (*sequencer, "stepRate", "Steps", 92, "SLOW", "FAST").setTooltip ("How long each step is, in time with the tempo.");
     knob (*sequencer, "gate", "Gate");
