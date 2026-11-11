@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Get Kaleidobox</title>
+<link rel="icon" href="icon.png" type="image/png">
 <meta name="description" content="Install Kaleidobox on your Mac: the app, and the instrument for Logic.">
 <style>
   :root {
@@ -21,12 +22,7 @@
          font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
   main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
   header { display: flex; align-items: center; gap: 18px; margin-bottom: 28px; }
-  .mark { width: 72px; height: 72px; flex: none; border-radius: 18px;
-          background: conic-gradient(from 0deg, #ff4d8d, #ffb03b, #f6f04a, #3be08f, #33c7ff, #7a3cff, #ff4d8d);
-          position: relative; box-shadow: 0 6px 20px rgba(122, 60, 255, .25); }
-  .mark::after { content: ""; position: absolute; inset: 16px; border-radius: 50%;
-                 background: repeating-conic-gradient(from 15deg, rgba(255,255,255,.85) 0 15deg, rgba(255,255,255,.15) 15deg 30deg);
-                 -webkit-mask: radial-gradient(circle, transparent 0 6px, #000 7px); mask: radial-gradient(circle, transparent 0 6px, #000 7px); }
+  .mark { width: 88px; height: 88px; flex: none; margin: -8px; display: block; }
   h1 { font-size: 34px; line-height: 1.1; margin: 0; letter-spacing: -.5px; }
   .sub { color: var(--dim); margin: 4px 0 0; }
   h2 { font-size: 21px; margin: 0 0 6px; }
@@ -54,7 +50,7 @@
 <body>
 <main>
   <header>
-    <div class="mark" aria-hidden="true"></div>
+    <img class="mark" src="icon.png" alt="" width="88" height="88">
     <div>
       <h1>Kaleidobox</h1>
       <p class="sub">A live music rig for your Mac: sampler, looper, drums, synths, vocoder and a song builder.</p>
