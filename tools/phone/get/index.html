@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get Kaleidobox</title>
+<meta name="description" content="Install Kaleidobox on your Mac: the app, and the instrument for Logic.">
+<style>
+  :root {
+    --bg: #faf6ef; --card: #ffffff; --ink: #1f1b2e; --dim: #5d5870; --line: #e6dfd2;
+    --accent: #7a3cff; --accent-ink: #ffffff; --code-bg: #1f1b2e; --code-ink: #f4f0ff; --ok: #1d8a55;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141220; --card: #1e1b2d; --ink: #f1eefa; --dim: #a8a2bd; --line: #2f2b44;
+      --accent: #a77bff; --accent-ink: #141220; --code-bg: #0c0b14; --code-ink: #e9e4ff; --ok: #4fd08e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+  header { display: flex; align-items: center; gap: 18px; margin-bottom: 28px; }
+  .mark { width: 72px; height: 72px; flex: none; border-radius: 18px;
+          background: conic-gradient(from 0deg, #ff4d8d, #ffb03b, #f6f04a, #3be08f, #33c7ff, #7a3cff, #ff4d8d);
+          position: relative; box-shadow: 0 6px 20px rgba(122, 60, 255, .25); }
+  .mark::after { content: ""; position: absolute; inset: 16px; border-radius: 50%;
+                 background: repeating-conic-gradient(from 15deg, rgba(255,255,255,.85) 0 15deg, rgba(255,255,255,.15) 15deg 30deg);
+                 -webkit-mask: radial-gradient(circle, transparent 0 6px, #000 7px); mask: radial-gradient(circle, transparent 0 6px, #000 7px); }
+  h1 { font-size: 34px; line-height: 1.1; margin: 0; letter-spacing: -.5px; }
+  .sub { color: var(--dim); margin: 4px 0 0; }
+  h2 { font-size: 21px; margin: 0 0 6px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; margin: 18px 0; }
+  .tag { display: inline-block; font-size: 13px; font-weight: 600; color: var(--ok);
+         border: 1px solid currentColor; border-radius: 999px; padding: 1px 10px; margin-bottom: 10px; }
+  ol { padding-left: 22px; margin: 10px 0 0; }
+  li { margin: 8px 0; }
+  .cmd { display: flex; gap: 8px; align-items: stretch; margin: 12px 0 4px; }
+  code.line { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; display: block;
+              background: var(--code-bg); color: var(--code-ink); border-radius: 10px; padding: 12px 14px;
+              font: 14px/1.4 ui-monospace, Menlo, monospace; }
+  button, .btn { font: inherit; font-weight: 600; border: 0; border-radius: 10px; cursor: pointer;
+                 background: var(--accent); color: var(--accent-ink); padding: 10px 16px; text-decoration: none;
+                 display: inline-block; white-space: nowrap; }
+  kbd { font: 14px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+        border-radius: 6px; padding: 0 6px; background: var(--bg); }
+  .dim { color: var(--dim); }
+  .small { font-size: 15px; }
+  details { margin: 10px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="mark" aria-hidden="true"></div>
+    <div>
+      <h1>Kaleidobox</h1>
+      <p class="sub">A live music rig for your Mac: sampler, looper, drums, synths, vocoder and a song builder.</p>
+    </div>
+  </header>
+
+  <p>Thanks for trying it out! You need a Mac with macOS 11 (Big Sur) or newer. Intel and Apple silicon both work.
+     It takes about a minute.</p>
+
+  <section class="card">
+    <span class="tag">Easiest</span>
+    <h2>Install with one line</h2>
+    <ol>
+      <li>Open <b>Terminal</b>: press <kbd>⌘</kbd> <kbd>Space</kbd>, type <b>Terminal</b>, press <kbd>Return</kbd>.</li>
+      <li>Copy this line, paste it into Terminal (<kbd>⌘</kbd> <kbd>V</kbd>) and press <kbd>Return</kbd>:
+        <div class="cmd">
+          <code class="line" id="cmd">/bin/bash -c "$(curl -fsSL https://github.com/colinblackshear-cell/crate/releases/latest/download/install.sh)"</code>
+          <button id="copy" type="button">Copy</button>
+        </div>
+      </li>
+      <li>When it says <b>Done!</b>, open Kaleidobox from Applications or Launchpad.</li>
+    </ol>
+    <p class="dim small">This puts the app in Applications, and the instrument for Logic (AU) and the VST3 in your Plug-Ins folder.
+       Installing this way skips the Mac's "unidentified developer" warning. Run the same line again any time to update.</p>
+  </section>
+
+  <section class="card">
+    <h2>Or download and drag it yourself</h2>
+    <p><a class="btn" href="https://github.com/colinblackshear-cell/crate/releases/latest/download/Kaleidobox-mac.dmg">Download Kaleidobox for Mac</a></p>
+    <ol>
+      <li>Open the downloaded <b>Kaleidobox-mac.dmg</b>, and drag <b>Kaleidobox</b> onto <b>Applications</b>.</li>
+      <li>Open it. The Mac says it can't check the app. Click <b>Done</b> (or <b>OK</b>).</li>
+      <li>Open <b>System Settings</b> &gt; <b>Privacy &amp; Security</b>, scroll to the bottom and click <b>Open Anyway</b> next to Kaleidobox.
+          Open it again and click <b>Open</b>. You only do this once.</li>
+      <li>For Logic: in Finder choose <b>Go</b> &gt; <b>Go to Folder…</b>, paste <code>~/Library/Audio/Plug-Ins/Components</code>,
+          and drag <b>Kaleidobox.component</b> from the DMG into it.</li>
+    </ol>
+    <p class="dim small">Why the warning? Kaleidobox is made by a friend, not bought from a store, so it isn't registered with Apple.
+       The Mac is just being careful.</p>
+  </section>
+
+  <section class="card">
+    <h2>Use it in Logic</h2>
+    <ol>
+      <li>Quit and reopen Logic if it was open while you installed.</li>
+      <li>Make a <b>Software Instrument</b> track.</li>
+      <li>Click the instrument slot and pick <b>AU Instruments</b> &gt; <b>Colin Blackshear</b> &gt; <b>Kaleidobox</b>.</li>
+    </ol>
+    <p class="dim small">Other music apps (Ableton Live, Reaper, Bitwig) can use the VST3 version.</p>
+  </section>
+
+  <section class="card">
+    <h2>If something goes wrong</h2>
+    <details>
+      <summary>Logic doesn't list Kaleidobox</summary>
+      <p>Open <b>Logic Pro</b> &gt; <b>Settings</b> &gt; <b>Plug-in Manager</b>, find Kaleidobox, and click <b>Reset &amp; Rescan Selection</b>.
+         If that doesn't help, restart the Mac and open Logic again.</p>
+    </details>
+    <details>
+      <summary>It can't hear my mic</summary>
+      <p>Open <b>System Settings</b> &gt; <b>Privacy &amp; Security</b> &gt; <b>Microphone</b> and switch on Kaleidobox (or Logic).
+         Then pick your input in Kaleidobox's audio settings.</p>
+    </details>
+    <details>
+      <summary>"Kaleidobox is damaged and can't be opened"</summary>
+      <p>That's the same warning in a scarier form. Use the one-line install above instead; it fixes it.</p>
+    </details>
+  </section>
+
+  <p class="dim small">Found a bug or have an idea? Tell Colin what you did, what you expected, and what happened. A screenshot helps a lot.</p>
+</main>
+<script>
+  document.getElementById ("copy").addEventListener ("click", async (e) => {
+    const text = document.getElementById ("cmd").textContent;
+    try { await navigator.clipboard.writeText (text); e.target.textContent = "Copied"; }
+    catch (err) {
+      const r = document.createRange(); r.selectNodeContents (document.getElementById ("cmd"));
+      const s = getSelection(); s.removeAllRanges(); s.addRange (r);
+      e.target.textContent = "Press ⌘C";
+    }
+    setTimeout (() => { e.target.textContent = "Copy"; }, 2000);
+  });
+</script>
+</body>
+</html>

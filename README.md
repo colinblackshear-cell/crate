@@ -391,3 +391,14 @@ tests/         headless tests for the core and the tools, the MPC file format te
 
 A new tool goes in `tools/<name>/` with its own `CMakeLists.txt`. It links `crate_core` and uses
 the library and theme from `core/`.
+
+## Sharing Kaleidobox with friends
+
+Friends install Kaleidobox (the Rig: app, AU and VST3) from
+https://colinblackshear-cell.github.io/crate/get/ , which points at the latest GitHub Release.
+To make a release, run **Actions > Release > Run workflow** with a version number: it builds a
+universal Mac build and makes a *draft* release (zip, DMG and `install.sh`) that nobody sees until
+you press **Publish release**. Pushing a tag such as `v0.2.0` builds and publishes in one go.
+The builds aren't signed with an Apple Developer ID, so the page's one-line Terminal install
+(`tools/release/install.sh`, downloaded with curl) is the warning-free way in; the DMG needs
+"Open Anyway" in Privacy & Security once.
