@@ -715,7 +715,7 @@ void GrooveView::buildTrack()
                 add (name, "Vocoder sound: " + juce::String (name) + ".");
             break;
         case sampler:
-            add ("Sample", "Records the mic, a tool or the mix (as set on the Mixer page) into the Sampler, from the next bar.");
+            add ("Sample", "Records the mic, a tool or the mix (as set on the Setup page) into the Sampler, from the next bar.");
             vintage::setLit (*patternButtons.getLast(), Lit::arm);
             add ("Stop sound", "Stops the Sampler's sound.");
             break;

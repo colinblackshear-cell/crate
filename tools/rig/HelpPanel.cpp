@@ -9,6 +9,9 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
     static const std::vector<Guide> list {
         { "Getting started",
           { "Pick your audio interface and keyboard: More > Audio and MIDI set-up.",
+            "Starting from nothing? New song (top bar) saves the song you're on and clears everything. New pattern then starts "
+            "the first thing: a beat, a bass line, keys, the vocoder, a loop or a sample, on an empty pattern.",
+            "Back and Forward (left of the screen buttons, or Cmd+[ and Cmd+]) step through the screens you've been on.",
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
             "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
             "Press Play (or the space bar). Everything plays in time with Kaleidobox's clock.",
@@ -37,11 +40,14 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Press Rec next layer. It starts at the next bar (with the clock stopped, the clock starts with it).",
             "Press Overdub to play over the layer you picked last; Undo takes the last overdub back.",
             "Double-click a loop to trim where it starts and ends. Its effect slot adds a filter, delay, reverb...",
-            "Keys 1-8 record, stop or overdub layers 1-8." },
+            "Keys 1-8 record, stop or overdub layers 1-8.",
+            "Loop bank: Save bank names this batch of eight loops. + New batch keeps them and gives you eight empty layers. "
+            "Back and Next (or click the bank's name) bring a batch back, at the next bar while playing." },
           "Loops can be up to 10 minutes long. A short loop and a long one play together in time." },
 
         { "Build a song",
-          { "Open the Song builder: More > Song builder, or the Song button on the Looper.",
+          { "Open the Song builder: More > Song builder, or the Song button on the Looper. (Or skip it: New pattern > Keep "
+            "what's playing as the next song part does the same as + New part, from any screen.)",
             "Get something playing: a beat on the Groove screen, the Bass or Synth, loops on the Looper. Mute what shouldn't play yet.",
             "Press + New part. It keeps what's playing now as the next column: which tracks and loops play, the MPC sequence, "
             "the bass pattern and the arp.",
@@ -51,7 +57,8 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Double-click a part's name to rename it. Its menu moves it earlier or later, copies it, saves what's playing into it, or deletes it.",
             "Press Play song: it plays from part A, each part for its length, then the next one. The strip at the top shows the "
             "whole song to scale and where you are.",
-            "A loop that comes in with a part starts from its top on the part's first beat." },
+            "A loop that comes in with a part starts from its top on the part's first beat.",
+            "Over each part's loops is its loop bank (from the Looper): click it to pick which batch of loops that part plays." },
           "Jump to any part live: click its letter or its place in the strip, press keys 1-8, or the A-H buttons along the bottom. "
           "Keys puts Next and Back on your keyboard's buttons." },
 
@@ -83,7 +90,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Press Play song, or launch parts yourself from the song part buttons.",
             "Sing: your voice goes through the vocoder live. Record a part of it onto a loop if you want it to repeat.",
             "Press Rec (top bar) first to keep the whole performance as stems for Logic.",
-            "The Stage screen (F5) shows everything at once, with the FX pad for the whole mix." },
+            "The Mixer (F5) has every level, pan, mute and solo; its Big stage button shows everything at once in giant buttons, with the FX pad for the whole mix." },
           "" },
 
         { "Guitar, bass, keytar and other instruments",
@@ -93,6 +100,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Stomp the pedals you want (Amp, Wah, Chorus, Delay...), or pick a board from Presets: Clean guitar, Crunch, Bass DI...",
             "Rec to looper puts it on the next loop layer from the next bar; Rec to sampler or Rec to MPC pad samples it. "
             "What you record has the pedals on it.",
+            "The Mixer (F5) has the Input strip too: its level, mute and sends.",
             "Every other sound has its own board too: pick the Bass, a loop or the Master on the left of the Effects screen.",
             "A keytar with MIDI can also play Kaleidobox's instruments, like any keyboard." },
           "" },
@@ -116,8 +124,8 @@ int HelpPanel::guideFor (const juce::String& page)
     if (page == "Looper") return 3;
     if (page == "Song") return 4;
     if (page == "Timeline") return 5;
-    if (page == "Stage") return 7;
-    if (page == "Mixer") return 8;
+    if (page == "Stage" || page == "Mixer") return 7;
+    if (page == "Setup") return 8;
     if (page == "Effects") return 9;
     return 0;
 }

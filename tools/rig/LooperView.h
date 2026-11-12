@@ -23,6 +23,11 @@
 // effects), its length in bars, level, mute, solo, and a menu (edit, undo, clear, import a loop
 // or song, save it, or put Record and Mute on buttons of your keyboard). Song grid lays the
 // loops (and tools) out into the song's parts.
+//
+// Under the top row, the loop bank: all eight layers as one named batch. Back and Next step
+// through your banks, the name picks one (or renames, copies or deletes it), Save bank keeps the
+// layers in it, and + New batch keeps them and gives you eight empty layers to start again.
+// While the clock plays, a bank comes in at the next bar. Song parts remember their bank.
 class LooperView : public juce::Component,
                    private juce::Timer
 {
@@ -68,6 +73,12 @@ public:
     int busyLayer() const;             // armed or recording, or -1
     juce::String statusText() const;   // what the LCD says
     int getSelected() const { return selected; }
+    // The loop bank row (RigEngine's loop banks).
+    void pressSaveBank();
+    void pressNewBank();
+    void stepBank (int delta);         // Back (-1) and Next (+1)
+    void pickBank (int bank);
+    juce::String bankText() const;     // what the bank's name button says
     int getSoloed() const { return soloed; }
 
 private:
@@ -92,6 +103,12 @@ private:
     juce::TextButton songButton { "Song" };
     std::unique_ptr<TimelineView> timeline;
     juce::TextButton timelineButton { "Timeline" };
+    juce::TextButton bankBack { "Back" }, bankName, bankNext { "Next" }, saveBank { "Save bank" }, newBank { "+ New batch" };
+    juce::Rectangle<int> bankArea;
+    int overlayTop = 86;
+    int shownQueuedBank = -1;
+    void showBankMenu();
+    void say (const juce::String& s) { if (onSay && s.isNotEmpty()) onSay (s); }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LooperView)
 };

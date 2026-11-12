@@ -85,7 +85,7 @@ EditorView::EditorView (EditorProcessor& p)
     recordTime.setColour (juce::Label::textColourId, crate::Theme::textDim);
     openButton.setTooltip ("Open a sound file: WAV, AIFF, MP3, FLAC (Cmd+O). You can also drag files onto the window.");
     openButton.onClick = [this] { chooseFile(); };
-    saveButton.setTooltip ("Save this sound to the shared library, where every Crate tool can use it (Cmd+S)");
+    saveButton.setTooltip ("Save this sound to the shared library, where every Kaleidobox tool can use it (Cmd+S)");
     saveButton.onClick = [this] { saveToLibrary(); };
     exportButton.setTooltip ("Save a copy anywhere as WAV or AIFF");
     exportButton.onClick = [this] { exportFile(); };
@@ -280,7 +280,7 @@ EditorView::EditorView (EditorProcessor& p)
         showChops();
         say ("Slice markers cleared.");
     };
-    saveSlicesButton.setTooltip ("Saves each slice as its own sound in the library, ready for the MPC pads or any Crate tool");
+    saveSlicesButton.setTooltip ("Saves each slice as its own sound in the library, ready for the MPC pads or any Kaleidobox tool");
     saveSlicesButton.onClick = [this] { saveSlices(); };
     sendPadsButton.setTooltip ("Puts the slices on the MPC's pads, in a new kit, so the drum pads play them straight away");
     sendPadsButton.onClick = [this] { sendSlicesToPads(); };
@@ -1015,7 +1015,7 @@ void EditorView::saveSlices()
         return;
 
     auto* window = new juce::AlertWindow ("Save slices to library",
-                                          "Saves each slice as its own WAV in your Crate sound library, numbered in order.",
+                                          "Saves each slice as its own WAV in your Kaleidobox sound library, numbered in order.",
                                           juce::MessageBoxIconType::NoIcon, this);
     window->addTextEditor ("name", document.getName().isNotEmpty() ? document.getName() : "Chop", "Name");
     window->addTextEditor ("tags", "chop", "Tags (optional, comma separated)");
@@ -1087,7 +1087,7 @@ void EditorView::saveToLibrary()
         return;
 
     auto* window = new juce::AlertWindow ("Save to library",
-                                          "Saves a WAV in your Crate sound library, where every Crate tool can find it.",
+                                          "Saves a WAV in your Kaleidobox sound library, where every Kaleidobox tool can find it.",
                                           juce::MessageBoxIconType::NoIcon, this);
     window->addTextEditor ("name", document.getName().isNotEmpty() ? document.getName() : "Untitled", "Name");
     window->addTextEditor ("tags", {}, "Tags (optional, comma separated)");

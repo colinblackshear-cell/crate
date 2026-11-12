@@ -609,8 +609,133 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     timelineButton.setTooltip ("Compose the song: lanes for your loops and tools over a bar ruler. Place blocks, stretch them, fade them.");
     timelineButton.onClick = [this] { showTimeline (timeline == nullptr); };
     addAndMakeVisible (timelineButton);
+
+    // The loop bank row.
+    bankBack.setButtonText (juce::String::fromUTF8 ("\xe2\x97\x80 Back"));
+    bankNext.setButtonText (juce::String::fromUTF8 ("Next \xe2\x96\xb6"));
+    bankBack.setTooltip ("The bank before this one (your loops here are kept in this bank).");
+    bankNext.setTooltip ("The next bank (your loops here are kept in this bank).");
+    bankName.setTooltip ("Pick a bank of loops, or rename, copy or delete this one.");
+    saveBank.setTooltip ("Keeps the eight layers in this bank, with a name. Save the show (Cmd+S) to keep them on disk.");
+    newBank.setTooltip ("Keeps these loops in their bank and gives you eight empty layers for a new batch. "
+                        "Come back to this one any time with Back, Next or the bank's name.");
+    bankBack.onClick = [this] { stepBank (-1); };
+    bankNext.onClick = [this] { stepBank (1); };
+    bankName.onClick = [this] { showBankMenu(); };
+    saveBank.onClick = [this] { pressSaveBank(); };
+    newBank.onClick = [this] { pressNewBank(); };
+    setLit (newBank, Lit::current);
+    for (auto* b : { &bankBack, &bankName, &bankNext, &saveBank, &newBank })
+    {
+        b->getProperties().set ("fontSize", 15.0f);
+        addAndMakeVisible (*b);
+    }
     updateTop();
     startTimerHz (30);
+}
+
+juce::String LooperView::bankText() const
+{
+    const int queued = engine.getQueuedLoopBank();
+    const int bank = engine.getCurrentLoopBank();
+    juce::String text = juce::String (bank + 1) + "/" + juce::String (engine.getNumLoopBanks()) + "  " + engine.getLoopBankName (bank);
+    if (queued >= 0)
+        text << juce::String::fromUTF8 (" \xc2\xb7 next bar");
+    return text;
+}
+
+void LooperView::pressSaveBank()
+{
+    const int bank = engine.getCurrentLoopBank();
+    auto* w = new juce::AlertWindow ("Save bank", "Keep the eight layers in this bank, named:", juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", engine.getLoopBankName (bank));
+    w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<LooperView> (this), w] (int result)
+    {
+        if (safe == nullptr || result != 1)
+            return;
+        safe->say (safe->engine.saveLoopBank (w->getTextEditorContents ("name")));
+        safe->updateTop();
+    }), true);
+}
+
+void LooperView::pressNewBank()
+{
+    say (engine.newLoopBank());
+    refresh();
+    updateTop();
+}
+
+void LooperView::stepBank (int delta)
+{
+    const int to = (engine.getQueuedLoopBank() >= 0 ? engine.getQueuedLoopBank() : engine.getCurrentLoopBank()) + delta;
+    if (! juce::isPositiveAndBelow (to, engine.getNumLoopBanks()))
+    {
+        say (delta < 0 ? "This is your first bank." : "This is your last bank. + New batch starts another.");
+        return;
+    }
+    pickBank (to);
+}
+
+void LooperView::pickBank (int bank)
+{
+    say (engine.switchLoopBank (bank));
+    refresh();
+    updateTop();
+}
+
+void LooperView::showBankMenu()
+{
+    juce::PopupMenu menu;
+    const int current = engine.getCurrentLoopBank();
+    const auto& banks = engine.getLoopBanks();
+    menu.addSectionHeader ("Loop banks");
+    for (int b = 0; b < engine.getNumLoopBanks(); ++b)
+    {
+        const int n = b < (int) banks.size() ? banks[(size_t) b].loopCount() : 0;
+        menu.addItem (1 + b, juce::String (b + 1) + ". " + engine.getLoopBankName (b) + "  (" + juce::String (n) + (n == 1 ? " loop)" : " loops)"),
+                      true, b == current);
+    }
+    menu.addSeparator();
+    menu.addItem (1001, "+ New batch (empty layers)");
+    menu.addItem (1002, "Rename this bank...");
+    menu.addItem (1003, "Copy this bank");
+    menu.addItem (1004, "Delete this bank", engine.getNumLoopBanks() > 1);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&bankName),
+                        [safe = juce::Component::SafePointer<LooperView> (this), current] (int result)
+    {
+        if (safe == nullptr || result == 0)
+            return;
+        auto& rig = safe->engine;
+        if (result >= 1 && result <= 1000)
+            safe->pickBank (result - 1);
+        else if (result == 1001)
+            safe->pressNewBank();
+        else if (result == 1002)
+        {
+            auto* w = new juce::AlertWindow ("Rename bank", "A name for this bank of loops:", juce::MessageBoxIconType::NoIcon, safe.getComponent());
+            w->addTextEditor ("name", rig.getLoopBankName (current));
+            w->addButton ("Rename", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, current] (int r)
+            {
+                if (safe != nullptr && r == 1)
+                {
+                    safe->say (safe->engine.renameLoopBank (current, w->getTextEditorContents ("name")));
+                    safe->updateTop();
+                }
+            }), true);
+        }
+        else if (result == 1003)
+            safe->say (rig.duplicateLoopBank (current));
+        else if (result == 1004)
+        {
+            safe->say (rig.deleteLoopBank (current));
+            safe->refresh();
+        }
+        safe->updateTop();
+    });
 }
 
 int LooperView::nextEmptyLayer() const
@@ -761,6 +886,18 @@ juce::String LooperView::statusText() const
 void LooperView::updateTop()
 {
     using namespace vintage;
+    if (const auto text = bankText(); bankName.getButtonText() != text)
+        bankName.setButtonText (text);
+    const int queuedBank = engine.getQueuedLoopBank();
+    bankName.setToggleState (queuedBank >= 0 && (juce::Time::getMillisecondCounter() / 400) % 2 == 0, juce::dontSendNotification);
+    if (shownQueuedBank >= 0 && queuedBank < 0)
+    {
+        // A bank came in at its bar: the rows show its levels and sources.
+        shownQueuedBank = -1;
+        for (auto* r : rows)
+            r->refresh();
+    }
+    shownQueuedBank = queuedBank;
     const int next = nextEmptyLayer();
     const auto& looper = engine.getLooper();
     const int bars = next >= 0 ? looper.getLayer (next).bars.load() : -1;
@@ -923,6 +1060,7 @@ void LooperView::paint (juce::Graphics& g)
     drawFace (g, getLocalBounds());
     engraved (g, "Length", lengthLabel, juce::Justification::centredLeft, 12.0f);
     engraved (g, "Record from", sourceLabel, juce::Justification::centredLeft, 12.0f);
+    engraved (g, "Loop bank", bankArea.withWidth (78), juce::Justification::centredLeft, 12.0f);
 
     // In sync, and what happens next.
     const auto& transport = engine.getTransport();
@@ -1007,7 +1145,22 @@ void LooperView::resized()
         t.removeFromRight (10);
         syncArea = t;
     }
-    area.removeFromTop (8);
+    area.removeFromTop (6);
+    {
+        bankArea = area.removeFromTop (30);
+        auto b = bankArea.withTrimmedLeft (84);
+        bankBack.setBounds (b.removeFromLeft (84).reduced (0, 2));
+        b.removeFromLeft (6);
+        bankName.setBounds (b.removeFromLeft (juce::jmin (300, juce::jmax (160, b.getWidth() / 3))).reduced (0, 2));
+        b.removeFromLeft (6);
+        bankNext.setBounds (b.removeFromLeft (84).reduced (0, 2));
+        b.removeFromLeft (14);
+        saveBank.setBounds (b.removeFromLeft (110).reduced (0, 2));
+        b.removeFromLeft (6);
+        newBank.setBounds (b.removeFromLeft (130).reduced (0, 2));
+        overlayTop = bankArea.getBottom() + 4;
+    }
+    area.removeFromTop (6);
     headings = area.removeFromTop (18);
     area.removeFromTop (4);
     if (fxPanel != nullptr)
@@ -1023,20 +1176,20 @@ void LooperView::resized()
     }
     if (songGrid != nullptr)
     {
-        auto bounds = getLocalBounds().reduced (22, 8).withTrimmedTop (86);
+        auto bounds = getLocalBounds().reduced (22, 8).withTrimmedTop (overlayTop);
         songGrid->setBounds (bounds);
         songGrid->toFront (false);
     }
     if (timeline != nullptr)
     {
         // The whole screen below the top row: the song needs the room.
-        timeline->setBounds (getLocalBounds().reduced (12, 8).withTrimmedTop (86));
+        timeline->setBounds (getLocalBounds().reduced (12, 8).withTrimmedTop (overlayTop));
         timeline->toFront (false);
     }
     // The editor sits over the layers, leaving its own row (and the ones above) in view.
     if (editor != nullptr)
     {
-        auto bounds = getLocalBounds().reduced (22, 8).withTrimmedTop (86);
+        auto bounds = getLocalBounds().reduced (22, 8).withTrimmedTop (overlayTop);
         if (fxPanel != nullptr)
             bounds = bounds.withTrimmedBottom (136);
         const auto* row = rows[editor->getLayer()];

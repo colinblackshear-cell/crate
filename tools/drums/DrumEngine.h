@@ -16,12 +16,19 @@
 // every second step late. A fill pattern can take over every few times round, or once when
 // you press Fill.
 //
+// Like the classic box it's modelled on, every pattern has an A and a B variation, which play
+// as A, B, or A then B (a two-bar beat). An intro can play once when you press Play, and a
+// chain plays patterns one after another (the old "rhythm track"). Each sound has its own
+// knobs (level, tune, decay, tone, snappy, pan), a mute, and a choice of sounds: the toms
+// switch to congas, the clap to maracas, the kick to a long sub boom, and more.
+//
 // The keys and the pads play the sounds too, from C (kick) up the octave; any octave works.
 namespace crate::drums
 {
 constexpr int kVoices = 12;
 constexpr int kMaxSteps = 32;
 constexpr int kPatterns = 16;
+constexpr int kChain = 32;   // patterns in the chain
 
 enum Voice { kick, snare, clap, rim, lowTom, midTom, highTom, clave, cowbell, closedHat, openHat, cymbal };
 
@@ -33,6 +40,9 @@ const char* voiceShort (int voice);
 // octave), or -1.
 int noteForVoice (int voice);
 int voiceForNote (int note);
+
+// Each sound's choice of sounds ("Classic", "Long boom"...), the first being the classic one.
+juce::StringArray soundNames (int voice);
 
 struct Pattern
 {
@@ -50,8 +60,11 @@ struct VoiceSettings
     float level = 0.8f;   // 0..1
     float tune = 0.0f;    // semitones, -12..12
     float decay = 0.5f;   // 0..1, short to long (each sound has its own range)
-    float tone = 0.5f;    // 0..1: kick click, snare snap, hat brightness...
+    float tone = 0.5f;    // 0..1: kick sweep, snare colour, hat brightness...
+    float snappy = 0.4f;  // 0..1: the snare's snares; the attack (click, skin, tick) on the others
     float pan = 0.0f;     // -1..1
+    int sound = 0;        // which of soundNames (voice)
+    bool mute = false;
 };
 
 struct Settings
@@ -62,13 +75,29 @@ struct Settings
     float drive = 0.0f;      // 0..1: analog-style saturation on the whole kit
     float volume = 0.8f;     // 0..1
     float humanize = 0.0f;   // 0..1: hits a little softer or harder at random
-    int stepRate = 1;        // 0 1/8, 1 1/16, 2 1/16 triplets, 3 1/32
+    int stepRate = 1;        // 0 1/8, 1 1/16, 2 1/16 triplets, 3 1/32, 4 1/8 triplets
     bool sequencerOn = true;
     int fillEvery = 0;       // 0: off; else the fill plays every Nth time round
 };
 
 double stepBeats (int stepRate);
 juce::StringArray stepRateNames();
+
+// Which patterns play, when the engine has the whole bank (DrumProcessor's 16 patterns, A and B).
+struct Plan
+{
+    enum Variation { a, b, aThenB };
+    int pattern = 0;          // 0..15
+    int variation = a;
+    int fill = -1;            // the fill's pattern (its A), or -1
+    int intro = -1;           // plays once when the clock starts from the top, or -1
+    bool chainOn = false;
+    int chainLength = 0;
+    // Each entry: pattern * 2 + (1 for its B).
+    std::array<std::int8_t, kChain> chain {};
+
+    bool sameRun (const Plan& o) const;   // the same patterns playing (so no need to jump)
+};
 
 struct Clock
 {
@@ -88,7 +117,9 @@ public:
 
     // Audio thread: the patterns to play (kept alive by the caller until they're replaced).
     // `fill` may be null.
-    void setPatterns (const Pattern* main, const Pattern* fill) { pattern = main; fillPattern = fill; }
+    void setPatterns (const Pattern* main, const Pattern* fill) { pattern = main; fillPattern = fill; bankA = bankB = nullptr; }
+    // Or the whole bank: `a` and `b` are kPatterns patterns each, and the plan says which play.
+    void setBank (const Pattern* a, const Pattern* b, const Plan& p) { bankA = a; bankB = b; plan = p; }
     // Plays the fill once, the next time the pattern comes round to its start.
     void requestFill() { fillOnce = true; }
 
@@ -102,6 +133,10 @@ public:
     // For the window.
     int getCurrentStep() const { return currentStep; }
     bool isPlayingFill() const { return inFill; }
+    bool isPlayingIntro() const { return inIntro; }
+    // The pattern playing (pattern * 2 + 1 for its B), -1 for none; and the chain's place.
+    int getCurrentCode() const { return currentCode; }
+    int getChainPosition() const { return chainPos; }
     // Counts up each time a voice sounds, so the window can flash it.
     std::array<std::atomic<int>, kVoices> hitCounts {};
 
@@ -131,6 +166,8 @@ private:
         float pitch = 0;        // base Hz
         float clickEnv = 0;
         float lastOut = 0;
+        double bell = 0;        // the ride's bell
+        int sound = 0;          // the sound picked when it was hit
     };
 
     void start (int voice, float velocity, bool accent);
@@ -138,11 +175,19 @@ private:
     float noise();
     void handleMidi (const juce::MidiMessage&);
     void hitStep (int step, const Pattern&, double stepStartBeat, double stepLength);
+    const Pattern* byCode (int code) const;
+    const Pattern* basePattern (long long loop, int& code) const;
+    void resync (long long index);
+    void nextLoop();
     void tap (int voice, float velocity);
 
     Settings settings;
     const Pattern* pattern = nullptr;
     const Pattern* fillPattern = nullptr;
+    const Pattern* bankA = nullptr;
+    const Pattern* bankB = nullptr;
+    Plan plan, lastPlan;
+    const Pattern* lastSimple = nullptr;
     double sampleRate = 44100.0;
     float invRate = 1.0f / 44100.0f;
     std::array<VoiceState, kVoices> state {};
@@ -151,9 +196,13 @@ private:
 
     // Sequencer.
     long long lastFired = -1;
-    long long lastLoop = -1;
+    long long loopCount = 0;
+    const Pattern* current = nullptr;
+    int position = 0;
     int currentStep = -1;
-    bool inFill = false;
+    int currentCode = -1;
+    int chainPos = 0;
+    bool inFill = false, inIntro = false;
     std::atomic<bool> fillOnce { false };
     bool fillQueued = false;
     bool wasPlaying = false;

@@ -7,12 +7,13 @@
 #include "core/ui/Theme.h"
 #include "core/ui/ParamControls.h"
 #include "RigPanels.h"
+#include "RigNavigation.h"
 
 // The Rig's window, built like a piece of 70s/80s studio gear: the top bar (transport, tempo,
 // where the song is, VU meters), five big screen buttons (Groove, Vocoder, Looper, Sampler + MPC,
-// Stage; F1-F5), the screen, and the song parts with "Live now" along the bottom. Everything else
-// (the MPC, Bass and Synth in full, the song list, the sound bank, the mixer and keyboard set-up)
-// is under More.
+// Mixer; F1-F5), the screen, and the song parts with "Live now" along the bottom. Everything else
+// (the MPC, Bass and Synth in full, the song list, the sound bank, the big Stage view and the
+// keyboard set-up) is under More, and the Mixer reaches every one of them too.
 class RigView : public juce::Component,
                 private juce::Timer,
                 private juce::AudioProcessorListener
@@ -52,31 +53,28 @@ public:
     void goTo (const juce::String& page) { showTab (page); }
     class GuideView* getGuide() const { return guide; }
 
+    // Back and forward through the screens you've been on (the arrows by the screen buttons,
+    // Cmd+[ and Cmd+]). A place is a page, or the Sampler's editor, or the Looper's timeline
+    // or song grid.
+    void goBack();
+    void goForward();
+    juce::String getPlace() const { return currentPlace(); }
+    const RigNavigation& getNavigation() const { return navigation; }
+
+    // New song (the top bar): asks whether to save the song you're on, then clears the Rig to a
+    // blank one and asks what to start with. `newSong` does it without asking: saving first
+    // (as the show you opened, or a new one in the shows folder) when `saveFirst`, and then
+    // opening New pattern's menu when `askWhatNext`.
+    void askNewSong();
+    void newSong (bool saveFirst, bool askWhatNext = true);
+    // New pattern (the top bar): a menu of what to start (songstart::Start), and keeping
+    // what's playing as the next song part. startPattern does one, as the menu does.
+    void showPatternMenu();
+    void startPattern (int start);
+    void keepAsSongPart();
+
 private:
-    // One mixer channel: name, level fader, mute, meter, and Learn for its fader.
-    class StripView : public juce::Component
-    {
-    public:
-        // `onSwitch`, if given, is an on/off switch on the strip (the vocoder's, the input's).
-        StripView (RigEngine&, int strip, int faderControl, int muteControl, std::atomic<bool>* onSwitch = nullptr);
-        void paint (juce::Graphics&) override;
-        void resized() override;
-        void refresh();
-        void tick (float meterLevel);
-
-        juce::Slider level { juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
-        juce::TextButton mute { "Mute" }, learn { "Learn" }, on { "On" }, fxButton { "FX" };
-        juce::ComboBox jack;   // the Input strip's: which input it listens to
-        const int strip;
-
-    private:
-        RigEngine& engine;
-        int faderControl, muteControl;
-        std::atomic<bool>* onFlag;
-        float meter = 0;
-    };
-
-    // One strip's effects, in a row above the mixer.
+    // One strip's effects, along the bottom of the Mixer.
     class FxPanel : public StripFxPanel
     {
     public:
@@ -84,6 +82,8 @@ private:
         const int strip;
     };
     void showFx (int strip);
+    // A loop layer's effects, on the Mixer the same way.
+    void showLayerFx (int layer);
 
     void timerCallback() override;
     void showAudioSettings();
@@ -100,6 +100,9 @@ private:
     // Hover over a button for a moment and it says what it does.
     juce::SharedResourcePointer<juce::TooltipWindow> tooltips;
 public:
+    class MixerView* getMixer() const { return mixer; }
+    // Takes the effects rack off the Mixer, if one is showing.
+    void closeMixerPanel();
     // Opens (or closes) the how-to guide, on the current screen's guide.
     void showHelp (bool show);
     HelpPanel* getHelp() const { return helpPanel.get(); }
@@ -129,12 +132,16 @@ private:
     void nudgeTempo (double);
     void pageChanged();
     bool stageShown = false;
+    RigNavigation navigation;
+    juce::String currentPlace() const;
+    void goToPlace (const juce::String&);
+    void updateNavButtons();
 
-    // The Mixer page (under More): the strips, the keyboard routing, Sample, knob Learn, the
-    // click, the mic, and the show's files.
-    class MixerPage;
-    MixerPage* mixerPage = nullptr;   // owned by its page
-    void layoutMixer (juce::Rectangle<int>);
+    // The Setup page (under More, once called the Mixer): the keyboard routing, Sample, knob
+    // Learn, the click, the mic, and the show's files. The levels are on the Mixer (F5).
+    class SetupPage;
+    SetupPage* setupPage = nullptr;   // owned by its page
+    void layoutSetup (juce::Rectangle<int>);
     juce::TextButton clickButton { "Click" }, micButton { "Mic off" };
     juce::TextButton learnPlay { "Learn" }, learnStop { "Learn" };
     juce::Label learnPlayLabel { {}, "Play key" }, learnStopLabel { {}, "Stop key" };
@@ -160,8 +167,10 @@ private:
     std::pair<int, int> caughtKnob { 0, -1 };
     juce::uint32 sayUntil = 0;
 
-    std::vector<std::unique_ptr<StripView>> stripViews;
     std::unique_ptr<FxPanel> fxPanel;
+    std::unique_ptr<StripFxPanel> layerFxPanel;
+    int layerFxShown = -1;
+    class MixerView* mixer = nullptr;   // the Mixer (F5), owned by its page
     class LooperView* looper = nullptr;   // owned by the tabs
     class SongView* song = nullptr;
     class StageView* stage = nullptr;

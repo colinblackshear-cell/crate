@@ -10,7 +10,9 @@ const char* const voiceKeys[drums::kVoices] = { "kick", "snare", "clap", "rim", 
 
 // Each sound's starting settings: decay and tone, so the kit sounds right out of the box.
 constexpr float defaultDecay[drums::kVoices] = { 0.55f, 0.4f, 0.4f, 0.5f, 0.45f, 0.45f, 0.45f, 0.5f, 0.35f, 0.35f, 0.4f, 0.5f };
-constexpr float defaultTone[drums::kVoices] = { 0.35f, 0.55f, 0.5f, 0.5f, 0.3f, 0.3f, 0.3f, 0.3f, 0.5f, 0.5f, 0.5f, 0.5f };
+constexpr float defaultTone[drums::kVoices] = { 0.35f, 0.55f, 0.5f, 0.5f, 0.4f, 0.4f, 0.4f, 0.3f, 0.5f, 0.5f, 0.5f, 0.5f };
+// Snappy: the snare's snares, and the attack on the others (the kick's click, the toms' skin...).
+constexpr float defaultSnappy[drums::kVoices] = { 0.35f, 0.55f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.2f, 0.5f, 0.2f, 0.2f, 0.2f };
 constexpr float defaultLevel[drums::kVoices] = { 0.9f, 0.75f, 0.7f, 0.6f, 0.7f, 0.7f, 0.7f, 0.6f, 0.55f, 0.55f, 0.5f, 0.45f };
 // A little stereo, like a mixed kit: toms across, hats a touch right, cowbell and clave left.
 constexpr float defaultPan[drums::kVoices] = { 0.0f, 0.0f, 0.0f, -0.1f, -0.35f, 0.0f, 0.35f, -0.25f, -0.2f, 0.2f, 0.2f, 0.15f };
@@ -49,12 +51,66 @@ const Written written[] = {
     { "Tom fill", { "x...............", "...............4", "", "", "............x.x.", "........x.x.....", "x.x.x.x.........",
                     "", "", "", "", "" }, ">...>...>...>.>>" },
     { "Snare fill", { "x.......x.......", "x.x.x.x.xxxx2222", "", "", "", "", "", "", "", "", "", "" }, ">...>...>.>.>>>>" },
+    { "Miami bass", { "x.....x.....x...", "....x.......x...", "....x.......x...", "", "", "", "", "", "",
+                      "x.xxx.xxx.xxx.xx", "", "" }, "x.....x.....x..." },
+    { "Old school", { "x.....x...x..x..", "....x.......x...", "", "", "", "", "", "", "..x...........x.",
+                      "x.x.x.x.x.x.x.x.", "", "x..............." }, "x...>...x...>..." },
+    { "Conga groove", { "x.......x.......", "", "....x.......x...", "..x.....x.x.....", "......x..x....x.", "...x.......x....",
+                        "x.x.......x.....", "", "", "x.x.x.x.x.x.x.x.", "", "" }, "x...x...x...x..." },
+};
+
+// Kits: the same machine set up for different styles. Each is the starting settings plus these.
+struct KitSetting { const char* voice; const char* what; float value; };
+struct Kit { const char* name; std::vector<KitSetting> settings; float drive; };
+
+const Kit kits[] = {
+    { "Classic", {}, 0.0f },
+    { "Deep sub (long boom kick)", { { "kick", "Sound", 1 }, { "kick", "Decay", 0.8f }, { "kick", "Tune", -2 }, { "kick", "Level", 1.0f },
+                                     { "snare", "Sound", 1 }, { "closedHat", "Sound", 1 }, { "clap", "Level", 0.8f } }, 0.1f },
+    { "Punchy electro", { { "kick", "Sound", 2 }, { "kick", "Snappy", 0.6f }, { "snare", "Snappy", 0.7f }, { "cowbell", "Level", 0.7f },
+                          { "closedHat", "Decay", 0.25f } }, 0.15f },
+    { "Latin (congas, maracas)", { { "lowTom", "Sound", 1 }, { "midTom", "Sound", 1 }, { "highTom", "Sound", 1 }, { "clap", "Sound", 1 },
+                                   { "rim", "Sound", 1 }, { "cowbell", "Sound", 1 }, { "closedHat", "Sound", 2 } }, 0.0f },
+    { "Dirty", { { "kick", "Sound", 3 }, { "snare", "Sound", 2 }, { "openHat", "Sound", 1 }, { "cymbal", "Sound", 1 } }, 0.45f },
+    { "Tight and dry", { { "kick", "Decay", 0.25f }, { "snare", "Decay", 0.2f }, { "clap", "Decay", 0.2f }, { "lowTom", "Decay", 0.25f },
+                         { "midTom", "Decay", 0.25f }, { "highTom", "Decay", 0.25f }, { "openHat", "Decay", 0.2f }, { "cymbal", "Decay", 0.25f },
+                         { "snare", "Sound", 1 }, { "closedHat", "Sound", 1 } }, 0.0f },
+    { "Big room", { { "kick", "Decay", 0.75f }, { "snare", "Sound", 2 }, { "snare", "Decay", 0.7f }, { "clap", "Decay", 0.7f },
+                    { "cymbal", "Decay", 0.8f }, { "openHat", "Decay", 0.6f } }, 0.2f },
 };
 }
 
 juce::String DrumProcessor::voiceParam (int voice, const juce::String& what)
 {
     return juce::String (voiceKeys[juce::jlimit (0, drums::kVoices - 1, voice)]) + what;
+}
+
+juce::StringArray DrumProcessor::kitNames()
+{
+    juce::StringArray names;
+    for (const auto& k : kits)
+        names.add (k.name);
+    return names;
+}
+
+void DrumProcessor::loadKit (int index)
+{
+    if (! juce::isPositiveAndBelow (index, (int) std::size (kits)))
+        return;
+    auto set = [this] (const juce::String& id, float value)
+    {
+        if (auto* p = params.getParameter (id))
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+    };
+    // Back to the starting settings, then the kit's own.
+    for (int v = 0; v < drums::kVoices; ++v)
+        for (const char* what : { "Level", "Tune", "Decay", "Tone", "Snappy", "Pan", "Sound", "Mute" })
+            if (auto* p = params.getParameter (voiceParam (v, what)))
+                p->setValueNotifyingHost (p->getDefaultValue());
+    const auto& kit = kits[index];
+    for (const auto& k : kit.settings)
+        set (juce::String (k.voice) + k.what, k.value);
+    set ("drive", kit.drive);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout DrumProcessor::createLayout()
@@ -80,6 +136,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DrumProcessor::createLayout(
                                                         StringArray { "Only when pressed", "2nd time", "4th time", "8th time", "16th time" }, 0));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "sequencer", 1 }, "Sequencer", true));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "stepRate", 1 }, "Step rate", drums::stepRateNames(), 1));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "variation", 1 }, "Variation", StringArray { "A", "B", "A then B" }, 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "intro", 1 }, "Intro pattern", fillNames, 0));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "chain", 1 }, "Play chain", false));
     number ("accent", "Accent", { 0.0f, 1.0f }, 0.5f);
     number ("swing", "Swing", { 0.0f, 1.0f }, 0.0f);
     number ("drive", "Drive", { 0.0f, 1.0f }, 0.0f);
@@ -95,6 +154,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DrumProcessor::createLayout(
                 { return (t > 0.05f ? "+" : "") + String (t, 1) + " st"; });
         number (voiceParam (v, "Decay"), name + " decay", { 0.0f, 1.0f }, defaultDecay[v]);
         number (voiceParam (v, "Tone"), name + " tone", { 0.0f, 1.0f }, defaultTone[v]);
+        number (voiceParam (v, "Snappy"), name + (v == drums::snare ? " snappy" : " attack"), { 0.0f, 1.0f }, defaultSnappy[v]);
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { voiceParam (v, "Sound"), 1 }, name + " sound", drums::soundNames (v), 0));
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { voiceParam (v, "Mute"), 1 }, name + " mute", false));
         number (voiceParam (v, "Pan"), name + " pan", { -1.0f, 1.0f }, defaultPan[v], [] (float p, int)
                 {
                     if (std::abs (p) < 0.03f)
@@ -179,16 +241,64 @@ drums::Pattern DrumProcessor::randomPattern (juce::Random& random)
     return p;
 }
 
-drums::Pattern DrumProcessor::getPattern (int index) const
+drums::Pattern DrumProcessor::getPattern (int index, int variation) const
 {
     const juce::SpinLock::ScopedLockType sl (patternLock);
-    return patterns[(size_t) juce::jlimit (0, drums::kPatterns - 1, index)];
+    return (variation == 1 ? patternsB : patterns)[(size_t) juce::jlimit (0, drums::kPatterns - 1, index)];
 }
 
-void DrumProcessor::setPattern (int index, const drums::Pattern& p)
+void DrumProcessor::setPattern (int index, const drums::Pattern& p, int variation)
 {
     const juce::SpinLock::ScopedLockType sl (patternLock);
-    patterns[(size_t) juce::jlimit (0, drums::kPatterns - 1, index)] = p;
+    (variation == 1 ? patternsB : patterns)[(size_t) juce::jlimit (0, drums::kPatterns - 1, index)] = p;
+    ++patternVersion;
+}
+
+drums::Pattern DrumProcessor::getEditedPattern() const { return getPattern (getSelectedPattern(), editVariation); }
+
+void DrumProcessor::setEditedPattern (const drums::Pattern& p) { setPattern (getSelectedPattern(), p, editVariation); }
+
+int DrumProcessor::getVariation() const { return (int) get (params, "variation"); }
+
+void DrumProcessor::setVariation (int v)
+{
+    if (auto* p = params.getParameter ("variation"))
+        p->setValueNotifyingHost (p->convertTo0to1 ((float) juce::jlimit (0, 2, v)));
+    if (v != 2)
+        editVariation = v;
+}
+
+int DrumProcessor::getIntroPattern() const { return (int) get (params, "intro") - 1; }
+
+std::vector<int> DrumProcessor::getChain() const
+{
+    const juce::SpinLock::ScopedLockType sl (patternLock);
+    return std::vector<int> (chain.begin(), chain.begin() + chainLength);
+}
+
+void DrumProcessor::setChain (const std::vector<int>& entries)
+{
+    const juce::SpinLock::ScopedLockType sl (patternLock);
+    chainLength = juce::jmin ((int) entries.size(), drums::kChain);
+    for (int i = 0; i < chainLength; ++i)
+        chain[(size_t) i] = (std::int8_t) juce::jlimit (0, drums::kPatterns * 2 - 1, entries[(size_t) i]);
+    ++patternVersion;
+}
+
+int DrumProcessor::getPlayingPattern() const
+{
+    // In the chain, the one the chain is on.
+    const int code = playingCode.load();
+    if (isChainOn() && code >= 0 && ! playingFill.load() && ! playingIntro.load())
+        return code >> 1;
+    return playingPattern.load();
+}
+
+bool DrumProcessor::isChainOn() const { return get (params, "chain") > 0.5f; }
+
+juce::String DrumProcessor::codeName (int code)
+{
+    return juce::String ((code >> 1) + 1) + ((code & 1) != 0 ? "B" : "A");
 }
 
 int DrumProcessor::getSelectedPattern() const { return (int) get (params, "pattern"); }
@@ -233,6 +343,9 @@ drums::Settings DrumProcessor::readSettings() const
         vs.tune = get (params, voiceParam (v, "Tune"));
         vs.decay = get (params, voiceParam (v, "Decay"));
         vs.tone = get (params, voiceParam (v, "Tone"));
+        vs.snappy = get (params, voiceParam (v, "Snappy"));
+        vs.sound = (int) get (params, voiceParam (v, "Sound"));
+        vs.mute = get (params, voiceParam (v, "Mute")) > 0.5f;
         vs.pan = get (params, voiceParam (v, "Pan"));
     }
     s.accent = get (params, "accent");
@@ -250,9 +363,15 @@ void DrumProcessor::prepareToPlay (double sampleRate, int)
 {
     engine.prepare (sampleRate);
     keyboardState.reset();
-    playing = getPattern (getSelectedPattern());
+    {
+        const juce::SpinLock::ScopedLockType sl (patternLock);
+        bankA = patterns;
+        bankB = patternsB;
+        playChain = chain;
+        playChainLength = chainLength;
+        bankVersion = patternVersion.load();
+    }
     playingPattern = getSelectedPattern();
-    engine.setPatterns (&playing, nullptr);
 }
 
 bool DrumProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -302,20 +421,32 @@ void DrumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         switchNow = std::floor (clock.ppq / 4.0) != std::floor ((clock.ppq + blockBeats) / 4.0)
                     || std::fmod (clock.ppq, 4.0) < 1.0e-6;
     }
-    const int fill = getFillPattern();
+    if (switchNow && wanted != playingPattern.load())
+        playingPattern = wanted;
+    // The patterns the audio plays: a copy, taken when they've been edited.
+    if (bankVersion != patternVersion.load())
     {
         const juce::SpinLock::ScopedTryLockType sl (patternLock);
         if (sl.isLocked())
         {
-            if (switchNow && wanted != playingPattern.load())
-                playingPattern = wanted;
-            playing = patterns[(size_t) playingPattern.load()];
-            if (fill >= 0)
-                playingFillPattern = patterns[(size_t) fill];
+            bankA = patterns;
+            bankB = patternsB;
+            playChain = chain;
+            playChainLength = chainLength;
+            bankVersion = patternVersion.load();
         }
     }
     lastPpq = clock.playing ? clock.ppq : -1;
-    engine.setPatterns (&playing, fill >= 0 ? &playingFillPattern : nullptr);
+
+    drums::Plan plan;
+    plan.pattern = playingPattern.load();
+    plan.variation = (int) get (params, "variation");
+    plan.fill = getFillPattern();
+    plan.intro = getIntroPattern();
+    plan.chainOn = isChainOn() && playChainLength > 0;
+    plan.chainLength = playChainLength;
+    plan.chain = playChain;
+    engine.setBank (bankA.data(), bankB.data(), plan);
     if (fillRequested.exchange (false))
         engine.requestFill();
 
@@ -324,6 +455,9 @@ void DrumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     engine.render (buffer.getWritePointer (0), right, numSamples, midi, clock);
     currentStep = engine.getCurrentStep();
     playingFill = engine.isPlayingFill();
+    playingIntro = engine.isPlayingIntro();
+    playingCode = engine.getCurrentCode();
+    chainPosition = plan.chainOn && playingCode >= 0 ? engine.getChainPosition() : -1;
     midi.clear();
 }
 
@@ -368,10 +502,21 @@ void DrumProcessor::getStateInformation (juce::MemoryBlock& dest)
 {
     auto state = params.copyState();
     state.removeChild (state.getChildWithName ("Patterns"), nullptr);
-    juce::ValueTree list ("Patterns");
+    state.removeChild (state.getChildWithName ("PatternsB"), nullptr);
+    state.removeChild (state.getChildWithName ("Chain"), nullptr);
+    juce::ValueTree list ("Patterns"), listB ("PatternsB"), chainTree ("Chain");
     for (int i = 0; i < drums::kPatterns; ++i)
+    {
         list.appendChild (patternToTree (getPattern (i)), nullptr);
+        listB.appendChild (patternToTree (getPattern (i, 1)), nullptr);
+    }
     state.appendChild (list, nullptr);
+    state.appendChild (listB, nullptr);
+    juce::StringArray entries;
+    for (int code : getChain())
+        entries.add (juce::String (code));
+    chainTree.setProperty ("entries", entries.joinIntoString (" "), nullptr);
+    state.appendChild (chainTree, nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, dest);
 }
@@ -389,5 +534,17 @@ void DrumProcessor::setStateInformation (const void* data, int size)
     for (int i = 0; i < juce::jmin (drums::kPatterns, list.getNumChildren()); ++i)
         setPattern (i, patternFromTree (list.getChild (i)));
     state.removeChild (list, nullptr);
+    // B variations and the chain (older saves have none: empty Bs, no chain).
+    const auto listB = state.getChildWithName ("PatternsB");
+    for (int i = 0; i < drums::kPatterns; ++i)
+        setPattern (i, i < listB.getNumChildren() ? patternFromTree (listB.getChild (i)) : drums::Pattern {}, 1);
+    state.removeChild (listB, nullptr);
+    const auto chainTree = state.getChildWithName ("Chain");
+    std::vector<int> entries;
+    for (const auto& e : juce::StringArray::fromTokens (chainTree.getProperty ("entries").toString(), " ", ""))
+        if (e.isNotEmpty())
+            entries.push_back (e.getIntValue());
+    setChain (entries);
+    state.removeChild (chainTree, nullptr);
     params.replaceState (state);
 }

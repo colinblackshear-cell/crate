@@ -14,6 +14,7 @@
 //   - Click a cell to switch that track on or off in that part (right-click: leave it as it is).
 //   - A part's length is how many bars it plays before the next one starts, when the song plays
 //     in order. Hold stays until you move on.
+//   - Over each part's loops, the loop bank it plays (the Looper's banks): click to pick one.
 //   - Play song starts at part A and plays the parts in order; press any part (or keys 1-8) to
 //     jump to it at the next bar.
 //
@@ -58,6 +59,9 @@ public:
     // Click: leave -> plays -> muted -> plays... The part that's playing changes straight away.
     void clickCell (int part, int row);
     void setCellTo (int part, int row, int value);
+    // Which loop bank a part plays (-1: leaves the loops as they are). The part that's playing
+    // switches to it straight away (at the next bar while the clock runs).
+    void setPartLoopBank (int part, int bank);
 
 private:
     class Grid;

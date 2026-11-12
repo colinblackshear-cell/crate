@@ -287,6 +287,255 @@ struct DrumMachineTests : juce::UnitTest
             expect (RigTimeline::laneForStrip (RigEngine::drumsStrip) >= 0, "it has a lane on the timeline");
         }
 
+        beginTest ("every choice of sound plays, at every snappy setting, and dies away; a muted sound is silent");
+        {
+            for (int v = 0; v < drums::kVoices; ++v)
+                for (int sound = 0; sound < drums::soundNames (v).size(); ++sound)
+                    for (float snappy : { 0.0f, 1.0f })
+                    {
+                        drums::Engine e;
+                        e.prepare (kRate);
+                        drums::Settings s;
+                        s.voices[(size_t) v].sound = sound;
+                        s.voices[(size_t) v].snappy = snappy;
+                        s.voices[(size_t) v].decay = 1.0f;
+                        e.setSettings (s);
+                        e.trigger (v, 1.0f, true);
+                        const auto h = listen (e, 7.0);
+                        const auto what = juce::String (drums::voiceName (v)) + " " + drums::soundNames (v)[sound];
+                        expect (h.finite, what);
+                        expectGreaterThan (h.peak, 0.04f, what);
+                        expectLessThan (h.peak, 2.0f, what);
+                        expectLessThan (h.tail, 1.0e-3f, what + " fades away");
+                    }
+
+            drums::Engine e;
+            e.prepare (kRate);
+            drums::Settings s;
+            s.voices[drums::kick].mute = true;
+            e.setSettings (s);
+            e.trigger (drums::kick, 1.0f, true);
+            expectLessThan (listen (e, 0.3).peak, 1.0e-6f, "muted");
+            expect (drums::soundNames (drums::lowTom).contains ("Conga"));
+            expect (drums::soundNames (drums::clap).contains ("Maracas"));
+            expect (drums::soundNames (drums::kick).contains ("Long boom"));
+            expectWithinAbsoluteError (drums::stepBeats (4), 1.0 / 3.0, 1.0e-9);
+        }
+
+        beginTest ("snappy brings up the snare's snares");
+        {
+            auto highs = [] (float snappy)
+            {
+                drums::Engine e;
+                e.prepare (kRate);
+                drums::Settings s;
+                s.voices[drums::snare].snappy = snappy;
+                e.setSettings (s);
+                e.trigger (drums::snare, 1.0f, false);
+                juce::AudioBuffer<float> b (2, 9600);
+                b.clear();
+                juce::MidiBuffer none;
+                e.render (b.getWritePointer (0), b.getWritePointer (1), 9600, none, {});
+                float energy = 0;   // of the sample-to-sample changes: the hiss
+                for (int i = 1; i < 9600; ++i)
+                    energy += juce::square (b.getSample (0, i) - b.getSample (0, i - 1));
+                return energy;
+            };
+            expectGreaterThan (highs (1.0f), highs (0.0f) * 3.0f);
+        }
+
+        beginTest ("A and B variations, an intro, and a chain");
+        {
+            std::array<drums::Pattern, drums::kPatterns> a {}, b {};
+            for (auto* bank : { &a, &b })
+                for (auto& p : *bank)
+                    p.length = 4;
+            a[0].hits[drums::kick][0] = 1;
+            b[0].hits[drums::snare][0] = 1;
+            a[1].hits[drums::clap][0] = 1;
+            a[2].hits[drums::cowbell][0] = 1;
+            drums::Clock clock;
+            clock.playing = true;
+
+            auto run = [&] (const drums::Plan& plan, double seconds)
+            {
+                auto e = std::make_unique<drums::Engine>();
+                e->prepare (kRate);
+                e->setBank (a.data(), b.data(), plan);
+                listen (*e, seconds, clock);   // 2 s at 120 = 4 beats = 4 times round
+                return e;
+            };
+
+            drums::Plan plan;
+            plan.variation = drums::Plan::aThenB;
+            auto e = run (plan, 2.0);
+            expectEquals (e->hitCounts[drums::kick].load(), 2, "A, then B, then A...");
+            expectEquals (e->hitCounts[drums::snare].load(), 2);
+
+            plan.variation = drums::Plan::b;
+            e = run (plan, 2.0);
+            expectEquals (e->hitCounts[drums::kick].load(), 0, "just B");
+            expectEquals (e->hitCounts[drums::snare].load(), 4);
+
+            plan.variation = drums::Plan::a;
+            plan.intro = 1;
+            e = run (plan, 2.0);
+            expectEquals (e->hitCounts[drums::clap].load(), 1, "the intro plays once");
+            expectEquals (e->hitCounts[drums::kick].load(), 3, "then the beat");
+
+            plan.intro = -1;
+            plan.chainOn = true;
+            plan.chainLength = 3;
+            plan.chain = {};
+            plan.chain[0] = 0;       // 1A
+            plan.chain[1] = 4;       // 3A
+            plan.chain[2] = 1;       // 1B
+            e = run (plan, 3.0);     // 6 times round: twice through the chain
+            expectEquals (e->hitCounts[drums::kick].load(), 2);
+            expectEquals (e->hitCounts[drums::cowbell].load(), 2);
+            expectEquals (e->hitCounts[drums::snare].load(), 2);
+            expectEquals (e->getCurrentCode(), 1, "on the chain's last pattern");
+            expectEquals (e->getChainPosition(), 2);
+
+            // A fill takes the place of a chain entry, and the chain goes on after it.
+            plan.fill = 1;
+            e = run (plan, 0.4);
+            e->requestFill();
+            drums::Clock later = clock;
+            later.ppq = 0.4 * 2.0;
+            listen (*e, 1.6, later);
+            expectEquals (e->hitCounts[drums::clap].load(), 1, "the fill, once");
+        }
+
+        beginTest ("B variations, the chain, sounds and kits are saved and load");
+        {
+            DrumProcessor a;
+            drums::Pattern b;
+            b.hits[drums::openHat][2] = 1;
+            a.setPattern (3, b, 1);
+            a.setChain ({ 0, 1, 6, 7 });
+            setParam (a.params, "chain", 1.0f);
+            setParam (a.params, "variation", 2.0f);
+            setParam (a.params, "intro", 7.0f);
+            setParam (a.params, "lowTomSound", 1.0f);
+            setParam (a.params, "snareSnappy", 0.9f);
+            setParam (a.params, "cowbellMute", 1.0f);
+            juce::MemoryBlock state;
+            a.getStateInformation (state);
+
+            DrumProcessor c;
+            c.setStateInformation (state.getData(), (int) state.getSize());
+            expect (c.getPattern (3, 1) == b);
+            expect (c.getPattern (3, 0) == a.getPattern (3, 0), "A stays A");
+            expect (c.getChain() == std::vector<int> ({ 0, 1, 6, 7 }));
+            expect (c.isChainOn());
+            expectEquals (c.getVariation(), 2);
+            expectEquals (c.getIntroPattern(), 6);
+            expectEquals ((int) c.params.getRawParameterValue ("lowTomSound")->load(), 1);
+            expectWithinAbsoluteError (c.params.getRawParameterValue ("snareSnappy")->load(), 0.9f, 0.001f);
+            expect (c.params.getRawParameterValue ("cowbellMute")->load() > 0.5f);
+            expectEquals (DrumProcessor::codeName (7), juce::String ("4B"));
+
+            // An older save (no Bs, no chain) loads with empty Bs.
+            DrumProcessor old;
+            old.setPattern (0, b, 1);
+            auto tree = juce::ValueTree::fromXml (*juce::AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize()));
+            tree.removeChild (tree.getChildWithName ("PatternsB"), nullptr);
+            tree.removeChild (tree.getChildWithName ("Chain"), nullptr);
+            juce::MemoryBlock olderState;
+            juce::AudioProcessor::copyXmlToBinary (*tree.createXml(), olderState);
+            old.setStateInformation (olderState.getData(), (int) olderState.getSize());
+            expect (old.getPattern (0, 1).isEmpty());
+            expect (old.getChain().empty());
+
+            // Kits set the sounds; Classic puts them back.
+            const int latin = DrumProcessor::kitNames().indexOf ("Latin (congas, maracas)");
+            expect (latin > 0);
+            c.loadKit (latin);
+            expectEquals ((int) c.params.getRawParameterValue ("midTomSound")->load(), 1, "congas");
+            expectEquals ((int) c.params.getRawParameterValue ("clapSound")->load(), 1, "maracas");
+            c.loadKit (0);
+            expectEquals ((int) c.params.getRawParameterValue ("midTomSound")->load(), 0);
+            expect (c.params.getRawParameterValue ("cowbellMute")->load() < 0.5f);
+            for (int k = 0; k < DrumProcessor::kitNames().size(); ++k)
+                c.loadKit (k);
+        }
+
+        beginTest ("the processor plays A then B and the chain from its banks");
+        {
+            DrumProcessor p;
+            p.prepareToPlay (kRate, kBlock);
+            for (int i = 0; i < drums::kPatterns; ++i)
+            {
+                drums::Pattern empty;
+                empty.length = 16;
+                p.setPattern (i, empty);
+            }
+            drums::Pattern kick, snare;
+            kick.hits[drums::kick][0] = 1;
+            snare.hits[drums::snare][0] = 1;
+            p.setPattern (0, kick);
+            p.setPattern (0, snare, 1);
+            setParam (p.params, "variation", 2.0f);
+            juce::AudioBuffer<float> out (2, kBlock);
+            juce::MidiBuffer midi;
+            struct Head : juce::AudioPlayHead
+            {
+                double ppq = 0;
+                juce::Optional<PositionInfo> getPosition() const override
+                {
+                    PositionInfo info;
+                    info.setIsPlaying (true);
+                    info.setBpm (120.0);
+                    info.setPpqPosition (ppq);
+                    return info;
+                }
+            } head;
+            p.setPlayHead (&head);
+            for (int i = 0; i < 400; ++i)   // 4 s: 8 beats, two bars
+            {
+                p.processBlock (out, midi);
+                head.ppq += kBlock * 2.0 / kRate;
+            }
+            expectEquals (p.getHitCount (drums::kick), 1, "bar 1: A");
+            expectEquals (p.getHitCount (drums::snare), 1, "bar 2: B");
+            expectEquals (p.getPlayingCode(), 1);
+            p.setPlayHead (nullptr);
+        }
+
+        beginTest ("the panel edits the B variation, and adds to the chain");
+        {
+            DrumProcessor p;
+            std::unique_ptr<juce::AudioProcessorEditor> editor (p.createEditor());
+            auto* view = dynamic_cast<DrumView*> (editor.get());
+            p.setPattern (0, {});
+            p.setPattern (0, {}, 1);
+            p.setVariation (1);
+            view->getGrid().click (2, 1 + drums::kick, false);
+            expectEquals ((int) p.getPattern (0, 1).hits[drums::kick][2], 1, "B");
+            expectEquals ((int) p.getPattern (0, 0).hits[drums::kick][2], 0, "not A");
+            p.setVariation (0);
+            expectEquals (p.editVariation, 0);
+
+            // CRATE_DRUMS_SNAPSHOT=/path/to.png saves a picture of the panel.
+            if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_DRUMS_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                p.setPattern (0, DrumProcessor::groove (0));
+                p.setPattern (0, DrumProcessor::groove (3), 1);
+                p.setVariation (2);
+                p.setChain ({ 0, 1, 0, 1, 2, 3, 12 });
+                setParam (p.params, "lowTomSound", 1.0f);
+                setParam (p.params, "kickSound", 1.0f);
+                setParam (p.params, "cowbellMute", 1.0f);
+                std::unique_ptr<juce::AudioProcessorEditor> fresh (p.createEditor());
+                fresh->setSize (1180, 840);
+                auto image = fresh->createComponentSnapshot (fresh->getLocalBounds(), true, 2.0f);
+                juce::File (path).deleteFile();
+                juce::FileOutputStream out { juce::File (path) };
+                juce::PNGImageFormat().writeImageToStream (image, out);
+            }
+        }
+
         beginTest ("its panel opens and the grid edits the pattern");
         {
             DrumProcessor p;

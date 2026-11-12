@@ -27,7 +27,7 @@ public:
             // The six screens first, then the rest; nothing for a page the Rig lacks.
             const auto& shown = guide->getShown();
             expect (shown.size() >= 10, "an entry per tool");
-            const char* six[] = { "Groove", "Vocoder", "Looper", "Sampler", "Stage", "Effects" };
+            const char* six[] = { "Groove", "Vocoder", "Looper", "Sampler", "Mixer", "Effects" };
             for (int i = 0; i < 6; ++i)
             {
                 expectEquals (shown[(size_t) i].page, juce::String (six[i]));

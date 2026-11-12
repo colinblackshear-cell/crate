@@ -414,7 +414,7 @@ struct RigEffectsTests : juce::UnitTest
             expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F6Key)));
             expectEquals (view.getPage(), juce::String ("Effects"));
             expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F5Key)));
-            expectEquals (view.getPage(), juce::String ("Stage"), "F5 is still the Stage");
+            expectEquals (view.getPage(), juce::String ("Mixer"), "F5 is still the Mixer");
 
             view.goTo ("Bass");
             auto* bassScreen = findChild<BassScreen> (view);
