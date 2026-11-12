@@ -4,6 +4,8 @@
 
 #include "DrumEngine.h"
 
+#include <vector>
+
 // The Drum Machine as a plugin: the Mac app, an Audio Unit instrument for Logic, a VST3, and a
 // track in the Rig. Every sound's level, tune, decay, tone and pan are parameters (so Logic can
 // automate them and the Rig can put them on knobs); the 16 patterns are saved with the project.
@@ -15,16 +17,39 @@ public:
     juce::AudioProcessorValueTreeState params;
 
     // The parameter ID of a sound's setting: "kickLevel", "snareTune"... `what` is one of
-    // Level, Tune, Decay, Tone, Pan.
+    // Level, Tune, Decay, Tone, Snappy, Pan, Sound, Mute.
     static juce::String voiceParam (int voice, const juce::String& what);
+
+    // Kits: the whole machine set up for a style (Classic, Deep sub, Latin...).
+    static juce::StringArray kitNames();
+    void loadKit (int index);
 
     //==========================================================================
     // Patterns, edited on the message thread.
-    crate::drums::Pattern getPattern (int index) const;
-    void setPattern (int index, const crate::drums::Pattern&);
+    // Each pattern has an A and a B (variation 0 and 1).
+    crate::drums::Pattern getPattern (int index, int variation = 0) const;
+    void setPattern (int index, const crate::drums::Pattern&, int variation = 0);
+    // The one the window edits: the selected pattern's A or B.
+    int editVariation = 0;
+    crate::drums::Pattern getEditedPattern() const;
+    void setEditedPattern (const crate::drums::Pattern&);
+    // What plays: 0 A, 1 B, 2 A then B. Picking A or B edits it too.
+    int getVariation() const;
+    void setVariation (int);
+    // The intro, played once when the clock starts from the top (-1: none).
+    int getIntroPattern() const;
+    // The chain: patterns played one after another while Play chain is on. Each entry is
+    // pattern * 2 + 1 for its B. codeName gives "3A", "3B".
+    std::vector<int> getChain() const;
+    void setChain (const std::vector<int>&);
+    bool isChainOn() const;
+    static juce::String codeName (int code);
+    int getPlayingCode() const { return playingCode.load(); }   // -1 when stopped
+    int getChainPosition() const { return chainPosition.load(); }
+    bool isPlayingIntro() const { return playingIntro.load(); }
     int getSelectedPattern() const;   // the one the Pattern parameter picks
     void selectPattern (int index);
-    int getPlayingPattern() const { return playingPattern.load(); }
+    int getPlayingPattern() const;
     int getCurrentStep() const { return currentStep.load(); }
     bool isPlayingFill() const { return playingFill.load(); }
     // The pattern the Fill plays (-1: none).
@@ -86,10 +111,16 @@ private:
     crate::drums::Engine engine;
 
     juce::SpinLock patternLock;
-    std::array<crate::drums::Pattern, crate::drums::kPatterns> patterns;   // under patternLock
-    crate::drums::Pattern playing, playingFillPattern;                     // audio thread
-    std::atomic<int> playingPattern { 0 }, currentStep { -1 };
-    std::atomic<bool> playingFill { false }, fillRequested { false };
+    std::array<crate::drums::Pattern, crate::drums::kPatterns> patterns, patternsB;   // under patternLock
+    std::array<std::int8_t, crate::drums::kChain> chain {};
+    int chainLength = 0;
+    std::atomic<int> patternVersion { 0 };
+    // The audio thread's copies.
+    std::array<crate::drums::Pattern, crate::drums::kPatterns> bankA, bankB;
+    std::array<std::int8_t, crate::drums::kChain> playChain {};
+    int playChainLength = 0, bankVersion = -1;
+    std::atomic<int> playingPattern { 0 }, currentStep { -1 }, playingCode { -1 }, chainPosition { -1 };
+    std::atomic<bool> playingFill { false }, fillRequested { false }, playingIntro { false };
     double lastPpq = -1, ownPpq = 0;
     bool ownWasRunning = false;
 
