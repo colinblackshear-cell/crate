@@ -15,6 +15,7 @@
 #include "VocoderScreen.h"
 #include "SynthScreens.h"
 #include "GuideView.h"
+#include "RigSongStart.h"
 
 namespace Theme = crate::Theme;
 
@@ -224,6 +225,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
             showTab ("More");
     };
     screenBar.help.onClick = [this] { showHelp (helpPanel == nullptr); };
+    screenBar.back.onClick = [this] { goBack(); };
+    screenBar.forward.onClick = [this] { goForward(); };
+
+    // Starting a song from nothing.
+    header.newSong.onClick = [this] { askNewSong(); };
+    header.newPattern.onClick = [this] { showPatternMenu(); };
 
     // The song parts and Live now.
     footer.onTrack = [this] (int strip)
@@ -579,6 +586,8 @@ void RigView::showTab (const juce::String& name)
 void RigView::pageChanged()
 {
     screenBar.setCurrent (currentPage());
+    navigation.visit (currentPlace());
+    updateNavButtons();
     // The Guide is a night sky: it fills the window the same way.
     const bool onStage = currentPage() == "Stage" || currentPage() == "Guide";
     if (onStage == stageShown)
@@ -1253,6 +1262,17 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         saveShow();
         return true;
     }
+    // Cmd+[ and Cmd+]: back and forward, as in a web browser.
+    if (key == juce::KeyPress ('[', juce::ModifierKeys::commandModifier, 0))
+    {
+        goBack();
+        return true;
+    }
+    if (key == juce::KeyPress (']', juce::ModifierKeys::commandModifier, 0))
+    {
+        goForward();
+        return true;
+    }
     // Esc leaves the big Stage, back to the Mixer it's opened from (the Guide: to the Groove).
     if (key == juce::KeyPress::escapeKey && stageShown)
     {
@@ -1277,6 +1297,183 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         return true;
     }
     return false;
+}
+
+//==============================================================================
+juce::String RigView::currentPlace() const
+{
+    const auto page = currentPage();
+    if (page == "Sampler" && samplerScreen != nullptr && samplerScreen->isEditMode())
+        return "Sampler editor";
+    if (page == "Looper" && looper != nullptr)
+    {
+        if (looper->getTimeline() != nullptr)
+            return "Looper / Timeline";
+        if (looper->getSongGrid() != nullptr)
+            return "Looper / Song grid";
+    }
+    return page;
+}
+
+void RigView::goToPlace (const juce::String& place)
+{
+    if (place.startsWith ("Looper / "))
+    {
+        showTab ("Looper");
+        if (looper != nullptr && place.endsWith ("Timeline"))
+            looper->showTimeline (true);
+        else if (looper != nullptr)
+            looper->showSongGrid (true);
+        pageChanged();
+        return;
+    }
+    if (place == "Sampler" && samplerScreen != nullptr)
+        samplerScreen->setEditMode (false);
+    if (place == "Looper" && looper != nullptr)
+    {
+        looper->showTimeline (false);
+        looper->showSongGrid (false);
+    }
+    showTab (place);
+}
+
+void RigView::goBack()
+{
+    if (const auto place = navigation.back(); place.isNotEmpty())
+        goToPlace (place);
+    updateNavButtons();
+}
+
+void RigView::goForward()
+{
+    if (const auto place = navigation.forward(); place.isNotEmpty())
+        goToPlace (place);
+    updateNavButtons();
+}
+
+void RigView::updateNavButtons()
+{
+    // "Back to the Groove", so you know where it goes.
+    auto nameOf = [] (juce::String place)
+    {
+        if (place == "Song")
+            place = "Song builder";
+        return place.replace (" / ", ": ");
+    };
+    auto set = [] (rigpanels::PanelButton& b, bool can, const juce::String& tip)
+    {
+        if (b.isEnabled() != can)
+            b.setEnabled (can);
+        if (b.getTooltip() != tip)
+            b.setTooltip (tip);
+    };
+    set (screenBar.back, navigation.canGoBack(),
+         navigation.canGoBack() ? "Back to " + nameOf (navigation.previous()) + " (Cmd+[)." : juce::String ("Back to the screen you were on (Cmd+[)."));
+    set (screenBar.forward, navigation.canGoForward(),
+         navigation.canGoForward() ? "Forward to " + nameOf (navigation.next()) + " (Cmd+])." : juce::String ("Forward again (Cmd+])."));
+}
+
+//==============================================================================
+void RigView::askNewSong()
+{
+    // Nothing made yet: no need to ask.
+    if (engine.isBlank())
+    {
+        newSong (false);
+        return;
+    }
+    const auto name = currentShow != juce::File() ? currentShow.getFileNameWithoutExtension() : juce::String ("this song");
+    auto options = juce::MessageBoxOptions()
+                       .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                       .withTitle ("Start a new song?")
+                       .withMessage ("Kaleidobox clears every tool, loop and song part for a new song. Save " + name + " first?")
+                       .withButton ("Save, then new song")
+                       .withButton ("New song, don't save")
+                       .withButton ("Cancel")
+                       .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+                                  {
+                                      // 1, 2, then 0 for the last button (Cancel).
+                                      if (safe != nullptr && (result == 1 || result == 2))
+                                          safe->newSong (result == 1);
+                                  });
+}
+
+void RigView::newSong (bool saveFirst, bool askWhatNext)
+{
+    if (saveFirst)
+    {
+        auto file = currentShow;
+        if (file == juce::File() || ! file.getParentDirectory().isDirectory())
+        {
+            showsFolder().createDirectory();
+            file = showsFolder().getNonexistentChildFile ("Song " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M"), ".crateshow", false);
+        }
+        if (! writeShowTo (file))
+            return;   // (it said why) Nothing is cleared.
+    }
+    const auto saved = saveFirst ? currentShow.getFileNameWithoutExtension() : juce::String();
+
+    engine.getTransport().stop();
+    engine.allNotesOff();
+    engine.newShow();
+    currentShow = juce::File();
+    refresh();
+    say ((saved.isNotEmpty() ? "Saved " + saved + ". " : juce::String()) + "New song: everything's clear. Pick what to start with "
+         "(New pattern), set the tempo, and press Play.");
+    if (askWhatNext)
+        showPatternMenu();
+}
+
+void RigView::showPatternMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Start a new pattern");
+    for (int s = 0; s < songstart::numStarts; ++s)
+        menu.addItem (s + 1, songstart::name (s));
+    menu.addSeparator();
+    menu.addSectionHeader ("The song");
+    const int parts = (int) engine.getScenes().getScenes().size();
+    menu.addItem (100, "Keep what's playing as the next song part (" + SongView::letterFor (parts) + ")", parts < RigScenes::kMaxScenes);
+    menu.addItem (101, "Open the song builder");
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.newPattern),
+                        [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+                        {
+                            if (safe == nullptr || result <= 0)
+                                return;
+                            if (result == 100)
+                                safe->keepAsSongPart();
+                            else if (result == 101)
+                                safe->showTab ("Song");
+                            else
+                                safe->startPattern (result - 1);
+                        });
+}
+
+void RigView::startPattern (int start)
+{
+    const auto r = songstart::begin (engine, start);
+    if (r.page.isEmpty())
+        return;
+    if (r.page == "Sampler" && samplerScreen != nullptr)
+        samplerScreen->setEditMode (false);
+    if (r.page == "Looper" && looper != nullptr)
+    {
+        looper->showTimeline (false);
+        looper->showSongGrid (false);
+    }
+    showTab (r.page);
+    if (r.track >= 0 && groove != nullptr)
+        groove->selectTrack (r.track);
+    say (r.message);
+}
+
+void RigView::keepAsSongPart()
+{
+    if (song == nullptr)
+        return;
+    song->addPart();   // (it says which part, and how to change it)
+    footer.repaint();
 }
 
 juce::String RigView::currentPage() const

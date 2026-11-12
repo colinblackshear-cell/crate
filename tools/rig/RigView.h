@@ -7,6 +7,7 @@
 #include "core/ui/Theme.h"
 #include "core/ui/ParamControls.h"
 #include "RigPanels.h"
+#include "RigNavigation.h"
 
 // The Rig's window, built like a piece of 70s/80s studio gear: the top bar (transport, tempo,
 // where the song is, VU meters), five big screen buttons (Groove, Vocoder, Looper, Sampler + MPC,
@@ -51,6 +52,26 @@ public:
     juce::String getPage() const { return currentPage(); }
     void goTo (const juce::String& page) { showTab (page); }
     class GuideView* getGuide() const { return guide; }
+
+    // Back and forward through the screens you've been on (the arrows by the screen buttons,
+    // Cmd+[ and Cmd+]). A place is a page, or the Sampler's editor, or the Looper's timeline
+    // or song grid.
+    void goBack();
+    void goForward();
+    juce::String getPlace() const { return currentPlace(); }
+    const RigNavigation& getNavigation() const { return navigation; }
+
+    // New song (the top bar): asks whether to save the song you're on, then clears the Rig to a
+    // blank one and asks what to start with. `newSong` does it without asking: saving first
+    // (as the show you opened, or a new one in the shows folder) when `saveFirst`, and then
+    // opening New pattern's menu when `askWhatNext`.
+    void askNewSong();
+    void newSong (bool saveFirst, bool askWhatNext = true);
+    // New pattern (the top bar): a menu of what to start (songstart::Start), and keeping
+    // what's playing as the next song part. startPattern does one, as the menu does.
+    void showPatternMenu();
+    void startPattern (int start);
+    void keepAsSongPart();
 
 private:
     // One strip's effects, along the bottom of the Mixer.
@@ -111,6 +132,10 @@ private:
     void nudgeTempo (double);
     void pageChanged();
     bool stageShown = false;
+    RigNavigation navigation;
+    juce::String currentPlace() const;
+    void goToPlace (const juce::String&);
+    void updateNavButtons();
 
     // The Setup page (under More, once called the Mixer): the keyboard routing, Sample, knob
     // Learn, the click, the mic, and the show's files. The levels are on the Mixer (F5).
