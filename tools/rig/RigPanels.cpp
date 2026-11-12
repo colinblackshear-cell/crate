@@ -262,7 +262,7 @@ void Header::mouseUp (const juce::MouseEvent& e)
 //==============================================================================
 const juce::StringArray& ScreenBar::screens()
 {
-    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Stage" };
+    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Mixer" };
     return s;
 }
 
@@ -283,8 +283,8 @@ ScreenBar::ScreenBar()
         addAndMakeVisible (b);
     }
     more.fontSize = 18.0f;
-    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, the mixer and keyboard "
-                     "set-up, saving and opening shows, the dark Stage panel.");
+    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, the big Stage view, "
+                     "the keyboard set-up, saving and opening shows, the dark panel.");
     addAndMakeVisible (more);
     help.fontSize = 20.0f;
     help.setTooltip ("How to: step-by-step guides for this screen, recording loops, building a song, saving and exporting, "

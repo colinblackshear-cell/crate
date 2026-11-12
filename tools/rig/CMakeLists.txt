@@ -51,6 +51,7 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/SongView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MoreView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/StageView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/MixerView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SamplerScreen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/VocoderScreen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/GrooveView.cpp

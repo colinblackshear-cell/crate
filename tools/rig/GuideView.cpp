@@ -126,10 +126,10 @@ const std::vector<GuideView::Entry>& GuideView::entries()
           "Catch a noise from the mic, a tool or your crate, then trim it, chop it and spread it across the keys or the pads. "
           "Most of the universe can be sampled, given patience and a decent cable.",
           RigColours::sampler, Art::sampler, true, "F4" },
-        { "Stage", "The Stage", "Big buttons for small, dark rooms.",
-          "The view for playing to actual humans: giant Play and Rec, a tempo you can read from the back, mutes, loop lamps "
-          "and the FX pad. Esc brings you back down to earth.",
-          RigColours::master, Art::stage, true, "F5" },
+        { "Mixer", "The Mixer", "Every sound, on a fader. Every tool, one click away.",
+          "A real mixing desk: a strip for each tool and each loop layer with its fader, meter, pan, mute, solo, effects "
+          "and two sends, to a shared reverb and an echo in time. Along the top, a button into every tool.",
+          RigColours::master, Art::mixer, true, "F5" },
 
         // Under More.
         { "Drum machine", "The Drum Machine", "Sixteen steps of pure analog swagger.",
@@ -154,9 +154,14 @@ const std::vector<GuideView::Entry>& GuideView::entries()
           "Your samples and your Splice folder, sorted by kind, tempo and key. The perfect snare is in here somewhere. "
           "Statistically, near the bottom.",
           juce::Colour (0xffa1887f), Art::sounds, false, {} },
-        { "Mixer", "The Mixer", "Where the levels are kept.",
-          "Faders, mutes and effects for every tool, plus keyboard routing, knob Learn, sampling between tools, the click and the mic.",
-          RigColours::master, Art::mixer, false, {} },
+        { "Stage", "The Big Stage", "Big buttons for small, dark rooms.",
+          "The view for playing to actual humans: giant Play and Rec, a tempo you can read from the back, mutes, loop lamps "
+          "and the FX pad. Esc brings you back down to earth (and to the Mixer).",
+          RigColours::master, Art::stage, false, {} },
+        { "Setup", "The Setup", "What your keyboard plays, and where.",
+          "Which tool the keys and pads play, the split, sampling one tool into another, knob Learn, the click and the mic. "
+          "Set it once, then forget about it until the next gig.",
+          RigColours::master, Art::generic, false, {} },
     };
     return e;
 }

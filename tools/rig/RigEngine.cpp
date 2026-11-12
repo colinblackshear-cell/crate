@@ -71,6 +71,36 @@ juce::String RigEngine::inputJackName (int jack)
     }
 }
 
+juce::String RigEngine::returnName (int id)
+{
+    return id == reverbReturn ? "Reverb" : id == echoReturn ? "Echo" : juce::String();
+}
+
+const std::vector<std::pair<juce::String, double>>& RigEngine::echoTimes()
+{
+    static const std::vector<std::pair<juce::String, double>> times { { "1/16", 0.25 }, { "1/8", 0.5 }, { "1/8 dotted", 0.75 },
+                                                                      { "1/4 triplet", 2.0 / 3.0 }, { "1/4", 1.0 }, { "1/2", 2.0 } };
+    return times;
+}
+
+bool RigEngine::anySolo() const
+{
+    for (int s = 0; s < numStrips; ++s)
+        if (s != masterStrip && strips[(size_t) s].solo.load())
+            return true;
+    return false;
+}
+
+bool RigEngine::isSilenced (int s) const
+{
+    if (! juce::isPositiveAndBelow (s, (int) numStrips))
+        return false;
+    const auto& strip = strips[(size_t) s];
+    if (strip.mute.load())
+        return true;
+    return s != masterStrip && ! strip.solo.load() && anySolo();
+}
+
 float RigEngine::faderGain (float level)
 {
     // 0.8 -> 0 dB, 1.0 -> +6 dB, and down to silence at 0 along a dB curve.
@@ -211,7 +241,27 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     for (int s = 0; s < numStrips; ++s)
     {
         gains[(size_t) s].reset (sampleRate, 0.02);
-        gains[(size_t) s].setCurrentAndTargetValue (strips[(size_t) s].mute.load() ? 0.0f : faderGain (strips[(size_t) s].level.load()));
+        gains[(size_t) s].setCurrentAndTargetValue (isSilenced (s) ? 0.0f : faderGain (strips[(size_t) s].level.load()));
+        pans[(size_t) s].reset (sampleRate, 0.02);
+        pans[(size_t) s].setCurrentAndTargetValue (strips[(size_t) s].pan.load());
+        sendGainsA[(size_t) s].reset (sampleRate, 0.02);
+        sendGainsA[(size_t) s].setCurrentAndTargetValue (strips[(size_t) s].sendA.load());
+        sendGainsB[(size_t) s].reset (sampleRate, 0.02);
+        sendGainsB[(size_t) s].setCurrentAndTargetValue (strips[(size_t) s].sendB.load());
+    }
+    // The mixer's shared reverb and echo (up to 4 seconds of echo, for slow tempos).
+    sendBufferA.setSize (2, maxBlock);
+    sendBufferB.setSize (2, maxBlock);
+    echoLine.setSize (2, (int) (sampleRate * 4.0) + 1);
+    echoLine.clear();
+    echoWrite = 0;
+    echoTone[0] = echoTone[1] = 0.0f;
+    sendReverb.setSampleRate (sampleRate);
+    sendReverb.reset();
+    for (int r = 0; r < numReturns; ++r)
+    {
+        returnGains[(size_t) r].reset (sampleRate, 0.02);
+        returnGains[(size_t) r].setCurrentAndTargetValue (returns[(size_t) r].mute.load() ? 0.0f : faderGain (returns[(size_t) r].level.load()));
     }
     prepared = true;
 }
@@ -430,6 +480,12 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         }
     }
 
+    // The mixer: a solo anywhere silences the strips that aren't soloed; the sends fill up as
+    // each strip plays.
+    soloActive = anySolo();
+    for (auto* b : { &sendBufferA, &sendBufferB })
+        b->clear (0, n);
+
     juce::AudioBuffer<float> mpcBlock (mpcBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> samplerBlock (samplerBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> vocoderBlock (vocoderBuffer.getArrayOfWritePointers(), 2, n);
@@ -626,6 +682,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     click.clear();
     transport.endBlock (n, &click);
 
+    processReturns (mix, n);
     fx[masterStrip].processBlock (mix, noMidi);
     performFx.process (mix, transport.getBlockPosition(), transport.getBpm(), transport.isPlayingThisBlock());
 
@@ -770,7 +827,8 @@ void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
         for (int ch = 0; ch < 2; ++ch)
             buffer.applyGainRamp (ch, 0, n, from, to);
     fx[(size_t) id].processBlock (buffer, noMidi);
-    gain.setTargetValue (strip.mute.load() ? 0.0f : faderGain (strip.level.load()));
+    const bool silenced = strip.mute.load() || (soloActive && ! strip.solo.load());
+    gain.setTargetValue (silenced ? 0.0f : faderGain (strip.level.load()));
     if (gain.isSmoothing())
     {
         for (int i = 0; i < n; ++i)
@@ -784,9 +842,108 @@ void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
     {
         buffer.applyGain (gain.getTargetValue());
     }
+
+    // Pan, after the fader: the middle leaves both sides as they were; turning it one way
+    // turns the other side down.
+    auto& pan = pans[(size_t) id];
+    pan.setTargetValue (juce::jlimit (-1.0f, 1.0f, strip.pan.load()));
+    if (pan.isSmoothing() || std::abs (pan.getTargetValue()) > 1.0e-4f)
+    {
+        auto* l = buffer.getWritePointer (0);
+        auto* r = buffer.getWritePointer (1);
+        for (int i = 0; i < n; ++i)
+        {
+            const float p = pan.getNextValue();
+            l[i] *= p > 0.0f ? 1.0f - p : 1.0f;
+            r[i] *= p < 0.0f ? 1.0f + p : 1.0f;
+        }
+    }
+
+    // The sends, after the fader and pan (so a muted strip sends nothing).
+    for (auto [send, amount, to] : { std::tuple<juce::LinearSmoothedValue<float>*, float, juce::AudioBuffer<float>*> { &sendGainsA[(size_t) id], strip.sendA.load(), &sendBufferA },
+                                     std::tuple<juce::LinearSmoothedValue<float>*, float, juce::AudioBuffer<float>*> { &sendGainsB[(size_t) id], strip.sendB.load(), &sendBufferB } })
+    {
+        send->setTargetValue (juce::jlimit (0.0f, 1.0f, amount));
+        if (! send->isSmoothing() && send->getTargetValue() <= 0.0f)
+            continue;
+        if (to->getNumSamples() < n)
+            continue;
+        const float from = send->getCurrentValue();
+        send->skip (n);
+        for (int ch = 0; ch < 2; ++ch)
+            to->addFromWithRamp (ch, 0, buffer.getReadPointer (ch), n, from, send->getCurrentValue());
+    }
+
     const float peak = juce::jmax (buffer.getMagnitude (0, 0, n), buffer.getMagnitude (1, 0, n));
     if (peak > strip.peak.load())
         strip.peak = peak;
+}
+
+void RigEngine::processReturns (juce::AudioBuffer<float>& mix, int n)
+{
+    if (sendBufferA.getNumSamples() < n || sendBufferB.getNumSamples() < n || echoLine.getNumSamples() < 2)
+        return;
+
+    // A: the reverb.
+    {
+        auto& ret = returns[reverbReturn];
+        juce::Reverb::Parameters p;
+        p.roomSize = juce::jlimit (0.0f, 1.0f, ret.amount.load());
+        p.damping = 1.0f - juce::jlimit (0.0f, 1.0f, ret.tone.load());
+        p.wetLevel = 1.0f;
+        p.dryLevel = 0.0f;
+        p.width = 1.0f;
+        sendReverb.setParameters (p);
+        sendReverb.processStereo (sendBufferA.getWritePointer (0), sendBufferA.getWritePointer (1), n);
+    }
+
+    // B: the echo, in time: each repeat crosses to the other side (ping-pong), a little darker.
+    {
+        auto& ret = returns[echoReturn];
+        const auto& times = echoTimes();
+        const double beats = times[(size_t) juce::jlimit (0, (int) times.size() - 1, ret.time.load())].second;
+        const double bpm = juce::jmax (20.0, transport.getBpm());
+        const int length = echoLine.getNumSamples();
+        const int delay = juce::jlimit (1, length - 1, (int) std::round (beats * 60.0 / bpm * sampleRate));
+        const float feedback = juce::jlimit (0.0f, 0.9f, ret.amount.load());
+        auto* inL = sendBufferB.getWritePointer (0);
+        auto* inR = sendBufferB.getWritePointer (1);
+        auto* lineL = echoLine.getWritePointer (0);
+        auto* lineR = echoLine.getWritePointer (1);
+        for (int i = 0; i < n; ++i)
+        {
+            int read = echoWrite - delay;
+            if (read < 0)
+                read += length;
+            const float dl = lineL[read], dr = lineR[read];
+            echoTone[0] += 0.45f * (dr - echoTone[0]);
+            echoTone[1] += 0.45f * (dl - echoTone[1]);
+            lineL[echoWrite] = inL[i] + echoTone[0] * feedback;
+            lineR[echoWrite] = inR[i] + echoTone[1] * feedback;
+            inL[i] = dl;
+            inR[i] = dr;
+            if (++echoWrite >= length)
+                echoWrite = 0;
+        }
+    }
+
+    for (int r = 0; r < numReturns; ++r)
+    {
+        auto& ret = returns[(size_t) r];
+        auto& buffer = r == reverbReturn ? sendBufferA : sendBufferB;
+        auto& gain = returnGains[(size_t) r];
+        gain.setTargetValue (ret.mute.load() ? 0.0f : faderGain (ret.level.load()));
+        const float from = gain.getCurrentValue();
+        gain.skip (n);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            buffer.applyGainRamp (ch, 0, n, from, gain.getCurrentValue());
+            mix.addFrom (ch, 0, buffer, ch, 0, n);
+        }
+        const float peak = juce::jmax (buffer.getMagnitude (0, 0, n), buffer.getMagnitude (1, 0, n));
+        if (peak > ret.peak.load())
+            ret.peak = peak;
+    }
 }
 
 void RigEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
@@ -846,7 +1003,23 @@ juce::ValueTree RigEngine::saveShow() const
         strip.setProperty ("name", stripName (s), nullptr);
         strip.setProperty ("level", strips[(size_t) s].level.load(), nullptr);
         strip.setProperty ("mute", strips[(size_t) s].mute.load(), nullptr);
+        strip.setProperty ("pan", strips[(size_t) s].pan.load(), nullptr);
+        strip.setProperty ("solo", strips[(size_t) s].solo.load(), nullptr);
+        strip.setProperty ("sendA", strips[(size_t) s].sendA.load(), nullptr);
+        strip.setProperty ("sendB", strips[(size_t) s].sendB.load(), nullptr);
         show.appendChild (strip, nullptr);
+    }
+    for (int r = 0; r < numReturns; ++r)
+    {
+        const auto& ret = returns[(size_t) r];
+        juce::ValueTree t ("Return");
+        t.setProperty ("name", returnName (r), nullptr);
+        t.setProperty ("level", ret.level.load(), nullptr);
+        t.setProperty ("mute", ret.mute.load(), nullptr);
+        t.setProperty ("amount", ret.amount.load(), nullptr);
+        t.setProperty ("tone", ret.tone.load(), nullptr);
+        t.setProperty ("time", ret.time.load(), nullptr);
+        show.appendChild (t, nullptr);
     }
 
     for (int c = 0; c < RigRouting::numControls; ++c)
@@ -982,6 +1155,21 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     {
         s.level = 0.8f;
         s.mute = false;
+        s.pan = 0.0f;
+        s.solo = false;
+        s.sendA = 0.0f;
+        s.sendB = 0.0f;
+    }
+    for (int r = 0; r < numReturns; ++r)
+    {
+        const auto t = show.getChildWithProperty ("name", returnName (r));
+        auto& ret = returns[(size_t) r];
+        const bool has = t.hasType ("Return");
+        ret.level = juce::jlimit (0.0f, 1.0f, has ? (float) t.getProperty ("level", 0.8f) : 0.8f);
+        ret.mute = has && (bool) t.getProperty ("mute", false);
+        ret.amount = juce::jlimit (0.0f, 1.0f, has ? (float) t.getProperty ("amount", 0.5f) : 0.5f);
+        ret.tone = juce::jlimit (0.0f, 1.0f, has ? (float) t.getProperty ("tone", 0.5f) : 0.5f);
+        ret.time = juce::jlimit (0, (int) echoTimes().size() - 1, has ? (int) t.getProperty ("time", 1) : 1);
     }
     int strip = 0;
     for (const auto child : show)
@@ -990,6 +1178,10 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         {
             strips[(size_t) strip].level = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("level", 0.8f));
             strips[(size_t) strip].mute = (bool) child.getProperty ("mute", false);
+            strips[(size_t) strip].pan = juce::jlimit (-1.0f, 1.0f, (float) child.getProperty ("pan", 0.0f));
+            strips[(size_t) strip].solo = strip != masterStrip && (bool) child.getProperty ("solo", false);
+            strips[(size_t) strip].sendA = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("sendA", 0.0f));
+            strips[(size_t) strip].sendB = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("sendB", 0.0f));
             ++strip;
         }
         else if (child.hasType ("Knob"))
