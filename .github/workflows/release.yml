@@ -1,0 +1,146 @@
+name: Release
+
+# Builds Kaleidobox for Macs (the app, the Audio Unit and the VST3) and puts it on a GitHub
+# Release that friends can download from https://colinblackshear-cell.github.io/crate/get/
+#
+# - Run it by hand (Actions > Release > Run workflow) to make a DRAFT release. Nobody can see a
+#   draft until you press "Publish release" on it.
+# - Or push a tag such as v0.2.0 to build and publish in one go.
+#
+# Friends get "Install-Kaleidobox.pkg" (a normal Mac installer) or the one-line Terminal install.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, for example 0.2.0"
+        required: true
+        default: "0.1.0"
+  push:
+    tags: ["v*"]
+  # A pull request that changes the release files builds everything as a check, but makes no release.
+  pull_request:
+    paths: [".github/workflows/release.yml", "tools/release/**"]
+
+permissions:
+  contents: write
+
+env:
+  NAME: Kaleidobox
+  APP_DIR: build/tools/rig/Kaleidobox_artefacts/Release
+  PLUGIN_DIR: build/tools/rig/KaleidoboxPlugin_artefacts/Release
+
+jobs:
+  mac:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One build that runs on every Mac from macOS 11, Intel and Apple silicon.
+      - name: Configure
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release --target Kaleidobox KaleidoboxPlugin_AU KaleidoboxPlugin_VST3 -- -quiet
+
+      # Ad hoc signing: enough for Apple silicon Macs to run it. Not an Apple Developer ID, so
+      # files downloaded in a browser need "Open Anyway" once (the install line avoids that).
+      - name: Sign
+        run: |
+          codesign --force --deep -s - "$APP_DIR/$NAME.app"
+          codesign --force --deep -s - "$PLUGIN_DIR/AU/$NAME.component"
+          codesign --force --deep -s - "$PLUGIN_DIR/VST3/$NAME.vst3"
+
+      - name: Check the Audio Unit loads (what Logic checks)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$PLUGIN_DIR/AU/$NAME.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 5
+          auval -v aumu CRig Cblk
+
+      - name: Package
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          mkdir -p pkgs
+          STAGE="dist/$NAME"
+          mkdir -p "$STAGE"
+          ditto "$APP_DIR/$NAME.app" "$STAGE/$NAME.app"
+          ditto "$PLUGIN_DIR/AU/$NAME.component" "$STAGE/$NAME.component"
+          ditto "$PLUGIN_DIR/VST3/$NAME.vst3" "$STAGE/$NAME.vst3"
+          cp tools/release/install.sh "$STAGE/install.sh"
+          # The zip is what the Terminal install line downloads.
+          (cd dist && ditto -c -k --keepParent "$NAME" "$NAME-mac.zip")
+          # The installer friends double-click: app to /Applications, AU and VST3 to
+          # /Library/Audio/Plug-Ins. Bundles must land exactly there, never "relocated" to an
+          # older copy somewhere else on the Mac.
+          ROOT=pkgroot
+          mkdir -p "$ROOT/Applications" "$ROOT/Library/Audio/Plug-Ins/Components" "$ROOT/Library/Audio/Plug-Ins/VST3"
+          ditto "$STAGE/$NAME.app" "$ROOT/Applications/$NAME.app"
+          ditto "$STAGE/$NAME.component" "$ROOT/Library/Audio/Plug-Ins/Components/$NAME.component"
+          ditto "$STAGE/$NAME.vst3" "$ROOT/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
+          pkgbuild --analyze --root "$ROOT" components.plist
+          plutil -p components.plist
+          i=0
+          while /usr/libexec/PlistBuddy -c "Print :$i" components.plist >/dev/null 2>&1; do
+            /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" components.plist 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Add :$i:BundleIsRelocatable bool false" components.plist
+            i=$((i+1))
+          done
+          pkgbuild --root "$ROOT" --component-plist components.plist \
+            --identifier com.colinblackshear.kaleidobox.pkg --version "$VERSION" \
+            --scripts tools/release/pkg-scripts --install-location / pkgs/kaleidobox-core.pkg
+          sed "s/{{VERSION}}/$VERSION/g" tools/release/distribution.xml > distribution.xml
+          productbuild --distribution distribution.xml --resources tools/release/pkg-resources \
+            --package-path pkgs "dist/Install-$NAME.pkg"
+          cp tools/release/install.sh dist/install.sh
+          ls -la dist
+
+      # Install it the way a friend would, then check everything landed and Logic can load it.
+      - name: Try the installer
+        run: |
+          sudo installer -pkg "dist/Install-$NAME.pkg" -target /
+          ls -d "/Applications/$NAME.app" "/Library/Audio/Plug-Ins/Components/$NAME.component" "/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
+          sleep 5
+          auval -v aumu CRig Cblk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kaleidobox-release
+          path: |
+            dist/*.zip
+            dist/*.pkg
+            dist/install.sh
+
+      - name: Make the release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+          DRAFT: ${{ steps.v.outputs.draft }}
+        run: |
+          TAG="v$VERSION"
+          sed "s/{{VERSION}}/$VERSION/g" tools/release/release-notes.md > dist/notes.md
+          FLAGS=""
+          [ "$DRAFT" = "true" ] && FLAGS="--draft --target $GITHUB_SHA"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/$NAME-mac.zip "dist/Install-$NAME.pkg" dist/install.sh --clobber
+          else
+            gh release create "$TAG" $FLAGS --title "$NAME $VERSION" --notes-file dist/notes.md \
+              dist/$NAME-mac.zip "dist/Install-$NAME.pkg" dist/install.sh
+          fi

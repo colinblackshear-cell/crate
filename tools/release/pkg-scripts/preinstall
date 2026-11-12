@@ -1,0 +1,22 @@
+#!/bin/bash
+# Runs as root before the Kaleidobox installer copies its files.
+# Kaleidobox used to be called Crate Rig and shares its plugin codes, so old copies must go,
+# and so must copies in the user's own Library (from the Terminal install) to avoid doubles.
+USER_NAME="$(stat -f%Su /dev/console 2>/dev/null || echo "")"
+USER_HOME=""
+[ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ] && USER_HOME="$(dscl . -read "/Users/$USER_NAME" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+
+osascript -e 'quit app "Kaleidobox"' >/dev/null 2>&1 || true
+osascript -e 'quit app "Crate Rig"' >/dev/null 2>&1 || true
+
+for base in "" "$USER_HOME"; do
+    rm -rf "$base/Applications/Crate Rig.app"
+    rm -rf "$base/Library/Audio/Plug-Ins/Components/Crate Rig.component"
+    rm -rf "$base/Library/Audio/Plug-Ins/VST3/Crate Rig.vst3"
+done
+if [ -n "$USER_HOME" ]; then
+    rm -rf "$USER_HOME/Applications/Kaleidobox.app"
+    rm -rf "$USER_HOME/Library/Audio/Plug-Ins/Components/Kaleidobox.component"
+    rm -rf "$USER_HOME/Library/Audio/Plug-Ins/VST3/Kaleidobox.vst3"
+fi
+exit 0
