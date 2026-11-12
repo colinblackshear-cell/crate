@@ -63,6 +63,7 @@ public:
     juce::String soundName() const { return shownSound; }
     void pressBypassAll();
     void pressMonitor();
+    bool isMonitoring() const;
     void pressToLooper();
     void pressNotesFrom();
     void setDryWet (double wet01);
