@@ -474,6 +474,15 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     addPage ("Song", RigColours::song, songView);
     auto* soundsView = new SoundsView (engine);
     soundsView->onSay = [this] (const juce::String& text) { say (text); };
+    if (auto* mpcView = pageIndex ("MPC") >= 0 ? dynamic_cast<MpcView*> (pages[(size_t) pageIndex ("MPC")].content.get()) : nullptr)
+    {
+        // The MPC's sound bank under its pads is the Sounds page's, and the keyboard's drum pads
+        // (Launchkey, Launchpad) follow the pad bank the MPC shows.
+        mpcView->setSoundBank (soundsView->getSharedBank());
+        mpcView->onPadBankChanged = [this] (int bank) { engine.getRouting().padBank = juce::jlimit (0, 3, bank); };
+    }
+    if (samplerScreen != nullptr)
+        samplerScreen->setSoundBank (soundsView->getSharedBank());
     addPage ("Sounds", juce::Colour (0xffa1887f), soundsView);
     addPage ("Mixer", Theme::text, mixerPage);
     {
@@ -668,6 +677,16 @@ void RigView::showTab (const juce::String& name)
         pages[(size_t) i].window->toFront (true);
     else
         tabs.setCurrentTabIndex (i);
+    // The keyboard's drum pads play the tool on screen: the MPC's pads (in the bank it shows) on
+    // the MPC and Sampler · MPC pages, the drum machine on its own.
+    auto& routing = engine.getRouting();
+    if (name == "MPC" || name == "Sampler")
+    {
+        routing.padsTo = (int) RigRouting::Dest::mpc;
+        routing.padBank = juce::jlimit (0, 3, engine.getMpc().padBankOnScreen.load());
+    }
+    else if (name == "Drum machine")
+        routing.padsTo = (int) RigRouting::Dest::drums;
     pageChanged();
 }
 

@@ -31,7 +31,7 @@ MpcView::MpcView (MpcProcessor& p)
     for (auto* c : std::initializer_list<juce::Component*> { &kitLabel, &kitName, &memory, &ram, &openButton,
                                                              &bpmLabel, &bpm, &keepInTime, &exportButton, &kitList,
                                                              &newKit, &removeKit, &libraryList,
-                                                             &grid, &editor, &status })
+                                                             &grid, &editorScroll, &status })
         addAndMakeVisible (c);
 
     kitName.setInputRestrictions (16);
@@ -112,9 +112,53 @@ MpcView::MpcView (MpcProcessor& p)
 
     grid.onPadPressed = [this] (int pad)
     {
-        selectPad (pad);
+        // With 16 Levels on the pads all play the one sound, which stays picked.
+        if (processor.levelsType.load() == levels::off)
+            selectPad (pad);
         processor.playPad (pad);
     };
+    grid.levelsText = [this] (int slot) { return levelText (slot); };
+
+    // Pad tools.
+    for (int t = 0; t < levels::numTypes; ++t)
+        levelsChoice.addItem (levels::typeName (t), t + 1);
+    levelsChoice.setTooltip ("16 Levels: the picked pad's sound on all 16 pads, a step apart. Tune plays it as a scale "
+                             "(a semitone a pad), Filter opens up pad by pad, Velocity goes soft to loud, Decay short to long.");
+    levelsChoice.onChange = [this] { setSixteenLevels (levelsChoice.getSelectedId() - 1); };
+    noteRepeatButton.setClickingTogglesState (true);
+    noteRepeatButton.setTooltip ("Hold a pad and it plays again on every step (1/16 and so on), in time with the sequence "
+                                 "and its metronome, while it plays, records, or is stopped.");
+    noteRepeatButton.onClick = [this] { setNoteRepeat (noteRepeatButton.getToggleState(), repeatRate.getSelectedId() - 2); };
+    repeatRate.addItem ("Timing", 1);
+    for (auto g : { seq::Grid::eighth, seq::Grid::eighthTriplet, seq::Grid::sixteenth, seq::Grid::sixteenthTriplet,
+                    seq::Grid::thirtySecond, seq::Grid::thirtySecondTriplet })
+        repeatRate.addItem (seq::gridName (g), (int) g + 2);
+    repeatRate.setTooltip ("How fast held pads repeat (Timing: the sequencer's timing correct)");
+    repeatRate.onChange = [this] { setNoteRepeat (noteRepeatButton.getToggleState(), repeatRate.getSelectedId() - 2); };
+    fullLevelButton.setClickingTogglesState (true);
+    fullLevelButton.setTooltip ("Full level: every hit plays at full velocity, however hard you hit the pad");
+    fullLevelButton.onClick = [this] { processor.fullLevel = fullLevelButton.getToggleState(); };
+    for (auto* b : { &noteRepeatButton, &fullLevelButton })
+    {
+        b->setWantsKeyboardFocus (false);
+        b->setColour (juce::TextButton::buttonOnColourId, Theme::accent);
+        b->setColour (juce::TextButton::textColourOnId, Theme::background);
+    }
+    for (auto* c : std::initializer_list<juce::Component*> { &levelsLabel, &levelsChoice, &noteRepeatButton, &repeatLabel, &repeatRate,
+                                                             &fullLevelButton, &browser })
+        addAndMakeVisible (c);
+    levelsLabel.setJustificationType (juce::Justification::centredRight);
+    repeatLabel.setJustificationType (juce::Justification::centred);
+    browser.targetPad = [this] { return grid.getSelectedPad(); };
+    browser.onStatus = [this] (const juce::String& text, bool warning) { setStatus (text, warning); };
+    browser.onPlaced = [this] (int pad) { showPadBank (pad / kPadsPerBank); selectPad (pad); grid.repaint(); };
+    editor.onPlay = [this]
+    {
+        processor.playPad (grid.getSelectedPad());
+        juce::Timer::callAfterDelay (400, [safe = juce::Component::SafePointer<MpcView> (this), pad = grid.getSelectedPad()]
+                                     { if (safe != nullptr) safe->processor.releasePad (pad); });
+    };
+    updatePadTools();
     grid.onPadReleased = [this] (int pad) { processor.releasePad (pad); };
     grid.onFilesDropped = [this] (int pad, const juce::StringArray& paths)
     {
@@ -126,6 +170,9 @@ MpcView::MpcView (MpcProcessor& p)
         project.changed();
     };
 
+    editorScroll.setViewedComponent (&editor, false);
+    editorScroll.setScrollBarsShown (true, false);
+    editorScroll.setScrollBarThickness (8);
     editor.onClear = [this] { grid.onClearPad (grid.getSelectedPad()); };
     editor.onLoadFile = [this] { chooseFileForPad(); };
 
@@ -179,6 +226,17 @@ MpcView::~MpcView()
 
 void MpcView::timerCallback()
 {
+    // The pad bank on screen can be changed from elsewhere (the Rig's Sampler screen).
+    if (const int bank = juce::jlimit (0, 3, processor.padBankOnScreen.load()); bank != grid.getPadBank())
+        showPadBank (bank);
+    if (noteRepeatButton.getToggleState() != processor.getSequencer().noteRepeat.load()
+        || fullLevelButton.getToggleState() != processor.fullLevel.load()
+        || levelsChoice.getSelectedId() != processor.levelsType.load() + 1)
+    {
+        updatePadTools();
+        grid.repaint();
+    }
+
     // Light the pads that played, from MIDI or clicks.
     const auto played = processor.takePlayedPads();
     for (int pad = 0; pad < mpc::kPadCount; ++pad)
@@ -193,6 +251,59 @@ void MpcView::showPadBank (int padBank)
     grid.setPadBank (padBank);
     sequencer.setPadBank (padBank);
     processor.padBankOnScreen = padBank;
+    if (onPadBankChanged)
+        onPadBankChanged (padBank);
+}
+
+void MpcView::setSixteenLevels (int type)
+{
+    type = juce::jlimit (0, levels::numTypes - 1, type);
+    const int pad = grid.getSelectedPad();
+    if (type != levels::off && project.currentBank().pads[(size_t) pad].isEmpty())
+    {
+        processor.levelsType = levels::off;
+        updatePadTools();
+        return setStatus ("Pick a pad with a sound on it first, then 16 Levels spreads it over the 16 pads.", true);
+    }
+    processor.levelsPad = pad;
+    processor.levelsType = type;
+    updatePadTools();
+    grid.repaint();
+    if (type == levels::off)
+        setStatus ("16 Levels is off: each pad plays its own sound again.");
+    else
+        setStatus ("16 Levels (" + levels::typeName (type) + "): the 16 pads all play " + project.currentBank().pads[(size_t) pad].name
+                   + ", pad 1 lowest to pad 16 highest. Hits you record keep their level. Pick Off to go back.");
+}
+
+void MpcView::setNoteRepeat (bool on, int gridChoice)
+{
+    auto& engine = processor.getSequencer();
+    engine.repeatGrid = gridChoice;
+    engine.noteRepeat = on;
+    updatePadTools();
+    if (on)
+        setStatus ("Note repeat: hold a pad and it repeats every " + seq::gridName (engine.getRepeatGrid())
+                   + ". Press Rec with the metronome on to record the repeats.");
+}
+
+void MpcView::updatePadTools()
+{
+    const auto& engine = processor.getSequencer();
+    const int type = processor.levelsType.load();
+    levelsChoice.setSelectedId (type + 1, juce::dontSendNotification);
+    noteRepeatButton.setToggleState (engine.noteRepeat.load(), juce::dontSendNotification);
+    const int rate = engine.repeatGrid.load();
+    repeatRate.setSelectedId (rate > 0 ? rate + 2 : 1, juce::dontSendNotification);
+    fullLevelButton.setToggleState (processor.fullLevel.load(), juce::dontSendNotification);
+    levelsLabel.setText (type == levels::off ? juce::String ("16 Levels")
+                                             : "16 Levels of " + padLabel (juce::jlimit (0, mpc::kPadCount - 1, processor.levelsPad.load())),
+                         juce::dontSendNotification);
+}
+
+juce::String MpcView::levelText (int slot) const
+{
+    return levels::stepText (processor.levelsType.load(), slot);
 }
 
 void MpcView::showSequencer (bool show)
@@ -201,6 +312,8 @@ void MpcView::showSequencer (bool show)
     padsTab.setToggleState (! show, juce::dontSendNotification);
     sequencer.setVisible (show);
     grid.setVisible (! show);
+    browser.setVisible (! show);
+    resized();
     if (show)
         setStatus ("Click steps to add hits, or press Rec and play pads (keys Z-V, A-F, Q-R, 1-4 play the 16 pads). Space plays and stops.");
 }
@@ -296,7 +409,13 @@ void MpcView::resized()
 
     r.removeFromLeft (16);
     const auto editorArea = r;
-    editor.setBounds (r.removeFromRight (340));
+    {
+        const auto area = r.removeFromRight (340);
+        editorScroll.setBounds (area);
+        const int needed = 610;   // both pages fit in this
+        const bool scrolls = area.getHeight() < needed;
+        editor.setBounds (0, 0, area.getWidth() - (scrolls ? editorScroll.getScrollBarThickness() : 0), juce::jmax (area.getHeight(), needed));
+    }
     r.removeFromRight (16);
 
     auto top = r.removeFromTop (30);
@@ -309,9 +428,29 @@ void MpcView::resized()
     top.removeFromRight (4);
     padsTab.setBounds (top.removeFromRight (70));
 
-    r.removeFromTop (12);
-    grid.setBounds (r);
+    r.removeFromTop (8);
     sequencer.setBounds (r);
+    {
+        auto tools = r.removeFromTop (28);
+        // Narrow windows squeeze the row rather than lose any of it.
+        const float scale = juce::jmin (1.0f, (float) tools.getWidth() / 620.0f);
+        auto take = [&tools, scale] (int width) { return tools.removeFromLeft (juce::roundToInt (width * scale)); };
+        levelsLabel.setBounds (take (120));
+        take (6);
+        levelsChoice.setBounds (take (130));
+        take (16);
+        noteRepeatButton.setBounds (take (104));
+        repeatLabel.setBounds (take (24));
+        repeatRate.setBounds (take (110));
+        fullLevelButton.setBounds (tools.removeFromRight (juce::roundToInt (92 * scale)));
+    }
+    r.removeFromTop (8);
+    if (browser.isVisible())
+    {
+        browser.setBounds (r.removeFromBottom (juce::jlimit (130, 260, r.getHeight() * 32 / 100)));
+        r.removeFromBottom (8);
+    }
+    grid.setBounds (r);
     soundEditor.setBounds (editorArea);
 }
 

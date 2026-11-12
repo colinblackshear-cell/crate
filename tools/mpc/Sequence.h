@@ -19,9 +19,13 @@ namespace seq
         int pad = 0;                // 0..63, A01..D16
         int velocity = 100;         // 1..127
         int length = 24;            // ticks; only note-off pads use it
+        int variation = 0;          // 16 Levels: how the hit was played (levels::pack), 0 = as it is
 
         bool operator< (const Note& o) const { return tick < o.tick || (tick == o.tick && pad < o.pad); }
-        bool operator== (const Note& o) const { return tick == o.tick && pad == o.pad && velocity == o.velocity && length == o.length; }
+        bool operator== (const Note& o) const
+        {
+            return tick == o.tick && pad == o.pad && velocity == o.velocity && length == o.length && variation == o.variation;
+        }
     };
 
     struct Track

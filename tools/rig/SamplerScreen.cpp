@@ -153,6 +153,118 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     knobs[3]->slider.setTooltip ("One shot plays to the end; Mono cuts its last hit off; Note off stops when you let go.");
     knobs[4]->slider.setTooltip ("Pads in the same choke group cut each other off (a closed hat stops the open one).");
 
+    // The pad's live sound, on the knob row's FX side.
+    const std::array<const char*, 5> fxNames { "Filter", "Reso", "Decay", "Delay", "Reverb" };
+    for (int i = 0; i < 5; ++i)
+    {
+        auto knob = std::make_unique<Knob> (fxNames[(size_t) i], colours::sampler);
+        auto& s = knob->slider;
+        switch (i)
+        {
+            case 0:
+                s.setRange (20.0, 20000.0, 1.0);
+                s.setSkewFactorFromMidPoint (1000.0);
+                s.setDoubleClickReturnValue (true, 20000.0);
+                s.textFromValueFunction = [] (double v)
+                {
+                    return v >= 19500.0 ? juce::String ("Open") : v >= 1000.0 ? juce::String (v / 1000.0, 1) + "k" : juce::String (juce::roundToInt (v));
+                };
+                break;
+            case 2:
+                s.setRange (0.0, 5000.0, 1.0);
+                s.setSkewFactorFromMidPoint (600.0);
+                s.setDoubleClickReturnValue (true, 0.0);
+                s.textFromValueFunction = [] (double v) { return v < 1.0 ? juce::String ("Whole") : juce::String (juce::roundToInt (v)) + "ms"; };
+                break;
+            default:
+                s.setRange (0.0, 100.0, 1.0);
+                s.setDoubleClickReturnValue (true, 0.0);
+                s.textFromValueFunction = [] (double v) { return juce::String (juce::roundToInt (v)); };
+                break;
+        }
+        auto* k = knob.get();
+        s.onValueChange = [this, i, k] { k->repaint(); setFxValue (i, k->slider.getValue()); };
+        addChildComponent (*knob);
+        fxKnobs.push_back (std::move (knob));
+    }
+    fxKnobs[0]->slider.setTooltip ("The pad's low-pass filter: turn it down to make the sound darker, as it plays.");
+    fxKnobs[1]->slider.setTooltip ("Resonance: a peak at the filter's cutoff.");
+    fxKnobs[2]->slider.setTooltip ("How long the pad rings before it dies away (Whole: the whole sound).");
+    fxKnobs[3]->slider.setTooltip ("How much of the pad goes into the MPC's delay (its time and repeats are on the MPC page's Sound + FX).");
+    fxKnobs[4]->slider.setTooltip ("How much of the pad goes into the MPC's reverb.");
+    fxButton.getProperties().set ("fontSize", 16.0f);
+    setLit (fxButton, Lit::current);
+    fxButton.setTooltip ("Switches the knobs between the pad's settings and its live sound: filter, decay, delay and reverb.");
+    fxButton.onClick = [this] { showFxKnobs (! fxShown); };
+    addAndMakeVisible (fxButton);
+
+    // Pad tools, under the pads.
+    for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton })
+    {
+        setLit (*b, Lit::current);
+        b->getProperties().set ("fontSize", 15.0f);
+        addAndMakeVisible (*b);
+    }
+    levelsButton.setTooltip ("16 Levels: the picked pad's sound on all 16 pads, a step apart (Tune plays it as a scale, Filter "
+                             "opens up pad by pad, Velocity soft to loud, Decay short to long).");
+    levelsButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("16 Levels of pad " + padLabel (getSelectedPad()));
+        for (int t = 0; t < levels::numTypes; ++t)
+            menu.addItem (t + 1, levels::typeName (t), true, engine.getMpc().levelsType.load() == t);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&levelsButton),
+                            [safe = juce::Component::SafePointer<SamplerScreen> (this)] (int result)
+                            {
+                                if (safe != nullptr && result > 0)
+                                    safe->setSixteenLevels (result - 1);
+                            });
+    };
+    repeatButton.setClickingTogglesState (true);
+    repeatButton.setTooltip ("Note repeat: hold a pad and it plays again on every step, in time with the clock.");
+    repeatButton.onClick = [this]
+    {
+        auto& seq = engine.getMpc().getSequencer();
+        seq.noteRepeat = repeatButton.getToggleState();
+        if (seq.repeatGrid.load() <= 0)
+            seq.repeatGrid = (int) seq::Grid::sixteenth;
+        updatePadTools();
+        if (onSay)
+            onSay (seq.noteRepeat.load() ? "Note repeat: hold a pad and it repeats every " + seq::gridName (seq.getRepeatGrid()) + "."
+                                         : juce::String ("Note repeat is off."));
+    };
+    rateButton.setTooltip ("How fast held pads repeat.");
+    rateButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        const int current = (int) engine.getMpc().getSequencer().getRepeatGrid();
+        for (auto g : { seq::Grid::eighth, seq::Grid::eighthTriplet, seq::Grid::sixteenth, seq::Grid::sixteenthTriplet,
+                        seq::Grid::thirtySecond, seq::Grid::thirtySecondTriplet })
+            menu.addItem ((int) g, seq::gridName (g), true, current == (int) g);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&rateButton),
+                            [safe = juce::Component::SafePointer<SamplerScreen> (this)] (int result)
+                            {
+                                if (safe == nullptr || result <= 0)
+                                    return;
+                                safe->engine.getMpc().getSequencer().repeatGrid = result;
+                                safe->updatePadTools();
+                            });
+    };
+    soundsButton.setClickingTogglesState (true);
+    soundsButton.setTooltip ("Your sound bank, over the wave: click a sound to hear it, double-click to put it on the picked pad.");
+    soundsButton.onClick = [this] { showSounds (soundsButton.getToggleState()); };
+    addChildComponent (browser);
+    browser.targetPad = [this] { return getSelectedPad(); };
+    browser.onStatus = [this] (const juce::String& text, bool) { if (onSay) onSay (text); };
+    browser.onPlaced = [this] (int pad)
+    {
+        if (pad / kPadsPerBank != engine.getMpc().padBankOnScreen.load())
+            pressBank (pad / kPadsPerBank);
+        selectedSlice = pad;
+        updateKnobs();
+        repaint();
+    };
+
     for (int i = 0; i < 3; ++i)
     {
         setInWell (mediumButtons[i], true);
@@ -231,6 +343,11 @@ void SamplerScreen::setEditMode (bool on)
     for (auto* c : getChildren())
         if (c != ownedEditor.get() && c != &chopModeButton && c != &editModeButton && c != &recordButton && c != &openButton)
             c->setVisible (! editMode);
+    for (auto& k : knobs)
+        k->setVisible (! editMode && ! fxShown);
+    for (auto& k : fxKnobs)
+        k->setVisible (! editMode && fxShown);
+    browser.setVisible (! editMode && soundsShown);
     if (ownedEditor != nullptr)
         ownedEditor->setVisible (editMode);
     openButton.setVisible (! editMode);
@@ -363,6 +480,9 @@ void SamplerScreen::pressPad (int padInBank)
     padInBank = juce::jlimit (0, kPadsPerBank - 1, padInBank);
     const int pad = engine.getMpc().padBankOnScreen.load() * kPadsPerBank + padInBank;
     engine.getMpc().playPad (pad);
+    // With 16 Levels on the pads all play the one sound, which stays picked.
+    if (engine.getMpc().levelsType.load() != levels::off)
+        return;
     selectedSlice = pad;
     updateKnobs();
     repaint();
@@ -446,6 +566,83 @@ void SamplerScreen::setPadValue (int knob, double value)
     project.changed();
 }
 
+void SamplerScreen::setFxValue (int knob, double value)
+{
+    auto& project = engine.getMpc().getProject();
+    auto& pad = project.currentBank().pads[(size_t) getSelectedPad()];
+    if (pad.isEmpty())
+        return;
+    switch (knob)
+    {
+        case 0: pad.cutoff = (float) value; break;
+        case 1: pad.resonance = (float) value / 100.0f; break;
+        case 2: pad.decay = juce::roundToInt (value); break;
+        case 3: pad.delaySend = juce::roundToInt (value); break;
+        default: pad.reverbSend = juce::roundToInt (value); break;
+    }
+    project.changed();
+}
+
+void SamplerScreen::showFxKnobs (bool show)
+{
+    fxShown = show;
+    fxButton.setToggleState (show, juce::dontSendNotification);
+    for (auto& k : knobs)
+        k->setVisible (! editMode && ! show);
+    for (auto& k : fxKnobs)
+        k->setVisible (! editMode && show);
+    updateKnobs();
+}
+
+void SamplerScreen::showSounds (bool show)
+{
+    soundsShown = show;
+    soundsButton.setToggleState (show, juce::dontSendNotification);
+    browser.setVisible (! editMode && show);
+    if (show)
+    {
+        browser.toFront (false);
+        if (onSay)
+            onSay ("Your sound bank: click a sound to hear it, double-click (or Onto pad) to put it on pad " + padLabel (getSelectedPad())
+                   + ". Pick another pad first to fill that one.");
+    }
+    repaint();
+}
+
+void SamplerScreen::setSixteenLevels (int type)
+{
+    auto& mpc = engine.getMpc();
+    type = juce::jlimit (0, levels::numTypes - 1, type);
+    const int pad = getSelectedPad();
+    if (type != levels::off && mpc.getProject().currentBank().pads[(size_t) pad].isEmpty())
+    {
+        mpc.levelsType = levels::off;
+        updatePadTools();
+        if (onSay)
+            onSay ("Pick a pad with a sound on it first, then 16 Levels spreads it over the 16 pads.");
+        return;
+    }
+    mpc.levelsPad = pad;
+    mpc.levelsType = type;
+    updatePadTools();
+    if (onSay)
+        onSay (type == levels::off ? juce::String ("16 Levels is off: each pad plays its own sound again.")
+                                   : "16 Levels (" + levels::typeName (type) + "): all 16 pads play pad " + padLabel (pad)
+                                         + ", pad 1 lowest to pad 16 highest. Hits you record keep their level.");
+    repaint();
+}
+
+void SamplerScreen::updatePadTools()
+{
+    auto& mpc = engine.getMpc();
+    const int type = mpc.levelsType.load();
+    levelsButton.setButtonText (type == levels::off ? juce::String ("16 Levels") : "16 Lv: " + levels::typeName (type));
+    levelsButton.setToggleState (type != levels::off, juce::dontSendNotification);
+    const auto& seq = mpc.getSequencer();
+    repeatButton.setToggleState (seq.noteRepeat.load(), juce::dontSendNotification);
+    rateButton.setButtonText (seq::gridName (seq.getRepeatGrid()));
+}
+
 void SamplerScreen::play (juce::Range<int> range)
 {
     const auto& doc = engine.getSampler().getDocument();
@@ -487,6 +684,14 @@ void SamplerScreen::updateKnobs()
         knobs[i]->setEnabled (! pad.isEmpty());
         knobs[i]->setAlpha (pad.isEmpty() ? 0.45f : 1.0f);
         knobs[i]->repaint();
+    }
+    const std::array<double, 5> fx { (double) pad.cutoff, pad.resonance * 100.0, (double) pad.decay, (double) pad.delaySend, (double) pad.reverbSend };
+    for (size_t i = 0; i < fxKnobs.size(); ++i)
+    {
+        fxKnobs[i]->slider.setValue (fx[i], juce::dontSendNotification);
+        fxKnobs[i]->setEnabled (! pad.isEmpty());
+        fxKnobs[i]->setAlpha (pad.isEmpty() ? 0.45f : 1.0f);
+        fxKnobs[i]->repaint();
     }
 }
 
@@ -541,6 +746,10 @@ void SamplerScreen::timerCallback()
 
     if (! isShowing())
         return;
+
+    if (repeatButton.getToggleState() != engine.getMpc().getSequencer().noteRepeat.load()
+        || levelsButton.getToggleState() != (engine.getMpc().levelsType.load() != levels::off))
+        updatePadTools();
 
     {
         const bool recording = engine.getSampler().isRecording();
@@ -783,7 +992,7 @@ void SamplerScreen::paint (juce::Graphics& g)
         g.setColour (p.ink);
         g.setFont (cond (22.0f, Weight::extra, 0.1f));
         auto t = sliceTitle;
-        t.setRight (toPadsButton.getX() - 8);
+        t.setRight (fxButton.getX() - 8);
         g.drawText (title.toUpperCase(), t, juce::Justification::centredLeft, true);
 
         if (doc.hasAudio() && selectedSlice < numSlices())
@@ -864,10 +1073,12 @@ void SamplerScreen::paint (juce::Graphics& g)
             g.drawText (padLabel (pad), top, juce::Justification::centredLeft);
             g.setFont (barlow (juce::jmin (12.0f, r.getHeight() * 0.13f)));
             g.setColour (ink.withMultipliedAlpha (0.85f));
-            g.drawFittedText (padData.isEmpty() ? juce::String ("Empty") : padData.name, inner.toNearestInt(), juce::Justification::bottomLeft, 2, 0.9f);
+            const int levelsType = engine.getMpc().levelsType.load();
+            const auto text = levelsType != levels::off ? levels::stepText (levelsType, i)
+                            : padData.isEmpty()        ? juce::String ("Empty")
+                                                       : padData.name;
+            g.drawFittedText (text, inner.toNearestInt(), juce::Justification::bottomLeft, 2, 0.9f);
         }
-        engraved (g, "Like the MPC: pad 1 bottom-left " + juce::String::fromUTF8 ("\xc2\xb7") + " Launchkey pads play them", padsNote,
-                  juce::Justification::centred, 11.0f);
     }
 }
 
@@ -903,7 +1114,17 @@ void SamplerScreen::resized()
         fullLevel.setBounds (h.removeFromRight (juce::jmin (120, h.getWidth())));
     }
     right.removeFromTop (12);
-    padsNote = right.removeFromBottom (20);
+    {
+        // The pad tools.
+        auto tools = right.removeFromBottom (34);
+        const int w = (tools.getWidth() - 3 * 6) / 4;
+        for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton })
+        {
+            b->setBounds (tools.removeFromLeft (w));
+            tools.removeFromLeft (6);
+        }
+        padsNote = {};
+    }
     right.removeFromBottom (8);
     padsWell = right;
 
@@ -940,6 +1161,8 @@ void SamplerScreen::resized()
         scrollArea = z.reduced (10, 0).withSizeKeepingCentre (z.getWidth() - 20, 20);
     }
 
+    browser.setBounds (waveWell);
+
     // Send to MPC, and the picked slice's pad.
     sendWell = leftArea.removeFromRight (juce::jmin (360, leftArea.getWidth() / 2));
     leftArea.removeFromRight (14);
@@ -963,10 +1186,14 @@ void SamplerScreen::resized()
         auto s = sliceBox.reduced (16, 12);
         sliceTitle = s.removeFromTop (34);
         toPadsButton.setBounds (sliceTitle.getRight() - 176 - 10 - 96, sliceTitle.getY(), 96, sliceTitle.getHeight());
+        fxButton.setBounds (toPadsButton.getX() - 8 - 52, sliceTitle.getY(), 52, sliceTitle.getHeight());
         s.removeFromTop (6);
         const int w = s.getWidth() / (int) knobs.size();
+        auto row = s;
         for (auto& k : knobs)
             k->setBounds (s.removeFromLeft (w).withSizeKeepingCentre (juce::jmin (w, 110), juce::jmin (s.getHeight(), 150)));
+        for (auto& k : fxKnobs)
+            k->setBounds (row.removeFromLeft (w).withSizeKeepingCentre (juce::jmin (w, 110), juce::jmin (row.getHeight(), 150)));
     }
 }
 

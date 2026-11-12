@@ -114,7 +114,13 @@ void PadGrid::paint (juce::Graphics& g)
         g.setFont (juce::FontOptions (12.0f));
         g.drawText (padLabel (pad), inner.removeFromTop (16), juce::Justification::topLeft);
 
-        if (! p.isEmpty())
+        if (const auto level = levelsText ? levelsText (slot) : juce::String(); level.isNotEmpty())
+        {
+            g.setColour (lit ? Theme::background : Theme::accent);
+            g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+            g.drawFittedText (level, inner.toNearestInt(), juce::Justification::centred, 2);
+        }
+        else if (! p.isEmpty())
         {
             // a small waveform of the pad's sound
             auto wave = inner.removeFromBottom (inner.getHeight() * 0.45f);

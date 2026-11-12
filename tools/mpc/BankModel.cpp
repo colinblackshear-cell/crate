@@ -200,6 +200,9 @@ juce::MemoryBlock Project::save() const
         b.setProperty ("name", bank.name, nullptr);
         b.setProperty ("bpm", bank.bpm, nullptr);
         b.setProperty ("keepInTime", bank.keepInTime, nullptr);
+        b.setProperty ("delayBeats", bank.delayBeats, nullptr);
+        b.setProperty ("delayFeedback", bank.delayFeedback, nullptr);
+        b.setProperty ("reverbSize", bank.reverbSize, nullptr);
 
         for (int i = 0; i < mpc::kPadCount; ++i)
         {
@@ -229,6 +232,12 @@ juce::MemoryBlock Project::save() const
             p.setProperty ("beats", pad.beats, nullptr);
             p.setProperty ("playNormal", pad.playNormal, nullptr);
             p.setProperty ("muteGroup", pad.muteGroup, nullptr);
+            p.setProperty ("cutoff", pad.cutoff, nullptr);
+            p.setProperty ("resonance", pad.resonance, nullptr);
+            p.setProperty ("attack", pad.attack, nullptr);
+            p.setProperty ("decay", pad.decay, nullptr);
+            p.setProperty ("delaySend", pad.delaySend, nullptr);
+            p.setProperty ("reverbSend", pad.reverbSend, nullptr);
             b.appendChild (p, nullptr);
         }
 
@@ -277,6 +286,9 @@ bool Project::load (const void* data, size_t size)
         bank.name = b["name"].toString();
         bank.bpm = juce::jlimit (40.0, 240.0, (double) b.getProperty ("bpm", 90.0));
         bank.keepInTime = b["keepInTime"];
+        bank.delayBeats = juce::jlimit (0.125, 4.0, (double) b.getProperty ("delayBeats", 0.75));
+        bank.delayFeedback = juce::jlimit (0, 90, (int) b.getProperty ("delayFeedback", 35));
+        bank.reverbSize = juce::jlimit (0, 100, (int) b.getProperty ("reverbSize", 50));
 
         for (const auto& p : b)
         {
@@ -298,6 +310,12 @@ bool Project::load (const void* data, size_t size)
             pad.beats = p["beats"];
             pad.playNormal = p["playNormal"];
             pad.muteGroup = juce::jlimit (0, 32, (int) p["muteGroup"]);
+            pad.cutoff = juce::jlimit (20.0f, 20000.0f, (float) p.getProperty ("cutoff", 20000.0f));
+            pad.resonance = juce::jlimit (0.0f, 1.0f, (float) p.getProperty ("resonance", 0.0f));
+            pad.attack = juce::jlimit (0, 2000, (int) p["attack"]);
+            pad.decay = juce::jlimit (0, 5000, (int) p["decay"]);
+            pad.delaySend = juce::jlimit (0, 100, (int) p["delaySend"]);
+            pad.reverbSend = juce::jlimit (0, 100, (int) p["reverbSend"]);
         }
 
         loaded.push_back (std::move (bank));

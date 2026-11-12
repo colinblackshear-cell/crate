@@ -9,7 +9,8 @@
 //
 // - Drum pads (MIDI channel 10, the Launchkey's drum mode) play the MPC's pads. The 16 pads
 //   send notes 36-51 from the bottom left, and play pads 1-16 of the chosen pad bank (A-D),
-//   laid out like the MPC's 4x4 grid.
+//   laid out like the MPC's 4x4 grid. A Novation Launchpad (in Drum mode, on any channel) plays
+//   them too, with its other 48 pads on the other three banks: see core/control/Launchpad.h.
 // - The keys (any other channel) play the instrument picked in "Keys play": the vocoder (by
 //   default), the bass, the synth, the sampler, or the MPC's pads note for note. With a split
 //   point, the keys below it play a second instrument (say the bass with your left hand).
@@ -115,7 +116,8 @@ public:
     // `to` has one buffer per Dest (off is never written).
     void route (const juce::MidiBuffer& in, std::array<juce::MidiBuffer*, kNumDests>& to, Result&);
 
-    // The MPC note a drum pad note plays (-1 if it's not one of the 16 pads).
+    // The MPC note a drum pad note plays (-1 if it's not one of the pads): notes 36-51 the pad
+    // bank picked, 52-99 (a Launchpad's other three blocks) the banks after it.
     int mpcNoteForPad (int padNote) const;
 
 private:

@@ -123,6 +123,41 @@ struct RigSamplerScreenTests : juce::UnitTest
                     b->onClick();
             expectEquals (sends, 1, "Send to MPC writes the kits");
             engine.getMpc().fullLevel = false;
+
+            // FX: the same knob row turns the picked pad's live sound.
+            screen.pressBank (0);
+            screen.selectSlice (5);
+            expect (! screen.isShowingFxKnobs());
+            screen.showFxKnobs (true);
+            expect (screen.fxKnobs[0]->isVisible() && ! screen.knobs[0]->isVisible());
+            screen.fxKnobs[0]->slider.setValue (800.0, juce::sendNotificationSync);
+            screen.fxKnobs[2]->slider.setValue (250.0, juce::sendNotificationSync);
+            screen.fxKnobs[3]->slider.setValue (30.0, juce::sendNotificationSync);
+            screen.fxKnobs[4]->slider.setValue (45.0, juce::sendNotificationSync);
+            expect (std::abs (kit.pads[5].cutoff - 800.0f) < 1.0f, "Filter");
+            expectEquals (kit.pads[5].decay, 250, "Decay");
+            expectEquals (kit.pads[5].delaySend, 30, "Delay");
+            expectEquals (kit.pads[5].reverbSend, 45, "Reverb");
+            screen.showFxKnobs (false);
+            expect (screen.knobs[0]->isVisible());
+
+            // 16 Levels: the picked pad's sound on every pad; hitting pads doesn't pick them.
+            screen.setSixteenLevels (levels::tuneFilter);
+            expectEquals (engine.getMpc().levelsType.load(), (int) levels::tuneFilter);
+            expectEquals (engine.getMpc().levelsPad.load(), 5);
+            screen.pressPad (9);
+            expectEquals (screen.getSelectedPad(), 5, "the sound stays picked");
+            screen.paintEntireComponent (g, false);
+            screen.setSixteenLevels (levels::off);
+            screen.pressBank (2);   // bank C: empty pads
+            screen.setSixteenLevels (levels::tune);
+            expectEquals (engine.getMpc().levelsType.load(), (int) levels::off, "an empty pad has nothing to spread");
+
+            // Sounds: the bank shows over the wave.
+            screen.showSounds (true);
+            expect (screen.getBrowser().isVisible());
+            screen.showSounds (false);
+            expect (! screen.getBrowser().isVisible());
         }
 
         beginTest ("the full editor is on the Sampler screen: Edit shows it, Chop shows the pads");

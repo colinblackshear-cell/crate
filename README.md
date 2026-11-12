@@ -76,6 +76,23 @@ It's a virtual MPC: kits, pads and a sequencer.
 - **Play:** click a pad, or play a MIDI keyboard: pads use the same notes as on the MPC (A01 is
   note 37). Set each pad's volume, pan, tune and how it plays: **One shot** plays to the end,
   **Mono** cuts off the last hit, **Note off** stops when you let go.
+- **Sound bank under the pads:** search your sound bank (your sample folders and Splice, the same
+  one as Kaleidobox's Sounds page) by name or kind, click a sound to hear it, and double-click it
+  (or **Onto pad**, or drag it) to put it on the pad you picked. Loops with a tempo in their name
+  get their length in beats.
+- **Sound + FX:** the pad's live sound, which you can turn while it plays without changing the
+  sound itself: a low-pass **Filter** with **Reso**, **Attack**, **Decay** (short decays make tight
+  hits), and how much goes to the kit's **Delay** (in time: 1/16 to 1/2) and **Reverb**.
+- **16 Levels:** like the MPC, spread the picked pad's sound over all 16 pads, a step apart:
+  **Tune** (a semitone a pad, so you play it as a scale), **Filter** (dark to open), **Tune +
+  filter**, **Velocity** (soft to loud) or **Decay** (short to long). Hits you record keep their
+  level when the sequence plays them back.
+- **Note repeat** (above the pads): hold a pad and it plays again every 1/8, 1/16, 1/32 or
+  triplet, in time with the sequence and its metronome, whether it's playing, recording or
+  stopped. **Full level** plays every hit at full velocity.
+- **Keyboard pads:** a Launchkey's drum pads (Drum mode, channel 10) play the 16 pads of the bank
+  on screen. In Kaleidobox a Novation Launchpad (Drum mode) plays them too, with all four banks
+  under your hands: the bank on screen bottom left, the next three on its other blocks.
 - **Keep in time:** give the kit a BPM and turn on **Keep in time** to stretch every loop (keeping
   its pitch) to a whole number of beats at that tempo. Short hits aren't stretched, and any pad can
   be set to **Play normal**.
@@ -96,7 +113,8 @@ MPC2000XL.
   in and out. It records onto the selected track and adds to what's there (overdub).
 - **Timing** corrects what you record to 1/8, 1/16, 1/32 or triplets, with **Swing** (50% is
   straight, 66% is a triplet feel). **Fix timing** snaps a track you already recorded.
-- **Note repeat:** hold a pad while it plays and it repeats on every step of the timing grid.
+- **Note repeat:** hold a pad and it repeats on every step of the timing grid (or the rate picked
+  above the pads), also while stopped.
 - **Steps:** shows the sequence as a grid for the 16 pads of the bank you're on. Click or drag
   across steps to add or remove hits; right-click a step for soft or hard hits. The selected
   track is bright and the others are faint. Click a pad's name to play it.

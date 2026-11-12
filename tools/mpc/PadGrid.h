@@ -27,6 +27,9 @@ public:
     std::function<void (int pad, const juce::StringArray& files)> onFilesDropped;
     std::function<void (int pad)> onClearPad;
     std::function<void (int pad)> onPadDoubleClicked;
+    // 16 Levels: what each of the 16 pads on screen plays (slot 0 is pad 1), shown on the pad
+    // instead of its own sound. Empty when 16 Levels is off.
+    std::function<juce::String (int slot)> levelsText;
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;

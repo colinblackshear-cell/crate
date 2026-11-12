@@ -577,6 +577,9 @@ void SequencerView::timerCallback()
 {
     // While playing, the grid follows the bar that's playing.
     const auto& engine = processor.getSequencer();
+    // Note repeat can be turned on from the pads too.
+    if (noteRepeat.getToggleState() != engine.noteRepeat.load())
+        noteRepeat.setToggleState (engine.noteRepeat.load(), juce::dontSendNotification);
     const auto& s = project.currentSequence();
     if (engine.isPlaying() && engine.getPosition() >= 0)
     {

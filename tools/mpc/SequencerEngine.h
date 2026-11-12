@@ -38,6 +38,7 @@ public:
     struct Recorded
     {
         int tick = 0, pad = 0, velocity = 100, length = 24;
+        int variation = 0;   // 16 Levels (levels::pack)
     };
 
     struct Host
@@ -86,6 +87,10 @@ public:
     std::atomic<int> grid { (int) seq::Grid::sixteenth };
     std::atomic<int> swing { 50 };
     std::atomic<bool> noteRepeat { false };
+    // Note repeat's rate (a seq::Grid), or -1 to repeat on the timing correct grid, as the
+    // MPC2000XL does. Held pads repeat while stopped too, at the sequence's tempo.
+    std::atomic<int> repeatGrid { -1 };
+    seq::Grid getRepeatGrid() const { const int r = repeatGrid.load(); return (seq::Grid) (r > 0 ? r : grid.load()); }
     std::atomic<int> clickMode { (int) ClickMode::recording };
     std::atomic<bool> countIn { true };
     std::atomic<bool> followHost { true };   // in Logic: play along when Logic plays
@@ -94,6 +99,7 @@ public:
     bool isRecording() const { return recordingNow.load(); }
     bool isFollowingHost() const { return followingNow.load(); }
     double getHostBpm() const { return hostBpmNow.load(); }   // the host's tempo while following it
+    double getBpm() const { return bpmNow.load(); }           // the tempo it's going at (or would)
     // Where the playhead is in the sequence, in ticks; below 0 while counting in.
     double getPosition() const { return positionNow.load(); }
 
@@ -120,9 +126,10 @@ private:
     void emitSegment (const Snapshot&, const Segment&, double samplesPerTick, juce::MidiBuffer& out,
                       std::array<Click, 16>& clicks, int& numClicks, bool clicking, int numSamples);
     void recordHit (const Snapshot&, int pad, int velocity, double tick, double ticksNow);
+    void repeatWhileStopped (int numSamples, double samplesPerTick, juce::MidiBuffer& out);
     void finishHeld (int pad, double tick, int length);
     void push (const Recorded&);
-    void noteOn (juce::MidiBuffer&, int pad, int velocity, int offset, int lengthSamples);
+    void noteOn (juce::MidiBuffer&, int pad, int velocity, int offset, int lengthSamples, int variation = 0);
 
     double sampleRate = 44100.0;
 
@@ -150,8 +157,10 @@ private:
     double anchor = 0;               // following: the host tick where the playing pass began
     long long sampleClock = 0;       // samples processed, to time note repeat after a press
 
-    struct Held { bool down = false; int velocity = 100; long long pressedAt = 0; double startTick = 0; bool recording = false; int recordedTick = 0; };
+    struct Held { bool down = false; int velocity = 100; long long pressedAt = 0; double startTick = 0; bool recording = false; int recordedTick = 0;
+                  int variation = 0; };
     std::array<Held, 64> held {};
+    std::array<int, 64> pendingVariation {};   // from a 16 Levels message, for the pad's next note
 
     struct Skip { int pad = -1; int tick = 0; };
     std::array<Skip, kSkipSlots> skips {};
@@ -164,7 +173,7 @@ private:
     std::array<Recorded, 1024> fifoData {};
 
     std::atomic<bool> playingNow { false }, recordingNow { false }, followingNow { false }, queuedNow { false };
-    std::atomic<double> hostBpmNow { 0.0 };
+    std::atomic<double> hostBpmNow { 0.0 }, bpmNow { 90.0 };
     std::atomic<int> playingIdNow { 0 }, passesNow { 0 };
     std::atomic<double> positionNow { 0 };
 };

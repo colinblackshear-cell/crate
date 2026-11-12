@@ -329,6 +329,9 @@ void MpcProcessor::rebuildKit()
 {
     auto next = std::make_shared<Kit>();
     const auto& bank = project.currentBank();
+    next->delayBeats = juce::jlimit (0.125, 4.0, bank.delayBeats);
+    next->delayFeedback = juce::jlimit (0, 90, bank.delayFeedback) / 100.0f;
+    next->reverbSize = juce::jlimit (0, 100, bank.reverbSize) / 100.0f;
 
     for (int i = 0; i < mpc::kPadCount; ++i)
     {
@@ -342,6 +345,13 @@ void MpcProcessor::rebuildKit()
         s.mode = pad.mode;
         s.muteGroup = pad.muteGroup;
         s.rate = std::pow (2.0, pad.tune / 120.0);
+        s.cutoff = juce::jlimit (20.0f, 20000.0f, pad.cutoff);
+        s.resonance = juce::jlimit (0.0f, 1.0f, pad.resonance);
+        s.attackSeconds = juce::jlimit (0, 2000, pad.attack) / 1000.0;
+        s.decaySeconds = juce::jlimit (0, 5000, pad.decay) / 1000.0;
+        s.delaySend = juce::jlimit (0, 100, pad.delaySend) / 100.0f;
+        s.reverbSend = juce::jlimit (0, 100, pad.reverbSend) / 100.0f;
+        next->sends |= s.delaySend > 0 || s.reverbSend > 0;
 
         float gain = (float) pad.volume / 100.0f;
         if (pad.normalize)
@@ -456,12 +466,22 @@ void MpcProcessor::renderPreview (juce::AudioBuffer<float>& buffer)
     previewPosition = (int) previewPos;
 }
 
-void MpcProcessor::prepareToPlay (double sampleRate, int)
+void MpcProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     hostRate = sampleRate > 0 ? sampleRate : 44100.0;
     clicks.reset (hostRate);
     sequencer.prepare (hostRate);
     remapped.ensureSize (8192);
+    levelsScratch.ensureSize (8192);
+    const int block = juce::jmax (512, samplesPerBlock);
+    delaySend.setSize (2, block);
+    reverbSend.setSize (2, block);
+    delayLine.setSize (2, (int) (hostRate * 4.0) + 1);
+    delayLine.clear();
+    delayWrite = 0;
+    reverb.setSampleRate (hostRate);
+    reverb.reset();
+    sendTail = 0;
 }
 
 void MpcProcessor::remapDrumPads (juce::MidiBuffer& midi)
@@ -502,12 +522,20 @@ void MpcProcessor::handleMidi (const juce::MidiMessage& m, const std::shared_ptr
         return;
     }
 
+    if (levels::isVariation (m))
+    {
+        if (const int pad = padForNoteNumber[(size_t) m.getNoteNumber()]; pad >= 0)
+            pendingVariation[(size_t) pad] = m.getAfterTouchValue();
+        return;
+    }
+
     if (! (m.isNoteOn() || m.isNoteOff()))
         return;
 
     const int pad = padForNoteNumber[(size_t) m.getNoteNumber()];
     if (pad < 0 || current == nullptr)
         return;
+    const int variation = m.isNoteOn() ? std::exchange (pendingVariation[(size_t) pad], 0) : 0;
 
     const auto& sound = (*current)[(size_t) pad];
 
@@ -542,6 +570,30 @@ void MpcProcessor::handleMidi (const juce::MidiMessage& m, const std::shared_ptr
     v.velocity = fullLevel.load() ? 1.0f : m.getFloatVelocity();
     v.step = sound.rate * kMpcSampleRate / hostRate;
     v.position = sound.reverse ? sound.audio->getNumSamples() - 1 : 0;
+
+    // 16 Levels and the pad's live sound.
+    const int type = levels::typeOf (variation), step = levels::stepOf (variation);
+    if (const double semis = levels::semitones (type, step); semis > 0.0)
+        v.step *= std::pow (2.0, semis / 12.0);
+
+    float cutoff = sound.cutoff;
+    if (const float c = levels::cutoff (type, step); c > 0.0f)
+        cutoff = juce::jmin (cutoff, c);
+    if (cutoff < 19000.0f || sound.resonance > 0.0f)
+    {
+        const float fc = juce::jlimit (20.0f, (float) (hostRate * 0.45), cutoff);
+        v.g = (float) std::tan (juce::MathConstants<double>::pi * fc / hostRate);
+        v.k = 2.0f - 1.9f * sound.resonance;
+    }
+
+    double decay = sound.decaySeconds;
+    if (const double d = levels::decaySeconds (type, step); d > 0.0)
+        decay = decay > 0.0 ? juce::jmin (decay, d) : d;
+    v.attackLength = (int) (sound.attackSeconds * hostRate);
+    v.decayLength = (int) (decay * hostRate);
+    if (v.decayLength > 0)
+        v.decayFactor = (float) std::pow (0.001, 1.0 / v.decayLength);   // -60 dB by the end
+
     voices.push_back (std::move (v));
 }
 
@@ -561,6 +613,10 @@ void MpcProcessor::render (juce::AudioBuffer<float>& buffer, int start, int coun
         const float* l = audio.getReadPointer (0);
         const float* r = audio.getReadPointer (audio.getNumChannels() > 1 ? 1 : 0);
         const float gl = sound.gainLeft * v.velocity, gr = sound.gainRight * v.velocity;
+        const bool sends = (sound.delaySend > 0 || sound.reverbSend > 0) && start + count <= delaySend.getNumSamples();
+        const bool shaped = v.attackLength > 0 || v.decayLength > 0;
+        // The filter's coefficients (a 2-pole state-variable low-pass).
+        const float a1 = 1.0f / (1.0f + v.g * (v.g + v.k)), a2 = v.g * a1, a3 = v.g * a2;
 
         for (int i = start; i < start + count; ++i)
         {
@@ -571,10 +627,50 @@ void MpcProcessor::render (juce::AudioBuffer<float>& buffer, int start, int coun
                 break;
             }
 
+            float env = v.fade;
+            if (shaped)
+            {
+                if (v.age < v.attackLength)
+                    env *= (float) v.age / (float) v.attackLength;
+                else if (v.decayLength > 0)
+                {
+                    if (v.age >= v.attackLength + v.decayLength)
+                    {
+                        v.fade = 0.0f;
+                        break;
+                    }
+                    env *= v.decayGain;
+                    v.decayGain *= v.decayFactor;
+                }
+                ++v.age;
+            }
+
             const float frac = (float) (v.position - index);
             const int next = juce::jlimit (0, length - 1, index + (sound.reverse ? -1 : 1));
-            const float sl = (l[index] + (l[next] - l[index]) * frac) * gl * v.fade;
-            const float sr = (r[index] + (r[next] - r[index]) * frac) * gr * v.fade;
+            float sl = (l[index] + (l[next] - l[index]) * frac) * gl * env;
+            float sr = (r[index] + (r[next] - r[index]) * frac) * gr * env;
+
+            if (v.g > 0.0f)
+            {
+                float* in[2] = { &sl, &sr };
+                for (int c = 0; c < 2; ++c)
+                {
+                    const float v3 = *in[c] - v.s2[c];
+                    const float v1 = a1 * v.s1[c] + a2 * v3;
+                    const float v2 = v.s2[c] + a2 * v.s1[c] + a3 * v3;
+                    v.s1[c] = 2.0f * v1 - v.s1[c];
+                    v.s2[c] = 2.0f * v2 - v.s2[c];
+                    *in[c] = v2;
+                }
+            }
+
+            if (sends)
+            {
+                delaySend.addSample (0, i, sl * sound.delaySend);
+                delaySend.addSample (1, i, sr * sound.delaySend);
+                reverbSend.addSample (0, i, sl * sound.reverbSend);
+                reverbSend.addSample (1, i, sr * sound.reverbSend);
+            }
 
             if (right != nullptr)
             {
@@ -618,6 +714,7 @@ void MpcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
     if (launchkeyPads.load())
         remapDrumPads (midi);
     clicks.removeNextBlockOfMessages (midi, buffer.getNumSamples());
+    applySixteenLevels (midi);
 
     // The sequencer adds its notes to what you played, so both go down the same path.
     SequencerEngine::Host host;
@@ -643,6 +740,12 @@ void MpcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
                 break;
             }
 
+    if (buffer.getNumSamples() <= delaySend.getNumSamples())
+    {
+        delaySend.clear (0, buffer.getNumSamples());
+        reverbSend.clear (0, buffer.getNumSamples());
+    }
+
     int position = 0;
     for (const auto metadata : midi)
     {
@@ -652,10 +755,113 @@ void MpcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
         handleMidi (metadata.getMessage(), current);
     }
     render (buffer, position, buffer.getNumSamples() - position);
+    renderSends (buffer, current != nullptr ? current.get() : nullptr);
     renderPreview (buffer);
     renderClicks (buffer);
 
     midi.clear();
+}
+
+void MpcProcessor::applySixteenLevels (juce::MidiBuffer& midi)
+{
+    const int type = levelsType.load();
+    const int bank = juce::jlimit (0, 3, padBankOnScreen.load());
+    const int target = juce::jlimit (0, mpc::kPadCount - 1, levelsPad.load());
+
+    auto affects = [&] (const juce::MidiMessage& m, int pad)
+    {
+        return pad >= 0 && ((m.isNoteOn() && type != levels::off && pad / kPadsPerBank == bank)
+                            || (m.isNoteOff() && levelsHeld[(size_t) pad] > 0));
+    };
+
+    bool any = false;
+    for (const auto metadata : midi)
+    {
+        const auto m = metadata.getMessage();
+        any |= m.isNoteOnOrOff() && ! levels::isVariation (m) && affects (m, padForNoteNumber[(size_t) m.getNoteNumber()]);
+    }
+    if (! any)
+        return;
+
+    levelsScratch.clear();
+    for (const auto metadata : midi)
+    {
+        auto m = metadata.getMessage();
+        const int at = metadata.samplePosition;
+        const int pad = m.isNoteOnOrOff() ? padForNoteNumber[(size_t) m.getNoteNumber()] : -1;
+        if (affects (m, pad))
+        {
+            if (m.isNoteOn())
+            {
+                const int step = pad % kPadsPerBank;
+                levelsHeld[(size_t) pad] = target + 1;
+                for (auto& played : playedPads)
+                    played.fetch_or ((juce::uint64) 1 << pad);   // the pad you hit lights, as well as the sound's
+                if (type == levels::velocity)
+                    m = juce::MidiMessage::noteOn (m.getChannel(), noteForPad (target), (juce::uint8) levels::velocityFor (step));
+                else
+                {
+                    levelsScratch.addEvent (levels::message (noteForPad (target), levels::pack (type, step)), at);
+                    m.setNoteNumber (noteForPad (target));
+                }
+            }
+            else
+            {
+                m.setNoteNumber (noteForPad (levelsHeld[(size_t) pad] - 1));
+                levelsHeld[(size_t) pad] = 0;
+            }
+        }
+        levelsScratch.addEvent (m, at);
+    }
+    midi.swapWith (levelsScratch);
+}
+
+void MpcProcessor::renderSends (juce::AudioBuffer<float>& buffer, const Kit* current)
+{
+    const int n = buffer.getNumSamples();
+    if (n > delaySend.getNumSamples() || delayLine.getNumSamples() < 2)
+        return;
+
+    // Keep the delay and reverb running while pads send to them, and for a while after so their
+    // tails ring out (8 seconds is longer than any feedback or room here takes to die away).
+    if (current != nullptr && current->sends)
+        sendTail = (int) (hostRate * 8.0);
+    if (sendTail <= 0)
+        return;
+    sendTail -= n;
+
+    const double beats = current != nullptr ? current->delayBeats : 0.75;
+    const float feedback = current != nullptr ? current->delayFeedback : 0.35f;
+    const double bpm = juce::jlimit (30.0, 300.0, sequencer.getBpm());
+    const int length = delayLine.getNumSamples();
+    const int delay = juce::jlimit (1, length - 1, (int) (beats * 60.0 / bpm * hostRate));
+
+    juce::Reverb::Parameters params;
+    params.roomSize = current != nullptr ? 0.3f + 0.68f * current->reverbSize : 0.6f;
+    params.damping = 0.45f;
+    params.wetLevel = 1.0f;
+    params.dryLevel = 0.0f;
+    params.width = 1.0f;
+    reverb.setParameters (params);
+    reverb.processStereo (reverbSend.getWritePointer (0), reverbSend.getWritePointer (1), n);
+
+    float* out[2] = { buffer.getWritePointer (0), buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr };
+    for (int i = 0; i < n; ++i)
+    {
+        const int read = (delayWrite - delay + length) % length;
+        for (int c = 0; c < 2; ++c)
+        {
+            float* line = delayLine.getWritePointer (c);
+            const float echo = line[read];
+            line[delayWrite] = delaySend.getSample (c, i) + echo * feedback;
+            const float wet = echo + reverbSend.getSample (c, i) * 0.6f;
+            if (out[1] != nullptr)
+                out[c][i] += wet;
+            else
+                out[0][i] += 0.5f * wet;
+        }
+        delayWrite = (delayWrite + 1) % length;
+    }
 }
 
 void MpcProcessor::renderClicks (juce::AudioBuffer<float>& buffer)
