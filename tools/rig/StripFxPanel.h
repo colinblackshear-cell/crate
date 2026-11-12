@@ -16,6 +16,10 @@ public:
     void tick();
 
     juce::TextButton resetButton { "Reset" }, closeButton { "Close" }, pluginButton, pluginOpen { "Open" };
+    // All pedals: this rack on the Effects screen, with every pedal (amp, wah, chorus...).
+    // Shown when it's set.
+    juce::TextButton pedalsButton { "All pedals" };
+    std::function<void()> onPedals;
     std::function<void (const juce::String&)> onSay;
 
 private:

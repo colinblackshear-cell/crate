@@ -56,7 +56,18 @@ void PanelButton::paintButton (juce::Graphics& g, bool over, bool down)
         const float s = juce::jmin (fontSize * 2.6f, iconArea.getHeight() - 4.0f);
         auto ic = juce::Rectangle<float> (s, s).withCentre ({ iconArea.getCentreX(), iconArea.getBottom() - s * 0.5f - 1.0f });
         juce::Path path;
-        if (icon == Icon::play)
+        if (icon == Icon::back || icon == Icon::forward)
+        {
+            // A chevron, pointing the way it goes.
+            const float x0 = ic.getX() + s * (icon == Icon::back ? 0.62f : 0.38f), x1 = ic.getX() + s * (icon == Icon::back ? 0.32f : 0.68f);
+            path.startNewSubPath (x0, ic.getY() + s * 0.18f);
+            path.lineTo (x1, ic.getCentreY());
+            path.lineTo (x0, ic.getBottom() - s * 0.18f);
+            g.setColour (ink);
+            g.strokePath (path, juce::PathStrokeType (s * 0.15f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            path.clear();
+        }
+        else if (icon == Icon::play)
             path.addTriangle (ic.getX() + s * 0.2f, ic.getY() + s * 0.12f, ic.getRight() - s * 0.08f, ic.getCentreY(), ic.getX() + s * 0.2f,
                               ic.getBottom() - s * 0.12f);
         else if (icon == Icon::stop)
@@ -125,6 +136,14 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
     }
     tap.fontSize = 18.0f;
     addAndMakeVisible (tap);
+    for (auto* b : { &newSong, &newPattern })
+    {
+        b->fontSize = 13.0f;
+        addAndMakeVisible (b);
+    }
+    newSong.setTooltip ("Starts a new song from nothing: saves the one you're on first, then clears every tool, loop and part.");
+    newPattern.setTooltip ("Starts the next thing in the song on an empty pattern: a beat, a bass line, keys, the vocoder, a loop "
+                           "or a sample. Also keeps what's playing as the next song part.");
     play.setTooltip ("Starts and stops every tool together (space bar).");
     stop.setTooltip ("Stops, goes back to the start, and silences any notes still sounding.");
     rec.setTooltip ("Records the set for Logic, from the next bar: every tool as its own WAV, the mix, and what you play as MIDI. "
@@ -146,10 +165,12 @@ void Header::resized()
 {
     auto r = getLocalBounds().reduced (22, 0);
     const int h = 66;
-    // Room for everything? Drop the VU meters first, then the wordmark, on a small screen.
-    const int needed = 168 + 16 + 260 + 16 + 128 + 8 + 46 + 8 + 58 + 16 + 176 + 16 + 240 + 16 + 118;
-    showVu = r.getWidth() >= needed;
-    showWordmark = r.getWidth() >= needed - 256 || showVu;
+    // Room for everything? Narrow the VU meters, then drop them, then the wordmark, on a small
+    // screen.
+    constexpr int fixed = 276 + 128 + 8 + 46 + 8 + 58 + 16 + 176 + 12 + 112 + 12 + 118;
+    constexpr int wordmark = 168 + 16, vuMin = 16 + 2 * 80 + 8, vuMax = 16 + 2 * 116 + 8;
+    showVu = r.getWidth() >= wordmark + fixed + vuMin;
+    showWordmark = r.getWidth() >= wordmark + fixed || showVu;
 
     if (showWordmark)
     {
@@ -178,11 +199,24 @@ void Header::resized()
     tap.setBounds (centreY (r.removeFromLeft (58), h));
     r.removeFromLeft (16);
     partArea = centreY (r.removeFromLeft (176), h);
-    r.removeFromLeft (16);
+    r.removeFromLeft (12);
+    {
+        // New song over New pattern, beside the song's place.
+        auto col = centreY (r.removeFromLeft (112), h + 6);
+        newSong.setBounds (col.removeFromTop (col.getHeight() / 2 - 1));
+        col.removeFromTop (2);
+        newPattern.setBounds (col);
+    }
+    r.removeFromLeft (12);
 
     lampsArea = centreY (r.removeFromRight (118), 72);
-    r.removeFromRight (16);
-    vuArea = showVu ? centreY (r.removeFromRight (240), 68) : juce::Rectangle<int>();
+    vuArea = {};
+    if (showVu)
+    {
+        const int width = juce::jmin (vuMax, r.getWidth()) - 16;
+        r.removeFromRight (16);
+        vuArea = centreY (r.removeFromRight (width), 68);
+    }
     micLampArea = lampsArea.withTrimmedTop (48);
 }
 
@@ -230,9 +264,10 @@ void Header::paint (juce::Graphics& g)
     if (! vuArea.isEmpty())
     {
         auto r = vuArea.toFloat();
-        drawVu (g, r.removeFromLeft (116.0f), shown.vuLeft, juce::String::fromUTF8 ("VU \xc2\xb7 L"));
+        const float each = (r.getWidth() - 8.0f) / 2.0f;
+        drawVu (g, r.removeFromLeft (each), shown.vuLeft, juce::String::fromUTF8 ("VU \xc2\xb7 L"));
         r.removeFromLeft (8.0f);
-        drawVu (g, r.removeFromLeft (116.0f), shown.vuRight, juce::String::fromUTF8 ("VU \xc2\xb7 R"));
+        drawVu (g, r.removeFromLeft (each), shown.vuRight, juce::String::fromUTF8 ("VU \xc2\xb7 R"));
     }
 
     // What's plugged in.
@@ -262,7 +297,7 @@ void Header::mouseUp (const juce::MouseEvent& e)
 //==============================================================================
 const juce::StringArray& ScreenBar::screens()
 {
-    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Stage" };
+    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Mixer", "Effects" };
     return s;
 }
 
@@ -282,9 +317,18 @@ ScreenBar::ScreenBar()
         b->onClick = [this, i] { if (onScreen) onScreen (screens()[i]); };
         addAndMakeVisible (b);
     }
+    for (auto* b : { &back, &forward })
+    {
+        b->fontSize = 12.0f;
+        b->icon = b == &back ? PanelButton::Icon::back : PanelButton::Icon::forward;
+        b->setEnabled (false);
+        addAndMakeVisible (b);
+    }
+    back.setTooltip ("Back to the screen you were on (Cmd+[).");
+    forward.setTooltip ("Forward again (Cmd+]).");
     more.fontSize = 18.0f;
-    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, the mixer and keyboard "
-                     "set-up, saving and opening shows, the dark Stage panel.");
+    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, the big Stage view, "
+                     "the keyboard set-up, saving and opening shows, the dark panel.");
     addAndMakeVisible (more);
     help.fontSize = 20.0f;
     help.setTooltip ("How to: step-by-step guides for this screen, recording loops, building a song, saving and exporting, "
@@ -315,6 +359,10 @@ void ScreenBar::resized()
 {
     auto r = getLocalBounds().reduced (22, 0);
     r = r.withSizeKeepingCentre (r.getWidth(), 49);
+    back.setBounds (r.removeFromLeft (60));
+    r.removeFromLeft (6);
+    forward.setBounds (r.removeFromLeft (60));
+    r.removeFromLeft (16);
     help.setBounds (r.removeFromRight (56));
     r.removeFromRight (12);
     more.setBounds (r.removeFromRight (juce::jmin (120, r.getWidth() / 8)));

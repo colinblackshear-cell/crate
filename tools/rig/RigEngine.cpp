@@ -73,6 +73,36 @@ juce::String RigEngine::inputJackName (int jack)
     }
 }
 
+juce::String RigEngine::returnName (int id)
+{
+    return id == reverbReturn ? "Reverb" : id == echoReturn ? "Echo" : juce::String();
+}
+
+const std::vector<std::pair<juce::String, double>>& RigEngine::echoTimes()
+{
+    static const std::vector<std::pair<juce::String, double>> times { { "1/16", 0.25 }, { "1/8", 0.5 }, { "1/8 dotted", 0.75 },
+                                                                      { "1/4 triplet", 2.0 / 3.0 }, { "1/4", 1.0 }, { "1/2", 2.0 } };
+    return times;
+}
+
+bool RigEngine::anySolo() const
+{
+    for (int s = 0; s < numStrips; ++s)
+        if (s != masterStrip && strips[(size_t) s].solo.load())
+            return true;
+    return false;
+}
+
+bool RigEngine::isSilenced (int s) const
+{
+    if (! juce::isPositiveAndBelow (s, (int) numStrips))
+        return false;
+    const auto& strip = strips[(size_t) s];
+    if (strip.mute.load())
+        return true;
+    return s != masterStrip && ! strip.solo.load() && anySolo();
+}
+
 float RigEngine::faderGain (float level)
 {
     // 0.8 -> 0 dB, 1.0 -> +6 dB, and down to silence at 0 along a dB curve.
@@ -111,6 +141,24 @@ RigEngine::RigEngine()
     // The drum machine waits for its Play (on the Groove screen), so a new Rig starts quiet.
     if (auto* p = drums.params.getParameter ("sequencer"))
         p->setValueNotifyingHost (0.0f);
+    blankShow = saveShow();
+}
+
+void RigEngine::newShow()
+{
+    const auto keep = screens.createCopy();
+    loadShow (blankShow);
+    screens = keep;
+}
+
+bool RigEngine::isBlank() const
+{
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (looper.getState (i) != RigLooper::State::empty)
+            return false;
+    auto now = saveShow();
+    now.removeChild (now.getChildWithName ("Screens"), nullptr);
+    return now.isEquivalentTo (blankShow);
 }
 
 void RigEngine::playMpcSequence (int index)
@@ -213,7 +261,27 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     for (int s = 0; s < numStrips; ++s)
     {
         gains[(size_t) s].reset (sampleRate, 0.02);
-        gains[(size_t) s].setCurrentAndTargetValue (strips[(size_t) s].mute.load() ? 0.0f : faderGain (strips[(size_t) s].level.load()));
+        gains[(size_t) s].setCurrentAndTargetValue (isSilenced (s) ? 0.0f : faderGain (strips[(size_t) s].level.load()));
+        pans[(size_t) s].reset (sampleRate, 0.02);
+        pans[(size_t) s].setCurrentAndTargetValue (strips[(size_t) s].pan.load());
+        sendGainsA[(size_t) s].reset (sampleRate, 0.02);
+        sendGainsA[(size_t) s].setCurrentAndTargetValue (strips[(size_t) s].sendA.load());
+        sendGainsB[(size_t) s].reset (sampleRate, 0.02);
+        sendGainsB[(size_t) s].setCurrentAndTargetValue (strips[(size_t) s].sendB.load());
+    }
+    // The mixer's shared reverb and echo (up to 4 seconds of echo, for slow tempos).
+    sendBufferA.setSize (2, maxBlock);
+    sendBufferB.setSize (2, maxBlock);
+    echoLine.setSize (2, (int) (sampleRate * 4.0) + 1);
+    echoLine.clear();
+    echoWrite = 0;
+    echoTone[0] = echoTone[1] = 0.0f;
+    sendReverb.setSampleRate (sampleRate);
+    sendReverb.reset();
+    for (int r = 0; r < numReturns; ++r)
+    {
+        returnGains[(size_t) r].reset (sampleRate, 0.02);
+        returnGains[(size_t) r].setCurrentAndTargetValue (returns[(size_t) r].mute.load() ? 0.0f : faderGain (returns[(size_t) r].level.load()));
     }
     prepared = true;
 }
@@ -432,6 +500,12 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         }
     }
 
+    // The mixer: a solo anywhere silences the strips that aren't soloed; the sends fill up as
+    // each strip plays.
+    soloActive = anySolo();
+    for (auto* b : { &sendBufferA, &sendBufferB })
+        b->clear (0, n);
+
     juce::AudioBuffer<float> mpcBlock (mpcBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> samplerBlock (samplerBuffer.getArrayOfWritePointers(), 2, n);
     juce::AudioBuffer<float> vocoderBlock (vocoderBuffer.getArrayOfWritePointers(), 2, n);
@@ -628,6 +702,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     click.clear();
     transport.endBlock (n, &click);
 
+    processReturns (mix, n);
     fx[masterStrip].processBlock (mix, noMidi);
     performFx.process (mix, transport.getBlockPosition(), transport.getBpm(), transport.isPlayingThisBlock());
 
@@ -772,7 +847,8 @@ void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
         for (int ch = 0; ch < 2; ++ch)
             buffer.applyGainRamp (ch, 0, n, from, to);
     fx[(size_t) id].processBlock (buffer, noMidi);
-    gain.setTargetValue (strip.mute.load() ? 0.0f : faderGain (strip.level.load()));
+    const bool silenced = strip.mute.load() || (soloActive && ! strip.solo.load());
+    gain.setTargetValue (silenced ? 0.0f : faderGain (strip.level.load()));
     if (gain.isSmoothing())
     {
         for (int i = 0; i < n; ++i)
@@ -786,9 +862,108 @@ void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
     {
         buffer.applyGain (gain.getTargetValue());
     }
+
+    // Pan, after the fader: the middle leaves both sides as they were; turning it one way
+    // turns the other side down.
+    auto& pan = pans[(size_t) id];
+    pan.setTargetValue (juce::jlimit (-1.0f, 1.0f, strip.pan.load()));
+    if (pan.isSmoothing() || std::abs (pan.getTargetValue()) > 1.0e-4f)
+    {
+        auto* l = buffer.getWritePointer (0);
+        auto* r = buffer.getWritePointer (1);
+        for (int i = 0; i < n; ++i)
+        {
+            const float p = pan.getNextValue();
+            l[i] *= p > 0.0f ? 1.0f - p : 1.0f;
+            r[i] *= p < 0.0f ? 1.0f + p : 1.0f;
+        }
+    }
+
+    // The sends, after the fader and pan (so a muted strip sends nothing).
+    for (auto [send, amount, to] : { std::tuple<juce::LinearSmoothedValue<float>*, float, juce::AudioBuffer<float>*> { &sendGainsA[(size_t) id], strip.sendA.load(), &sendBufferA },
+                                     std::tuple<juce::LinearSmoothedValue<float>*, float, juce::AudioBuffer<float>*> { &sendGainsB[(size_t) id], strip.sendB.load(), &sendBufferB } })
+    {
+        send->setTargetValue (juce::jlimit (0.0f, 1.0f, amount));
+        if (! send->isSmoothing() && send->getTargetValue() <= 0.0f)
+            continue;
+        if (to->getNumSamples() < n)
+            continue;
+        const float from = send->getCurrentValue();
+        send->skip (n);
+        for (int ch = 0; ch < 2; ++ch)
+            to->addFromWithRamp (ch, 0, buffer.getReadPointer (ch), n, from, send->getCurrentValue());
+    }
+
     const float peak = juce::jmax (buffer.getMagnitude (0, 0, n), buffer.getMagnitude (1, 0, n));
     if (peak > strip.peak.load())
         strip.peak = peak;
+}
+
+void RigEngine::processReturns (juce::AudioBuffer<float>& mix, int n)
+{
+    if (sendBufferA.getNumSamples() < n || sendBufferB.getNumSamples() < n || echoLine.getNumSamples() < 2)
+        return;
+
+    // A: the reverb.
+    {
+        auto& ret = returns[reverbReturn];
+        juce::Reverb::Parameters p;
+        p.roomSize = juce::jlimit (0.0f, 1.0f, ret.amount.load());
+        p.damping = 1.0f - juce::jlimit (0.0f, 1.0f, ret.tone.load());
+        p.wetLevel = 1.0f;
+        p.dryLevel = 0.0f;
+        p.width = 1.0f;
+        sendReverb.setParameters (p);
+        sendReverb.processStereo (sendBufferA.getWritePointer (0), sendBufferA.getWritePointer (1), n);
+    }
+
+    // B: the echo, in time: each repeat crosses to the other side (ping-pong), a little darker.
+    {
+        auto& ret = returns[echoReturn];
+        const auto& times = echoTimes();
+        const double beats = times[(size_t) juce::jlimit (0, (int) times.size() - 1, ret.time.load())].second;
+        const double bpm = juce::jmax (20.0, transport.getBpm());
+        const int length = echoLine.getNumSamples();
+        const int delay = juce::jlimit (1, length - 1, (int) std::round (beats * 60.0 / bpm * sampleRate));
+        const float feedback = juce::jlimit (0.0f, 0.9f, ret.amount.load());
+        auto* inL = sendBufferB.getWritePointer (0);
+        auto* inR = sendBufferB.getWritePointer (1);
+        auto* lineL = echoLine.getWritePointer (0);
+        auto* lineR = echoLine.getWritePointer (1);
+        for (int i = 0; i < n; ++i)
+        {
+            int read = echoWrite - delay;
+            if (read < 0)
+                read += length;
+            const float dl = lineL[read], dr = lineR[read];
+            echoTone[0] += 0.45f * (dr - echoTone[0]);
+            echoTone[1] += 0.45f * (dl - echoTone[1]);
+            lineL[echoWrite] = inL[i] + echoTone[0] * feedback;
+            lineR[echoWrite] = inR[i] + echoTone[1] * feedback;
+            inL[i] = dl;
+            inR[i] = dr;
+            if (++echoWrite >= length)
+                echoWrite = 0;
+        }
+    }
+
+    for (int r = 0; r < numReturns; ++r)
+    {
+        auto& ret = returns[(size_t) r];
+        auto& buffer = r == reverbReturn ? sendBufferA : sendBufferB;
+        auto& gain = returnGains[(size_t) r];
+        gain.setTargetValue (ret.mute.load() ? 0.0f : faderGain (ret.level.load()));
+        const float from = gain.getCurrentValue();
+        gain.skip (n);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            buffer.applyGainRamp (ch, 0, n, from, gain.getCurrentValue());
+            mix.addFrom (ch, 0, buffer, ch, 0, n);
+        }
+        const float peak = juce::jmax (buffer.getMagnitude (0, 0, n), buffer.getMagnitude (1, 0, n));
+        if (peak > ret.peak.load())
+            ret.peak = peak;
+    }
 }
 
 void RigEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
@@ -857,7 +1032,23 @@ juce::ValueTree RigEngine::saveShow() const
         strip.setProperty ("name", stripName (s), nullptr);
         strip.setProperty ("level", strips[(size_t) s].level.load(), nullptr);
         strip.setProperty ("mute", strips[(size_t) s].mute.load(), nullptr);
+        strip.setProperty ("pan", strips[(size_t) s].pan.load(), nullptr);
+        strip.setProperty ("solo", strips[(size_t) s].solo.load(), nullptr);
+        strip.setProperty ("sendA", strips[(size_t) s].sendA.load(), nullptr);
+        strip.setProperty ("sendB", strips[(size_t) s].sendB.load(), nullptr);
         show.appendChild (strip, nullptr);
+    }
+    for (int r = 0; r < numReturns; ++r)
+    {
+        const auto& ret = returns[(size_t) r];
+        juce::ValueTree t ("Return");
+        t.setProperty ("name", returnName (r), nullptr);
+        t.setProperty ("level", ret.level.load(), nullptr);
+        t.setProperty ("mute", ret.mute.load(), nullptr);
+        t.setProperty ("amount", ret.amount.load(), nullptr);
+        t.setProperty ("tone", ret.tone.load(), nullptr);
+        t.setProperty ("time", ret.time.load(), nullptr);
+        show.appendChild (t, nullptr);
     }
 
     for (int c = 0; c < RigRouting::numControls; ++c)
@@ -891,6 +1082,37 @@ juce::ValueTree RigEngine::saveShow() const
             loop.setProperty ("fx", fxState.toBase64Encoding(), nullptr);
         }
         show.appendChild (loop, nullptr);
+    }
+
+    // The loop banks. The current one's layers are the Loops above; the others are kept here.
+    if (loopBanks.size() > 1 || (loopBanks.size() == 1 && loopBanks[0].name.isNotEmpty()))
+    {
+        juce::ValueTree banks ("LoopBanks");
+        banks.setProperty ("current", getCurrentLoopBank(), nullptr);
+        for (int b = 0; b < (int) loopBanks.size(); ++b)
+        {
+            const auto& bank = loopBanks[(size_t) b];
+            juce::ValueTree t ("LoopBank");
+            t.setProperty ("name", getLoopBankName (b), nullptr);
+            if (b != getCurrentLoopBank())
+                for (int i = 0; i < RigLooper::kLayers; ++i)
+                {
+                    const auto& l = bank.layers[(size_t) i];
+                    juce::ValueTree loop ("Loop");
+                    loop.setProperty ("index", i, nullptr);
+                    loop.setProperty ("source", l.source, nullptr);
+                    loop.setProperty ("bars", l.bars, nullptr);
+                    loop.setProperty ("level", l.level, nullptr);
+                    loop.setProperty ("mute", l.mute, nullptr);
+                    if (l.audio != nullptr && l.beats > 0)
+                        loop.setProperty ("beats", l.beats, nullptr);
+                    if (! l.fx.isEmpty())
+                        loop.setProperty ("fx", l.fx.toBase64Encoding(), nullptr);
+                    t.appendChild (loop, nullptr);
+                }
+            banks.appendChild (t, nullptr);
+        }
+        show.appendChild (banks, nullptr);
     }
 
     show.setProperty ("songMode", scenes.songMode, nullptr);
@@ -981,8 +1203,40 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     screens = show.getChildWithName ("Screens").isValid() ? show.getChildWithName ("Screens").createCopy() : juce::ValueTree ("Screens");
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
+        looper.cancelSwap (i);
         looper.reset (i);
         loadedLoopBeats[(size_t) i] = 0;
+        bankFxPending[(size_t) i] = false;
+    }
+    loopBanks.clear();
+    currentLoopBank = -1;
+    queuedLoopBank = -1;
+    if (const auto banks = show.getChildWithName ("LoopBanks"); banks.isValid())
+    {
+        for (const auto t : banks)
+        {
+            if (! t.hasType ("LoopBank") || (int) loopBanks.size() >= kMaxLoopBanks)
+                continue;
+            LoopBank bank;
+            bank.name = t.getProperty ("name").toString().substring (0, 40);
+            for (const auto loop : t)
+            {
+                const int i = loop.getProperty ("index", -1);
+                if (! loop.hasType ("Loop") || ! juce::isPositiveAndBelow (i, RigLooper::kLayers))
+                    continue;
+                auto& l = bank.layers[(size_t) i];
+                l.source = juce::jlimit (0, RigLooper::numSources - 1, (int) loop.getProperty ("source", (int) RigLooper::mix));
+                l.bars = (int) loop.getProperty ("bars", 0);
+                l.level = juce::jlimit (0.0f, 1.0f, (float) loop.getProperty ("level", 0.8f));
+                l.mute = (bool) loop.getProperty ("mute", false);
+                l.beats = juce::jmax (0.0, (double) loop.getProperty ("beats", 0.0));   // its sound comes in readLoopAudio
+                if (loop.hasProperty ("fx"))
+                    l.fx.fromBase64Encoding (loop.getProperty ("fx").toString());
+            }
+            loopBanks.push_back (std::move (bank));
+        }
+        if (! loopBanks.empty())
+            currentLoopBank = juce::jlimit (0, (int) loopBanks.size() - 1, (int) banks.getProperty ("current", 0));
     }
     // Shows from before the effects have none.
     for (auto& f : fx)
@@ -994,6 +1248,21 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     {
         s.level = 0.8f;
         s.mute = false;
+        s.pan = 0.0f;
+        s.solo = false;
+        s.sendA = 0.0f;
+        s.sendB = 0.0f;
+    }
+    for (int r = 0; r < numReturns; ++r)
+    {
+        const auto t = show.getChildWithProperty ("name", returnName (r));
+        auto& ret = returns[(size_t) r];
+        const bool has = t.hasType ("Return");
+        ret.level = juce::jlimit (0.0f, 1.0f, has ? (float) t.getProperty ("level", 0.8f) : 0.8f);
+        ret.mute = has && (bool) t.getProperty ("mute", false);
+        ret.amount = juce::jlimit (0.0f, 1.0f, has ? (float) t.getProperty ("amount", 0.5f) : 0.5f);
+        ret.tone = juce::jlimit (0.0f, 1.0f, has ? (float) t.getProperty ("tone", 0.5f) : 0.5f);
+        ret.time = juce::jlimit (0, (int) echoTimes().size() - 1, has ? (int) t.getProperty ("time", 1) : 1);
     }
     int strip = 0;
     for (const auto child : show)
@@ -1002,6 +1271,10 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         {
             strips[(size_t) strip].level = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("level", 0.8f));
             strips[(size_t) strip].mute = (bool) child.getProperty ("mute", false);
+            strips[(size_t) strip].pan = juce::jlimit (-1.0f, 1.0f, (float) child.getProperty ("pan", 0.0f));
+            strips[(size_t) strip].solo = strip != masterStrip && (bool) child.getProperty ("solo", false);
+            strips[(size_t) strip].sendA = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("sendA", 0.0f));
+            strips[(size_t) strip].sendB = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("sendB", 0.0f));
             ++strip;
         }
         else if (child.hasType ("Knob"))
@@ -1095,6 +1368,7 @@ RigScene::State RigEngine::captureScene()
     s.drumSequencer = getParameter (drums.params, "sequencer") > 0.5f ? 1 : 0;
     s.vocoderOn = vocoderOn.load() ? 1 : 0;
     s.inputOn = inputOn.load() ? 1 : 0;
+    s.loopBank = queuedLoopBank >= 0 ? queuedLoopBank : getCurrentLoopBank();
     for (int st = 0; st < numStrips && st < RigScene::kMaxStrips; ++st)
         s.stripMutes[(size_t) st] = st == masterStrip ? -1 : (strips[(size_t) st].mute.load() ? 1 : 0);
     for (int l = 0; l < RigLooper::kLayers; ++l)
@@ -1241,6 +1515,20 @@ void RigEngine::tickScenes()
         setParameter (bass.params, "pattern", (float) s.bassPattern);
     if (s.drumPattern >= 0)
         setParameter (drums.params, "pattern", (float) s.drumPattern);
+
+    // The part's loop bank comes in on its first beat (unless a layer is still recording).
+    if (s.loopBank >= 0 && s.loopBank < getNumLoopBanks()
+        && s.loopBank != (queuedLoopBank >= 0 ? queuedLoopBank : getCurrentLoopBank()))
+    {
+        juce::String why;
+        if (! loopBankBusy (why))
+        {
+            storeLoopBank();
+            const double at = ! transport.isPlaying() ? -1.0
+                              : scenes.getQueued() == early ? scenes.getQueuedBeat() : scenes.getCurrentStartBeat();
+            putLoopBankOnLayers (s.loopBank, at, &s);
+        }
+    }
 }
 
 //==============================================================================
@@ -1277,6 +1565,31 @@ bool RigEngine::writeLoopAudio (const juce::File& showFile) const
         else
             ok = false;
     }
+
+    // The other loop banks, each in its own folder ("Bank 2/Loop 1.wav").
+    for (int b = 0; b < (int) loopBanks.size(); ++b)
+    {
+        if (b == getCurrentLoopBank())
+            continue;
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+        {
+            const auto& l = loopBanks[(size_t) b].layers[(size_t) i];
+            if (l.audio == nullptr || l.beats <= 0 || l.audio->getNumSamples() == 0)
+                continue;
+            const auto sub = folder.getChildFile ("Bank " + juce::String (b + 1));
+            sub.createDirectory();
+            std::unique_ptr<juce::OutputStream> stream (sub.getChildFile ("Loop " + juce::String (i + 1) + ".wav").createOutputStream());
+            juce::WavAudioFormat wav;
+            const double rate = sampleRate > 0 ? sampleRate : 44100.0;
+            auto options = juce::AudioFormatWriterOptions().withSampleRate (rate).withNumChannels (2).withBitsPerSample (24);
+            if (stream == nullptr)
+                ok = false;
+            else if (auto writer = wav.createWriterFor (stream, options))
+                ok = writer->writeFromAudioSampleBuffer (*l.audio, 0, l.audio->getNumSamples()) && ok;
+            else
+                ok = false;
+        }
+    }
     return ok;
 }
 
@@ -1300,6 +1613,27 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
             juce::AudioBuffer<float> audio (2, (int) reader->lengthInSamples);
             reader->read (&audio, 0, audio.getNumSamples(), 0, true, true);
             looper.setLayerAudio (i, std::move (audio), beats);
+        }
+    }
+
+    for (int b = 0; b < (int) loopBanks.size(); ++b)
+    {
+        if (b == getCurrentLoopBank())
+            continue;
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+        {
+            auto& l = loopBanks[(size_t) b].layers[(size_t) i];
+            l.audio = nullptr;
+            const auto file = folder.getChildFile ("Bank " + juce::String (b + 1)).getChildFile ("Loop " + juce::String (i + 1) + ".wav");
+            if (l.beats > 0 && file.existsAsFile())
+                if (std::unique_ptr<juce::AudioFormatReader> reader { formats.createReaderFor (file) })
+                {
+                    auto audio = std::make_shared<juce::AudioBuffer<float>> (2, (int) reader->lengthInSamples);
+                    reader->read (audio.get(), 0, audio->getNumSamples(), 0, true, true);
+                    l.audio = std::move (audio);
+                }
+            if (l.audio == nullptr)
+                l.beats = 0;
         }
     }
 }
@@ -1338,4 +1672,263 @@ juce::String RigEngine::sendSlicesToMpc (std::vector<crate::SharedAudio> slices,
     if (count < (int) slices.size())
         text << " (The other " << ((int) slices.size() - count) << " didn't fit; a kit has 64 pads.)";
     return text;
+}
+
+//==============================================================================
+// Loop banks.
+int RigEngine::LoopBank::loopCount() const
+{
+    int n = 0;
+    for (const auto& l : layers)
+        n += l.audio != nullptr && l.beats > 0 ? 1 : 0;
+    return n;
+}
+
+juce::String RigEngine::getLoopBankName (int bank) const
+{
+    if (juce::isPositiveAndBelow (bank, (int) loopBanks.size()) && loopBanks[(size_t) bank].name.isNotEmpty())
+        return loopBanks[(size_t) bank].name;
+    return "Bank " + juce::String (bank + 1);
+}
+
+bool RigEngine::loopBankBusy (juce::String& why) const
+{
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto state = looper.getState (i);
+        if (state == RigLooper::State::armed || state == RigLooper::State::recording || state == RigLooper::State::overdubbing)
+        {
+            why = "Layer " + juce::String (i + 1) + " is "
+                  + (state == RigLooper::State::overdubbing ? "overdubbing" : state == RigLooper::State::armed ? "about to record" : "recording")
+                  + ". Finish it first, then switch banks.";
+            return true;
+        }
+    }
+    return false;
+}
+
+void RigEngine::storeLoopBank()
+{
+    if (loopBanks.empty())
+    {
+        loopBanks.emplace_back();
+        currentLoopBank = 0;
+    }
+    currentLoopBank = juce::jlimit (0, (int) loopBanks.size() - 1, currentLoopBank);
+    auto& bank = loopBanks[(size_t) currentLoopBank];
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto& live = looper.getLayer (i);
+        auto& l = bank.layers[(size_t) i];
+        // A layer whose new loop is still waiting for its bar: what's coming is already kept.
+        if (looper.isSwapPending (i))
+            continue;
+        // Only copies a loop that changed since it was last kept (versions move when it does).
+        const int version = live.version.load();
+        if (version != l.version)
+        {
+            auto audio = looper.copyLayerAudio (i);
+            const double beats = audio.getNumSamples() > 0 ? live.lengthBeats.load() : 0.0;
+            l.audio = beats > 0 ? std::make_shared<const juce::AudioBuffer<float>> (std::move (audio)) : nullptr;
+            l.beats = l.audio != nullptr ? beats : 0.0;
+            l.version = version;
+        }
+        l.source = live.source.load();
+        l.bars = live.bars.load();
+        l.level = live.level.load();
+        l.mute = live.mute.load();
+        l.fx.reset();
+        if (loopFx[(size_t) i].isActive())
+            loopFx[(size_t) i].getStateInformation (l.fx);
+    }
+}
+
+const std::vector<RigEngine::LoopBank>& RigEngine::getLoopBanks()
+{
+    storeLoopBank();
+    return loopBanks;
+}
+
+void RigEngine::applyBankFx (int i)
+{
+    auto& rack = loopFx[(size_t) i];
+    if (pendingBankFx[(size_t) i].isEmpty())
+        rack.reset();
+    else
+        rack.setStateInformation (pendingBankFx[(size_t) i].getData(), (int) pendingBankFx[(size_t) i].getSize());
+    bankFxPending[(size_t) i] = false;
+}
+
+void RigEngine::serviceLoopBanks()
+{
+    bool waiting = false;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        if (! bankFxPending[(size_t) i])
+            continue;
+        if (looper.isSwapPending (i))
+            waiting = true;
+        else
+        {
+            applyBankFx (i);
+            if (looper.getState (i) == RigLooper::State::empty)
+                looper.makeRoom (i);
+        }
+    }
+    if (! waiting)
+        queuedLoopBank = -1;
+}
+
+void RigEngine::putLoopBankOnLayers (int index, double beat, const RigScene::State* scene)
+{
+    const auto& bank = loopBanks[(size_t) index];
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto& l = bank.layers[(size_t) i];
+        auto& live = looper.getLayer (i);
+        live.source = l.source;
+        live.bars = l.bars;
+        bool mute = l.mute;
+        if (scene != nullptr && scene->loopMutes[(size_t) i] >= 0)
+            mute = scene->loopMutes[(size_t) i] == 1;
+        // The bank keeps its own copy; the layer gets one it can overdub on.
+        juce::AudioBuffer<float> audio;
+        if (l.audio != nullptr)
+            audio.makeCopyOf (*l.audio);
+        looper.queueLayerAudio (i, std::move (audio), l.audio != nullptr ? l.beats : 0.0, beat, l.level, mute);
+        pendingBankFx[(size_t) i] = l.fx;
+        bankFxPending[(size_t) i] = true;
+        loopBanks[(size_t) index].layers[(size_t) i].version = beat < 0 ? live.version.load() : -1;
+        if (beat < 0)
+        {
+            applyBankFx (i);
+            if (looper.getState (i) == RigLooper::State::empty)
+                looper.makeRoom (i);
+        }
+    }
+    currentLoopBank = index;
+    queuedLoopBank = beat < 0 ? -1 : index;
+}
+
+juce::String RigEngine::saveLoopBank (const juce::String& name)
+{
+    juce::String why;
+    if (loopBankBusy (why))
+        return why;
+    storeLoopBank();
+    auto& bank = loopBanks[(size_t) currentLoopBank];
+    if (name.trim().isNotEmpty())
+        bank.name = name.trim().substring (0, 40);
+    const int n = bank.loopCount();
+    return "Kept " + juce::String (n) + (n == 1 ? " loop" : " loops") + " in \"" + getLoopBankName (currentLoopBank)
+           + "\". Save the show (Cmd+S) to keep it on disk.";
+}
+
+juce::String RigEngine::newLoopBank (const juce::String& name)
+{
+    juce::String why;
+    if (loopBankBusy (why))
+        return why;
+    if ((int) loopBanks.size() >= kMaxLoopBanks)
+        return "That's the most banks a show can have (" + juce::String (kMaxLoopBanks) + "). Delete one first.";
+    storeLoopBank();
+    const auto kept = getLoopBankName (currentLoopBank);
+    LoopBank fresh;
+    fresh.name = name.trim().isNotEmpty() ? name.trim().substring (0, 40) : "Bank " + juce::String ((int) loopBanks.size() + 1);
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        // Ready to record the same way: the same sources and lengths.
+        fresh.layers[(size_t) i].source = looper.getLayer (i).source.load();
+        fresh.layers[(size_t) i].bars = looper.getLayer (i).bars.load();
+    }
+    loopBanks.insert (loopBanks.begin() + currentLoopBank + 1, std::move (fresh));
+    const int index = currentLoopBank + 1;
+    putLoopBankOnLayers (index, transport.isPlaying() ? std::ceil (transport.getPositionInBeats() / juce::jmax (1, transport.getBeatsPerBar()) - 1.0e-9) * juce::jmax (1, transport.getBeatsPerBar()) : -1.0, nullptr);
+    // Song parts that pick banks after it keep the same banks.
+    for (auto& scene : scenes.getScenes())
+        if (scene.state.loopBank >= index)
+            ++scene.state.loopBank;
+    return "Kept your loops in \"" + kept + "\" and started \"" + getLoopBankName (index)
+           + "\", empty and ready to record" + (transport.isPlaying() ? " (from the next bar)." : ".");
+}
+
+juce::String RigEngine::switchLoopBank (int index)
+{
+    if (! juce::isPositiveAndBelow (index, getNumLoopBanks()))
+        return {};
+    juce::String why;
+    if (loopBankBusy (why))
+        return why;
+    storeLoopBank();
+    if (index == currentLoopBank && queuedLoopBank < 0)
+        return "\"" + getLoopBankName (index) + "\" is the bank playing.";
+    const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+    const bool playing = transport.isPlaying();
+    putLoopBankOnLayers (index, playing ? std::ceil (transport.getPositionInBeats() / bpb - 1.0e-9) * bpb : -1.0, nullptr);
+    const int n = loopBanks[(size_t) index].loopCount();
+    return "\"" + getLoopBankName (index) + "\" (" + juce::String (n) + (n == 1 ? " loop" : " loops") + ")"
+           + (playing ? " comes in at the next bar." : " is on the layers.");
+}
+
+juce::String RigEngine::duplicateLoopBank (int index)
+{
+    if (! juce::isPositiveAndBelow (index, getNumLoopBanks()))
+        return {};
+    if ((int) loopBanks.size() >= kMaxLoopBanks)
+        return "That's the most banks a show can have (" + juce::String (kMaxLoopBanks) + "). Delete one first.";
+    storeLoopBank();
+    auto copy = loopBanks[(size_t) index];   // the sounds are shared until one is recorded over
+    copy.name = getLoopBankName (index).substring (0, 34) + " copy";
+    loopBanks.insert (loopBanks.begin() + index + 1, std::move (copy));
+    if (currentLoopBank > index)
+        ++currentLoopBank;
+    if (queuedLoopBank > index)
+        ++queuedLoopBank;
+    for (auto& scene : scenes.getScenes())
+        if (scene.state.loopBank > index)
+            ++scene.state.loopBank;
+    return "Made \"" + getLoopBankName (index + 1) + "\". Switch to it to change it; \"" + getLoopBankName (index) + "\" stays as it is.";
+}
+
+juce::String RigEngine::renameLoopBank (int index, const juce::String& name)
+{
+    if (! juce::isPositiveAndBelow (index, getNumLoopBanks()) || name.trim().isEmpty())
+        return {};
+    storeLoopBank();
+    loopBanks[(size_t) index].name = name.trim().substring (0, 40);
+    return "Renamed the bank \"" + getLoopBankName (index) + "\".";
+}
+
+juce::String RigEngine::deleteLoopBank (int index)
+{
+    if (! juce::isPositiveAndBelow (index, (int) loopBanks.size()))
+        return {};
+    if (loopBanks.size() < 2)
+        return "That's your only bank. Clear its layers instead.";
+    const auto name = getLoopBankName (index);
+    if (index == currentLoopBank)
+    {
+        juce::String why;
+        if (loopBankBusy (why))
+            return why;
+        const int to = index > 0 ? index - 1 : 1;
+        storeLoopBank();
+        const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+        putLoopBankOnLayers (to, transport.isPlaying() ? std::ceil (transport.getPositionInBeats() / bpb - 1.0e-9) * bpb : -1.0, nullptr);
+    }
+    else
+        storeLoopBank();
+    loopBanks.erase (loopBanks.begin() + index);
+    if (currentLoopBank > index)
+        --currentLoopBank;
+    if (queuedLoopBank > index)
+        --queuedLoopBank;
+    for (auto& scene : scenes.getScenes())
+    {
+        if (scene.state.loopBank == index)
+            scene.state.loopBank = -1;
+        else if (scene.state.loopBank > index)
+            --scene.state.loopBank;
+    }
+    return "Deleted \"" + name + "\". Now playing \"" + getLoopBankName (currentLoopBank) + "\".";
 }

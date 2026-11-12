@@ -13,7 +13,7 @@ namespace rigpanels
 class PanelButton : public juce::Button
 {
 public:
-    enum class Icon { none, play, stop, rec };
+    enum class Icon { none, play, stop, rec, back, forward };
 
     explicit PanelButton (const juce::String& text = {});
     void paintButton (juce::Graphics&, bool over, bool down) override;
@@ -36,6 +36,9 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
     PanelButton play { "Play" }, stop { "Stop" }, rec { "Rec" }, up { "+" }, down { juce::String::fromUTF8 ("\xe2\x88\x92") }, tap { "Tap" };
+    // Starting a song from nothing: a blank song, then its first pattern (a beat, a bass line,
+    // keys...), and the next.
+    PanelButton newSong { "New song" }, newPattern { "New pattern" };
     std::function<void()> onMic;
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
 
@@ -67,12 +70,14 @@ public:
     ScreenBar();
     void resized() override;
 
-    // The five screens, as their pages are named.
+    // The six screens, as their pages are named.
     static const juce::StringArray& screens();
     static juce::String label (int);
     void setCurrent (const juce::String& page);
 
     juce::OwnedArray<PanelButton> tabs;
+    // Back and forward through the screens you've been on (Cmd+[ and Cmd+]).
+    PanelButton back { "Back" }, forward { "Forward" };
     PanelButton more { "More" };
     PanelButton help { "?" };   // the how-to guide
     std::function<void (const juce::String& page)> onScreen;

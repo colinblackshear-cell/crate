@@ -65,6 +65,35 @@ const char* voiceShort (int v)
     return juce::isPositiveAndBelow (v, kVoices) ? names[v] : "";
 }
 
+juce::StringArray soundNames (int v)
+{
+    switch (v)
+    {
+        case kick:      return { "Classic", "Long boom", "Punch", "Distorted" };
+        case snare:     return { "Classic", "Tight", "Fat" };
+        case clap:      return { "Clap", "Maracas" };
+        case rim:       return { "Rim shot", "Side stick" };
+        case lowTom: case midTom: case highTom:
+                        return { "Tom", "Conga" };
+        case clave:     return { "Clave", "Woodblock" };
+        case cowbell:   return { "Cowbell", "Agogo" };
+        case closedHat: return { "Classic", "Tight", "Shaker" };
+        case openHat:   return { "Classic", "Trashy" };
+        case cymbal:    return { "Crash", "Ride" };
+        default:        return { "Classic" };
+    }
+}
+
+bool Plan::sameRun (const Plan& o) const
+{
+    if (pattern != o.pattern || variation != o.variation || chainOn != o.chainOn || chainLength != o.chainLength)
+        return false;
+    for (int i = 0; i < juce::jlimit (0, kChain, chainLength); ++i)
+        if (chain[(size_t) i] != o.chain[(size_t) i])
+            return false;
+    return true;
+}
+
 int noteForVoice (int v) { return juce::isPositiveAndBelow (v, kVoices) ? 36 + kSemitone[v] : -1; }
 
 int voiceForNote (int note)
@@ -91,11 +120,11 @@ bool Pattern::operator== (const Pattern& o) const { return hits == o.hits && acc
 
 double stepBeats (int rate)
 {
-    static constexpr double values[] = { 0.5, 0.25, 1.0 / 6.0, 0.125 };
-    return values[juce::jlimit (0, 3, rate)];
+    static constexpr double values[] = { 0.5, 0.25, 1.0 / 6.0, 0.125, 1.0 / 3.0 };
+    return values[juce::jlimit (0, 4, rate)];
 }
 
-juce::StringArray stepRateNames() { return { "1/8", "1/16", "1/16 T", "1/32" }; }
+juce::StringArray stepRateNames() { return { "1/8", "1/16", "1/16 T", "1/32", "1/8 T" }; }
 
 //==============================================================================
 void Engine::Svf::set (float hz, float q, float rate)
@@ -137,9 +166,13 @@ void Engine::reset()
         s = VoiceState {};
     rolls = {};
     lastFired = -1;
-    lastLoop = -1;
+    loopCount = 0;
+    current = nullptr;
+    position = 0;
     currentStep = -1;
-    inFill = false;
+    currentCode = -1;
+    chainPos = 0;
+    inFill = inIntro = false;
     fillQueued = false;
     wasPlaying = false;
     driveState = 0;
@@ -169,11 +202,14 @@ void Engine::start (int v, float velocity, bool accent)
     if (! juce::isPositiveAndBelow (v, kVoices))
         return;
     const auto& vs = settings.voices[(size_t) v];
+    if (vs.mute)
+        return;
     auto& s = state[(size_t) v];
     const float ratio = std::exp2 (juce::jlimit (-24.0f, 24.0f, vs.tune) / 12.0f);
     const float rate = (float) sampleRate;
     const float tone = juce::jlimit (0.0f, 1.0f, vs.tone);
-    const float decay = decaySeconds (v, vs.decay);
+    const int sound = juce::jlimit (0, soundNames (v).size() - 1, vs.sound);
+    float decay = decaySeconds (v, vs.decay);
 
     float human = 1.0f;
     if (settings.humanize > 0.0f)
@@ -182,52 +218,110 @@ void Engine::start (int v, float velocity, bool accent)
     s.active = true;
     s.t = 0;
     s.env = 1.0f;
-    s.envCoeff = coeffFor (decay, invRate);
     s.env2 = 1.0f;
     s.env2Coeff = 0;
     s.clickEnv = 1.0f;
+    s.sound = sound;
     for (auto& p : s.phase)
         p = 0;
+    s.bell = 0;
 
     switch (v)
     {
         case kick:
-            s.pitch = 49.0f * ratio;
-            s.env2Coeff = coeffFor (0.09f + 0.05f * (1.0f - tone), invRate);   // the pitch drop
+        {
+            // Classic, Long boom (the deep sub with a slow pitch glide), Punch, Distorted.
+            static constexpr float pitch[] = { 49.0f, 43.0f, 58.0f, 49.0f };
+            static constexpr float drop[] = { 0.09f, 0.2f, 0.035f, 0.09f };
+            s.pitch = pitch[sound] * ratio;
+            s.env2Coeff = coeffFor (drop[sound] + (sound == 1 ? 0.15f : 0.05f) * (1.0f - tone), invRate);   // the pitch drop
+            if (sound == 1)
+                decay *= 1.8f;
             break;
+        }
         case snare:
-            s.pitch = 182.0f * ratio;
-            s.env2Coeff = coeffFor (0.12f + 0.25f * vs.decay, invRate);           // the drum's body
-            s.f1.set (1500.0f + 2500.0f * tone, 0.7f, rate);
+        {
+            // Classic, Tight, Fat.
+            static constexpr float pitch[] = { 182.0f, 238.0f, 150.0f };
+            static constexpr float body[] = { 1.0f, 0.6f, 1.5f };
+            s.pitch = pitch[sound] * ratio;
+            s.env2Coeff = coeffFor ((0.12f + 0.25f * vs.decay) * body[sound], invRate);   // the drum's body
+            if (sound == 1)
+                s.f1.set (2600.0f + 3500.0f * tone, 0.7f, rate);
+            else if (sound == 2)
+                s.f1.set (900.0f + 1800.0f * tone, 0.6f, rate);
+            else
+                s.f1.set (1500.0f + 2500.0f * tone, 0.7f, rate);
             break;
+        }
         case clap:
-            s.f1.set (1100.0f * ratio * (0.7f + 0.6f * tone), 1.6f, rate);
+            if (sound == 1)
+            {
+                // Maracas: a short hiss of high noise.
+                decay *= 0.25f;
+                s.f1.set (5500.0f + 4500.0f * tone, 0.7f, rate);
+            }
+            else
+            {
+                s.f1.set (1100.0f * ratio * (0.7f + 0.6f * tone), 1.6f, rate);
+            }
             break;
         case rim:
-            s.pitch = 1720.0f * ratio;
-            s.f1.set (380.0f, 0.7f, rate);
+            s.pitch = (sound == 1 ? 880.0f : 1720.0f) * ratio;
+            s.f1.set (sound == 1 ? 1400.0f : 380.0f, 0.7f, rate);
+            if (sound == 1)
+                decay *= 1.6f;
             break;
         case lowTom: case midTom: case highTom:
-            s.pitch = (v == lowTom ? 86.0f : v == midTom ? 122.0f : 168.0f) * ratio;
-            s.env2Coeff = coeffFor (0.25f, invRate);
+        {
+            const int i = v - lowTom;
+            static constexpr float tom[] = { 86.0f, 122.0f, 168.0f };
+            static constexpr float conga[] = { 165.0f, 247.0f, 370.0f };
+            s.pitch = (sound == 1 ? conga[i] : tom[i]) * ratio;
+            s.env2Coeff = coeffFor (sound == 1 ? 0.03f : 0.25f, invRate);
             s.f1.set (2500.0f, 0.8f, rate);
+            if (sound == 1)
+                decay *= 0.55f;
             break;
+        }
         case clave:
-            s.pitch = 2480.0f * ratio;
+            s.pitch = (sound == 1 ? 980.0f : 2480.0f) * ratio;
+            if (sound == 1)
+                decay *= 1.4f;
             break;
         case cowbell:
-            s.freqs[0] = 540.0f * ratio;
-            s.freqs[1] = 800.0f * ratio;
+            s.freqs[0] = (sound == 1 ? 920.0f : 540.0f) * ratio;
+            s.freqs[1] = (sound == 1 ? 1385.0f : 800.0f) * ratio;
             s.env2Coeff = coeffFor (0.05f, invRate);
-            s.f1.set (2640.0f * ratio * (0.75f + 0.5f * tone), 2.6f, rate);
+            s.f1.set ((sound == 1 ? 1900.0f : 2640.0f) * ratio * (0.75f + 0.5f * tone), sound == 1 ? 1.4f : 2.6f, rate);
             break;
         case closedHat: case openHat: case cymbal:
+        {
+            const bool ride = v == cymbal && sound == 1;
+            const bool trashy = v == openHat && sound == 1;
             for (int i = 0; i < 6; ++i)
-                s.freqs[i] = kMetal[i] * ratio;
+                s.freqs[i] = kMetal[i] * ratio * (ride ? 1.45f : trashy ? (i % 2 == 0 ? 1.27f : 0.93f) : 1.0f);
+            s.env2Coeff = coeffFor (0.004f, invRate);   // the tick at the start
             if (v == cymbal)
             {
-                s.f1.set (7000.0f * (0.7f + 0.6f * tone), 0.9f, rate);
-                s.f2.set (3500.0f + 4000.0f * tone, 0.7f, rate);
+                s.f1.set ((ride ? 9000.0f : 7000.0f) * (0.7f + 0.6f * tone), 0.9f, rate);
+                s.f2.set ((ride ? 6500.0f : 3500.0f) + 4000.0f * tone, 0.7f, rate);
+                if (ride)
+                    decay *= 1.3f;
+            }
+            else if (v == closedHat && sound == 1)
+            {
+                // Tight: higher and shorter.
+                s.f1.set (12500.0f * (0.85f + 0.2f * tone), 1.1f, rate);
+                s.f2.set (8000.0f + 4000.0f * tone, 0.7f, rate);
+                decay *= 0.6f;
+            }
+            else if (v == closedHat && sound == 2)
+            {
+                // Shaker: noise, with a soft start.
+                s.f1.set (6000.0f + 5000.0f * tone, 0.8f, rate);
+                s.f2.set (4000.0f + 3000.0f * tone, 0.7f, rate);
+                decay *= 1.4f;
             }
             else
             {
@@ -238,9 +332,11 @@ void Engine::start (int v, float velocity, bool accent)
             if (v == closedHat && state[openHat].active)
                 state[openHat].envCoeff = coeffFor (0.012f, invRate);
             break;
+        }
         default:
             break;
     }
+    s.envCoeff = coeffFor (decay, invRate);
     ++hitCounts[(size_t) v];
     tap (v, velocity);
 }
@@ -249,6 +345,8 @@ float Engine::renderVoice (int v, VoiceState& s)
 {
     const auto& vs = settings.voices[(size_t) v];
     const float tone = juce::jlimit (0.0f, 1.0f, vs.tone);
+    const float snappy = juce::jlimit (0.0f, 1.0f, vs.snappy);
+    const int sound = s.sound;
     float out = 0, lp, bp, hp;
     float level = s.env;
 
@@ -257,36 +355,52 @@ float Engine::renderVoice (int v, VoiceState& s)
         case kick:
         {
             // A sine that drops in pitch, with a click on top.
-            const float hz = s.pitch * (1.0f + (1.2f + 2.4f * tone) * s.env2 * s.env2);
+            const float sweep = sound == 1 ? 0.6f + 1.4f * tone : sound == 2 ? 2.0f + 3.0f * tone : 1.2f + 2.4f * tone;
+            const float hz = s.pitch * (1.0f + sweep * s.env2 * s.env2);
             advance (s.phase[0], hz, invRate);
             const float body = sine (s.phase[0]);
-            const float click = s.clickEnv * (0.6f * noise() + 0.8f) * tone * 0.55f;
-            s.clickEnv *= 0.985f;
+            const float click = s.clickEnv * (0.6f * noise() + 0.8f) * snappy * (sound == 2 ? 0.9f : 0.55f);
+            s.clickEnv *= sound == 2 ? 0.975f : 0.985f;
             out = (body * s.env + click * s.clickEnv) * 1.05f;
-            out = std::tanh (out * 1.4f) * 0.8f;
+            if (sound == 3)
+                out = std::tanh (out * 4.5f) * 0.62f;
+            else if (sound == 1)
+                out = std::tanh (out * 2.0f) * 0.7f;
+            else
+                out = std::tanh (out * 1.4f) * 0.8f;
             s.env2 *= s.env2Coeff;
             break;
         }
         case snare:
         {
+            // Two tuned drums (Tone sets their balance) and the snares (Snappy).
             advance (s.phase[0], s.pitch, invRate);
             advance (s.phase[1], s.pitch * 1.76f, invRate);
-            const float body = (0.65f * sine (s.phase[0]) + 0.35f * sine (s.phase[1])) * s.env2 * s.env2;
+            const float w2 = 0.15f + 0.4f * tone;
+            const float body = ((1.0f - w2) * sine (s.phase[0]) + w2 * sine (s.phase[1])) * s.env2 * s.env2;
             s.f1.process (noise(), lp, bp, hp);
-            const float snap = hp * s.env;
-            out = body * (0.9f - 0.45f * tone) + snap * (0.35f + 0.85f * tone);
+            const float snap = (sound == 2 ? bp * 1.4f : hp) * s.env;
+            out = body * (0.95f - 0.4f * snappy) + snap * (0.15f + 1.2f * snappy);
             s.env2 *= s.env2Coeff;
             level = juce::jmax (s.env, s.env2);
             break;
         }
         case clap:
         {
-            // A few quick bursts of noise, then the tail.
+            s.f1.process (noise(), lp, bp, hp);
+            if (sound == 1)
+            {
+                // Maracas: Snappy makes the start sharper.
+                const float attack = 0.001f + 0.009f * (1.0f - snappy);
+                out = hp * s.env * juce::jmin (1.0f, s.t / attack) * 1.3f;
+                break;
+            }
+            // A few quick bursts of noise, then the tail. Snappy makes the bursts sharper.
+            const float tau = 0.0015f + 0.0045f * (1.0f - snappy);
             float e = 0;
             if (s.t < 0.034f)
-                e = std::exp (-std::fmod (s.t, 0.0108f) / 0.0028f);
+                e = std::exp (-std::fmod (s.t, 0.0108f) / tau);
             const float tail = s.t > 0.022f ? s.env : 0.0f;
-            s.f1.process (noise(), lp, bp, hp);
             out = bp * juce::jmax (e, tail) * 2.4f;
             level = juce::jmax (e, s.env);
             break;
@@ -294,19 +408,40 @@ float Engine::renderVoice (int v, VoiceState& s)
         case rim:
         {
             advance (s.phase[0], s.pitch, invRate);
-            advance (s.phase[1], s.pitch * 0.28f, invRate);
+            advance (s.phase[1], s.pitch * (sound == 1 ? 1.71f : 0.28f), invRate);
+            const float click = s.clickEnv * noise() * snappy * 0.5f;
+            s.clickEnv *= 0.99f;
+            if (sound == 1)
+            {
+                const float x = sine (s.phase[0]) + 0.5f * tone * sine (s.phase[1]);
+                s.f1.process (x + click, lp, bp, hp);
+                out = (bp * 1.4f + x * 0.3f) * s.env * 0.7f;
+                break;
+            }
             const float x = 0.6f * square (s.phase[0]) * (0.4f + 0.6f * tone) + 0.7f * sine (s.phase[1]);
-            s.f1.process (x, lp, bp, hp);
+            s.f1.process (x + click, lp, bp, hp);
             out = hp * s.env * 0.75f;
             break;
         }
         case lowTom: case midTom: case highTom:
         {
-            const float hz = s.pitch * (1.0f + 0.35f * s.env2);
+            const float sweep = sound == 1 ? 0.05f + 0.25f * tone : 0.15f + 0.4f * tone;
+            const float hz = s.pitch * (1.0f + sweep * s.env2);
             advance (s.phase[0], hz, invRate);
-            s.f1.process (noise(), lp, bp, hp);
-            const float skin = lp * s.clickEnv * tone * 0.5f;
-            s.clickEnv *= 0.996f;
+            float skin = 0;
+            if (sound == 1)
+            {
+                // The conga's slap: a quick overtone.
+                advance (s.phase[1], hz * 2.3f, invRate);
+                skin = sine (s.phase[1]) * s.clickEnv * snappy * 0.6f;
+                s.clickEnv *= 0.993f;
+            }
+            else
+            {
+                s.f1.process (noise(), lp, bp, hp);
+                skin = lp * s.clickEnv * snappy * 0.5f;
+                s.clickEnv *= 0.996f;
+            }
             out = sine (s.phase[0]) * s.env * 0.9f + skin;
             s.env2 *= s.env2Coeff;
             break;
@@ -314,18 +449,22 @@ float Engine::renderVoice (int v, VoiceState& s)
         case clave:
         {
             advance (s.phase[0], s.pitch, invRate);
-            advance (s.phase[1], s.pitch * 1.58f, invRate);
-            out = (sine (s.phase[0]) + tone * 0.5f * sine (s.phase[1])) * s.env * 0.7f;
+            advance (s.phase[1], s.pitch * (sound == 1 ? 2.72f : 1.58f), invRate);
+            const float click = s.clickEnv * noise() * snappy * 0.4f;
+            s.clickEnv *= 0.99f;
+            out = (sine (s.phase[0]) + tone * 0.5f * sine (s.phase[1])) * s.env * (sound == 1 ? 0.8f : 0.7f) + click;
             break;
         }
         case cowbell:
         {
             advance (s.phase[0], s.freqs[0], invRate);
             advance (s.phase[1], s.freqs[1], invRate);
-            const float x = 0.5f * (square (s.phase[0]) + square (s.phase[1]));
+            const float x = sound == 1 ? 0.5f * (sine (s.phase[0]) + sine (s.phase[1])) : 0.5f * (square (s.phase[0]) + square (s.phase[1]));
             s.f1.process (x, lp, bp, hp);
-            const float e = 0.6f * s.env2 + 0.4f * s.env;
-            out = bp * e * 1.6f;
+            // Snappy: how much of the bright clank at the start.
+            const float a = 0.3f + 0.6f * snappy;
+            const float e = a * s.env2 + (1.0f - a) * s.env;
+            out = (sound == 1 ? bp * 1.2f + x * 0.4f : bp * 1.6f) * e;
             s.env2 *= s.env2Coeff;
             level = e;
             break;
@@ -333,17 +472,35 @@ float Engine::renderVoice (int v, VoiceState& s)
         case closedHat: case openHat: case cymbal:
         {
             float x = 0;
-            for (int i = 0; i < 6; ++i)
+            if (v == closedHat && sound == 2)
             {
-                advance (s.phase[i], s.freqs[i], invRate);
-                x += square (s.phase[i]);
+                x = noise() * juce::jmin (1.0f, s.t / 0.006f);
             }
-            x *= 1.0f / 6.0f;
+            else
+            {
+                for (int i = 0; i < 6; ++i)
+                {
+                    advance (s.phase[i], s.freqs[i], invRate);
+                    x += square (s.phase[i]);
+                }
+                x *= 1.0f / 6.0f;
+                if (v == openHat && sound == 1)
+                    x = 0.7f * x + 0.35f * noise();
+            }
+            // Snappy: a tick of noise at the very start.
+            x += s.env2 * noise() * snappy * 0.6f;
+            s.env2 *= s.env2Coeff;
             s.f1.process (x, lp, bp, hp);
             float lp2, bp2, hp2;
             s.f2.process (bp, lp2, bp2, hp2);
             const float e = v == cymbal ? s.env * (0.75f + 0.25f * s.clickEnv) : s.env;
             out = hp2 * e * (v == cymbal ? 1.6f : 1.9f);
+            if (v == cymbal && sound == 1)
+            {
+                // The ride's bell.
+                advance (s.bell, s.freqs[5] * 4.1f, invRate);
+                out += sine (s.bell) * s.env * s.clickEnv * tone * 0.18f;
+            }
             s.clickEnv *= 0.999f;
             break;
         }
@@ -399,16 +556,106 @@ void Engine::hitStep (int step, const Pattern& p, double stepStart, double stepL
     }
 }
 
+const Pattern* Engine::byCode (int code) const
+{
+    if (bankA == nullptr)
+        return pattern;
+    const int p = juce::jlimit (0, kPatterns - 1, code >> 1);
+    return ((code & 1) != 0 && bankB != nullptr ? bankB : bankA) + p;
+}
+
+const Pattern* Engine::basePattern (long long loop, int& code) const
+{
+    if (bankA == nullptr)
+    {
+        code = 0;
+        return pattern;
+    }
+    if (plan.chainOn && plan.chainLength > 0)
+        code = plan.chain[(size_t) juce::jlimit (0, plan.chainLength - 1, chainPos)];
+    else
+        code = juce::jlimit (0, kPatterns - 1, plan.pattern) * 2
+               + ((plan.variation == Plan::b || (plan.variation == Plan::aThenB && (loop & 1) != 0)) ? 1 : 0);
+    return byCode (code);
+}
+
+namespace
+{
+int lengthOf (const Pattern* p) { return p != nullptr ? juce::jlimit (1, kMaxSteps, p->length) : 16; }
+}
+
+void Engine::resync (long long index)
+{
+    // Where the patterns are at this step, counting from the top (after a jump, a new pattern or
+    // a start part-way through).
+    inFill = inIntro = false;
+    if (bankA != nullptr && plan.chainOn && plan.chainLength > 0)
+    {
+        const int entries = juce::jlimit (1, kChain, plan.chainLength);
+        long long total = 0;
+        for (int e = 0; e < entries; ++e)
+            total += lengthOf (byCode (plan.chain[(size_t) e]));
+        long long k = index % total;
+        chainPos = 0;
+        while (chainPos < entries - 1 && k >= lengthOf (byCode (plan.chain[(size_t) chainPos])))
+            k -= lengthOf (byCode (plan.chain[(size_t) chainPos++]));
+        position = (int) k;
+        loopCount = (index / total) * entries + chainPos;
+    }
+    else
+    {
+        const int length = lengthOf (bankA != nullptr ? byCode (juce::jlimit (0, kPatterns - 1, plan.pattern) * 2) : pattern);
+        loopCount = index / length;
+        position = (int) (index % length);
+        chainPos = 0;
+    }
+    current = basePattern (loopCount, currentCode);
+    position %= lengthOf (current);
+    if (position == 0)
+    {
+        const Pattern* fill = bankA != nullptr ? (plan.fill >= 0 ? bankA + juce::jlimit (0, kPatterns - 1, plan.fill) : nullptr) : fillPattern;
+        const bool every = settings.fillEvery > 1 && (loopCount % settings.fillEvery) == settings.fillEvery - 1;
+        const bool once = fillOnce.exchange (false);
+        if (fill != nullptr && (every || once))
+        {
+            inFill = true;
+            current = fill;
+            currentCode = bankA != nullptr ? plan.fill * 2 : -1;
+        }
+    }
+}
+
+void Engine::nextLoop()
+{
+    const bool afterIntro = inIntro;
+    inIntro = inFill = false;
+    ++loopCount;
+    if (! afterIntro && bankA != nullptr && plan.chainOn && plan.chainLength > 0)
+        chainPos = (chainPos + 1) % juce::jlimit (1, kChain, plan.chainLength);
+    current = basePattern (loopCount, currentCode);
+
+    const Pattern* fill = bankA != nullptr ? (plan.fill >= 0 ? bankA + juce::jlimit (0, kPatterns - 1, plan.fill) : nullptr) : fillPattern;
+    const bool every = settings.fillEvery > 1 && loopCount >= 0 && (loopCount % settings.fillEvery) == settings.fillEvery - 1;
+    const bool once = fillOnce.exchange (false);
+    if (fill != nullptr && (every || once))
+    {
+        inFill = true;
+        current = fill;
+        currentCode = bankA != nullptr ? plan.fill * 2 : -1;
+    }
+}
+
 void Engine::render (float* left, float* right, int numSamples, const juce::MidiBuffer& midi, const Clock& clock)
 {
     const double beatsPerSample = clock.bpm / (60.0 * sampleRate);
-    const bool sequencing = clock.playing && settings.sequencerOn && pattern != nullptr;
+    const bool sequencing = clock.playing && settings.sequencerOn && (pattern != nullptr || bankA != nullptr);
     if (wasPlaying && ! sequencing)
     {
         currentStep = -1;
+        currentCode = -1;
         lastFired = -1;
-        lastLoop = -1;
-        inFill = false;
+        current = nullptr;
+        inFill = inIntro = false;
         rolls = {};
     }
     wasPlaying = sequencing;
@@ -441,25 +688,38 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
             const long long index = ((raw & 1) != 0 && into < swingOffset) ? raw - 1 : raw;
             if (index != lastFired && index >= 0)
             {
+                const bool fresh = lastFired < 0;
+                const bool contiguous = ! fresh && index == lastFired + 1 && current != nullptr && plan.sameRun (lastPlan)
+                                        && (bankA != nullptr || pattern == lastSimple);
                 lastFired = index;
-                const int length = juce::jlimit (1, kMaxSteps, pattern->length);
-                const long long loop = index / length;
-                const int s = (int) (index % length);
-                if (s == 0 || loop != lastLoop)
+                lastPlan = plan;
+                lastSimple = pattern;
+                if (contiguous)
                 {
-                    if (loop != lastLoop)
+                    if (++position >= lengthOf (current))
                     {
-                        lastLoop = loop;
-                        const bool every = settings.fillEvery > 1 && (loop % settings.fillEvery) == settings.fillEvery - 1;
-                        const bool once = s == 0 && fillOnce.exchange (false);
-                        inFill = fillPattern != nullptr && s == 0 && (every || once);
+                        position = 0;
+                        nextLoop();
                     }
                 }
-                const Pattern& p = inFill ? *fillPattern : *pattern;
-                const int ps = s % juce::jlimit (1, kMaxSteps, p.length);
-                currentStep = s;
+                else if (fresh && index == 0 && bankA != nullptr && plan.intro >= 0)
+                {
+                    // The intro plays once, then the beat (or the chain) from its top.
+                    inFill = false;
+                    inIntro = true;
+                    chainPos = 0;
+                    loopCount = -1;
+                    position = 0;
+                    currentCode = juce::jlimit (0, kPatterns - 1, plan.intro) * 2;
+                    current = byCode (currentCode);
+                }
+                else
+                {
+                    resync (index);
+                }
+                currentStep = position;
                 const double start = (double) index * sb + ((index & 1) != 0 ? swingOffset : 0.0);
-                hitStep (ps, p, start, (index & 1) != 0 ? sb - swingOffset : sb + swingOffset);
+                hitStep (position, *current, start, (index & 1) != 0 ? sb - swingOffset : sb + swingOffset);
             }
             for (int v = 0; v < kVoices; ++v)
             {

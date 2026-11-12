@@ -33,8 +33,11 @@ AnalogScreen::AnalogScreen (juce::AudioProcessorValueTreeState& p, PluginSlot& s
         updateEngineButtons();
     };
 
-    for (auto* b : { &builtIn, &plugin, &soundPrev, &soundNext, &soundMenu })
+    for (auto* b : { &builtIn, &plugin, &soundPrev, &soundNext, &soundMenu, &effects })
         addAndMakeVisible (b);
+    effects.setTooltip ("The " + trackName + "'s pedals: delay, reverb, an amp, chorus, phaser, wah... with their own settings, "
+                        "on the Effects screen.");
+    effects.onClick = [this] { if (onEffects) onEffects(); };
     builtIn.setTooltip ("The " + trackName + "'s own analog sound. A plugin you loaded stays in the shell, switched off, to come back to.");
     plugin.setTooltip ("The instrument shell: your Arturia synths (or any instrument plugin) play the " + trackName + "'s keys, steps and arp.");
     builtIn.onClick = [this] { showEngine (false); };
@@ -272,6 +275,7 @@ void AnalogScreen::resized()
     plate.removeFromRight (4);
     soundPrev.setBounds (plate.removeFromRight (30));
     soundPrev.setBounds (soundPrev.getBounds().withX (soundLcd.getX() - 34));
+    effects.setBounds (soundPrev.getBounds().withWidth (84).withX (soundPrev.getX() - 96));
     area.removeFromTop (10);
 
     // The keys at the bottom, in their bed.

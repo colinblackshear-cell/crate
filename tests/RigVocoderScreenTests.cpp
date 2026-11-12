@@ -162,10 +162,37 @@ struct RigVocoderScreenTests : juce::UnitTest
             VocoderScreen screen (engine, new juce::Component(), true);
             screen.setSize (1400, 600);
 
+            // The mic starts off (no feedback through speakers), so you can see your voice but not hear it.
+            expect (! engine.micOn.load());
+            expect (! screen.isMonitoring(), "the wave shows, but the mic is off: not monitoring");
+            engine.getStrip (RigEngine::vocoderStrip).mute = true;
+            engine.vocoderOn = false;
+            screen.pressMonitor();
+            expect (engine.micOn.load(), "Monitor switches the mic on");
+            expect (param (engine, ParamIDs::voiceOn) > 0.5f);
+            expect (engine.vocoderOn.load() && ! engine.getStrip (RigEngine::vocoderStrip).mute.load(), "and the vocoder back on, unmuted");
+            expect (screen.isMonitoring());
             screen.pressMonitor();
             expect (param (engine, ParamIDs::voiceOn) < 0.5f, "Monitor off");
+            expect (engine.micOn.load(), "keeps the mic on, so the robot still hears you");
             screen.pressMonitor();
             expect (param (engine, ParamIDs::voiceOn) > 0.5f);
+
+            // With the mic on, the voice really comes out of the vocoder strip.
+            {
+                juce::AudioBuffer<float> in (1, 480), out (2, 480);
+                float sum = 0.0f;
+                for (int block = 0; block < 40; ++block)
+                {
+                    for (int i = 0; i < 480; ++i)
+                        in.setSample (0, i, 0.3f * std::sin ((float) (block * 480 + i) * 0.05f));
+                    out.clear();
+                    engine.process (in.getArrayOfReadPointers(), 1, out.getArrayOfWritePointers(), 2, 480);
+                    if (block > 20)
+                        sum += out.getMagnitude (0, 0, 480);
+                }
+                expect (sum > 0.1f, "you hear your voice");
+            }
 
             screen.setDryWet (0.0);
             expectWithinAbsoluteError (param (engine, ParamIDs::robotLevel), 0.0f, 0.01f, "dry");
