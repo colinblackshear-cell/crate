@@ -9,6 +9,9 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
     static const std::vector<Guide> list {
         { "Getting started",
           { "Pick your audio interface and keyboard: More > Audio and MIDI set-up.",
+            "Starting from nothing? New song (top bar) saves the song you're on and clears everything. New pattern then starts "
+            "the first thing: a beat, a bass line, keys, the vocoder, a loop or a sample, on an empty pattern.",
+            "Back and Forward (left of the screen buttons, or Cmd+[ and Cmd+]) step through the screens you've been on.",
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
             "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
             "Press Play (or the space bar). Everything plays in time with Kaleidobox's clock.",
@@ -43,7 +46,8 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
           "Loops can be up to 10 minutes long. A short loop and a long one play together in time." },
 
         { "Build a song",
-          { "Open the Song builder: More > Song builder, or the Song button on the Looper.",
+          { "Open the Song builder: More > Song builder, or the Song button on the Looper. (Or skip it: New pattern > Keep "
+            "what's playing as the next song part does the same as + New part, from any screen.)",
             "Get something playing: a beat on the Groove screen, the Bass or Synth, loops on the Looper. Mute what shouldn't play yet.",
             "Press + New part. It keeps what's playing now as the next column: which tracks and loops play, the MPC sequence, "
             "the bass pattern and the arp.",

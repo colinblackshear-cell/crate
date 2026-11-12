@@ -109,6 +109,24 @@ RigEngine::RigEngine()
     // The drum machine waits for its Play (on the Groove screen), so a new Rig starts quiet.
     if (auto* p = drums.params.getParameter ("sequencer"))
         p->setValueNotifyingHost (0.0f);
+    blankShow = saveShow();
+}
+
+void RigEngine::newShow()
+{
+    const auto keep = screens.createCopy();
+    loadShow (blankShow);
+    screens = keep;
+}
+
+bool RigEngine::isBlank() const
+{
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (looper.getState (i) != RigLooper::State::empty)
+            return false;
+    auto now = saveShow();
+    now.removeChild (now.getChildWithName ("Screens"), nullptr);
+    return now.isEquivalentTo (blankShow);
 }
 
 void RigEngine::playMpcSequence (int index)
