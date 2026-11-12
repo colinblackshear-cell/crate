@@ -25,6 +25,8 @@ public:
     void resized() override;
 
     std::function<void (const juce::String&)> onSay;
+    // Effects: the track's pedals (delay, reverb, amp, chorus...) on the Effects screen.
+    std::function<void()> onEffects;
 
     // The engine: the tool's own sound, or the shell's plugin.
     void showEngine (bool plugin);
@@ -69,7 +71,7 @@ protected:
     std::vector<std::unique_ptr<juce::Component>> owned;
     analog::Keys keys;
     InstrumentShell shell;
-    analog::Button builtIn { "Built-in" }, plugin { "Plugin" }, soundPrev { "<" }, soundNext { ">" }, soundMenu { "Sounds" };
+    analog::Button builtIn { "Built-in" }, plugin { "Plugin" }, effects { "Effects" }, soundPrev { "<" }, soundNext { ">" }, soundMenu { "Sounds" };
     juce::Rectangle<int> panelArea, nameplate, soundLcd, keyBed;
     bool shellShown = false;
 

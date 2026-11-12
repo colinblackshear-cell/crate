@@ -36,6 +36,10 @@ StripFxPanel::StripFxPanel (StripFx& f, const juce::String& t, juce::Colour c)
     }
     addAndMakeVisible (resetButton);
     addAndMakeVisible (closeButton);
+    addChildComponent (pedalsButton);
+    pedalsButton.setTooltip ("Opens these effects on the Effects screen, with every pedal: gate, comp, wah, amp, EQ, chorus, "
+                             "phaser, tremolo and more, plus ready-made settings.");
+    pedalsButton.onClick = [this] { if (onPedals) onPedals(); };
     resetButton.setTooltip ("Turns every effect here off.");
     resetButton.onClick = [this] { fx.reset(); };
 
@@ -75,6 +79,7 @@ void StripFxPanel::setRepeat (int choice)
 
 void StripFxPanel::tick()
 {
+    pedalsButton.setVisible (onPedals != nullptr);
     const int current = (int) fx.params.getRawParameterValue ("repeat")->load();
     for (int i = 0; i < repeatButtons.size(); ++i)
         repeatButtons[i]->setToggleState (i == current && i > 0, juce::dontSendNotification);
@@ -109,6 +114,9 @@ void StripFxPanel::resized()
     closeButton.setBounds (top.removeFromRight (70));
     top.removeFromRight (6);
     resetButton.setBounds (top.removeFromRight (70));
+    top.removeFromRight (6);
+    pedalsButton.setVisible (onPedals != nullptr);
+    pedalsButton.setBounds (top.removeFromRight (100));
 
     area.removeFromTop (4);
     auto repeatArea = area.removeFromLeft (200);

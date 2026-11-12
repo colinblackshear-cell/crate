@@ -130,6 +130,10 @@ const std::vector<GuideView::Entry>& GuideView::entries()
           "The view for playing to actual humans: giant Play and Rec, a tempo you can read from the back, mutes, loop lamps "
           "and the FX pad. Esc brings you back down to earth.",
           RigColours::master, Art::stage, true, "F5" },
+        { "Effects", "The Effects", "A pedalboard for everything that makes a noise.",
+          "Plug in a guitar or bass, or pick any tool or loop, and stomp on thirteen pedals: amp, wah, chorus, phaser, delay, "
+          "reverb and friends, each sound with its own settings. There's a tuner, for the honest.",
+          RigColours::input, Art::effects, true, "F6" },
 
         // Under More.
         { "Drum machine", "The Drum Machine", "Sixteen steps of pure analog swagger.",
@@ -304,7 +308,10 @@ public:
                 return;
             }
             label = r.removeFromTop (44);
-            const int columns = juce::jlimit (1, maxColumns, juce::jmin ((int) list.size(), r.getWidth() / minWidth));
+            int columns = juce::jlimit (1, maxColumns, juce::jmin ((int) list.size(), r.getWidth() / minWidth));
+            // Even rows: six cards that don't fit in one row go in two rows of three, not five and one.
+            const int rows = ((int) list.size() + columns - 1) / columns;
+            columns = ((int) list.size() + rows - 1) / rows;
             const int w = r.getWidth() / columns;
             for (size_t i = 0; i < list.size(); i += (size_t) columns)
             {
@@ -314,7 +321,7 @@ public:
             }
             r.removeFromTop (18);
         };
-        place (big, 250, 450, 5, mainLabel);
+        place (big, 250, 450, 6, mainLabel);
         place (small, 380, 196, 3, moreLabel);
         footer = r.removeFromTop (50);
         return footer.getBottom() + 20;
@@ -373,7 +380,7 @@ public:
             g.setColour (kInk.withAlpha (0.12f));
             g.fillRect (r.withSizeKeepingCentre (r.getWidth(), 1));
         };
-        section (mainLabel, "THE FIVE SCREENS", utf8 ("F1\xe2\x80\x93" "F5, along the top. Start with any of them."));
+        section (mainLabel, "THE SIX SCREENS", utf8 ("F1\xe2\x80\x93" "F6, along the top. Start with any of them."));
         section (moreLabel, "DEEPER IN", "Each tool in full. Also under More.");
 
         g.setFont (vintage::barlow (13.0f));
@@ -749,6 +756,29 @@ void GuideView::drawArt (juce::Graphics& g, Art art, juce::Rectangle<float> r, j
             g.drawLine (centre.x, standTop, centre.x, floor.getY() - 2.0f, 2.5f);
             g.drawLine (centre.x - 14.0f, floor.getY() - 2.0f, centre.x + 14.0f, floor.getY() - 2.0f, 2.5f);
             g.fillRoundedRectangle (juce::Rectangle<float> (12.0f, 20.0f).withCentre ({ centre.x, standTop - 6.0f }), 6.0f);
+            break;
+        }
+        case Art::effects:
+        {
+            // Three stomp boxes on a cable, the middle one lit.
+            const float w = juce::jmin (r.getWidth() / 3.6f, r.getHeight() * 0.62f);
+            const float h = w * 1.45f;
+            const juce::Colour boxes[] = { juce::Colour (0xffe0785a), juce::Colour (0xff8fc06a), juce::Colour (0xff7d9be0) };
+            g.setColour (kInk.withAlpha (0.55f));
+            g.fillRoundedRectangle (r.getX(), centre.y - h * 0.22f, r.getWidth(), 4.0f, 2.0f);
+            for (int i = 0; i < 3; ++i)
+            {
+                const auto box = juce::Rectangle<float> (w, h).withCentre ({ centre.x + (float) (i - 1) * w * 1.18f, centre.y });
+                g.setColour (boxes[i].withAlpha (i == 1 ? 1.0f : 0.55f));
+                g.fillRoundedRectangle (box, w * 0.14f);
+                g.setColour (kInk.withAlpha (0.6f));
+                g.drawRoundedRectangle (box, w * 0.14f, 1.5f);
+                g.setColour (i == 1 ? kAmber : kInk.withAlpha (0.4f));
+                g.fillEllipse (juce::Rectangle<float> (w * 0.14f, w * 0.14f).withCentre ({ box.getX() + w * 0.2f, box.getY() + w * 0.2f }));
+                g.setColour (kInk.withAlpha (0.8f));
+                g.drawEllipse (juce::Rectangle<float> (w * 0.42f, w * 0.42f).withCentre ({ box.getCentreX(), box.getY() + h * 0.38f }), 2.0f);
+                g.fillEllipse (juce::Rectangle<float> (w * 0.36f, w * 0.36f).withCentre ({ box.getCentreX(), box.getBottom() - h * 0.2f }));
+            }
             break;
         }
         case Art::pads:

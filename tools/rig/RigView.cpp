@@ -14,6 +14,7 @@
 #include "VocoderScreen.h"
 #include "SynthScreens.h"
 #include "GuideView.h"
+#include "EffectsView.h"
 
 namespace Theme = crate::Theme;
 
@@ -235,6 +236,17 @@ RigView::FxPanel::FxPanel (RigEngine& engine, int s)
 }
 
 //==============================================================================
+void RigView::showEffectsFor (int strip, int loop)
+{
+    if (effects == nullptr)
+        return;
+    if (loop >= 0)
+        effects->showLoop (loop);
+    else
+        effects->showStrip (strip);
+    showTab ("Effects");
+}
+
 void RigView::showFx (int strip)
 {
     if (fxPanel != nullptr && fxPanel->strip == strip)
@@ -243,6 +255,7 @@ void RigView::showFx (int strip)
     {
         fxPanel = std::make_unique<FxPanel> (engine, strip);
         fxPanel->onSay = [this] (const juce::String& text) { say (text); };
+        fxPanel->onPedals = [this, strip] { showEffectsFor (strip); };
         fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
                                                                                  { if (safe != nullptr) { safe->fxPanel.reset(); safe->mixerPage->resized(); } }); };
         mixerPage->addAndMakeVisible (*fxPanel);
@@ -403,6 +416,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     looperView->setLookAndFeel (&vintageLook);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looperView->onSongBuilder = [this] { showTab ("Song"); };
+    looperView->onPedals = [this] (int layer) { showEffectsFor (-1, layer); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
     // The Sampler · MPC screen, over the full sample editor (a page of its own, in More).
@@ -454,6 +468,18 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     };
     stage = stageView;
     addPage ("Stage", Theme::text, stageView);
+    {
+        // The effects processor: a pedalboard for every sound (the line in, each tool, each loop).
+        auto* view = new EffectsView (engine);
+        view->setLookAndFeel (&vintageLook);
+        view->onSay = [this] (const juce::String& text) { say (text); };
+        view->onOpen = [this] (const juce::String& name) { showTab (name); };
+        view->onSample = [this] { toggleSampling(); };
+        view->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
+        view->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+        effects = view;
+        addPage ("Effects", RigColours::input, view);
+    }
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
     if (samplerView != nullptr)
         addPage ("Sampler", samplerColour, samplerView);
@@ -464,6 +490,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         screen->setLookAndFeel (&vintageLook);
         screen->onSay = [this] (const juce::String& text) { say (text); };
         const bool isBass = dynamic_cast<BassScreen*> (screen) != nullptr;
+        screen->onEffects = [this, isBass] { showEffectsFor (isBass ? RigEngine::bassStrip : RigEngine::synthStrip); };
         addPage (isBass ? "Bass" : "Synth", isBass ? bassColour : synthColour, screen);
     }
     auto* songView = new SongView (engine);

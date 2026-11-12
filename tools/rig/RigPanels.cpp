@@ -262,7 +262,7 @@ void Header::mouseUp (const juce::MouseEvent& e)
 //==============================================================================
 const juce::StringArray& ScreenBar::screens()
 {
-    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Stage" };
+    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Stage", "Effects" };
     return s;
 }
 

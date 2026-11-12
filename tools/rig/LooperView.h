@@ -46,6 +46,8 @@ public:
     void showSongGrid (bool show);
     // Set by the Rig: the Song button opens the Song builder page instead of the grid here.
     std::function<void()> onSongBuilder;
+    // A loop's All pedals: its effects on the Effects screen.
+    std::function<void (int layer)> onPedals;
     SongGrid* getSongGrid() const { return songGrid.get(); }
     // Opens (or closes) the timeline: the song composer, lanes of blocks over a bar ruler.
     void showTimeline (bool show);

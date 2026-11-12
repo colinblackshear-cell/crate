@@ -165,6 +165,9 @@ private:
     class LooperView* looper = nullptr;   // owned by the tabs
     class SongView* song = nullptr;
     class StageView* stage = nullptr;
+    class EffectsView* effects = nullptr;
+    // The Effects screen, on one sound's pedals.
+    void showEffectsFor (int strip, int loop = -1);
     class SamplerScreen* samplerScreen = nullptr;
     class VocoderScreen* vocoderScreen = nullptr;   // owned by the tabs
     class GrooveView* groove = nullptr;
