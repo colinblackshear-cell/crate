@@ -207,6 +207,54 @@ public:
     // window and saved with the show (message thread).
     juce::ValueTree screens { "Screens" };
 
+    //==========================================================================
+    // Loop banks (message thread): a named set of all eight looper layers (their loops, lengths,
+    // sources, levels, mutes and effects), so you can keep a batch of loops, start a fresh one
+    // and come back to it. The layers you see are always the current bank's; switching banks
+    // keeps what's on them in the bank you leave. While the clock plays, the new bank's loops
+    // come in at the next bar, from their tops. Song parts can switch banks too
+    // (RigScene::State::loopBank). Saved with the show; their loops are WAVs in the show's
+    // loops folder ("Bank 2/Loop 1.wav"...).
+    struct LoopBank
+    {
+        struct Layer
+        {
+            std::shared_ptr<const juce::AudioBuffer<float>> audio;   // null: an empty layer
+            double beats = 0;
+            int source = RigLooper::mix, bars = 0;
+            float level = 0.8f;
+            bool mute = false;
+            juce::MemoryBlock fx;   // StripFx state (empty: no effects)
+            int version = -1;       // the looper layer's version when it was kept
+        };
+        juce::String name;
+        std::array<Layer, RigLooper::kLayers> layers;
+        int loopCount() const;
+    };
+    static constexpr int kMaxLoopBanks = 64;
+    // The banks, with the current one's layers as they are now on the looper.
+    const std::vector<LoopBank>& getLoopBanks();
+    int getNumLoopBanks() const { return juce::jmax (1, (int) loopBanks.size()); }
+    // Always one: before you make a second, the layers are "Bank 1".
+    int getCurrentLoopBank() const { return juce::jmax (0, currentLoopBank); }
+    juce::String getLoopBankName (int bank) const;
+    // Each returns what to tell the user. They refuse while a layer is recording or overdubbing
+    // (finish it first), and a switch waiting for its bar is replaced by a newer one.
+    // Keeps the layers in the current bank, and names it.
+    juce::String saveLoopBank (const juce::String& name);
+    // Keeps the layers in the current bank, then starts a new empty one (layers keep their sources
+    // and lengths for recording; levels, mutes and effects start fresh).
+    juce::String newLoopBank (const juce::String& name = {});
+    juce::String switchLoopBank (int bank);
+    juce::String duplicateLoopBank (int bank);
+    juce::String renameLoopBank (int bank, const juce::String& name);
+    // Not the only one. Deleting the current bank switches to the one before it.
+    juce::String deleteLoopBank (int bank);
+    // A bank switch waiting for its bar (-1 for none).
+    int getQueuedLoopBank() const { return queuedLoopBank; }
+    // The timer's part: puts each layer's effects on as its new loop comes in.
+    void serviceLoopBanks();
+
     // The loops' sound is too big for the show file, so it goes in WAV files in a folder next
     // to it ("My show loops"). Call after writing the show file, and after loading it.
     static juce::File loopsFolder (const juce::File& showFile);
@@ -229,13 +277,21 @@ private:
     RigTransport transport;
     RigRouting routing;
     RigLooper looper;
-    // Gives the looper's recording layers more room as they go (message thread).
+    // Gives the looper's recording layers more room as they go, and finishes loop bank switches
+    // (message thread).
     struct LoopRoom : juce::Timer
     {
-        explicit LoopRoom (RigLooper& l) : looper (l) {}
-        void timerCallback() override { looper.maintain(); }
-        RigLooper& looper;
-    } loopRoom { looper };
+        explicit LoopRoom (RigEngine& e) : engine (e) {}
+        void timerCallback() override { engine.looper.maintain(); engine.serviceLoopBanks(); }
+        RigEngine& engine;
+    } loopRoom { *this };
+    std::vector<LoopBank> loopBanks;
+    int currentLoopBank = -1;
+    // A switch waiting for its bar: each layer's effects, put on when its loop comes in.
+    std::array<juce::MemoryBlock, RigLooper::kLayers> pendingBankFx;
+    std::array<bool, RigLooper::kLayers> bankFxPending {};
+    void applyBankFx (int layer);
+    void putLoopBankOnLayers (int bank, double beat, const RigScene::State* scene);
     RigScenes scenes;
     RigTimeline timeline;
     // Audio thread: the timeline's level for each strip over this block, and where each loop
@@ -256,6 +312,9 @@ private:
     std::atomic<bool> previewPlaying { false };
     std::vector<std::shared_ptr<const juce::AudioBuffer<float>>> previewHeld;   // message thread
     void applyScene (const RigScene::State&, double beat);   // audio thread, at the bar (`beat`)
+    int queuedLoopBank = -1;
+    bool loopBankBusy (juce::String& why) const;
+    void storeLoopBank();   // the layers as they are now, into the current bank
     std::array<double, RigLooper::kLayers> loadedLoopBeats {};
     std::array<Strip, numStrips> strips;
     std::array<StripFx, numStrips> fx;
