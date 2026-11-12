@@ -198,6 +198,10 @@ public:
     juce::ValueTree saveShow() const;
     void loadShow (const juce::ValueTree&);
     static constexpr const char* kShowType = "CrateRigShow";
+    // A new song: every tool, loop, part and setting as a new Rig has them (the windows stay
+    // where they are). isBlank: nothing's been changed since (or since the Rig started).
+    void newShow();
+    bool isBlank() const;
 
     // Which tools are in their own windows (on a second screen, say) and where, kept by the
     // window and saved with the show (message thread).
@@ -210,6 +214,7 @@ public:
     void readLoopAudio (const juce::File& showFile);
 
 private:
+    juce::ValueTree blankShow;   // a new Rig's show, for newShow
     void processChunk (const float* const* inputs, int numInputs, int offset, int numSamples);
     void applyControls (const RigRouting::Result&);
 
