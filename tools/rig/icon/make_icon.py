@@ -1,9 +1,13 @@
 # Draws the Kaleidobox app icon (kaleidobox-icon.png, 1024 x 1024) with Pillow and numpy:
 # a twelve-fold kaleidoscope in the Rig's panel colours, seen through a brass eyepiece on a
 # dark panel. Run: python3 make_icon.py
+# With --phone it also draws the phone web app's full-bleed square icons (no rounded corners or
+# shadow, since iOS rounds them itself) into tools/phone/icon-180.png and icon-512.png.
 import numpy as np
 from PIL import Image, ImageFilter
-import os
+import os, sys
+
+PHONE = "--phone" in sys.argv
 
 S = 2048                      # drawn at twice the size, then scaled down for smooth edges
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kaleidobox-icon.png")
@@ -25,6 +29,8 @@ BRASS  = hexc("c9a24a")
 y, x = np.mgrid[0:S, 0:S].astype(np.float32)
 cx = cy = S / 2
 dx, dy = (x - cx) / (S / 2), (y - cy) / (S / 2)
+if PHONE:
+    dx, dy = dx * 0.86, dy * 0.86   # zoom in: the square is the whole icon
 r = np.sqrt(dx * dx + dy * dy)
 a = np.arctan2(dy, dx)
 
@@ -46,6 +52,9 @@ sq = (np.abs(dx) / half) ** n + (np.abs(dy) / half) ** n
 body = soft(sq - 1.0, 0.02)
 shadow = soft(((np.abs(dx) / half) ** n + (np.abs((dy - 0.025)) / half) ** n) - 1.0, 0.12)
 alpha = np.maximum(body, shadow * 0.45)
+if PHONE:
+    body = np.ones_like(body)
+    alpha = np.ones_like(alpha)
 
 # The panel: dark, with a faint violet nebula and an amber glow, like the Guide's sky.
 panel = INK[None, None, :] * np.ones((S, S, 1), np.float32)
@@ -129,5 +138,12 @@ img = img + gl[..., None] * (1 - img) * inside[..., None]
 img = img * body[..., None]
 rgba = np.dstack([np.clip(img, 0, 1), alpha])
 im = Image.fromarray((rgba * 255).astype(np.uint8), "RGBA").resize((1024, 1024), Image.LANCZOS)
-im.save(out)
-print("wrote", out)
+if PHONE:
+    phone = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "phone")
+    for size in (180, 512):
+        path = os.path.normpath(os.path.join(phone, "icon-%d.png" % size))
+        im.convert("RGB").resize((size, size), Image.LANCZOS).save(path)
+        print("wrote", path)
+else:
+    im.save(out)
+    print("wrote", out)

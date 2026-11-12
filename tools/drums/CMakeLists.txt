@@ -3,13 +3,13 @@ if(APPLE)
     list(APPEND DRUMS_FORMATS AU)
 endif()
 
-juce_add_plugin(CrateDrums
+juce_add_plugin(KaleidoboxDrums
     COMPANY_NAME "Colin Blackshear"
     BUNDLE_ID "com.colinblackshear.crate.drums"
     PLUGIN_MANUFACTURER_CODE Cblk
     PLUGIN_CODE CDrm
     FORMATS ${DRUMS_FORMATS}
-    PRODUCT_NAME "Crate Drums"
+    PRODUCT_NAME "Kaleidobox Drums"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -26,9 +26,9 @@ set(DRUMS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/DrumView.cpp
     PARENT_SCOPE)
 
-target_sources(CrateDrums PRIVATE PluginEntry.cpp DrumEngine.cpp DrumProcessor.cpp DrumView.cpp)
-target_include_directories(CrateDrums PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(CrateDrums
+target_sources(KaleidoboxDrums PRIVATE PluginEntry.cpp DrumEngine.cpp DrumProcessor.cpp DrumView.cpp)
+target_include_directories(KaleidoboxDrums PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(KaleidoboxDrums
     PRIVATE
         crate_core
     PUBLIC

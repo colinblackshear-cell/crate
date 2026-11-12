@@ -366,7 +366,8 @@ VocoderScreen::VocoderScreen (RigEngine& e, juce::Component* studioView, bool is
     setLit (monitorButton, Lit::play);
     setLit (recVoiceButton, Lit::arm);
     setLit (toLooperButton, Lit::arm);
-    monitorButton.setTooltip ("Monitor: hear your own voice (as well as the pedals).");
+    monitorButton.setTooltip ("Monitor: hear your own voice (as well as the pedals). Switches the mic on too if it's off. Use headphones, "
+                              "so the speakers don't feed back.");
     recVoiceButton.setTooltip ("Records the mic into the Sampler, from the next bar while playing. Press again to stop.");
     toLooperButton.setTooltip ("Records the vocoder onto the next free loop layer. Press again to stop it and loop it.");
     monitorButton.onClick = [this] { pressMonitor(); };
@@ -766,10 +767,35 @@ void VocoderScreen::pressBypassAll()
     repaint();
 }
 
+bool VocoderScreen::isMonitoring() const
+{
+    // You only hear yourself with the mic live too: with it off the vocoder gets silence,
+    // even though the wave above still shows what's coming in.
+    return param (ParamIDs::voiceOn) > 0.5f && (! standalone || engine.micOn.load());
+}
+
 void VocoderScreen::pressMonitor()
 {
-    setParam (ParamIDs::voiceOn, param (ParamIDs::voiceOn) > 0.5f ? 0.0f : 1.0f);
+    if (isMonitoring())
+    {
+        setParam (ParamIDs::voiceOn, 0.0f);
+    }
+    else
+    {
+        // Monitor on means you hear your voice, whatever else was in the way.
+        if (standalone && ! engine.micOn.load())
+        {
+            if (onMic)
+                onMic();   // also checks a mic is picked, and says so if not
+            else
+                engine.micOn = true;
+        }
+        setParam (ParamIDs::voiceOn, 1.0f);
+        engine.vocoderOn = true;
+        engine.getStrip (RigEngine::vocoderStrip).mute = false;
+    }
     updateButtons();
+    repaint (rawWell);
 }
 
 void VocoderScreen::pressToLooper()
@@ -856,8 +882,8 @@ void VocoderScreen::updateButtons()
     boardButton.setToggleState (! studioShown, juce::dontSendNotification);
     studioButton.setToggleState (studioShown, juce::dontSendNotification);
     bypassButton.setToggleState (bypassed, juce::dontSendNotification);
-    monitorButton.setToggleState (param (ParamIDs::voiceOn) > 0.5f, juce::dontSendNotification);
-    monitorButton.setButtonText (monitorButton.getToggleState() ? "Monitor on" : "Monitor off");
+    monitorButton.setToggleState (isMonitoring(), juce::dontSendNotification);
+    monitorButton.setButtonText (isMonitoring() ? "Monitor on" : "Monitor off");
     const bool sampling = isSampling != nullptr && isSampling() && engine.getCapture().getSource() == RigCapture::mic;
     recVoiceButton.setToggleState (sampling, juce::dontSendNotification);
     recVoiceButton.setButtonText (sampling ? "Stop rec" : "Rec voice");
@@ -1003,6 +1029,20 @@ void VocoderScreen::paint (juce::Graphics& g)
             const float h = juce::jmax (1.5f, level * (s.getHeight() - 12));
             g.setColour ((i > n - 8 && level > 0.05f ? colours::arm : colours::vocoder).withAlpha (0.85f));
             g.fillRect (s.getX() + 6 + i * w, s.getCentreY() - h / 2, juce::jmax (1.0f, w - 1.0f), h);
+        }
+        if (! micLive)
+        {
+            // The wave still shows what's coming in, but none of it is heard yet.
+            g.setColour (juce::Colour (0xff0e0c0a).withAlpha (0.72f));
+            g.fillRoundedRectangle (s, 8.0f);
+            g.setColour (colours::arm);
+            g.setFont (cond (17.0f, Weight::extra, 0.06f));
+            g.drawFittedText (juce::String::fromUTF8 ("MIC OFF \xc2\xb7 NOT HEARD"), s.reduced (8).toNearestInt().removeFromTop ((int) s.getHeight() / 2 + 4),
+                              juce::Justification::centredBottom, 1);
+            g.setColour (juce::Colours::white.withAlpha (0.8f));
+            g.setFont (barlow (13.0f));
+            g.drawFittedText ("Press Monitor or click the lamp", s.reduced (8).toNearestInt().removeFromBottom ((int) s.getHeight() / 2 - 4),
+                              juce::Justification::centredTop, 1);
         }
     }
     drawLeds (g, inputLeds.toFloat(), std::sqrt (inputLevel), 18, false);
@@ -1166,7 +1206,8 @@ void VocoderScreen::layoutRack()
 
 void VocoderScreen::mouseUp (const juce::MouseEvent& e)
 {
-    if (! studioShown && standalone && (micLamp.expanded (8).contains (e.getPosition()) || rawSub.contains (e.getPosition())) && onMic)
+    if (! studioShown && standalone && (micLamp.expanded (8).contains (e.getPosition()) || rawSub.contains (e.getPosition())
+                                        || (! engine.micOn.load() && scopeArea.contains (e.getPosition()))) && onMic)
     {
         onMic();
         repaint (rawWell);

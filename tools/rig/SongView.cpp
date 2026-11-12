@@ -118,6 +118,8 @@ public:
     juce::Rectangle<int> lengthBox (int part) const { return header (part).removeFromBottom (26).removeFromLeft (72); }
     juce::Rectangle<int> playBox (int part) const { return header (part).removeFromBottom (26).withTrimmedLeft (78).withTrimmedRight (34); }
     juce::Rectangle<int> menuBox (int part) const { return header (part).removeFromBottom (26).removeFromRight (28); }
+    // Over the part's loops: which loop bank it plays (click to pick).
+    juce::Rectangle<int> bankBox (int part) const { return column (part).reduced (8, 0).withY (rowY (numTools()) - kGroup).withHeight (kGroup); }
 
     void paint (juce::Graphics& g) override
     {
@@ -230,6 +232,16 @@ public:
             g.setColour (p.btnInk);
             g.setFont (cond (18.0f, Weight::extra));
             g.drawText (juce::String::fromUTF8 ("\xe2\x8b\xaf"), menu.withTrimmedBottom (3.0f).toNearestInt(), juce::Justification::centred);
+
+            // The part's loop bank, over its loops.
+            {
+                const auto& engine = owner.engine;
+                const int bank = scene.state.loopBank;
+                const auto text = bank >= 0 && bank < engine.getNumLoopBanks() ? engine.getLoopBankName (bank) : juce::String ("Loops as they are");
+                g.setColour (hovered == i ? p.ink : p.ink2);
+                g.setFont (cond (12.0f, Weight::bold, 0.06f));
+                g.drawFittedText (juce::String::fromUTF8 ("\xe2\x96\xbe ") + text, bankBox (i), juce::Justification::centredLeft, 1, 0.7f);
+            }
 
             // The cells.
             for (int r = 0; r < (int) rows.size(); ++r)
@@ -367,6 +379,8 @@ public:
             else
                 owner.clickCell (part, row);
         }
+        else if (bankBox (part).contains (pos))
+            bankMenu (part, bankBox (part));
         else if (menuBox (part).contains (pos) || (popup && pos.y < kHead))
             partMenu (part);
         else if (lengthBox (part).contains (pos))
@@ -460,6 +474,7 @@ public:
                       });
         menu.addItem ("Rename...", [this, part] { startRename (part); });
         menu.addSubMenu ("Length", lengths);
+        menu.addSubMenu ("Loop bank", bankItems (part));
         menu.addSeparator();
         menu.addItem (juce::String::fromUTF8 ("\xe2\x97\x80 Move earlier"), part > 0, false, [this, part] { scenes().move (part, part - 1); owner.refresh(); });
         menu.addItem (juce::String::fromUTF8 ("Move later \xe2\x96\xb6"), part + 1 < count, false, [this, part] { scenes().move (part, part + 1); owner.refresh(); });
@@ -477,6 +492,23 @@ public:
                           owner.refresh();
                       });
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (menuBox (part))));
+    }
+
+    juce::PopupMenu bankItems (int part)
+    {
+        juce::PopupMenu menu;
+        const int now = scenes().getScenes()[(size_t) part].state.loopBank;
+        auto& engine = owner.engine;
+        for (int b = 0; b < engine.getNumLoopBanks(); ++b)
+            menu.addItem (juce::String (b + 1) + ". " + engine.getLoopBankName (b), true, now == b, [this, part, b] { owner.setPartLoopBank (part, b); });
+        menu.addSeparator();
+        menu.addItem ("Leave the loops as they are", true, now < 0, [this, part] { owner.setPartLoopBank (part, -1); });
+        return menu;
+    }
+
+    void bankMenu (int part, juce::Rectangle<int> where)
+    {
+        bankItems (part).showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (where)));
     }
 
     RigScenes& scenes() const { return owner.engine.getScenes(); }
@@ -624,6 +656,24 @@ void SongView::setCellTo (int part, int row, int value)
             engine.getLooper().getLayer (t.index).mute = value == 0;
         else
             engine.getStrip (t.index).mute = value == 0;
+    }
+    grid->repaint();
+}
+
+void SongView::setPartLoopBank (int part, int bank)
+{
+    auto& scenes = engine.getScenes();
+    auto& list = scenes.getScenes();
+    if (! juce::isPositiveAndBelow (part, (int) list.size()) || bank >= engine.getNumLoopBanks())
+        return;
+    auto& scene = list[(size_t) part];
+    scene.state.loopBank = juce::jmax (-1, bank);
+    if (bank >= 0)
+    {
+        if (part == scenes.getCurrent())
+            say (engine.switchLoopBank (bank));
+        else
+            say ("Part " + letterFor (part) + " plays the loops in \"" + engine.getLoopBankName (bank) + "\".");
     }
     grid->repaint();
 }
