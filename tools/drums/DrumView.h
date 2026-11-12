@@ -5,10 +5,11 @@
 #include "DrumProcessor.h"
 
 // The Drum Machine's panel, styled like an early-80s analog rhythm box: a charcoal face with
-// cream lettering, a column of knobs for each of the 12 sounds (level, tune, decay, tone, pan)
-// with a pad to hit it, and below them the step grid with its red, orange, yellow and cream
-// step numbers. The bar along the middle has the 16 patterns and what they do (length, fill,
-// swing, accent...).
+// cream lettering, a column for each of the 12 sounds (its name, which mutes it; its choice of
+// sound; level, tune, decay, tone, snappy and pan knobs; a pad to hit it), and below them the
+// step grid with its red, orange, yellow and cream step numbers. The bar along the middle has
+// the 16 patterns, their A and B variations and what they do (length, fill, kits...), and the
+// row under it the intro and the chain.
 //
 // In the grid, click a step to put a hit there (drag to paint several). Right-click (or
 // Option-click) a hit to make it a roll of 2, 3 or 4 hits. The top row is the accent.
@@ -56,12 +57,18 @@ private:
     void editPattern (const std::function<void (crate::drums::Pattern&)>&);
     void updatePatternButtons();
     void showGrooveMenu();
+    void showKitMenu();
+    void showChainSlotMenu (int slot);
+    void mouseDown (const juce::MouseEvent&) override;
+    void updateVariationButtons();
 
     struct Column
     {
-        std::array<std::unique_ptr<juce::Slider>, 5> knobs;
-        std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 5> attachments;
-        std::unique_ptr<juce::TextButton> pad;
+        std::array<std::unique_ptr<juce::Slider>, 6> knobs;
+        std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 6> attachments;
+        std::unique_ptr<juce::TextButton> pad, name;   // the name mutes it
+        std::unique_ptr<juce::ComboBox> sound;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> soundAttachment;
         int shownHits = 0;
         float flash = 0;
     };
@@ -75,18 +82,24 @@ private:
     juce::OwnedArray<juce::AudioProcessorValueTreeState::SliderAttachment> globalAttachments;
     juce::OwnedArray<juce::TextButton> patternButtons;
     juce::TextButton shorter { "-" }, longer { "+" }, randomButton { "Random" }, clearButton { "Clear" }, copyButton { "Copy to next" },
-        grooveButton { "Beats..." }, fillButton { "Fill" }, startButton { "Start" }, sequencerButton { "Pattern on" };
-    juce::ComboBox stepRate, fillPattern, fillEvery;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> stepRateAttachment, fillAttachment, fillEveryAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sequencerAttachment;
+        grooveButton { "Beats..." }, fillButton { "Fill" }, startButton { "Start" }, sequencerButton { "Pattern on" },
+        kitButton { "Kits..." }, copyAB { "A to B" }, chainButton { "Play chain" }, addChain { "Add to chain" }, clearChain { "Clear chain" };
+    std::array<juce::TextButton, 3> variationButtons { juce::TextButton ("A"), juce::TextButton ("B"), juce::TextButton ("A+B") };
+    juce::ComboBox stepRate, fillPattern, fillEvery, introPattern;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> stepRateAttachment, fillAttachment, fillEveryAttachment, introAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sequencerAttachment, chainAttachment;
     std::unique_ptr<juce::Slider> tempo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tempoAttachment;
     StepGrid grid;
     juce::Random random;
 
-    juce::Rectangle<int> header, voiceArea, barArea, gridArea, globalArea;
-    int shownStep = -2, shownPattern = -1;
-    bool shownFill = false;
+    juce::Rectangle<int> header, voiceArea, barArea, chainArea, chainSlots, gridArea, globalArea;
+    int shownStep = -2, shownPattern = -1, shownCode = -2, shownChainPos = -2, shownVariation = -1;
+    bool shownFill = false, shownIntro = false;
+
+public:
+    // The chain's slots, for the tests: where slot `i` is drawn.
+    juce::Rectangle<int> chainSlot (int i) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DrumView)
 };

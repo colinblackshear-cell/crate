@@ -122,21 +122,36 @@ oscillators, noise and filters, not samples. It's a Mac app, an Audio Unit instr
 (**Kaleidobox Drums**), a VST3, and a track of its own in Kaleidobox (beside the MPC, so the drums
 don't have to come from the MPC).
 
-- **Twelve sounds:** a booming kick, snare, clap, rim shot, low, mid and high toms, clave,
-  cowbell, closed and open hats (the closed hat cuts the open one off, as on the old boxes) and a
-  cymbal. Each has **Level**, **Tune**, **Decay**, **Tone** (the kick's click, the snare's snap,
-  the hats' brightness...) and **Pan**, and a pad to hit it.
+- **Twelve sounds, modelled on the classic box's voices:** a booming kick, snare, clap, rim shot,
+  low, mid and high toms, clave, cowbell, closed and open hats (the closed hat cuts the open one
+  off, as on the old boxes) and a cymbal. Each has **Level**, **Tune**, **Decay**, **Tone** (the
+  kick's sweep, the balance of the snare's two drums, the hats' brightness...), **Snappy** (the
+  snare's snares, and the attack on the others: the kick's beater click, the toms' skin, the hats'
+  tick) and **Pan**, a pad to hit it, and its name lights while it's on (click it to **mute**).
+- **More sounds:** each sound has a **Sound** choice, like the old box's switches and more. Kick:
+  Classic, Long boom (the deep sub with a slow glide), Punch, Distorted. Snare: Classic, Tight,
+  Fat. The toms switch to **congas**, the clap to **maracas**, the rim shot to a side stick, the
+  clave to a woodblock, the cowbell to an agogo, the closed hat to Tight or Shaker, the open hat
+  to Trashy and the cymbal to a ride. **Kits...** sets the whole machine up for a style: Classic,
+  Deep sub, Punchy electro, Latin (congas and maracas), Dirty, Tight and dry, Big room.
 - **Steps:** up to 32 steps for all twelve sounds, with the classic red, orange, yellow and cream
   step keys. Click to add a hit, drag to paint; right-click (or Option-click) a hit to make it a
   roll of 2, 3 or 4. The top row is the **accent**: the whole step hits harder (**Accent** sets
   how much).
-- **16 patterns**, the first eight ready-made beats (electro, boom bap, trap, house, funk, latin,
-  a tom fill and a snare fill). **Beats...** loads one into any pattern; **Random** makes a fresh
-  one. A pattern picked while it plays comes in at the next bar.
-- **Fills:** pick a fill pattern and it plays every 2nd, 4th, 8th or 16th time round, or once when
-  you press **Fill**.
-- **Swing**, **Drive** (warm saturation on the kit), **Humanize** (each hit a little softer or
-  harder) and **Volume**; the step length can be 1/8, 1/16, 1/16 triplets or 1/32.
+- **16 patterns, each with an A and a B:** **A**, **B** or **A+B** (A then B, back and forth: a
+  two-bar beat) picks what plays and which one you edit (click A+B again to switch). **A to B**
+  copies A into B to start a variation. The first eleven are ready-made beats (electro, boom bap,
+  trap, house, funk, latin, a tom fill, a snare fill, Miami bass, old school, conga groove).
+  **Beats...** loads one into any pattern; **Random** makes a fresh one. A pattern picked while
+  it plays comes in at the next bar.
+- **Intro and fills:** an intro pattern plays once when you press Play from the top. Pick a fill
+  pattern and it plays every 2nd, 4th, 8th or 16th time round, or once when you press **Fill**.
+- **Chain** (the old box's rhythm track): **Add to chain** puts the pattern you're editing (A or
+  B) on the end, up to 32; **Play chain** plays them one after another, round and round. Click a
+  pattern in the chain to change it, edit it or remove it. The display shows where you are.
+- **Swing** (up to a heavy shuffle), **Drive** (warm saturation on the kit), **Humanize** (each
+  hit a little softer or harder) and **Volume**; the step length (scale) can be 1/8, 1/16, 1/16
+  triplets, 1/32 or 1/8 triplets.
 - **Play it:** MIDI notes from C play the sounds (C kick, C# rim, D snare, D# clap, F# closed hat,
   A# open hat...), in any octave, so a keyboard's drum pads work as they are. In its own app it
   has **Start** and a **Tempo**; in Logic and the Rig it follows their clock.
