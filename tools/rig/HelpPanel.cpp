@@ -37,7 +37,9 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Press Rec next layer. It starts at the next bar (with the clock stopped, the clock starts with it).",
             "Press Overdub to play over the layer you picked last; Undo takes the last overdub back.",
             "Double-click a loop to trim where it starts and ends. Its effect slot adds a filter, delay, reverb...",
-            "Keys 1-8 record, stop or overdub layers 1-8." },
+            "Keys 1-8 record, stop or overdub layers 1-8.",
+            "Loop bank: Save bank names this batch of eight loops. + New batch keeps them and gives you eight empty layers. "
+            "Back and Next (or click the bank's name) bring a batch back, at the next bar while playing." },
           "Loops can be up to 10 minutes long. A short loop and a long one play together in time." },
 
         { "Build a song",
@@ -51,7 +53,8 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Double-click a part's name to rename it. Its menu moves it earlier or later, copies it, saves what's playing into it, or deletes it.",
             "Press Play song: it plays from part A, each part for its length, then the next one. The strip at the top shows the "
             "whole song to scale and where you are.",
-            "A loop that comes in with a part starts from its top on the part's first beat." },
+            "A loop that comes in with a part starts from its top on the part's first beat.",
+            "Over each part's loops is its loop bank (from the Looper): click it to pick which batch of loops that part plays." },
           "Jump to any part live: click its letter or its place in the strip, press keys 1-8, or the A-H buttons along the bottom. "
           "Keys puts Next and Back on your keyboard's buttons." },
 
