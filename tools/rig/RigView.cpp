@@ -5,6 +5,7 @@
 #include "SongView.h"
 #include "MoreView.h"
 #include "StageView.h"
+#include "MixerView.h"
 #include "GrooveView.h"
 #include "SoundsView.h"
 #include "RigColours.h"
@@ -14,6 +15,7 @@
 #include "VocoderScreen.h"
 #include "SynthScreens.h"
 #include "GuideView.h"
+#include "RigSongStart.h"
 
 namespace Theme = crate::Theme;
 
@@ -98,11 +100,11 @@ private:
     juce::TextButton show { "Show it" }, back { "Bring it back here" };
 };
 
-// The Mixer page: lays its parts out through the view, which owns them.
-class RigView::MixerPage : public juce::Component
+// The Setup page: lays its parts out through the view, which owns them.
+class RigView::SetupPage : public juce::Component
 {
 public:
-    explicit MixerPage (RigView& v) : view (v) {}
+    explicit SetupPage (RigView& v) : view (v) {}
     void paint (juce::Graphics& g) override
     {
         g.fillAll (Theme::panel);
@@ -110,123 +112,11 @@ public:
         g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
         g.drawText ("TOOLS", getLocalBounds().reduced (14, 0).removeFromTop (22), juce::Justification::bottomLeft);
     }
-    void resized() override { view.layoutMixer (getLocalBounds()); }
+    void resized() override { view.layoutSetup (getLocalBounds()); }
 
 private:
     RigView& view;
 };
-
-//==============================================================================
-RigView::StripView::StripView (RigEngine& e, int s, int fader, int muteC, std::atomic<bool>* onSwitch)
-    : strip (s), engine (e), faderControl (fader), muteControl (muteC), onFlag (onSwitch)
-{
-    addAndMakeVisible (fxButton);
-    fxButton.setColour (juce::TextButton::buttonOnColourId, stripColour (strip).withAlpha (0.8f));
-    fxButton.setTooltip ("Effects on this strip: filter sweep, drive, crush, delay, reverb and beat repeat. Lit when any are on.");
-    if (onFlag != nullptr)
-    {
-        addAndMakeVisible (on);
-        on.setClickingTogglesState (true);
-        on.setColour (juce::TextButton::buttonOnColourId, stripColour (strip));
-        on.setTooltip (strip == RigEngine::inputStrip
-                           ? "Plays your audio input (a guitar, another mic) through this strip and its effects. "
-                             "Off until you turn it on, so a mic doesn't feed back."
-                           : "Turns the vocoder on or off. Off, it's silent and uses no processor time.");
-        on.onClick = [this] { *onFlag = on.getToggleState(); refresh(); };
-    }
-    if (strip == RigEngine::inputStrip)
-    {
-        addAndMakeVisible (jack);
-        for (int i = 0; i < 3; ++i)
-            jack.addItem (RigEngine::inputJackName (i), i + 1);
-        jack.onChange = [this] { engine.inputJack = jack.getSelectedId() - 1; };
-        jack.setTooltip ("Which input of your audio interface this strip plays: both, or just input 1 or 2 "
-                         "(e.g. the mic on 1 for the vocoder and a guitar on 2).");
-    }
-    addAndMakeVisible (level);
-    addAndMakeVisible (mute);
-    addAndMakeVisible (learn);
-    level.setRange (0.0, 1.0);
-    level.setDoubleClickReturnValue (true, 0.8);
-    level.setColour (juce::Slider::thumbColourId, stripColour (strip));
-    level.setColour (juce::Slider::trackColourId, stripColour (strip).withAlpha (0.6f));
-    level.onValueChange = [this] { engine.getStrip (strip).level = (float) level.getValue(); };
-    mute.setClickingTogglesState (true);
-    mute.setColour (juce::TextButton::buttonOnColourId, Theme::record);
-    mute.onClick = [this] { engine.getStrip (strip).mute = mute.getToggleState(); };
-    mute.setVisible (muteControl >= 0 || strip == RigEngine::masterStrip);
-    learn.setTooltip ("Press, then move a fader or knob on your keyboard to control this level with it.");
-    refresh();
-}
-
-void RigView::StripView::refresh()
-{
-    level.setValue (engine.getStrip (strip).level.load(), juce::dontSendNotification);
-    mute.setToggleState (engine.getStrip (strip).mute.load(), juce::dontSendNotification);
-    if (onFlag != nullptr)
-    {
-        on.setToggleState (onFlag->load(), juce::dontSendNotification);
-        on.setButtonText (onFlag->load() ? "On" : "Off");
-    }
-    if (strip == RigEngine::inputStrip)
-        jack.setSelectedId (engine.inputJack.load() + 1, juce::dontSendNotification);
-}
-
-void RigView::StripView::tick (float meterLevel)
-{
-    fxButton.setToggleState (engine.getFx (strip).isActive(), juce::dontSendNotification);
-    meter = meterLevel;
-    repaint();
-}
-
-void RigView::StripView::paint (juce::Graphics& g)
-{
-    auto area = getLocalBounds().toFloat();
-    g.setColour (Theme::raised);
-    g.fillRoundedRectangle (area, 6.0f);
-
-    auto top = getLocalBounds().reduced (6, 6).removeFromTop (20);
-    g.setColour (stripColour (strip));
-    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    g.drawText (RigEngine::stripName (strip), top, juce::Justification::centredLeft);
-
-    // The meter, under the fader.
-    auto meterArea = getLocalBounds().reduced (6, 0).withTop (level.getBottom()).withHeight (6).toFloat();
-    g.setColour (Theme::background);
-    g.fillRoundedRectangle (meterArea, 3.0f);
-    const float db = juce::Decibels::gainToDecibels (meter, -60.0f);
-    const float fill = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
-    g.setColour (meter > 0.98f ? Theme::record : stripColour (strip).withAlpha (0.9f));
-    g.fillRoundedRectangle (meterArea.withWidth (meterArea.getWidth() * fill), 3.0f);
-}
-
-void RigView::StripView::resized()
-{
-    // Name, On and the input's jack / Mute, Learn, FX / the fader and meter.
-    auto area = getLocalBounds().reduced (6, 6);
-    auto top = area.removeFromTop (20);
-    if (jack.isVisible())
-        jack.setBounds (top.removeFromRight (48));
-    if (on.isVisible())
-    {
-        top.removeFromRight (2);
-        on.setBounds (top.removeFromRight (32));
-    }
-    area.removeFromTop (4);
-    auto buttons = area.removeFromTop (22);
-    std::vector<juce::Button*> row;
-    for (auto* b : std::initializer_list<juce::Button*> { &mute, &learn, &fxButton })
-        if (b->isVisible())
-            row.push_back (b);
-    const int w = (buttons.getWidth() - 3 * ((int) row.size() - 1)) / (int) row.size();
-    for (auto* b : row)
-    {
-        b->setBounds (buttons.removeFromLeft (w));
-        buttons.removeFromLeft (3);
-    }
-    area.removeFromTop (2);
-    level.setBounds (area.removeFromTop (24));
-}
 
 //==============================================================================
 RigView::FxPanel::FxPanel (RigEngine& engine, int s)
@@ -235,19 +125,40 @@ RigView::FxPanel::FxPanel (RigEngine& engine, int s)
 }
 
 //==============================================================================
+void RigView::closeMixerPanel()
+{
+    if (mixer != nullptr)
+        mixer->setPanel (nullptr);
+    fxPanel.reset();
+    layerFxPanel.reset();
+    layerFxShown = -1;
+}
+
 void RigView::showFx (int strip)
 {
-    if (fxPanel != nullptr && fxPanel->strip == strip)
-        fxPanel.reset();
-    else
-    {
-        fxPanel = std::make_unique<FxPanel> (engine, strip);
-        fxPanel->onSay = [this] (const juce::String& text) { say (text); };
-        fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
-                                                                                 { if (safe != nullptr) { safe->fxPanel.reset(); safe->mixerPage->resized(); } }); };
-        mixerPage->addAndMakeVisible (*fxPanel);
-    }
-    mixerPage->resized();
+    const bool same = fxPanel != nullptr && fxPanel->strip == strip;
+    closeMixerPanel();
+    if (same || mixer == nullptr)
+        return;
+    fxPanel = std::make_unique<FxPanel> (engine, strip);
+    fxPanel->onSay = [this] (const juce::String& text) { say (text); };
+    fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
+                                                                             { if (safe != nullptr) safe->closeMixerPanel(); }); };
+    mixer->setPanel (fxPanel.get());
+}
+
+void RigView::showLayerFx (int layer)
+{
+    const bool same = layerFxPanel != nullptr && layerFxShown == layer;
+    closeMixerPanel();
+    if (same || mixer == nullptr || ! juce::isPositiveAndBelow (layer, RigLooper::kLayers))
+        return;
+    layerFxPanel = std::make_unique<StripFxPanel> (engine.getLoopFx (layer), "Loop " + juce::String (layer + 1) + " effects", RigColours::loops);
+    layerFxShown = layer;
+    layerFxPanel->onSay = [this] (const juce::String& text) { say (text); };
+    layerFxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
+                                                                                  { if (safe != nullptr) safe->closeMixerPanel(); }); };
+    mixer->setPanel (layerFxPanel.get());
 }
 
 //==============================================================================
@@ -314,6 +225,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
             showTab ("More");
     };
     screenBar.help.onClick = [this] { showHelp (helpPanel == nullptr); };
+    screenBar.back.onClick = [this] { goBack(); };
+    screenBar.forward.onClick = [this] { goForward(); };
+
+    // Starting a song from nothing.
+    header.newSong.onClick = [this] { askNewSong(); };
+    header.newPattern.onClick = [this] { showPatternMenu(); };
 
     // The song parts and Live now.
     footer.onTrack = [this] (int strip)
@@ -326,13 +243,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     };
     footer.onEditParts = [this] { showTab ("Song"); };
 
-    // The Mixer page's parts.
-    mixerPage = new MixerPage (*this);
+    // The Setup page's parts.
+    setupPage = new SetupPage (*this);
     for (auto* c : std::initializer_list<juce::Component*> { &clickButton, &micButton, &learnPlay, &learnStop, &learnPlayLabel, &learnStopLabel,
                                                              &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
                                                              &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
-        mixerPage->addAndMakeVisible (c);
+        setupPage->addAndMakeVisible (c);
 
     clickButton.setClickingTogglesState (true);
     clickButton.onClick = [this, &transport] { transport.metronome = clickButton.getToggleState(); };
@@ -453,6 +370,19 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
                                                                                                                : vintage::Lit::none);
     };
     stage = stageView;
+    {
+        // The Mixer (F5): a strip per tool and loop layer, the Reverb and Echo returns, the
+        // master, and a button into every tool.
+        auto* view = new MixerView (engine);
+        view->onOpen = [this] (const juce::String& name) { showTab (name); };
+        view->onFx = [this] (int strip) { showFx (strip); };
+        view->onLayerFx = [this] (int layer) { showLayerFx (layer); };
+        view->onLearn = [this] (int control, juce::Button& b) { startLearning (control, b); };
+        view->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+        view->onSay = [this] (const juce::String& text) { say (text); };
+        mixer = view;
+        addPage ("Mixer", Theme::text, view);
+    }
     addPage ("Stage", Theme::text, stageView);
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
     if (samplerView != nullptr)
@@ -475,7 +405,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto* soundsView = new SoundsView (engine);
     soundsView->onSay = [this] (const juce::String& text) { say (text); };
     addPage ("Sounds", juce::Colour (0xffa1887f), soundsView);
-    addPage ("Mixer", Theme::text, mixerPage);
+    addPage ("Setup", Theme::text, setupPage);
     {
         // The More page: the tools in full, your show and the set-up, as big buttons.
         auto* view = new MoreView (devices != nullptr);
@@ -578,26 +508,6 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     sampleBars.onChange = [this] { engine.captureBars = sampleBars.getSelectedId() - 1; };
     sampleBars.setTooltip ("How long: a number of bars (it stops by itself, in time, ready to loop), or Free (until you press Sample again).");
 
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::mpcStrip, RigRouting::mpcLevel, RigRouting::mpcMute));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::drumsStrip, RigRouting::drumsLevel, RigRouting::drumsMute));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::vocoderStrip, RigRouting::vocoderLevel, RigRouting::vocoderMute, &engine.vocoderOn));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::bassStrip, RigRouting::bassLevel, RigRouting::bassMute));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::synthStrip, RigRouting::synthLevel, RigRouting::synthMute));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::inputStrip, RigRouting::inputLevel, RigRouting::inputMute, &engine.inputOn));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::samplerStrip, RigRouting::samplerLevel, RigRouting::samplerMute));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::loopsStrip, RigRouting::loopsLevel, RigRouting::loopsMute));
-    stripViews.push_back (std::make_unique<StripView> (engine, RigEngine::masterStrip, RigRouting::masterLevel, -1));
-    const int faders[] = { RigRouting::mpcLevel, RigRouting::drumsLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
-                           RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::loopsLevel, RigRouting::masterLevel };
-    for (size_t i = 0; i < stripViews.size(); ++i)
-    {
-        auto* s = stripViews[i].get();
-        mixerPage->addAndMakeVisible (s);
-        const int control = faders[i];
-        s->learn.onClick = [this, s, control] { startLearning (control, s->learn); };
-        s->fxButton.onClick = [this, s] { showFx (s->strip); };
-    }
-
     openMidiInputs();
     refresh();
     startTimerHz (30);
@@ -610,7 +520,7 @@ RigView::~RigView()
 {
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).removeListener (this);
-    fxPanel.reset();
+    closeMixerPanel();
     for (auto& p : pages)
         p.window.reset();   // they only show the pages
     tabs.clearTabs();
@@ -636,8 +546,8 @@ void RigView::refresh()
     const int split = engine.getRouting().splitNote.load();
     splitNote.setSelectedId (split > 0 ? split + 1 : 1, juce::dontSendNotification);
     lowerKeysTo.setEnabled (split > 0);
-    for (auto& s : stripViews)
-        s->refresh();
+    if (mixer != nullptr)
+        mixer->refresh();
     if (looper != nullptr)
         looper->refresh();
     if (song != nullptr)
@@ -676,6 +586,8 @@ void RigView::showTab (const juce::String& name)
 void RigView::pageChanged()
 {
     screenBar.setCurrent (currentPage());
+    navigation.visit (currentPlace());
+    updateNavButtons();
     // The Guide is a night sky: it fills the window the same way.
     const bool onStage = currentPage() == "Stage" || currentPage() == "Guide";
     if (onStage == stageShown)
@@ -872,10 +784,9 @@ void RigView::updateLearnButtons()
     };
     show (learnPlay, RigRouting::play);
     show (learnStop, RigRouting::stop);
-    const int faders[] = { RigRouting::mpcLevel, RigRouting::drumsLevel, RigRouting::vocoderLevel, RigRouting::bassLevel, RigRouting::synthLevel,
-                           RigRouting::inputLevel, RigRouting::samplerLevel, RigRouting::loopsLevel, RigRouting::masterLevel };
-    for (size_t i = 0; i < stripViews.size(); ++i)
-        show (stripViews[i]->learn, faders[i]);
+    if (mixer != nullptr)
+        for (auto [button, control] : mixer->learnButtons())
+            show (*button, control);
 }
 
 void RigView::timerCallback()
@@ -903,6 +814,8 @@ void RigView::timerCallback()
 
     if (fxPanel != nullptr)
         fxPanel->tick();
+    if (layerFxPanel != nullptr)
+        layerFxPanel->tick();
     engine.tickScenes();
     if (engine.serviceRecorder())
     {
@@ -938,8 +851,6 @@ void RigView::timerCallback()
         meters[(size_t) st] = juce::jmax (peak, meters[(size_t) st] * 0.85f);
     }
     micMeter = juce::jmax (engine.micPeak.exchange (0.0f), micMeter * 0.85f);
-    for (auto& s : stripViews)
-        s->tick (meters[(size_t) s->strip]);
 
     const bool recent = juce::Time::getMillisecondCounter() - engine.lastMidiTime.load() < 150;
     keyboardActive = recent;
@@ -1351,10 +1262,21 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         saveShow();
         return true;
     }
-    // Esc leaves the Stage.
+    // Cmd+[ and Cmd+]: back and forward, as in a web browser.
+    if (key == juce::KeyPress ('[', juce::ModifierKeys::commandModifier, 0))
+    {
+        goBack();
+        return true;
+    }
+    if (key == juce::KeyPress (']', juce::ModifierKeys::commandModifier, 0))
+    {
+        goForward();
+        return true;
+    }
+    // Esc leaves the big Stage, back to the Mixer it's opened from (the Guide: to the Groove).
     if (key == juce::KeyPress::escapeKey && stageShown)
     {
-        showTab ("Groove");
+        showTab (currentPage() == "Stage" ? "Mixer" : "Groove");
         return true;
     }
     // F1-F5: the screens.
@@ -1375,6 +1297,183 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         return true;
     }
     return false;
+}
+
+//==============================================================================
+juce::String RigView::currentPlace() const
+{
+    const auto page = currentPage();
+    if (page == "Sampler" && samplerScreen != nullptr && samplerScreen->isEditMode())
+        return "Sampler editor";
+    if (page == "Looper" && looper != nullptr)
+    {
+        if (looper->getTimeline() != nullptr)
+            return "Looper / Timeline";
+        if (looper->getSongGrid() != nullptr)
+            return "Looper / Song grid";
+    }
+    return page;
+}
+
+void RigView::goToPlace (const juce::String& place)
+{
+    if (place.startsWith ("Looper / "))
+    {
+        showTab ("Looper");
+        if (looper != nullptr && place.endsWith ("Timeline"))
+            looper->showTimeline (true);
+        else if (looper != nullptr)
+            looper->showSongGrid (true);
+        pageChanged();
+        return;
+    }
+    if (place == "Sampler" && samplerScreen != nullptr)
+        samplerScreen->setEditMode (false);
+    if (place == "Looper" && looper != nullptr)
+    {
+        looper->showTimeline (false);
+        looper->showSongGrid (false);
+    }
+    showTab (place);
+}
+
+void RigView::goBack()
+{
+    if (const auto place = navigation.back(); place.isNotEmpty())
+        goToPlace (place);
+    updateNavButtons();
+}
+
+void RigView::goForward()
+{
+    if (const auto place = navigation.forward(); place.isNotEmpty())
+        goToPlace (place);
+    updateNavButtons();
+}
+
+void RigView::updateNavButtons()
+{
+    // "Back to the Groove", so you know where it goes.
+    auto nameOf = [] (juce::String place)
+    {
+        if (place == "Song")
+            place = "Song builder";
+        return place.replace (" / ", ": ");
+    };
+    auto set = [] (rigpanels::PanelButton& b, bool can, const juce::String& tip)
+    {
+        if (b.isEnabled() != can)
+            b.setEnabled (can);
+        if (b.getTooltip() != tip)
+            b.setTooltip (tip);
+    };
+    set (screenBar.back, navigation.canGoBack(),
+         navigation.canGoBack() ? "Back to " + nameOf (navigation.previous()) + " (Cmd+[)." : juce::String ("Back to the screen you were on (Cmd+[)."));
+    set (screenBar.forward, navigation.canGoForward(),
+         navigation.canGoForward() ? "Forward to " + nameOf (navigation.next()) + " (Cmd+])." : juce::String ("Forward again (Cmd+])."));
+}
+
+//==============================================================================
+void RigView::askNewSong()
+{
+    // Nothing made yet: no need to ask.
+    if (engine.isBlank())
+    {
+        newSong (false);
+        return;
+    }
+    const auto name = currentShow != juce::File() ? currentShow.getFileNameWithoutExtension() : juce::String ("this song");
+    auto options = juce::MessageBoxOptions()
+                       .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                       .withTitle ("Start a new song?")
+                       .withMessage ("Kaleidobox clears every tool, loop and song part for a new song. Save " + name + " first?")
+                       .withButton ("Save, then new song")
+                       .withButton ("New song, don't save")
+                       .withButton ("Cancel")
+                       .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+                                  {
+                                      // 1, 2, then 0 for the last button (Cancel).
+                                      if (safe != nullptr && (result == 1 || result == 2))
+                                          safe->newSong (result == 1);
+                                  });
+}
+
+void RigView::newSong (bool saveFirst, bool askWhatNext)
+{
+    if (saveFirst)
+    {
+        auto file = currentShow;
+        if (file == juce::File() || ! file.getParentDirectory().isDirectory())
+        {
+            showsFolder().createDirectory();
+            file = showsFolder().getNonexistentChildFile ("Song " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M"), ".crateshow", false);
+        }
+        if (! writeShowTo (file))
+            return;   // (it said why) Nothing is cleared.
+    }
+    const auto saved = saveFirst ? currentShow.getFileNameWithoutExtension() : juce::String();
+
+    engine.getTransport().stop();
+    engine.allNotesOff();
+    engine.newShow();
+    currentShow = juce::File();
+    refresh();
+    say ((saved.isNotEmpty() ? "Saved " + saved + ". " : juce::String()) + "New song: everything's clear. Pick what to start with "
+         "(New pattern), set the tempo, and press Play.");
+    if (askWhatNext)
+        showPatternMenu();
+}
+
+void RigView::showPatternMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Start a new pattern");
+    for (int s = 0; s < songstart::numStarts; ++s)
+        menu.addItem (s + 1, songstart::name (s));
+    menu.addSeparator();
+    menu.addSectionHeader ("The song");
+    const int parts = (int) engine.getScenes().getScenes().size();
+    menu.addItem (100, "Keep what's playing as the next song part (" + SongView::letterFor (parts) + ")", parts < RigScenes::kMaxScenes);
+    menu.addItem (101, "Open the song builder");
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.newPattern),
+                        [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+                        {
+                            if (safe == nullptr || result <= 0)
+                                return;
+                            if (result == 100)
+                                safe->keepAsSongPart();
+                            else if (result == 101)
+                                safe->showTab ("Song");
+                            else
+                                safe->startPattern (result - 1);
+                        });
+}
+
+void RigView::startPattern (int start)
+{
+    const auto r = songstart::begin (engine, start);
+    if (r.page.isEmpty())
+        return;
+    if (r.page == "Sampler" && samplerScreen != nullptr)
+        samplerScreen->setEditMode (false);
+    if (r.page == "Looper" && looper != nullptr)
+    {
+        looper->showTimeline (false);
+        looper->showSongGrid (false);
+    }
+    showTab (r.page);
+    if (r.track >= 0 && groove != nullptr)
+        groove->selectTrack (r.track);
+    say (r.message);
+}
+
+void RigView::keepAsSongPart()
+{
+    if (song == nullptr)
+        return;
+    song->addPart();   // (it says which part, and how to change it)
+    footer.repaint();
 }
 
 juce::String RigView::currentPage() const
@@ -1435,7 +1534,9 @@ void RigView::showMoreMenu()
     const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Drum machine", "Drum machine: analog sounds and patterns" },
                                { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
                                { "Synth", "Synth: sound and arp" }, { "Song", "Song builder: parts in order, lengths, names" },
-                               { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer, effects and keyboard set-up" } };
+                               { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer: levels, pan, solo, sends, effects" },
+                               { "Stage", "Big stage: giant buttons and the FX pad, for playing live" },
+                               { "Setup", "Setup: keys, pads, split, sampling, knobs" } };
     const auto here = currentPage();
     for (int i = 0; i < (int) std::size (tools); ++i)
         menu.addItem (10 + i, tools[i][1], true, here == tools[i][0]);
@@ -1452,7 +1553,7 @@ void RigView::showMoreMenu()
         menu.addItem (7, "Audio and MIDI set-up...");
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.more),
-                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer" }] (int result)
+                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer", "Stage", "Setup" }] (int result)
                         {
                             if (safe == nullptr || result == 0)
                                 return;
@@ -1521,7 +1622,7 @@ void RigView::resized()
     }
 }
 
-void RigView::layoutMixer (juce::Rectangle<int> page)
+void RigView::layoutSetup (juce::Rectangle<int> page)
 {
     auto area = page.reduced (14, 10);
 
@@ -1545,22 +1646,6 @@ void RigView::layoutMixer (juce::Rectangle<int> page)
     if (devices != nullptr)
         audioButton.setBounds (tools.removeFromRight (116));
     area.removeFromTop (14);
-
-    // The strips at the bottom, the effects of one above them.
-    auto strips = area.removeFromBottom (96);
-    const int count = (int) stripViews.size();
-    const int w = (strips.getWidth() - 6 * (count - 1)) / juce::jmax (1, count);
-    for (auto& s : stripViews)
-    {
-        s->setBounds (strips.removeFromLeft (w));
-        strips.removeFromLeft (6);
-    }
-    area.removeFromBottom (10);
-    if (fxPanel != nullptr)
-    {
-        fxPanel->setBounds (area.removeFromBottom (130));
-        area.removeFromBottom (10);
-    }
 
     // The keyboard routing and Sample.
     auto routing = area.removeFromLeft (560);

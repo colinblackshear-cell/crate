@@ -3,13 +3,13 @@ if(APPLE)
     list(APPEND SYNTH_FORMATS AU)
 endif()
 
-juce_add_plugin(CrateSynth
+juce_add_plugin(KaleidoboxSynth
     COMPANY_NAME "Colin Blackshear"
     BUNDLE_ID "com.colinblackshear.crate.synth"
     PLUGIN_MANUFACTURER_CODE Cblk
     PLUGIN_CODE CSyn
     FORMATS ${SYNTH_FORMATS}
-    PRODUCT_NAME "Crate Synth"
+    PRODUCT_NAME "Kaleidobox Synth"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -26,9 +26,9 @@ set(SYNTH_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/SynthView.cpp
     PARENT_SCOPE)
 
-target_sources(CrateSynth PRIVATE PluginEntry.cpp SynthEngine.cpp SynthProcessor.cpp SynthView.cpp)
-target_include_directories(CrateSynth PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(CrateSynth
+target_sources(KaleidoboxSynth PRIVATE PluginEntry.cpp SynthEngine.cpp SynthProcessor.cpp SynthView.cpp)
+target_include_directories(KaleidoboxSynth PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(KaleidoboxSynth
     PRIVATE
         crate_core
     PUBLIC

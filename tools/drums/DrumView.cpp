@@ -604,8 +604,8 @@ void DrumView::paint (juce::Graphics& g)
         auto r = header.reduced (20, 8);
         g.setColour (col::bandInk);
         g.setFont (juce::Font (juce::FontOptions (30.0f, juce::Font::bold | juce::Font::italic)));
-        auto mark = r.removeFromLeft (130);
-        g.drawText ("Crate", mark, juce::Justification::centredLeft);
+        auto mark = r.removeFromLeft (180);
+        g.drawText ("Kaleidobox", mark, juce::Justification::centredLeft);
         g.setFont (panelFont (15.0f));
         g.drawText ("DM-12  ANALOG RHYTHM COMPOSER", r.removeFromLeft (300), juce::Justification::centredLeft);
 

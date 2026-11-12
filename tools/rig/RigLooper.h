@@ -64,6 +64,13 @@ public:
         int writeIndex = 0;
         std::atomic<int> recorded { 0 };      // writeIndex, for the message thread
         float gain = 0.8f;
+        // A loop waiting to take this one's place at swapBeat (a loop bank coming in). Under
+        // `lock`; after the swap it holds the old sound until maintain() frees it.
+        juce::AudioBuffer<float> swapAudio;
+        double swapBeats = 0, swapBeat = -1;
+        float swapLevel = 0.8f;
+        bool swapMute = false;
+        std::atomic<bool> swapPending { false };
     };
 
     RigLooper();
@@ -81,6 +88,13 @@ public:
 
     // Message thread: puts a sound on a layer, `beats` long, playing from beat 0.
     void setLayerAudio (int layer, juce::AudioBuffer<float> audio, double beats);
+    // Message thread: swaps a layer's loop for another (a loop bank coming in) at `beat`, from
+    // its top, or right away if `beat` < 0. `audio` `beats` long, or empty (or `beats` 0) to leave
+    // the layer empty. Its level and mute change with it. A newer swap replaces one not yet done.
+    void queueLayerAudio (int layer, juce::AudioBuffer<float> audio, double beats, double beat, float level, bool mute);
+    bool isSwapPending (int layer) const { return layers[(size_t) layer].swapPending.load(); }
+    // Message thread: forgets a swap that hasn't happened yet.
+    void cancelSwap (int layer);
     // Message thread: a copy of a layer's loop (empty if it has none).
     juce::AudioBuffer<float> copyLayerAudio (int layer) const;
     // Message thread: the loop's loudness in `count` slices, for drawing it (also while it
@@ -137,6 +151,7 @@ public:
 private:
     void handleRequests (Layer&, int index, const Clock&, bool& wantsPlay);
     void finishRecording (Layer&);
+    void applySwap (Layer&, int index);   // under the layer's lock
 
     double sampleRate = 44100.0;
     std::array<Layer, kLayers> layers;

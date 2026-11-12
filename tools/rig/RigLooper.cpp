@@ -79,6 +79,73 @@ void RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double
     // The old buffer is freed here, outside the lock.
 }
 
+void RigLooper::queueLayerAudio (int index, juce::AudioBuffer<float> audio, double beats, double beat, float level, bool mute)
+{
+    auto& layer = layers[(size_t) index];
+    if (audio.getNumChannels() == 1)
+    {
+        audio.setSize (2, audio.getNumSamples(), true);
+        audio.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
+    }
+    if (audio.getNumSamples() == 0 || beats <= 0)
+    {
+        audio = {};
+        beats = 0;
+    }
+    {
+        const juce::SpinLock::ScopedLockType sl (layer.lock);
+        std::swap (layer.swapAudio, audio);
+        layer.swapBeats = beats;
+        layer.swapBeat = beat;
+        layer.swapLevel = juce::jlimit (0.0f, 1.0f, level);
+        layer.swapMute = mute;
+        layer.swapPending = true;
+        if (beat < 0)
+            applySwap (layer, index);
+    }
+    // A swap not yet done (or the sound it replaced) is freed here, outside the lock.
+}
+
+void RigLooper::cancelSwap (int index)
+{
+    auto& layer = layers[(size_t) index];
+    juce::AudioBuffer<float> old;
+    const juce::SpinLock::ScopedLockType sl (layer.lock);
+    layer.swapPending = false;
+    std::swap (layer.swapAudio, old);
+}
+
+void RigLooper::applySwap (Layer& layer, int index)
+{
+    // Only moves buffers, so it's fine on the audio thread.
+    if (layer.swapBeats > 0 && layer.swapAudio.getNumSamples() > 0)
+    {
+        std::swap (layer.audio, layer.swapAudio);
+        layer.length = layer.audio.getNumSamples();
+        layer.lengthBeats = layer.swapBeats;
+        layer.startBeat = juce::jmax (0.0, layer.swapBeat);
+        layer.stopBeat = -1;
+        layer.state = (int) State::playing;
+    }
+    else
+    {
+        layer.state = (int) State::empty;
+        layer.length = 0;
+        layer.lengthBeats = 0;
+        layer.position = 0;
+    }
+    layer.writeIndex = 0;
+    layer.recorded = 0;
+    layer.level = layer.swapLevel;
+    layer.mute = layer.swapMute;
+    layer.presses = 0;
+    layer.restartBeat = -1.0;
+    layer.swapPending = false;
+    if (undoLayer == index)
+        undoLayer = -1;
+    ++layer.version;
+}
+
 juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index) const
 {
     auto& layer = const_cast<Layer&> (layers[(size_t) index]);
@@ -208,6 +275,18 @@ void RigLooper::setTrim (int index, double startBeat, double endBeat, double pla
 
 void RigLooper::maintain()
 {
+    // The sounds that swaps replaced.
+    for (auto& layer : layers)
+        if (! layer.swapPending.load() && layer.swapAudio.getNumSamples() > 0)
+        {
+            juce::AudioBuffer<float> old;
+            {
+                const juce::SpinLock::ScopedLockType sl (layer.lock);
+                if (! layer.swapPending.load())
+                    std::swap (layer.swapAudio, old);
+            }
+        }
+
     const int maxCapacity = (int) (sampleRate * kMaxRecordSeconds);
     const int ahead = (int) (sampleRate * kGrowAheadSeconds);
     int longest = 0;
@@ -403,15 +482,24 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         const float* srcR = src != nullptr ? src->getReadPointer (juce::jmin (1, src->getNumChannels() - 1)) : nullptr;
         auto* audioL = layer.audio.getWritePointer (0);
         auto* audioR = layer.audio.getWritePointer (1);
-        const int capacity = layer.audio.getNumSamples();
+        int capacity = layer.audio.getNumSamples();
         const int bpb = juce::jmax (1, clock.beatsPerBar);
-        const float target = layer.mute.load() ? 0.0f : layer.level.load();
+        float target = layer.mute.load() ? 0.0f : layer.level.load();
         float peak = 0;
         bool changed = false;
 
         for (int i = 0; i < n; ++i)
         {
             const double beat = clock.beat + (clock.playing ? i * beatsPerSample : 0.0);
+            if (layer.swapPending.load (std::memory_order_relaxed) && (! clock.playing || beat >= layer.swapBeat - 1.0e-9))
+            {
+                applySwap (layer, index);
+                audioL = layer.audio.getWritePointer (0);
+                audioR = layer.audio.getWritePointer (1);
+                capacity = layer.audio.getNumSamples();
+                target = layer.mute.load() ? 0.0f : layer.level.load();
+                changed = true;
+            }
             auto state = (State) layer.state.load (std::memory_order_relaxed);
 
             if (state == State::armed)

@@ -3,13 +3,13 @@ if(APPLE)
     list(APPEND BASS_FORMATS AU)
 endif()
 
-juce_add_plugin(CrateBass
+juce_add_plugin(KaleidoboxBass
     COMPANY_NAME "Colin Blackshear"
     BUNDLE_ID "com.colinblackshear.crate.bass"
     PLUGIN_MANUFACTURER_CODE Cblk
     PLUGIN_CODE CBas
     FORMATS ${BASS_FORMATS}
-    PRODUCT_NAME "Crate Bass"
+    PRODUCT_NAME "Kaleidobox Bass"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -26,9 +26,9 @@ set(BASS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/BassView.cpp
     PARENT_SCOPE)
 
-target_sources(CrateBass PRIVATE PluginEntry.cpp BassEngine.cpp BassProcessor.cpp BassView.cpp)
-target_include_directories(CrateBass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(CrateBass
+target_sources(KaleidoboxBass PRIVATE PluginEntry.cpp BassEngine.cpp BassProcessor.cpp BassView.cpp)
+target_include_directories(KaleidoboxBass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(KaleidoboxBass
     PRIVATE
         crate_core
     PUBLIC
