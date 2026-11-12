@@ -24,13 +24,13 @@ public:
             if (guide == nullptr)
                 return;
 
-            // The five screens first, then the rest; nothing for a page the Rig lacks.
+            // The six screens first, then the rest; nothing for a page the Rig lacks.
             const auto& shown = guide->getShown();
             expect (shown.size() >= 10, "an entry per tool");
-            const char* five[] = { "Groove", "Vocoder", "Looper", "Sampler", "Mixer" };
-            for (int i = 0; i < 5; ++i)
+            const char* six[] = { "Groove", "Vocoder", "Looper", "Sampler", "Mixer", "Effects" };
+            for (int i = 0; i < 6; ++i)
             {
-                expectEquals (shown[(size_t) i].page, juce::String (five[i]));
+                expectEquals (shown[(size_t) i].page, juce::String (six[i]));
                 expect (shown[(size_t) i].main);
             }
             for (const auto& e : shown)

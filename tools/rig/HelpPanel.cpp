@@ -93,12 +93,25 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "The Mixer (F5) has every level, pan, mute and solo; its Big stage button shows everything at once in giant buttons, with the FX pad for the whole mix." },
           "" },
 
-        { "Guitar, keytar and other instruments",
-          { "Plug it into an input of your audio interface.",
-            "In the Mixer (F5), the Input strip plays it: switch it on, and pick input 1, 2 or both.",
-            "Give it effects with the strip's FX button.",
-            "To loop it: Looper > Record from > Line in. Picking Line in switches the Input strip on for you.",
+        { "Guitar, bass, keytar and other instruments",
+          { "Plug it into an input of your audio interface (the instrument or Hi-Z input, for a guitar or bass).",
+            "Open Effects (F6) and pick Line in. Press Plug in, and pick input 1, 2 or both.",
+            "Too quiet? Turn up Gain in. The tuner beside it shows the note you play.",
+            "Stomp the pedals you want (Amp, Wah, Chorus, Delay...), or pick a board from Presets: Clean guitar, Crunch, Bass DI...",
+            "Rec to looper puts it on the next loop layer from the next bar; Rec to sampler or Rec to MPC pad samples it. "
+            "What you record has the pedals on it.",
+            "The Mixer (F5) has the Input strip too: its level, mute and sends.",
+            "Every other sound has its own board too: pick the Bass, a loop or the Master on the left of the Effects screen.",
             "A keytar with MIDI can also play Kaleidobox's instruments, like any keyboard." },
+          "" },
+
+        { "Effects (F6): pedals on any sound",
+          { "Pick a sound on the left: the Line in, the Vocoder, Bass, Synth, MPC, Drum machine, Sampler, any loop, all the loops, or the Master.",
+            "Stomp a pedal's footswitch to switch it on; turn its knob. Click the pedal to open all its settings below.",
+            "Presets has ready-made boards for guitar, bass, keys, drums and anything; Save keeps yours for any sound.",
+            "Copy and Paste put one sound's board on another, to change from there.",
+            "Bypass switches the whole board out for a moment; Reset all switches every pedal off.",
+            "The Bass and Synth screens' Effects button, and All pedals on any FX panel, come straight here." },
           "" },
     };
     return list;
@@ -113,6 +126,7 @@ int HelpPanel::guideFor (const juce::String& page)
     if (page == "Timeline") return 5;
     if (page == "Stage" || page == "Mixer") return 7;
     if (page == "Setup") return 8;
+    if (page == "Effects") return 9;
     return 0;
 }
 

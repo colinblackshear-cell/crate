@@ -14,7 +14,7 @@ class GuideView : public juce::Component,
 {
 public:
     // The little pictures. `generic` is for a tool that has none yet.
-    enum class Art { groove, vocoder, looper, sampler, stage, pads, bass, synth, song, sounds, mixer, editor, drumMachine, generic };
+    enum class Art { groove, vocoder, looper, sampler, stage, pads, bass, synth, song, sounds, mixer, editor, drumMachine, effects, generic };
 
     struct Entry
     {

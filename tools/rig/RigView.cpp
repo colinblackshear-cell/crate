@@ -15,6 +15,7 @@
 #include "VocoderScreen.h"
 #include "SynthScreens.h"
 #include "GuideView.h"
+#include "EffectsView.h"
 #include "RigSongStart.h"
 
 namespace Theme = crate::Theme;
@@ -125,6 +126,17 @@ RigView::FxPanel::FxPanel (RigEngine& engine, int s)
 }
 
 //==============================================================================
+void RigView::showEffectsFor (int strip, int loop)
+{
+    if (effects == nullptr)
+        return;
+    if (loop >= 0)
+        effects->showLoop (loop);
+    else
+        effects->showStrip (strip);
+    showTab ("Effects");
+}
+
 void RigView::closeMixerPanel()
 {
     if (mixer != nullptr)
@@ -142,6 +154,7 @@ void RigView::showFx (int strip)
         return;
     fxPanel = std::make_unique<FxPanel> (engine, strip);
     fxPanel->onSay = [this] (const juce::String& text) { say (text); };
+    fxPanel->onPedals = [this, strip] { showEffectsFor (strip); };
     fxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
                                                                              { if (safe != nullptr) safe->closeMixerPanel(); }); };
     mixer->setPanel (fxPanel.get());
@@ -156,6 +169,7 @@ void RigView::showLayerFx (int layer)
     layerFxPanel = std::make_unique<StripFxPanel> (engine.getLoopFx (layer), "Loop " + juce::String (layer + 1) + " effects", RigColours::loops);
     layerFxShown = layer;
     layerFxPanel->onSay = [this] (const juce::String& text) { say (text); };
+    layerFxPanel->onPedals = [this, layer] { showEffectsFor (-1, layer); };
     layerFxPanel->closeButton.onClick = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
                                                                                   { if (safe != nullptr) safe->closeMixerPanel(); }); };
     mixer->setPanel (layerFxPanel.get());
@@ -288,7 +302,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
                            "The first time it asks for a name; after that it saves straight away (Cmd+S). More > Save show as... for a copy.");
     openButton.onClick = [this] { openShow(); };
 
-    // The five screens first (F1-F5), then what More shows. The tab bar is hidden: the screen
+    // The six screens first (F1-F6), then what More shows. The tab bar is hidden: the screen
     // buttons and More pick the page.
     tabs.setTabBarDepth (0);
     tabs.setOutline (0);
@@ -320,6 +334,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     looperView->setLookAndFeel (&vintageLook);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looperView->onSongBuilder = [this] { showTab ("Song"); };
+    looperView->onPedals = [this] (int layer) { showEffectsFor (-1, layer); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
     // The Sampler · MPC screen, over the full sample editor (a page of its own, in More).
@@ -384,6 +399,18 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         addPage ("Mixer", Theme::text, view);
     }
     addPage ("Stage", Theme::text, stageView);
+    {
+        // The effects processor: a pedalboard for every sound (the line in, each tool, each loop).
+        auto* view = new EffectsView (engine);
+        view->setLookAndFeel (&vintageLook);
+        view->onSay = [this] (const juce::String& text) { say (text); };
+        view->onOpen = [this] (const juce::String& name) { showTab (name); };
+        view->onSample = [this] { toggleSampling(); };
+        view->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
+        view->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
+        effects = view;
+        addPage ("Effects", RigColours::input, view);
+    }
     addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
     if (samplerView != nullptr)
         addPage ("Sampler", samplerColour, samplerView);
@@ -394,6 +421,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         screen->setLookAndFeel (&vintageLook);
         screen->onSay = [this] (const juce::String& text) { say (text); };
         const bool isBass = dynamic_cast<BassScreen*> (screen) != nullptr;
+        screen->onEffects = [this, isBass] { showEffectsFor (isBass ? RigEngine::bassStrip : RigEngine::synthStrip); };
         addPage (isBass ? "Bass" : "Synth", isBass ? bassColour : synthColour, screen);
     }
     auto* songView = new SongView (engine);
@@ -1279,7 +1307,7 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         showTab (currentPage() == "Stage" ? "Mixer" : "Groove");
         return true;
     }
-    // F1-F5: the screens.
+    // F1-F6: the screens.
     for (int i = 0; i < rigpanels::ScreenBar::screens().size(); ++i)
         if (key.getKeyCode() == juce::KeyPress::F1Key + i)
         {

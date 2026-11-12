@@ -70,7 +70,7 @@ public:
     ScreenBar();
     void resized() override;
 
-    // The five screens, as their pages are named.
+    // The six screens, as their pages are named.
     static const juce::StringArray& screens();
     static juce::String label (int);
     void setCurrent (const juce::String& page);
