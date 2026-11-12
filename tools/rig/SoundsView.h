@@ -24,6 +24,8 @@ public:
 
     std::function<void (const juce::String&)> onSay;
     SoundBank& getBank() { return bank; }
+    // The same bank, for the MPC's sound bank under its pads.
+    std::shared_ptr<SoundBank> getSharedBank() const { return bankPtr; }
 
     // Sends the selected sound (public for tests).
     void sendToMpc();
@@ -46,7 +48,8 @@ private:
     void say (const juce::String& s) { if (onSay) onSay (s); }
 
     RigEngine& engine;
-    SoundBank bank;
+    std::shared_ptr<SoundBank> bankPtr;
+    SoundBank& bank;
     juce::AudioFormatManager formats;
     std::vector<SoundBank::Sound> shown;
     int kind = -1;

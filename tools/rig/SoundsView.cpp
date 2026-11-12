@@ -12,7 +12,7 @@ const juce::Colour soundsColour { 0xffa1887f };
 }
 
 SoundsView::SoundsView (RigEngine& e, juce::File bankHome)
-    : engine (e), bank (std::move (bankHome))
+    : engine (e), bankPtr (std::make_shared<SoundBank> (std::move (bankHome))), bank (*bankPtr)
 {
     formats.registerBasicFormats();
     bank.addChangeListener (this);

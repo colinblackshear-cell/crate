@@ -45,6 +45,16 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Back and Next (or click the bank's name) bring a batch back, at the next bar while playing." },
           "Loops can be up to 10 minutes long. A short loop and a long one play together in time." },
 
+        { "Sampler and MPC (F4): play the pads like an MPC",
+          { "Your keyboard's drum pads (Launchkey in Drum mode, or a Launchpad in Drum mode) play the 16 pads of the bank on screen. "
+            "A Launchpad plays all four banks at once.",
+            "Sounds (under the pads) opens your sound bank: click a sound to hear it, double-click to put it on the picked pad.",
+            "FX (by the knobs) turns the picked pad's filter, decay, delay and reverb, live while it plays.",
+            "16 Levels spreads the picked pad over all 16 pads: Tune plays it as a scale, Filter opens up, Velocity soft to loud, Decay short to long.",
+            "Repeat: hold a pad and it plays again every 1/16 (or the rate you pick), in time. Record with the click on to keep the repeats.",
+            "More > MPC has the same tools, with the full kit, sequencer and Sound + FX page." },
+          "Hits you record with 16 Levels keep their level when the sequence plays them back." },
+
         { "Build a song",
           { "Open the Song builder: More > Song builder, or the Song button on the Looper. (Or skip it: New pattern > Keep "
             "what's playing as the next song part does the same as + New part, from any screen.)",
@@ -122,11 +132,12 @@ int HelpPanel::guideFor (const juce::String& page)
     if (page == "Groove") return 1;
     if (page == "Vocoder") return 2;
     if (page == "Looper") return 3;
-    if (page == "Song") return 4;
-    if (page == "Timeline") return 5;
-    if (page == "Stage" || page == "Mixer") return 7;
-    if (page == "Setup") return 8;
-    if (page == "Effects") return 9;
+    if (page == "Sampler" || page == "MPC") return 4;
+    if (page == "Song") return 5;
+    if (page == "Timeline") return 6;
+    if (page == "Stage" || page == "Mixer") return 8;
+    if (page == "Setup") return 9;
+    if (page == "Effects") return 10;
     return 0;
 }
 

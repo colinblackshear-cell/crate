@@ -42,6 +42,15 @@ struct Pad
     double beats = 0;
     bool playNormal = false;
 
+    // The pad's live sound: it shapes the sound as it plays without changing the sound itself,
+    // so it can be turned while the pad plays (Trim and effects... changes the sound itself).
+    float cutoff = 20000.0f;        // low-pass filter, Hz; 20000 = open
+    float resonance = 0.0f;         // 0..1
+    int attack = 0;                 // fade in, ms (0..2000)
+    int decay = 0;                  // ms before it fades away (10..5000); 0 = the whole sound
+    int delaySend = 0;              // 0..100, into the kit's delay
+    int reverbSend = 0;             // 0..100, into the kit's reverb
+
     bool isEmpty() const { return audio == nullptr || audio->getNumSamples() == 0; }
     int channelsOnMpc() const { return isEmpty() ? 0 : (mono ? 1 : juce::jmin (2, audio->getNumChannels())); }
 
@@ -60,6 +69,11 @@ struct Bank
 
     double bpm = 90.0;
     bool keepInTime = false;        // stretch every pad to `bpm`, except pads set to play normal
+
+    // The kit's delay and reverb, which each pad sends some of itself to.
+    double delayBeats = 0.75;       // the echo's time in beats at the sequence's tempo (0.75 = dotted 1/8)
+    int delayFeedback = 35;         // 0..90 %
+    int reverbSize = 50;            // 0..100 %
 
     // How many beats the pad will be stretched to, or 0 when it plays as recorded.
     double beatsFor (int pad) const;

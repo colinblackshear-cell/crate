@@ -1,5 +1,7 @@
 #include "SequencerEngine.h"
 
+#include "SixteenLevels.h"
+
 #include "BankModel.h"
 
 namespace
@@ -114,8 +116,10 @@ void SequencerEngine::prepare (double rate)
     sampleRate = rate > 0 ? rate : 44100.0;
 }
 
-void SequencerEngine::noteOn (juce::MidiBuffer& out, int pad, int velocity, int offset, int lengthSamples)
+void SequencerEngine::noteOn (juce::MidiBuffer& out, int pad, int velocity, int offset, int lengthSamples, int variation)
 {
+    if (variation != 0)
+        out.addEvent (levels::message (noteForPad (pad), variation), offset);
     out.addEvent (juce::MidiMessage::noteOn (kSequencerChannel, noteForPad (pad), (juce::uint8) juce::jlimit (1, 127, velocity)), offset);
     for (auto& slot : noteOffs)
         if (slot.pad < 0)
@@ -176,7 +180,32 @@ void SequencerEngine::finishHeld (int pad, double now, int length)
             held += playingSnapshot->length;
         length = juce::jmax (1, juce::roundToInt (held));
     }
-    push ({ h.recordedTick, pad, h.velocity, length });
+    push ({ h.recordedTick, pad, h.velocity, length, h.variation });
+}
+
+void SequencerEngine::repeatWhileStopped (int numSamples, double samplesPerTick, juce::MidiBuffer& out)
+{
+    // Stopped, held pads still repeat, counted from the press at the sequence's tempo (straight,
+    // no swing: there's no beat to swing against).
+    const int step = seq::gridTicks (getRepeatGrid());
+    if (! noteRepeat.load() || step <= 0)
+        return;
+    const double every = step * samplesPerTick;
+    for (int pad = 0; pad < (int) held.size(); ++pad)
+    {
+        const auto& h = held[(size_t) pad];
+        if (! h.down)
+            continue;
+        const double since = (double) (sampleClock - h.pressedAt);
+        for (long long n = juce::jmax (1LL, (long long) std::ceil (since / every));; ++n)
+        {
+            const int offset = juce::roundToInt (n * every - since);
+            if (offset >= numSamples)
+                break;
+            if (offset >= 0)
+                noteOn (out, pad, h.velocity, offset, juce::roundToInt (every / 2), h.variation);
+        }
+    }
 }
 
 void SequencerEngine::emitSegment (const Snapshot& snap, const Segment& seg, double samplesPerTick, juce::MidiBuffer& out,
@@ -208,7 +237,7 @@ void SequencerEngine::emitSegment (const Snapshot& snap, const Segment& seg, dou
                 break;
             }
         if (! skip)
-            noteOn (out, it->pad, it->velocity, offsetOf (it->tick), juce::roundToInt (it->length * samplesPerTick));
+            noteOn (out, it->pad, it->velocity, offsetOf (it->tick), juce::roundToInt (it->length * samplesPerTick), it->variation);
     }
 
     for (auto& s : skips)
@@ -216,7 +245,7 @@ void SequencerEngine::emitSegment (const Snapshot& snap, const Segment& seg, dou
             s.pad = -1;
 
     // Note repeat: held pads play on every grid step.
-    const auto g = (seq::Grid) grid.load();
+    const auto g = getRepeatGrid();
     const int step = seq::gridTicks (g);
     if (noteRepeat.load() && step > 0)
     {
@@ -232,9 +261,9 @@ void SequencerEngine::emitSegment (const Snapshot& snap, const Segment& seg, dou
                 // The press itself was the hit; repeats start from the next step.
                 if (! h.down || sampleClock + offsetOf (st) - h.pressedAt < step / 2 * samplesPerTick)
                     continue;
-                noteOn (out, pad, h.velocity, offsetOf (st), juce::roundToInt (step / 2 * samplesPerTick));
+                noteOn (out, pad, h.velocity, offsetOf (st), juce::roundToInt (step / 2 * samplesPerTick), h.variation);
                 if (recording)
-                    push ({ st, pad, h.velocity, juce::jmax (1, step / 2) });
+                    push ({ st, pad, h.velocity, juce::jmax (1, step / 2), h.variation });
             }
         }
     }
@@ -338,6 +367,12 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
     for (const auto m : played)
     {
         const auto msg = m.getMessage();
+        if (levels::isVariation (msg))
+        {
+            if (const int pad = padForNote (msg.getNoteNumber()); pad >= 0)
+                pendingVariation[(size_t) pad] = msg.getAfterTouchValue();
+            continue;
+        }
         if (! (msg.isNoteOn() || msg.isNoteOff()))
             continue;
         const int pad = padForNote (msg.getNoteNumber());
@@ -348,6 +383,7 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
         if (msg.isNoteOn())
         {
             h.down = true;
+            h.variation = std::exchange (pendingVariation[(size_t) pad], 0);
             h.velocity = msg.getVelocity();
             h.pressedAt = sampleClock + m.samplePosition;
             if (playing && recording)
@@ -359,6 +395,9 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
             finishHeld (pad, at, 0);
         }
     }
+
+    if (! playing)
+        repeatWhileStopped (numSamples, samplesPerTick, out);
 
     if (playing)
     {
@@ -452,5 +491,6 @@ void SequencerEngine::process (int numSamples, const Host* host, const juce::Mid
     recordingNow = recording;
     followingNow = following;
     hostBpmNow = following ? bpm : 0.0;
+    bpmNow = bpm;
     positionNow = tick;
 }

@@ -95,10 +95,14 @@ void RigRouting::setAssignment (int control, int channel, int cc)
 
 int RigRouting::mpcNoteForPad (int padNote) const
 {
+    // The Launchkey's 16 pads are notes 36-51: the pad bank on screen. A Launchpad in Drum mode
+    // goes on to note 99, in four blocks of 16 (bottom left, bottom right, top left, top
+    // right): the bank on screen, then the three after it, so all 64 pads are under your hands.
     const int i = padNote - kFirstPadNote;
-    if (! juce::isPositiveAndBelow (i, 16))
+    if (! juce::isPositiveAndBelow (i, 64))
         return -1;
-    return noteForPad (juce::jlimit (0, 3, padBank.load()) * 16 + i);
+    const int bank = (juce::jlimit (0, 3, padBank.load()) + i / 16) % 4;
+    return noteForPad (bank * 16 + i % 16);
 }
 
 std::pair<int, int> RigRouting::takeCaughtKnob()

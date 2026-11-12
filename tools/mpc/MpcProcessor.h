@@ -5,6 +5,7 @@
 
 #include "BankModel.h"
 #include "SequencerEngine.h"
+#include "SixteenLevels.h"
 #include "core/SoundLibrary.h"
 
 #include <array>
@@ -52,6 +53,11 @@ public:
     // instead of the MPC notes those numbers would be. Off inside the Rig, which maps them itself.
     std::atomic<bool> launchkeyPads { true };
     std::atomic<int> padBankOnScreen { 0 };
+
+    // 16 Levels (see SixteenLevels.h): with a type picked, the 16 pads of the bank on screen
+    // all play `levelsPad`'s sound, a step apart. Off (levels::off) the pads play their own.
+    std::atomic<int> levelsType { levels::off };
+    std::atomic<int> levelsPad { 0 };
 
     // Undo for sequence edits: call beginEdit() before changing the current sequence.
     void beginEdit();
@@ -128,8 +134,18 @@ private:
         bool reverse = false;
         PadMode mode = PadMode::oneShot;
         int muteGroup = 0;
+        // The live sound (Pad::cutoff and on).
+        float cutoff = 20000.0f, resonance = 0.0f;
+        double attackSeconds = 0, decaySeconds = 0;
+        float delaySend = 0, reverbSend = 0;
     };
-    using Kit = std::array<PadSound, mpc::kPadCount>;
+    struct KitSounds : std::array<PadSound, mpc::kPadCount>
+    {
+        double delayBeats = 0.75;
+        float delayFeedback = 0.35f, reverbSize = 0.5f;
+        bool sends = false;         // some pad sends to the delay or reverb
+    };
+    using Kit = KitSounds;
 
     struct Voice
     {
@@ -140,6 +156,11 @@ private:
         float velocity = 1;
         float fade = 1;
         bool releasing = false;
+        // Fade in, then (with a decay) die away and stop.
+        int age = 0, attackLength = 0, decayLength = 0;
+        float decayGain = 1, decayFactor = 1;
+        // A low-pass filter (a state-variable one, per side); off when g is 0.
+        float g = 0, k = 2, s1[2] {}, s2[2] {};
     };
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -150,6 +171,20 @@ private:
 
     void handleMidi (const juce::MidiMessage&, const std::shared_ptr<const Kit>&);
     void render (juce::AudioBuffer<float>&, int start, int count);
+    void applySixteenLevels (juce::MidiBuffer&);
+    void renderSends (juce::AudioBuffer<float>&, const Kit*);
+
+    // 16 Levels: the pad each pad held down is playing (+1; 0: none), so letting go stops it
+    // even if the levels changed meanwhile; and a variation waiting for its note. Audio thread.
+    std::array<int, mpc::kPadCount> levelsHeld {}, pendingVariation {};
+    juce::MidiBuffer levelsScratch;
+
+    // The kit's delay and reverb: voices add what they send here, and they're mixed in at the
+    // end of the block. Sized in prepareToPlay.
+    juce::AudioBuffer<float> delaySend, reverbSend, delayLine;
+    int delayWrite = 0;
+    juce::Reverb reverb;
+    int sendTail = 0;               // samples the delay and reverb keep ringing after the sends stop
 
     juce::AudioFormatManager formats;
     SoundLibrary library;

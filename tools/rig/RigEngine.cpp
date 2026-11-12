@@ -1,5 +1,7 @@
 #include "RigEngine.h"
 
+#include "core/control/Launchpad.h"
+
 #include <algorithm>
 
 #include "core/AudioFiles.h"
@@ -986,8 +988,17 @@ void RigEngine::audioDeviceStopped()
     synthTool.releaseResources();
 }
 
-void RigEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
+void RigEngine::handleIncomingMidiMessage (juce::MidiInput* source, const juce::MidiMessage& m)
 {
+    // A Launchpad's pads come in on the drum pads' channel, whatever channel it's set to, so it
+    // plays the MPC (or the drum machine) without setting anything up.
+    if (source != nullptr && crate::launchpad::isLaunchpad (source->getName()) && crate::launchpad::isPadMessage (m))
+    {
+        auto pad = m;
+        pad.setChannel (juce::jlimit (1, 16, routing.padChannel.load() > 0 ? routing.padChannel.load() : 10));
+        incoming.addMessageToQueue (pad);
+        return;
+    }
     incoming.addMessageToQueue (m);
 }
 
@@ -1162,6 +1173,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     transport.metronome = (bool) show.getProperty ("metronome", false);
     routing.padChannel = juce::jlimit (0, 16, (int) show.getProperty ("padChannel", 10));
     routing.padBank = juce::jlimit (0, 3, (int) show.getProperty ("padBank", 0));
+    mpc.padBankOnScreen = routing.padBank.load();   // the MPC shows the bank the drum pads play
     routing.padsTo = (int) show.getProperty ("padsTo", (int) RigRouting::Dest::mpc) == (int) RigRouting::Dest::drums ? (int) RigRouting::Dest::drums : (int) RigRouting::Dest::mpc;
     routing.keysTo = juce::jlimit (0, RigRouting::kNumDests - 1, (int) show.getProperty ("keysTo", (int) RigRouting::Dest::vocoder));
     vocoderOn = (bool) show.getProperty ("vocoderOn", true);
@@ -1652,6 +1664,7 @@ juce::String RigEngine::sendSlicesToMpc (std::vector<crate::SharedAudio> slices,
 
     project.setCurrent (index);
     mpc.padBankOnScreen = 0;   // the drum pads play A01 to A16
+    routing.padBank = 0;
     project.changed();
 
     juce::String text = "Sent " + juce::String (count) + " slices to a new MPC kit, \"" + bank.name + "\": pads A01 to "

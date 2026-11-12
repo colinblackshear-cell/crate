@@ -67,6 +67,16 @@ juce::ValueTree Sequence::toValueTree() const
             notes.writeInt (n.length);
         }
         tv.setProperty ("notes", notes.getMemoryBlock(), nullptr);
+
+        // 16 Levels hits keep their variation, one number a note, in the notes' order. Saved
+        // only when a track has some, so older versions read the notes as they always did.
+        if (std::any_of (t.notes.begin(), t.notes.end(), [] (const Note& n) { return n.variation != 0; }))
+        {
+            juce::MemoryOutputStream vars;
+            for (const auto& n : t.notes)
+                vars.writeInt (n.variation);
+            tv.setProperty ("variations", vars.getMemoryBlock(), nullptr);
+        }
         v.appendChild (tv, nullptr);
     }
     return v;
@@ -94,6 +104,10 @@ Sequence Sequence::fromValueTree (const juce::ValueTree& v)
         if (const auto* data = tv["notes"].getBinaryData())
         {
             juce::MemoryInputStream in (*data, false);
+            const auto* varData = tv["variations"].getBinaryData();
+            std::unique_ptr<juce::MemoryInputStream> vars;
+            if (varData != nullptr && varData->getSize() * 4 == data->getSize())
+                vars = std::make_unique<juce::MemoryInputStream> (*varData, false);
             while (in.getNumBytesRemaining() >= 16)
             {
                 Note n;
@@ -101,6 +115,8 @@ Sequence Sequence::fromValueTree (const juce::ValueTree& v)
                 n.pad = in.readInt();
                 n.velocity = juce::jlimit (1, 127, in.readInt());
                 n.length = juce::jmax (1, in.readInt());
+                if (vars != nullptr && vars->getNumBytesRemaining() >= 4)
+                    n.variation = juce::jlimit (0, 127, vars->readInt());
                 if (juce::isPositiveAndBelow (n.pad, mpc::kPadCount) && juce::isPositiveAndBelow (n.tick, s.lengthTicks()))
                     t.notes.push_back (n);
             }

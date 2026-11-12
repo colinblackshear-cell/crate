@@ -4,6 +4,7 @@
 
 #include "RigEngine.h"
 #include "Vintage.h"
+#include "BankBrowser.h"
 
 class EditorView;
 
@@ -73,12 +74,26 @@ public:
     int medium = 0;
 
     std::vector<std::unique_ptr<vintage::Knob>> knobs;   // Pitch, Level, Pan, Mode, Choke
+    // The pad's live sound, on the same row when FX is on: Filter, Reso, Decay, Delay, Reverb.
+    std::vector<std::unique_ptr<vintage::Knob>> fxKnobs;
+    void showFxKnobs (bool);
+    bool isShowingFxKnobs() const { return fxShown; }
+
+    // The pad tools under the pads: 16 Levels, Note repeat, and your sound bank (which shows
+    // over the wave, for the picked pad).
+    void setSixteenLevels (int type);
+    void showSounds (bool);
+    bool isShowingSounds() const { return soundsShown; }
+    void setSoundBank (std::shared_ptr<SoundBank> b) { browser.setSoundBank (std::move (b)); }
+    BankBrowser& getBrowser() { return browser; }
 
 private:
     void timerCallback() override;
     void updateButtons();
     void updateKnobs();
     void setPadValue (int knob, double value);
+    void setFxValue (int knob, double value);
+    void updatePadTools();
     void rebuildPeaks();
     void play (juce::Range<int>);
 
@@ -111,6 +126,10 @@ private:
     juce::TextButton chopButtons[3] { juce::TextButton ("Transients"), juce::TextButton ("Even 16"), juce::TextButton ("By hand") };
     juce::TextButton snapButton { "Snap to zero" }, toPadsButton { "To pads" }, openButton { "Open" }, editorButton { "Editor" },
         zoomOut { juce::String::fromUTF8 ("\xe2\x88\x92") }, zoomIn { "+" }, fullLevel { "Full level" }, sendButton { "Send to MPC" };
+    juce::TextButton levelsButton { "16 Levels" }, repeatButton { "Repeat" }, rateButton { "1/16" }, soundsButton { "Sounds" },
+        fxButton { "FX" };
+    BankBrowser browser { engine.getMpc() };
+    bool fxShown = false, soundsShown = false;
     juce::TextButton bankButtons[4] { juce::TextButton ("A"), juce::TextButton ("B"), juce::TextButton ("C"), juce::TextButton ("D") };
     juce::TextButton mediumButtons[3] { juce::TextButton (juce::String::fromUTF8 ("USB \xe2\x86\x92 CF card")), juce::TextButton ("Zip disk"),
                                         juce::TextButton ("Floppy") };
