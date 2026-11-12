@@ -90,12 +90,12 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Press Play song, or launch parts yourself from the song part buttons.",
             "Sing: your voice goes through the vocoder live. Record a part of it onto a loop if you want it to repeat.",
             "Press Rec (top bar) first to keep the whole performance as stems for Logic.",
-            "The Stage screen (F5) shows everything at once, with the FX pad for the whole mix." },
+            "The Mixer (F5) has every level, pan, mute and solo; its Big stage button shows everything at once in giant buttons, with the FX pad for the whole mix." },
           "" },
 
         { "Guitar, keytar and other instruments",
           { "Plug it into an input of your audio interface.",
-            "In the mixer (More > Mixer), the Input strip plays it: switch it on, and pick input 1, 2 or both.",
+            "In the Mixer (F5), the Input strip plays it: switch it on, and pick input 1, 2 or both.",
             "Give it effects with the strip's FX button.",
             "To loop it: Looper > Record from > Line in. Picking Line in switches the Input strip on for you.",
             "A keytar with MIDI can also play Kaleidobox's instruments, like any keyboard." },
@@ -111,8 +111,8 @@ int HelpPanel::guideFor (const juce::String& page)
     if (page == "Looper") return 3;
     if (page == "Song") return 4;
     if (page == "Timeline") return 5;
-    if (page == "Stage") return 7;
-    if (page == "Mixer") return 8;
+    if (page == "Stage" || page == "Mixer") return 7;
+    if (page == "Setup") return 8;
     return 0;
 }
 

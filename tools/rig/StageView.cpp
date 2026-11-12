@@ -141,7 +141,7 @@ void StageView::setShowPad (bool on)
         pad.release();
     for (auto* m : mutes)
         m->setVisible (! on);
-    padToggle.text = on ? "Mixer" : "FX pad";
+    padToggle.text = on ? "Channels" : "FX pad";
     padToggle.lit = on ? vintage::Lit::current : vintage::Lit::none;
     padToggle.repaint();
     repaint();
