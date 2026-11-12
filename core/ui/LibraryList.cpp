@@ -46,7 +46,7 @@ void LibraryList::filter()
     list.repaint();
 
     emptyNote.setText (! shown.empty() ? juce::String()
-                       : library.getEntries().empty() ? "No sounds yet.\nSounds you save to the library show up here, for every Crate tool."
+                       : library.getEntries().empty() ? "No sounds yet.\nSounds you save to the library show up here, for every Kaleidobox tool."
                                                       : "No sounds match.", juce::dontSendNotification);
 }
 
