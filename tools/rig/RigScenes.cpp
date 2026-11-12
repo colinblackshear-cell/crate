@@ -32,6 +32,8 @@ juce::ValueTree RigScene::toTree() const
     t.setProperty ("drumSequencer", state.drumSequencer, nullptr);
     t.setProperty ("vocoderOn", state.vocoderOn, nullptr);
     t.setProperty ("inputOn", state.inputOn, nullptr);
+    if (state.loopBank >= 0)
+        t.setProperty ("loopBank", state.loopBank, nullptr);
     t.setProperty ("stripMutes", joinInts (state.stripMutes.data(), kMaxStrips), nullptr);
     t.setProperty ("loopMutes", joinInts (state.loopMutes.data(), kLayers), nullptr);
     return t;
@@ -50,6 +52,7 @@ RigScene RigScene::fromTree (const juce::ValueTree& t)
     s.state.drumSequencer = t.getProperty ("drumSequencer", -1);
     s.state.vocoderOn = t.getProperty ("vocoderOn", -1);
     s.state.inputOn = t.getProperty ("inputOn", -1);
+    s.state.loopBank = juce::jmax (-1, (int) t.getProperty ("loopBank", -1));
     splitInts (t.getProperty ("stripMutes").toString(), s.state.stripMutes);
     splitInts (t.getProperty ("loopMutes").toString(), s.state.loopMutes);
     return s;
