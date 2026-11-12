@@ -1,4 +1,4 @@
-// Crate on the phone: record sounds while you walk around, shape them, keep them in a library,
+// Kaleidobox on the phone: record sounds while you walk around, shape them, keep them in a library,
 // play them on pads, and export kits the MPC2000XL loads.
 
 import * as dsp from "./dsp.js";
@@ -791,7 +791,7 @@ async function start()
         kit.pads = saved.pads;
     }
     const kept = await store.persist();
-    $("persist-note").textContent = kept ? "" : "Tip: add Crate to your Home Screen so iOS keeps your sounds.";
+    $("persist-note").textContent = kept ? "" : "Tip: add Kaleidobox to your Home Screen so iOS keeps your sounds.";
 
     if ("serviceWorker" in navigator)
         navigator.serviceWorker.register ("sw.js").catch (() => {});

@@ -4,7 +4,7 @@
 
 #include "RigEngine.h"
 
-// The Rig as a plugin, for Logic: an instrument ("Crate Rig") that runs the whole Rig inside
+// The Rig as a plugin, for Logic: an instrument ("Kaleidobox", once "Crate Rig") that runs the whole Rig inside
 // a Logic song. It follows Logic's tempo, time signature and Play/Stop, plays from the
 // track's MIDI (your Launchkey through Logic), and hears your mic through the side chain
 // (pick the mic's track or input in Side Chain at the top of the plugin window). The

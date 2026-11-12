@@ -1,7 +1,7 @@
 // Keeps the app working with no signal: every file is cached, and refreshed from the network
 // whenever there is one.
-const CACHE = "crate-phone-v1";
-const FILES = ["./", "index.html", "style.css", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-512.png",
+const CACHE = "kaleidobox-phone-v2";
+const FILES = ["./", "index.html", "style.css", "manifest.webmanifest", "icon-180.png", "icon-512.png",
                "js/app.js", "js/audio.js", "js/capture-worklet.js", "js/dsp.js", "js/files.js", "js/mpc.js", "js/store.js"];
 
 self.addEventListener ("install", (e) =>
