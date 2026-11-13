@@ -3,6 +3,14 @@
 
 juce::AudioProcessor::BusesProperties RigPlugin::buses()
 {
+#if defined (RIG_PLUGIN_INPUT)
+    // Kaleidobox Input (an AU MIDI-controlled effect): the track's audio comes in on the main
+    // input, or the Side Chain's on the second one. One stereo output.
+    return BusesProperties()
+        .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+        .withInput ("Side chain", juce::AudioChannelSet::stereo(), false)
+        .withOutput ("Rig", juce::AudioChannelSet::stereo(), true);
+#else
     auto b = BusesProperties()
                  .withInput ("Input", juce::AudioChannelSet::stereo(), false)
                  .withInput ("Side chain", juce::AudioChannelSet::stereo(), false)
@@ -10,6 +18,7 @@ juce::AudioProcessor::BusesProperties RigPlugin::buses()
     for (int s = 0; s < RigEngine::numStems; ++s)
         b = b.withOutput (RigEngine::stemName (s), juce::AudioChannelSet::stereo(), false);
     return b;
+#endif
 }
 
 RigPlugin::RigPlugin() : AudioProcessor (buses())
