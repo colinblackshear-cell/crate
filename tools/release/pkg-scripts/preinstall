@@ -18,5 +18,6 @@ if [ -n "$USER_HOME" ]; then
     rm -rf "$USER_HOME/Applications/Kaleidobox.app"
     rm -rf "$USER_HOME/Library/Audio/Plug-Ins/Components/Kaleidobox.component"
     rm -rf "$USER_HOME/Library/Audio/Plug-Ins/VST3/Kaleidobox.vst3"
+    rm -rf "$USER_HOME/Library/Audio/Plug-Ins/Components/Kaleidobox Input.component"
 fi
 exit 0

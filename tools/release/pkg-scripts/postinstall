@@ -4,5 +4,6 @@
 xattr -cr "/Applications/Kaleidobox.app" 2>/dev/null || true
 xattr -cr "/Library/Audio/Plug-Ins/Components/Kaleidobox.component" 2>/dev/null || true
 xattr -cr "/Library/Audio/Plug-Ins/VST3/Kaleidobox.vst3" 2>/dev/null || true
+xattr -cr "/Library/Audio/Plug-Ins/Components/Kaleidobox Input.component" 2>/dev/null || true
 killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true
 exit 0

@@ -69,6 +69,7 @@ install_one() {   # install_one <thing> <folder>
 install_one "$SRC/$NAME.app" "$APPS"
 [ -d "$SRC/$NAME.component" ] && install_one "$SRC/$NAME.component" "$COMPONENTS"
 [ -d "$SRC/$NAME.vst3" ] && install_one "$SRC/$NAME.vst3" "$VST3"
+[ -d "$SRC/$NAME Input.component" ] && install_one "$SRC/$NAME Input.component" "$COMPONENTS"
 
 # Make Logic notice the new Audio Unit without a restart of the Mac.
 killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true
@@ -78,6 +79,9 @@ cat <<MSG
   - The app is in $APPS. Open it from there or from Launchpad.
   - In Logic: make a Software Instrument track and pick
     AU Instruments > Colin Blackshear > $NAME.
+  - To play your mic or guitar through it in Logic, pick
+    AU MIDI-controlled Effects > Colin Blackshear > $NAME Input instead,
+    and set Side Chain at the top of its window to your input.
     (If Logic was open, quit and reopen it first.)
   - The first time it uses your mic, the Mac asks. Click Allow.
 MSG

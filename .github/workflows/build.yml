@@ -58,6 +58,8 @@ jobs:
           cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxPlugin_artefacts/Release"
           codesign --force --deep -s - "AU/Kaleidobox.component"
           codesign --force --deep -s - "VST3/Kaleidobox.vst3"
+          cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxInputPlugin_artefacts/Release"
+          codesign --force --deep -s - "AU/Kaleidobox Input.component"
 
       - name: Validate the Audio Unit (what Logic checks)
         run: |
@@ -86,6 +88,10 @@ jobs:
           killall -9 AudioComponentRegistrar || true
           sleep 5
           auval -v aumu CRig Cblk
+          cp -R "build/tools/rig/KaleidoboxInputPlugin_artefacts/Release/AU/Kaleidobox Input.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 5
+          auval -v aumf CRgI Cblk
 
       - name: Package
         run: |
@@ -108,6 +114,8 @@ jobs:
           cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxPlugin_artefacts/Release"
           ditto -c -k --keepParent "AU/Kaleidobox.component" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-AU.zip"
           ditto -c -k --keepParent "VST3/Kaleidobox.vst3" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-VST3.zip"
+          cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxInputPlugin_artefacts/Release"
+          ditto -c -k --keepParent "AU/Kaleidobox Input.component" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-Input-AU.zip"
           for t in Bass Synth Drums; do
             cd "$GITHUB_WORKSPACE/build/tools/$(echo $t | tr A-Z a-z)/Kaleidobox${t}_artefacts/Release"
             ditto -c -k --keepParent "Standalone/Kaleidobox $t.app" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-$t-App.zip"

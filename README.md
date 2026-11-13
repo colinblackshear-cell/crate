@@ -319,9 +319,12 @@ The whole Rig also runs inside Logic, as an instrument called **Kaleidobox**:
 
 1. Make a **Software Instrument** track and pick **AU Instruments > Colin Blackshear > Kaleidobox**
    (choose **Multi Output** if you want each tool on its own track).
-2. **Your mic:** make an audio track for the mic (or just know its input), then at the top of
-   the Kaleidobox window set **Side Chain** to it. The vocoder, the Input strip, sampling and
-   the looper hear it from there.
+2. **Your mic or guitar:** Logic sends no audio into an instrument plugin, so for these load
+   **Kaleidobox Input** instead: the same box as an AU MIDI-controlled effect, like the Vocoder.
+   On a Software Instrument track pick **AU MIDI-controlled Effects > Colin Blackshear >
+   Kaleidobox Input**, then at the top of its window set **Side Chain** to your mic's input or
+   audio track. Press **Plug in** on Effects > Line in to hear the Line in; the vocoder,
+   sampling and the looper hear it too. Kaleidobox Input has one stereo output (no Multi Output).
 3. **Your keys:** select the Kaleidobox track and play; the Launchkey comes in through Logic and
    the Rig splits it between the tools as usual (keys, pads, split, learned knobs).
 4. **The clock is Logic's:** the Rig uses Logic's tempo and time signature, plays when Logic plays,

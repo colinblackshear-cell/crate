@@ -29,6 +29,8 @@ env:
   NAME: Kaleidobox
   APP_DIR: build/tools/rig/Kaleidobox_artefacts/Release
   PLUGIN_DIR: build/tools/rig/KaleidoboxPlugin_artefacts/Release
+  INPUT_DIR: build/tools/rig/KaleidoboxInputPlugin_artefacts/Release
+  INPUT_NAME: Kaleidobox Input
 
 jobs:
   mac:
@@ -55,7 +57,7 @@ jobs:
         run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 
       - name: Build
-        run: cmake --build build --config Release --target Kaleidobox KaleidoboxPlugin_AU KaleidoboxPlugin_VST3 -- -quiet
+        run: cmake --build build --config Release --target Kaleidobox KaleidoboxPlugin_AU KaleidoboxPlugin_VST3 KaleidoboxInputPlugin_AU -- -quiet
 
       # Ad hoc signing: enough for Apple silicon Macs to run it. Not an Apple Developer ID, so
       # files downloaded in a browser need "Open Anyway" once (the install line avoids that).
@@ -64,14 +66,16 @@ jobs:
           codesign --force --deep -s - "$APP_DIR/$NAME.app"
           codesign --force --deep -s - "$PLUGIN_DIR/AU/$NAME.component"
           codesign --force --deep -s - "$PLUGIN_DIR/VST3/$NAME.vst3"
+          codesign --force --deep -s - "$INPUT_DIR/AU/$INPUT_NAME.component"
 
       - name: Check the Audio Unit loads (what Logic checks)
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
-          cp -R "$PLUGIN_DIR/AU/$NAME.component" ~/Library/Audio/Plug-Ins/Components/
+          cp -R "$PLUGIN_DIR/AU/$NAME.component" "$INPUT_DIR/AU/$INPUT_NAME.component" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           sleep 5
           auval -v aumu CRig Cblk
+          auval -v aumf CRgI Cblk
 
       - name: Package
         env:
@@ -83,6 +87,7 @@ jobs:
           ditto "$APP_DIR/$NAME.app" "$STAGE/$NAME.app"
           ditto "$PLUGIN_DIR/AU/$NAME.component" "$STAGE/$NAME.component"
           ditto "$PLUGIN_DIR/VST3/$NAME.vst3" "$STAGE/$NAME.vst3"
+          ditto "$INPUT_DIR/AU/$INPUT_NAME.component" "$STAGE/$INPUT_NAME.component"
           cp tools/release/install.sh "$STAGE/install.sh"
           # The zip is what the Terminal install line downloads.
           (cd dist && ditto -c -k --keepParent "$NAME" "$NAME-mac.zip")
@@ -94,6 +99,7 @@ jobs:
           ditto "$STAGE/$NAME.app" "$ROOT/Applications/$NAME.app"
           ditto "$STAGE/$NAME.component" "$ROOT/Library/Audio/Plug-Ins/Components/$NAME.component"
           ditto "$STAGE/$NAME.vst3" "$ROOT/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
+          ditto "$STAGE/$INPUT_NAME.component" "$ROOT/Library/Audio/Plug-Ins/Components/$INPUT_NAME.component"
           pkgbuild --analyze --root "$ROOT" components.plist
           plutil -p components.plist
           i=0
@@ -115,9 +121,11 @@ jobs:
       - name: Try the installer
         run: |
           sudo installer -pkg "dist/Install-$NAME.pkg" -target /
-          ls -d "/Applications/$NAME.app" "/Library/Audio/Plug-Ins/Components/$NAME.component" "/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
+          ls -d "/Applications/$NAME.app" "/Library/Audio/Plug-Ins/Components/$NAME.component" "/Library/Audio/Plug-Ins/VST3/$NAME.vst3" \
+            "/Library/Audio/Plug-Ins/Components/$INPUT_NAME.component"
           sleep 5
           auval -v aumu CRig Cblk
+          auval -v aumf CRgI Cblk
 
       - uses: actions/upload-artifact@v4
         with:
