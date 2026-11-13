@@ -1,6 +1,7 @@
 #include "SamplerScreen.h"
 
 #include "EditorView.h"
+#include "MpcView.h"
 #include "core/SoundFx.h"
 
 using namespace vintage;
@@ -76,16 +77,48 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     editorButton.setTooltip ("The full sample editor: record, trim, fades, effects, keys.");
     editorButton.onClick = [this] { setEditMode (true); };
 
-    for (auto* b : { &chopModeButton, &editModeButton })
+    for (auto* b : { &chopModeButton, &mpcModeButton, &editModeButton })
     {
         setLit (*b, Lit::current);
         b->getProperties().set ("fontSize", 18.0f);
         addAndMakeVisible (*b);
     }
     chopModeButton.setTooltip ("Chop the sound and play it from the MPC's pads.");
+    mpcModeButton.setTooltip ("The MPC's sequencer (Play, Rec, steps), its songs, your kits and library, and the picked pad's "
+                              "settings, beside the pads.");
     editModeButton.setTooltip ("Every tool of the sample editor: record, trim, cut and paste, fades, effects, keys and your library.");
-    chopModeButton.onClick = [this] { setEditMode (false); };
-    editModeButton.onClick = [this] { setEditMode (true); };
+    chopModeButton.onClick = [this] { setSide (chopSide); };
+    mpcModeButton.onClick = [this] { setSide (mpcSide); };
+    editModeButton.onClick = [this] { setSide (editSide); };
+
+    // The MPC's beat, and playing the pads into the looper.
+    for (auto* b : { &beatButton, &loopPadsButton, &loopBarsButton })
+    {
+        b->getProperties().set ("fontSize", 18.0f);
+        addAndMakeVisible (*b);
+    }
+    loopBarsButton.getProperties().set ("fontSize", 15.0f);
+    setLit (beatButton, Lit::play);
+    beatButton.setTooltip ("The MPC's beat (its sequence): on, it plays whenever the Rig plays; off, Play leaves it quiet. "
+                           "The pads play either way. The Groove screen's MPC card switches it too.");
+    beatButton.onClick = [this] { pressBeat(); };
+    setLit (loopPadsButton, Lit::arm);
+    loopPadsButton.setTooltip ("Play the pads into the looper: the next empty loop layer records the MPC from the next bar "
+                               "(for the bars beside it, or until you press again). Switch Beat off to loop just what you play.");
+    loopPadsButton.onClick = [this] { pressLoopPads(); };
+    loopBarsButton.setTooltip ("How long Loop pads records: Free (until you press Loop pads again), or 1 to 16 bars.");
+    loopBarsButton.onClick = [this]
+    {
+        const auto& choices = RigLooper::barChoices();
+        auto at = std::find (choices.begin(), choices.end(), loopBars);
+        loopBars = at == choices.end() || at + 1 == choices.end() ? choices.front() : *(at + 1);
+        updateTopButtons();
+    };
+    editPadButton.getProperties().set ("fontSize", 16.0f);
+    editPadButton.setTooltip ("The picked pad's sound editor: trim, fades, reverse and effects. (Pads only play when you tap "
+                              "them, so finger drumming never opens it.)");
+    editPadButton.onClick = [this] { pressEditPad(); };
+    addAndMakeVisible (editPadButton);
     setLit (recordButton, Lit::arm);
     recordButton.getProperties().set ("fontSize", 18.0f);
     recordButton.setTooltip ("Record from your audio input into the Sampler. Press again to stop. (To sample a tool of Kaleidobox, use More > Sample.)");
@@ -334,30 +367,113 @@ void SamplerScreen::ownEditor (juce::Component* fullEditor)
     ownedEditor.reset (fullEditor);
     if (ownedEditor != nullptr)
         addChildComponent (*ownedEditor);
-    setEditMode (editMode);
+    setSide (mode);
 }
 
-void SamplerScreen::setEditMode (bool on)
+void SamplerScreen::ownMpc (MpcView* view)
 {
-    editMode = on && ownedEditor != nullptr;
+    ownedMpc.reset (view);
+    mpcView = view;
+    if (mpcView != nullptr)
+    {
+        // In the screen's look, on a dark well like the editor's.
+        mpcView->setHosted (nullptr, [v = mpcView] (juce::Graphics& g)
+        {
+            drawFace (g, v->getLocalBounds());
+            drawWell (g, v->getLocalBounds().reduced (2).toFloat(), 12.0f);
+        });
+        addChildComponent (*mpcView);
+        mpcView->selectPad (getSelectedPad());
+    }
+    setSide (mode);
+}
+
+void SamplerScreen::setSide (int side)
+{
+    mode = juce::jlimit ((int) chopSide, (int) editSide, side);
+    if ((mode == editSide && ownedEditor == nullptr) || (mode == mpcSide && mpcView == nullptr))
+        mode = chopSide;
+    const bool chop = mode == chopSide, pads = mode != editSide;
+    // The pads and their tools are on the right of the Chop and Sequencer sides.
+    const std::initializer_list<juce::Component*> padSide { &bankButtons[0], &bankButtons[1], &bankButtons[2], &bankButtons[3], &fullLevel,
+                                                            &levelsButton, &repeatButton, &rateButton, &soundsButton };
+    const std::initializer_list<juce::Component*> top { &chopModeButton, &mpcModeButton, &editModeButton, &beatButton, &loopPadsButton,
+                                                        &loopBarsButton };
     for (auto* c : getChildren())
-        if (c != ownedEditor.get() && c != &chopModeButton && c != &editModeButton && c != &recordButton && c != &openButton)
-            c->setVisible (! editMode);
+    {
+        if (c == ownedEditor.get())
+            c->setVisible (mode == editSide);
+        else if (c == ownedMpc.get())
+            c->setVisible (mode == mpcSide);
+        else if (std::find (top.begin(), top.end(), c) != top.end())
+            c->setVisible (true);
+        else if (std::find (padSide.begin(), padSide.end(), c) != padSide.end())
+            c->setVisible (pads);
+        else
+            c->setVisible (chop);
+    }
     for (auto& k : knobs)
-        k->setVisible (! editMode && ! fxShown);
+        k->setVisible (chop && ! fxShown);
     for (auto& k : fxKnobs)
-        k->setVisible (! editMode && fxShown);
-    browser.setVisible (! editMode && soundsShown);
-    if (ownedEditor != nullptr)
-        ownedEditor->setVisible (editMode);
-    openButton.setVisible (! editMode);
-    recordButton.setVisible (! editMode);
-    chopModeButton.setToggleState (! editMode, juce::dontSendNotification);
-    editModeButton.setToggleState (editMode, juce::dontSendNotification);
-    if (! editMode)
+        k->setVisible (chop && fxShown);
+    browser.setVisible (chop && soundsShown);
+    chopModeButton.setToggleState (mode == chopSide, juce::dontSendNotification);
+    mpcModeButton.setToggleState (mode == mpcSide, juce::dontSendNotification);
+    editModeButton.setToggleState (mode == editSide, juce::dontSendNotification);
+    mpcModeButton.setVisible (mpcView != nullptr);
+    if (mode != editSide)
         refresh();
     resized();
     repaint();
+    if (onSideChanged)
+        onSideChanged();
+}
+
+void SamplerScreen::pressBeat()
+{
+    const bool on = ! engine.isMpcBeatOn();
+    engine.setMpcBeatOn (on);
+    updateTopButtons();
+    if (onSay)
+        onSay (on ? juce::String ("The MPC's beat is on: it plays whenever the Rig plays.")
+                  : juce::String ("The MPC's beat is off: Play leaves it quiet. The pads still play."));
+}
+
+void SamplerScreen::pressLoopPads()
+{
+    const auto text = engine.loopMpcPads (loopBars);
+    updateTopButtons();
+    if (onSay)
+        onSay (text);
+}
+
+void SamplerScreen::pressEditPad()
+{
+    if (mpcView == nullptr)
+        return;
+    if (engine.getMpc().getProject().currentBank().pads[(size_t) getSelectedPad()].isEmpty())
+    {
+        if (onSay)
+            onSay ("Pad " + padLabel (getSelectedPad()) + " is empty. Put a sound on it first (To pads, Sounds, or drop one on the Sequencer side's library).");
+        return;
+    }
+    setSide (mpcSide);
+    mpcView->selectPad (getSelectedPad());
+    mpcView->showSequencer (false);
+    mpcView->editPadSound();
+}
+
+void SamplerScreen::updateTopButtons()
+{
+    const bool beat = engine.isMpcBeatOn();
+    beatButton.setToggleState (beat, juce::dontSendNotification);
+    beatButton.setButtonText (beat ? "Beat on" : "Beat off");
+    const bool looping = engine.getPadLoopLayer() >= 0;
+    loopPadsButton.setToggleState (looping, juce::dontSendNotification);
+    const auto loopText = looping ? "Looping " + juce::String (engine.getPadLoopLayer() + 1) : juce::String ("Loop pads");
+    if (loopPadsButton.getButtonText() != loopText)
+        loopPadsButton.setButtonText (loopText);
+    loopBarsButton.setButtonText (loopBars <= 0 ? juce::String ("Free") : juce::String (loopBars) + (loopBars == 1 ? " bar" : " bars"));
 }
 
 size_t SamplerScreen::capacityOf (int m)
@@ -484,6 +600,8 @@ void SamplerScreen::pressPad (int padInBank)
     if (engine.getMpc().levelsType.load() != levels::off)
         return;
     selectedSlice = pad;
+    if (mpcView != nullptr)
+        mpcView->selectPad (pad);
     updateKnobs();
     repaint();
 }
@@ -588,9 +706,9 @@ void SamplerScreen::showFxKnobs (bool show)
     fxShown = show;
     fxButton.setToggleState (show, juce::dontSendNotification);
     for (auto& k : knobs)
-        k->setVisible (! editMode && ! show);
+        k->setVisible (mode == chopSide && ! show);
     for (auto& k : fxKnobs)
-        k->setVisible (! editMode && show);
+        k->setVisible (mode == chopSide && show);
     updateKnobs();
 }
 
@@ -598,7 +716,10 @@ void SamplerScreen::showSounds (bool show)
 {
     soundsShown = show;
     soundsButton.setToggleState (show, juce::dontSendNotification);
-    browser.setVisible (! editMode && show);
+    // The sound bank shows over the wave, on the Chop side.
+    if (show && mode != chopSide)
+        setSide (chopSide);
+    browser.setVisible (mode == chopSide && show);
     if (show)
     {
         browser.toFront (false);
@@ -654,6 +775,7 @@ void SamplerScreen::play (juce::Range<int> range)
 void SamplerScreen::refresh()
 {
     fullLevel.setToggleState (engine.getMpc().fullLevel.load(), juce::dontSendNotification);
+    updateTopButtons();
     selectedSlice = juce::jlimit (0, juce::jmax (0, juce::jmax (numSlices(), mpc::kPadCount) - 1), selectedSlice);
     updateButtons();
     updateKnobs();
@@ -758,7 +880,12 @@ void SamplerScreen::timerCallback()
         if (recordButton.getButtonText() != text)
             recordButton.setButtonText (text);
     }
-    if (editMode)
+    if (beatButton.getToggleState() != engine.isMpcBeatOn() || loopPadsButton.getToggleState() != (engine.getPadLoopLayer() >= 0))
+        updateTopButtons();
+    // The MPC side's pad settings are the picked pad's.
+    if (mpcView != nullptr && mpcView->getSelectedPad() != getSelectedPad())
+        mpcView->selectPad (getSelectedPad());
+    if (mode == editSide)
         return;
 
     auto& sampler = engine.getSampler();
@@ -847,194 +974,198 @@ void SamplerScreen::paint (juce::Graphics& g)
 {
     rebuildPeaks();
     drawFace (g, getLocalBounds());
-    if (editMode)
+    if (mode == editSide)
         return;
     const auto& p = pal();
     auto& sampler = engine.getSampler();
     const auto& doc = sampler.getDocument();
     const auto& chops = sampler.getChops();
 
-    // The sound.
-    drawWell (g, waveWell.toFloat(), 12.0f);
+    // The sound, its slice's pad, and Send to MPC (the Chop · Pads side).
+    if (mode == chopSide)
     {
-        auto row = titleRow;
-        const auto name = doc.hasAudio() ? (doc.getName().isNotEmpty() ? doc.getName() : juce::String ("Untitled")) : juce::String ("No sound");
-        g.setColour (p.wellInk);
-        g.setFont (cond (24.0f, Weight::extra, 0.08f));
-        const int nameWidth = juce::jmin (row.getWidth() / 3, juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), name.toUpperCase()) + 4);
-        g.drawText (name.toUpperCase(), row.removeFromLeft (nameWidth), juce::Justification::centredLeft, true);
-        row.removeFromLeft (12);
-
-        juce::String info;
-        if (doc.hasAudio())
+        // The sound.
+        drawWell (g, waveWell.toFloat(), 12.0f);
         {
-            const auto& audio = *doc.getAudio();
-            const double secs = audio.getNumSamples() / crate::kSampleRate;
-            const double bars = secs * engine.getTransport().getBpm() / 240.0;
-            info << (std::abs (bars - std::round (bars)) < 0.08 ? juce::String (juce::roundToInt (bars)) : juce::String (bars, 1))
-                 << (std::abs (bars - 1.0) < 0.08 ? " bar" : " bars") << juce::String::fromUTF8 (" \xc2\xb7 ") << juce::String (secs, 1)
-                 << juce::String::fromUTF8 (" s \xc2\xb7 ") << (audio.getNumChannels() > 1 ? "stereo" : "mono");
-        }
-        const int chopLeft = chopButtons[0].getX() - 52;
-        engraved (g, info, row.withRight (chopLeft - 8), juce::Justification::centredLeft, 13.0f, true);
-        engraved (g, "Chop", juce::Rectangle<int> (chopLeft, row.getY(), 46, row.getHeight()), juce::Justification::centredRight, 13.0f, true);
-    }
+            auto row = titleRow;
+            const auto name = doc.hasAudio() ? (doc.getName().isNotEmpty() ? doc.getName() : juce::String ("Untitled")) : juce::String ("No sound");
+            g.setColour (p.wellInk);
+            g.setFont (cond (24.0f, Weight::extra, 0.08f));
+            const int nameWidth = juce::jmin (row.getWidth() / 3, juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), name.toUpperCase()) + 4);
+            g.drawText (name.toUpperCase(), row.removeFromLeft (nameWidth), juce::Justification::centredLeft, true);
+            row.removeFromLeft (12);
 
-    // The wave.
-    const auto wave = waveArea.toFloat();
-    g.setColour (juce::Colour (0xff0e0c0a));
-    g.fillRoundedRectangle (wave, 8.0f);
-    {
-        juce::Graphics::ScopedSaveState clip (g);
-        g.reduceClipRegion (waveArea);
-
-        if (! doc.hasAudio() || peaks.empty())
-        {
-            g.setColour (p.wellInk2);
-            g.setFont (barlow (16.0f));
-            g.drawText ("Drop a sound here, press Open, or sample any tool (More > Sample).", waveArea, juce::Justification::centred);
-        }
-        else
-        {
-            const int length = doc.getAudio()->getNumSamples();
-            const auto selected = sliceRange (selectedSlice);
-
-            // The picked slice, lit.
-            const float sx = juce::jmax (wave.getX(), xForSample (selected.getStart()));
-            const float ex = juce::jmin (wave.getRight(), xForSample (selected.getEnd()));
-            if (ex > sx)
+            juce::String info;
+            if (doc.hasAudio())
             {
-                g.setColour (colours::selected.withAlpha (0.14f));
-                g.fillRect (juce::Rectangle<float> (sx, (float) rulerArea.getBottom(), ex - sx, wave.getBottom() - rulerArea.getBottom()));
+                const auto& audio = *doc.getAudio();
+                const double secs = audio.getNumSamples() / crate::kSampleRate;
+                const double bars = secs * engine.getTransport().getBpm() / 240.0;
+                info << (std::abs (bars - std::round (bars)) < 0.08 ? juce::String (juce::roundToInt (bars)) : juce::String (bars, 1))
+                     << (std::abs (bars - 1.0) < 0.08 ? " bar" : " bars") << juce::String::fromUTF8 (" \xc2\xb7 ") << juce::String (secs, 1)
+                     << juce::String::fromUTF8 (" s \xc2\xb7 ") << (audio.getNumChannels() > 1 ? "stereo" : "mono");
             }
+            const int chopLeft = chopButtons[0].getX() - 52;
+            engraved (g, info, row.withRight (chopLeft - 8), juce::Justification::centredLeft, 13.0f, true);
+            engraved (g, "Chop", juce::Rectangle<int> (chopLeft, row.getY(), 46, row.getHeight()), juce::Justification::centredRight, 13.0f, true);
+        }
 
-            // The bars.
-            const auto body = juce::Rectangle<float> (wave.getX() + 8, (float) rulerArea.getBottom() + 4, wave.getWidth() - 16,
-                                                      wave.getBottom() - rulerArea.getBottom() - 12);
-            const int bars = (int) (body.getWidth() / (kBarWidth + kBarGap));
-            for (int b = 0; b < bars; ++b)
+        // The wave.
+        const auto wave = waveArea.toFloat();
+        g.setColour (juce::Colour (0xff0e0c0a));
+        g.fillRoundedRectangle (wave, 8.0f);
+        {
+            juce::Graphics::ScopedSaveState clip (g);
+            g.reduceClipRegion (waveArea);
+
+            if (! doc.hasAudio() || peaks.empty())
             {
-                const double s0 = view.getStart() + view.getLength() * b / bars;
-                const double s1 = view.getStart() + view.getLength() * (b + 1) / bars;
-                const int i0 = juce::jlimit (0, (int) peaks.size() - 1, (int) (s0 * peaks.size()));
-                const int i1 = juce::jlimit (i0 + 1, (int) peaks.size(), (int) std::ceil (s1 * peaks.size()));
-                float peak = 0;
-                for (int i = i0; i < i1; ++i)
-                    peak = juce::jmax (peak, peaks[(size_t) i]);
-                const float h = juce::jmax (2.0f, std::sqrt (peak) * body.getHeight());
-                const int sample = (int) ((s0 + s1) * 0.5 * length);
-                g.setColour (selected.contains (sample) ? colours::selected : juce::Colour (0xffe6d8b8).withAlpha (0.8f));
-                g.fillRoundedRectangle (body.getX() + b * (kBarWidth + kBarGap), body.getCentreY() - h / 2, kBarWidth, h, 1.0f);
+                g.setColour (p.wellInk2);
+                g.setFont (barlow (16.0f));
+                g.drawText ("Drop a sound here, press Open, or sample any tool (More > Sample).", waveArea, juce::Justification::centred);
             }
-
-            // The markers, each slice numbered at its start.
-            const int slices = (int) chops.size() + 1;
-            g.setFont (lcd (19.0f));
-            for (int s = 0; s < slices; ++s)
+            else
             {
-                const int start = s == 0 ? 0 : chops[(size_t) s - 1];
-                const float x = xForSample (start);
-                if (x < wave.getX() - 30 || x > wave.getRight())
-                    continue;
-                const bool isSelected = s == selectedSlice;
-                if (s > 0)
+                const int length = doc.getAudio()->getNumSamples();
+                const auto selected = sliceRange (selectedSlice);
+
+                // The picked slice, lit.
+                const float sx = juce::jmax (wave.getX(), xForSample (selected.getStart()));
+                const float ex = juce::jmin (wave.getRight(), xForSample (selected.getEnd()));
+                if (ex > sx)
                 {
-                    g.setColour ((isSelected ? colours::selected : juce::Colour (0xffe6d8b8)).withAlpha (0.75f));
-                    g.fillRect (juce::Rectangle<float> (x - 1.0f, (float) rulerArea.getY() + 2, 2.0f, wave.getBottom() - rulerArea.getY() - 2));
+                    g.setColour (colours::selected.withAlpha (0.14f));
+                    g.fillRect (juce::Rectangle<float> (sx, (float) rulerArea.getBottom(), ex - sx, wave.getBottom() - rulerArea.getBottom()));
                 }
-                const auto tag = juce::Rectangle<float> (x + (s == 0 ? 0.0f : 1.0f), (float) rulerArea.getY() + 3,
-                                                         s + 1 >= 10 ? 26.0f : 18.0f, (float) rulerArea.getHeight() - 5);
-                g.setColour (isSelected ? colours::selected : juce::Colour (0xff2e2925));
-                g.fillRoundedRectangle (tag, 3.0f);
-                g.setColour (isSelected ? juce::Colour (0xff2a1a05) : p.wellInk);
-                g.drawText (juce::String (s + 1), tag, juce::Justification::centred);
-            }
 
-            // Where it's playing.
-            const int position = sampler.getPlayPosition();
-            if (position >= 0)
-            {
-                const float x = xForSample (position);
-                glow (g, juce::Rectangle<float> (x - 1.5f, (float) rulerArea.getBottom(), 3.0f, wave.getBottom() - rulerArea.getBottom()),
-                      1.0f, juce::Colour (0xfffff3d6), 8.0f, 0.4f);
-                g.setColour (juce::Colour (0xfffff3d6));
-                g.fillRect (juce::Rectangle<float> (x - 1.5f, (float) rulerArea.getBottom(), 3.0f, wave.getBottom() - rulerArea.getBottom()));
+                // The bars.
+                const auto body = juce::Rectangle<float> (wave.getX() + 8, (float) rulerArea.getBottom() + 4, wave.getWidth() - 16,
+                                                          wave.getBottom() - rulerArea.getBottom() - 12);
+                const int bars = (int) (body.getWidth() / (kBarWidth + kBarGap));
+                for (int b = 0; b < bars; ++b)
+                {
+                    const double s0 = view.getStart() + view.getLength() * b / bars;
+                    const double s1 = view.getStart() + view.getLength() * (b + 1) / bars;
+                    const int i0 = juce::jlimit (0, (int) peaks.size() - 1, (int) (s0 * peaks.size()));
+                    const int i1 = juce::jlimit (i0 + 1, (int) peaks.size(), (int) std::ceil (s1 * peaks.size()));
+                    float peak = 0;
+                    for (int i = i0; i < i1; ++i)
+                        peak = juce::jmax (peak, peaks[(size_t) i]);
+                    const float h = juce::jmax (2.0f, std::sqrt (peak) * body.getHeight());
+                    const int sample = (int) ((s0 + s1) * 0.5 * length);
+                    g.setColour (selected.contains (sample) ? colours::selected : juce::Colour (0xffe6d8b8).withAlpha (0.8f));
+                    g.fillRoundedRectangle (body.getX() + b * (kBarWidth + kBarGap), body.getCentreY() - h / 2, kBarWidth, h, 1.0f);
+                }
+
+                // The markers, each slice numbered at its start.
+                const int slices = (int) chops.size() + 1;
+                g.setFont (lcd (19.0f));
+                for (int s = 0; s < slices; ++s)
+                {
+                    const int start = s == 0 ? 0 : chops[(size_t) s - 1];
+                    const float x = xForSample (start);
+                    if (x < wave.getX() - 30 || x > wave.getRight())
+                        continue;
+                    const bool isSelected = s == selectedSlice;
+                    if (s > 0)
+                    {
+                        g.setColour ((isSelected ? colours::selected : juce::Colour (0xffe6d8b8)).withAlpha (0.75f));
+                        g.fillRect (juce::Rectangle<float> (x - 1.0f, (float) rulerArea.getY() + 2, 2.0f, wave.getBottom() - rulerArea.getY() - 2));
+                    }
+                    const auto tag = juce::Rectangle<float> (x + (s == 0 ? 0.0f : 1.0f), (float) rulerArea.getY() + 3,
+                                                             s + 1 >= 10 ? 26.0f : 18.0f, (float) rulerArea.getHeight() - 5);
+                    g.setColour (isSelected ? colours::selected : juce::Colour (0xff2e2925));
+                    g.fillRoundedRectangle (tag, 3.0f);
+                    g.setColour (isSelected ? juce::Colour (0xff2a1a05) : p.wellInk);
+                    g.drawText (juce::String (s + 1), tag, juce::Justification::centred);
+                }
+
+                // Where it's playing.
+                const int position = sampler.getPlayPosition();
+                if (position >= 0)
+                {
+                    const float x = xForSample (position);
+                    glow (g, juce::Rectangle<float> (x - 1.5f, (float) rulerArea.getBottom(), 3.0f, wave.getBottom() - rulerArea.getBottom()),
+                          1.0f, juce::Colour (0xfffff3d6), 8.0f, 0.4f);
+                    g.setColour (juce::Colour (0xfffff3d6));
+                    g.fillRect (juce::Rectangle<float> (x - 1.5f, (float) rulerArea.getBottom(), 3.0f, wave.getBottom() - rulerArea.getBottom()));
+                }
             }
         }
-    }
 
-    // The scroll bar.
-    {
-        const auto track = scrollArea.toFloat();
-        g.setColour (juce::Colour (0xff2e2925));
-        g.fillRoundedRectangle (track, 5.0f);
-        const auto inner = track.reduced (2.0f);
-        const auto thumb = juce::Rectangle<float> (inner.getX() + (float) view.getStart() * inner.getWidth(), inner.getY(),
-                                                   juce::jmax (12.0f, (float) view.getLength() * inner.getWidth()), inner.getHeight());
-        g.setColour (colours::selected.withAlpha (0.35f));
-        g.fillRoundedRectangle (thumb, 4.0f);
-        g.setColour (colours::selected);
-        g.drawRoundedRectangle (thumb.reduced (1.0f), 4.0f, 2.0f);
-    }
-
-    // The picked slice's pad.
-    {
-        g.setColour (p.line);
-        g.drawRoundedRectangle (sliceBox.toFloat().reduced (1.0f), 12.0f, 2.0f);
-        const int pad = getSelectedPad();
-        const auto& padData = engine.getMpc().getProject().currentBank().pads[(size_t) pad];
-        juce::String title;
-        if (selectedSlice < numSlices())
-            title << "Slice " << (selectedSlice + 1) << juce::String::fromUTF8 (" \xe2\x86\x92 ");
-        title << "Pad " << padLabel (pad);
-        if (padData.isEmpty())
-            title << juce::String::fromUTF8 (" \xc2\xb7 empty");
-        g.setColour (p.ink);
-        g.setFont (cond (22.0f, Weight::extra, 0.1f));
-        auto t = sliceTitle;
-        t.setRight (fxButton.getX() - 8);
-        g.drawText (title.toUpperCase(), t, juce::Justification::centredLeft, true);
-
-        if (doc.hasAudio() && selectedSlice < numSlices())
+        // The scroll bar.
         {
-            const auto r = sliceRange (selectedSlice);
-            const auto box = juce::Rectangle<float> (0, 0, 176, 32).withPosition ((float) sliceTitle.getRight() - 176,
-                                                                                  (float) sliceTitle.getCentreY() - 16);
-            drawLcd (g, box);
-            lcdText (g, seconds (r.getStart()) + juce::String::fromUTF8 (" \xe2\x86\x92 ") + seconds (r.getEnd()), box, 22.0f);
+            const auto track = scrollArea.toFloat();
+            g.setColour (juce::Colour (0xff2e2925));
+            g.fillRoundedRectangle (track, 5.0f);
+            const auto inner = track.reduced (2.0f);
+            const auto thumb = juce::Rectangle<float> (inner.getX() + (float) view.getStart() * inner.getWidth(), inner.getY(),
+                                                       juce::jmax (12.0f, (float) view.getLength() * inner.getWidth()), inner.getHeight());
+            g.setColour (colours::selected.withAlpha (0.35f));
+            g.fillRoundedRectangle (thumb, 4.0f);
+            g.setColour (colours::selected);
+            g.drawRoundedRectangle (thumb.reduced (1.0f), 4.0f, 2.0f);
         }
-    }
 
-    // Send to the MPC2000XL.
-    {
-        drawWell (g, sendWell.toFloat(), 12.0f);
-        g.setColour (p.wellInk);
-        g.setFont (cond (22.0f, Weight::extra, 0.08f));
-        g.drawText ("SEND TO MPC2000XL", sendTitle, juce::Justification::centredLeft, true);
+        // The picked slice's pad.
+        {
+            g.setColour (p.line);
+            g.drawRoundedRectangle (sliceBox.toFloat().reduced (1.0f), 12.0f, 2.0f);
+            const int pad = getSelectedPad();
+            const auto& padData = engine.getMpc().getProject().currentBank().pads[(size_t) pad];
+            juce::String title;
+            if (selectedSlice < numSlices())
+                title << "Slice " << (selectedSlice + 1) << juce::String::fromUTF8 (" \xe2\x86\x92 ");
+            title << "Pad " << padLabel (pad);
+            if (padData.isEmpty())
+                title << juce::String::fromUTF8 (" \xc2\xb7 empty");
+            g.setColour (p.ink);
+            g.setFont (cond (22.0f, Weight::extra, 0.1f));
+            auto t = sliceTitle;
+            t.setRight (fxButton.getX() - 8);
+            g.drawText (title.toUpperCase(), t, juce::Justification::centredLeft, true);
 
-        auto& project = engine.getMpc().getProject();
-        int kits = 0, sounds = 0;
-        size_t bytes = 0;
-        for (const auto& bank : project.getBanks())
-            if (const int used = bank.usedPads(); used > 0)
-                ++kits, sounds += used, bytes += bank.memoryBytes();
-        const auto cap = capacityOf (medium);
-        const bool fits = cap == 0 || bytes <= cap;
-        drawLamp (g, { (float) sendTitle.getRight() - 8, (float) sendTitle.getCentreY() }, sounds == 0 ? Lit::none : fits ? Lit::play : Lit::arm, 14.0f);
+            if (doc.hasAudio() && selectedSlice < numSlices())
+            {
+                const auto r = sliceRange (selectedSlice);
+                const auto box = juce::Rectangle<float> (0, 0, 176, 32).withPosition ((float) sliceTitle.getRight() - 176,
+                                                                                      (float) sliceTitle.getCentreY() - 16);
+                drawLcd (g, box);
+                lcdText (g, seconds (r.getStart()) + juce::String::fromUTF8 (" \xe2\x86\x92 ") + seconds (r.getEnd()), box, 22.0f);
+            }
+        }
 
-        juce::String info;
-        if (sounds == 0)
-            info = "No sounds on the pads yet. Chop a sound and press To pads.";
-        else
-            info << (kits == 1 ? "Kit " + project.currentBank().name : juce::String (kits) + " kits") << juce::String::fromUTF8 (" \xc2\xb7 ")
-                 << sounds << " samples" << juce::String::fromUTF8 (" \xc2\xb7 ")
-                 << juce::String ((double) bytes / (1024.0 * 1024.0), 1) << " MB" << juce::String::fromUTF8 (" \xc2\xb7 16-bit 44.1 kHz \xc2\xb7 ")
-                 << "sequences as .MID" << juce::String::fromUTF8 (" \xc2\xb7 ") << "names cut to 16 characters";
-        if (! fits)
-            info << ". Too big for a " << mediumName (medium).toLowerCase() << ".";
-        g.setColour (fits ? p.wellInk : colours::arm.brighter (0.3f));
-        g.setFont (barlow (14.0f));
-        g.drawFittedText (info, sendInfo, juce::Justification::topLeft, 3, 0.9f);
+        // Send to the MPC2000XL.
+        {
+            drawWell (g, sendWell.toFloat(), 12.0f);
+            g.setColour (p.wellInk);
+            g.setFont (cond (22.0f, Weight::extra, 0.08f));
+            g.drawText ("SEND TO MPC2000XL", sendTitle, juce::Justification::centredLeft, true);
+
+            auto& project = engine.getMpc().getProject();
+            int kits = 0, sounds = 0;
+            size_t bytes = 0;
+            for (const auto& bank : project.getBanks())
+                if (const int used = bank.usedPads(); used > 0)
+                    ++kits, sounds += used, bytes += bank.memoryBytes();
+            const auto cap = capacityOf (medium);
+            const bool fits = cap == 0 || bytes <= cap;
+            drawLamp (g, { (float) sendTitle.getRight() - 8, (float) sendTitle.getCentreY() }, sounds == 0 ? Lit::none : fits ? Lit::play : Lit::arm, 14.0f);
+
+            juce::String info;
+            if (sounds == 0)
+                info = "No sounds on the pads yet. Chop a sound and press To pads.";
+            else
+                info << (kits == 1 ? "Kit " + project.currentBank().name : juce::String (kits) + " kits") << juce::String::fromUTF8 (" \xc2\xb7 ")
+                     << sounds << " samples" << juce::String::fromUTF8 (" \xc2\xb7 ")
+                     << juce::String ((double) bytes / (1024.0 * 1024.0), 1) << " MB" << juce::String::fromUTF8 (" \xc2\xb7 16-bit 44.1 kHz \xc2\xb7 ")
+                     << "sequences as .MID" << juce::String::fromUTF8 (" \xc2\xb7 ") << "names cut to 16 characters";
+            if (! fits)
+                info << ". Too big for a " << mediumName (medium).toLowerCase() << ".";
+            g.setColour (fits ? p.wellInk : colours::arm.brighter (0.3f));
+            g.setFont (barlow (14.0f));
+            g.drawFittedText (info, sendInfo, juce::Justification::topLeft, 3, 0.9f);
+        }
     }
 
     // The pads.
@@ -1089,8 +1220,16 @@ void SamplerScreen::resized()
     {
         auto m = modeRow;
         chopModeButton.setBounds (m.removeFromLeft (150));
+        if (mpcModeButton.isVisible())
+            mpcModeButton.setBounds (m.removeFromLeft (200));
         editModeButton.setBounds (m.removeFromLeft (230));
         recordButton.setBounds (m.removeFromRight (90));
+        m.removeFromRight (10);
+        loopBarsButton.setBounds (m.removeFromRight (78));
+        m.removeFromRight (4);
+        loopPadsButton.setBounds (m.removeFromRight (136));
+        m.removeFromRight (10);
+        beatButton.setBounds (m.removeFromRight (112));
     }
     r.removeFromTop (10);
     if (ownedEditor != nullptr)
@@ -1100,6 +1239,8 @@ void SamplerScreen::resized()
     auto right = r.removeFromRight (juce::jlimit (300, 430, getWidth() * 30 / 100));
     r.removeFromRight (16);
     leftArea = r;
+    if (ownedMpc != nullptr)
+        ownedMpc->setBounds (leftArea.withTrimmedLeft (-10).withTrimmedBottom (-8));
 
     // Pads.
     padsHeader = right.removeFromTop (46);
@@ -1187,6 +1328,7 @@ void SamplerScreen::resized()
         sliceTitle = s.removeFromTop (34);
         toPadsButton.setBounds (sliceTitle.getRight() - 176 - 10 - 96, sliceTitle.getY(), 96, sliceTitle.getHeight());
         fxButton.setBounds (toPadsButton.getX() - 8 - 52, sliceTitle.getY(), 52, sliceTitle.getHeight());
+        editPadButton.setBounds (fxButton.getX() - 8 - 60, sliceTitle.getY(), 60, sliceTitle.getHeight());
         s.removeFromTop (6);
         const int w = s.getWidth() / (int) knobs.size();
         auto row = s;
@@ -1210,6 +1352,9 @@ void SamplerScreen::mouseDown (const juce::MouseEvent& e)
         pressPad (pad);
         return;
     }
+
+    if (mode != chopSide)
+        return;
 
     if (scrollArea.expanded (0, 6).contains (p.toInt()))
     {

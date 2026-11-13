@@ -127,7 +127,8 @@ bool MpcProcessor::playSong (int fromStep)
     rebuildSequence();
     lastPasses = sequencer.getPasses();
     queueForSong();
-    sequencer.play (true);
+    // (In the Rig the song starts the Rig's clock, and plays along with it.)
+    pressPlay (true);
     project.sequenceChanged();
     return true;
 }
@@ -195,6 +196,34 @@ void MpcProcessor::stopTransport()
     songStartQueued = false;
     if (std::exchange (songPlaying, false))
         rebuildSequence();
+}
+
+void MpcProcessor::pressPlay (bool fromStart)
+{
+    if (hostCommand)
+        return hostCommand (fromStart ? HostCommand::playFromStart : HostCommand::play);
+    sequencer.play (fromStart);
+}
+
+void MpcProcessor::pressStop()
+{
+    if (hostCommand)
+        return hostCommand (HostCommand::stop);
+    stopTransport();
+}
+
+void MpcProcessor::pressRecord()
+{
+    if (hostCommand)
+        return hostCommand (HostCommand::record);
+    toggleRecord();
+}
+
+void MpcProcessor::setFollowing (bool follow)
+{
+    if (hostCommand)
+        return hostCommand (follow ? HostCommand::beatOn : HostCommand::beatOff);
+    sequencer.followHost = follow;
 }
 
 void MpcProcessor::followTransport()

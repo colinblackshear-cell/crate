@@ -182,6 +182,7 @@ private:
     class GrooveView* groove = nullptr;
     class GuideView* guide = nullptr;   // the front page
     void showTab (const juce::String& name);
+    void openTool (const juce::String& name);
 
     // Each tab's page. A page can pop out into its own window (to put it on a second screen);
     // its tab then holds a note saying where it went, and closing the window brings it back.
