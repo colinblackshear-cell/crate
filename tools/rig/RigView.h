@@ -73,6 +73,15 @@ public:
     void startPattern (int start);
     void keepAsSongPart();
 
+    // Quantize (the top bar's button, Cmd+U, and the tools' own Quantize buttons). What it works
+    // on follows the screen: the Groove's picked track, the Looper's picked loop (or all of
+    // them), the MPC, drum machine, Bass or Synth page. showQuantize opens the panel on a target
+    // (by `from`); quantizeNow does it straight away and says what it did.
+    int quantizeTarget() const;
+    void showQuantize (int target, juce::Component* from = nullptr);
+    juce::String quantizeNow();
+    class QuantizePanel* getQuantizePanel() const;
+
 private:
     // One strip's effects, along the bottom of the Mixer.
     class FxPanel : public StripFxPanel
@@ -96,6 +105,7 @@ private:
     void finishKnobLearn();
     void say (const juce::String&);
     juce::File currentShow;
+    juce::Component::SafePointer<juce::Component> quantizePanel;
     std::unique_ptr<class HelpPanel> helpPanel;
     // Hover over a button for a moment and it says what it does.
     juce::SharedResourcePointer<juce::TooltipWindow> tooltips;

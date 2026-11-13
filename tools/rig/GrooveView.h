@@ -87,6 +87,8 @@ public:
     std::function<void (const juce::String&)> onSay;
     std::function<float (int strip)> meterOf;
     std::function<void()> onSample;
+    // Its Quantize button: the Quantize panel on this track (a RigQuantizer::Target), by the button.
+    std::function<void (int target, juce::Component* from)> onQuantize;
     std::function<bool()> isSampling;
     // Whether the Mic switch shows (not in Logic, where the side chain is the mic).
     bool showMic = true;
@@ -167,7 +169,7 @@ private:
     std::array<bool, RigEngine::numStrips> mutesBeforeSolo {};
 
     juce::OwnedArray<TrackCard> cards;
-    juce::TextButton openButton, micButton { "Mic off" }, extraButton, barButton, clearButton { "Clear" }, soundButton,
+    juce::TextButton openButton, micButton { "Mic off" }, extraButton, barButton, clearButton { "Clear" }, quantizeButton { "Quantize" }, soundButton,
         soundPrev { "<" }, soundNext { ">" };
     juce::MidiKeyboardState keysState;
     juce::MidiKeyboardComponent screenKeys { keysState, juce::MidiKeyboardComponent::horizontalKeyboard };

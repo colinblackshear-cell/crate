@@ -15,6 +15,8 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
             "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
             "Press Play (or the space bar). Everything plays in time with Kaleidobox's clock.",
+            "Off the beat? Quantize (top bar, under Tap) pulls what's on screen onto a grid: 1/4 to 1/32, triplets, a strength "
+            "and swing. It works on the MPC, the drum machine, Bass, Synth arp and loops. Cmd+U does it straight away; Undo puts it back.",
             "Build the song: More > Song builder (parts you switch between, in order) or Looper > Timeline (lay it out bar by bar, with fades).",
             "Save show (Cmd+S) keeps everything. Export for Logic gives you the WAV files." },
           "Use headphones when the mic is on, so the speakers don't feed back into it." },

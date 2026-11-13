@@ -39,6 +39,8 @@ public:
     // Starting a song from nothing: a blank song, then its first pattern (a beat, a bass line,
     // keys...), and the next.
     PanelButton newSong { "New song" }, newPattern { "New pattern" };
+    // Quantize what's on screen (under Tap): opens the Quantize panel. Cmd+U does it straight away.
+    PanelButton quantize { "Quantize" };
     std::function<void()> onMic;
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
 

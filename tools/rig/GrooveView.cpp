@@ -315,7 +315,7 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     for (int t = 0; t < numTracks; ++t)
         addAndMakeVisible (cards.add (new TrackCard (*this, t)));
 
-    for (auto* b : { &openButton, &micButton, &extraButton, &barButton, &clearButton, &soundButton, &soundPrev, &soundNext })
+    for (auto* b : { &openButton, &micButton, &extraButton, &barButton, &clearButton, &quantizeButton, &soundButton, &soundPrev, &soundNext })
     {
         wellButton (*b);
         addChildComponent (b);
@@ -377,6 +377,13 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     };
 
     clearButton.onClick = [this] { clearPattern(); };
+    quantizeButton.onClick = [this]
+    {
+        if (onQuantize)
+            onQuantize (track == machine ? RigQuantizer::machine : track == bass ? RigQuantizer::bass
+                        : track == synth ? RigQuantizer::synth : track == loops ? RigQuantizer::allLoops : RigQuantizer::mpc,
+                        &quantizeButton);
+    };
 
     // Start on the track the keys already play, so nothing changes until you pick one.
     for (int t = 0; t < numTracks; ++t)
@@ -1040,6 +1047,10 @@ void GrooveView::buildTrack()
     keysState.allNotesOff (1);
     barButton.setVisible (track == drums || (track == machine && machineLength() > 16));
     clearButton.setVisible (track == drums || track == bass || track == synth || track == machine);
+    quantizeButton.setVisible (track == drums || track == bass || track == synth || track == machine || track == loops);
+    quantizeButton.setTooltip (track == drums ? "Quantize the MPC's beat: pull its notes onto a grid (Cmd+U does it straight away)."
+                               : track == loops ? "Quantize the loops: slide each hit onto the beat (Cmd+U does it straight away)."
+                               : "Quantize the pattern onto a coarser or triplet grid (Cmd+U does it straight away).");
     clearButton.setTooltip (track == drums ? "Clears the shown bar of the beat, for the four sounds here."
                             : track == machine ? "Clears the drum machine's pattern (every sound, not just these rows)."
                                            : track == bass ? "Clears the bass pattern's steps." : "Lights every arp step again, no accents.");
@@ -2307,6 +2318,7 @@ void GrooveView::resized()
         };
         place (openButton, 132);
         place (clearButton, 76);
+        place (quantizeButton, 100);
         place (extraButton, 110);
         if (soundButton.isVisible())
         {
