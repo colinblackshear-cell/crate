@@ -79,6 +79,9 @@ public:
     void drawButtonText (juce::Graphics&, juce::TextButton&, bool over, bool down) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
     void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&) override;
+    // Vertical sliders are faders, as on the Mixer.
+    void drawLinearSlider (juce::Graphics&, int x, int y, int w, int h, float pos, float minPos, float maxPos, juce::Slider::SliderStyle,
+                           juce::Slider&) override;
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getPopupMenuFont() override;
     void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
