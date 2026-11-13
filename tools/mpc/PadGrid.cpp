@@ -162,7 +162,7 @@ void PadGrid::mouseDown (const juce::MouseEvent& e)
         menu.addItem ("Clear " + padLabel (pad), ! project.currentBank().pads[(size_t) pad].isEmpty(),
                       false, [this, pad] { if (onClearPad) onClearPad (pad); });
         menu.addItem ("Trim and effects...", ! project.currentBank().pads[(size_t) pad].isEmpty(),
-                      false, [this, pad] { if (onPadDoubleClicked) onPadDoubleClicked (pad); });
+                      false, [this, pad] { if (onEditPad) onEditPad (pad); });
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
         return;
     }
@@ -179,13 +179,6 @@ void PadGrid::mouseUp (const juce::MouseEvent&)
         onPadReleased (held);
     held = -1;
     repaint();
-}
-
-void PadGrid::mouseDoubleClick (const juce::MouseEvent& e)
-{
-    const int pad = padAt (e.getPosition());
-    if (pad >= 0 && ! e.mods.isPopupMenu() && onPadDoubleClicked)
-        onPadDoubleClicked (pad);
 }
 
 void PadGrid::fileDragMove (const juce::StringArray&, int x, int y)

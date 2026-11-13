@@ -93,6 +93,104 @@ struct RigGrooveTests : juce::UnitTest
             expect (view.stateOf (GrooveView::loops).contains ("Empty"));
         }
 
+        beginTest ("every instrument has a card with its own Play / On button");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            engine.vocoderOn = false;
+            GrooveView view (engine);
+            view.setSize (1400, 860);
+            expectEquals ((int) GrooveView::numTracks, 8);
+            expectEquals (GrooveView::trackName (GrooveView::drums), juce::String ("MPC"), "the MPC says MPC");
+            expectEquals (GrooveView::stripFor (GrooveView::lineIn), (int) RigEngine::inputStrip);
+            expectEquals (GrooveView::tabFor (GrooveView::lineIn), juce::String ("Effects"));
+            for (int t = 0; t < GrooveView::numTracks; ++t)
+            {
+                view.selectTrack (t);
+                expect (view.trackButtonText (t).isNotEmpty() && view.trackButtonTip (t).isNotEmpty());
+                expect (view.stateOf (t).isNotEmpty(), GrooveView::trackName (t) + " says what it's doing");
+            }
+
+            // Bass and the drum machine: Play starts their pattern and Kaleidobox; Stop stops the pattern only.
+            for (int t : { (int) GrooveView::bass, (int) GrooveView::machine })
+            {
+                auto& params = t == GrooveView::bass ? engine.getBass().params : engine.getDrums().params;
+                expect (! view.isGoing (t));
+                view.pressTrackButton (t);
+                runBlocks (engine, 1);
+                expect (param (params, "sequencer") > 0.5f && engine.getTransport().isPlaying());
+                expect (view.isGoing (t));
+                view.pressTrackButton (t);
+                expect (param (params, "sequencer") < 0.5f, "Stop turns its pattern off");
+                runBlocks (engine, 1);
+                expect (engine.getTransport().isPlaying(), "the rest keeps playing");
+            }
+
+            // The synth's arp, the vocoder.
+            view.pressTrackButton (GrooveView::synth);
+            expect (param (engine.getSynth().params, "arpOn") > 0.5f);
+            view.pressTrackButton (GrooveView::synth);
+            expect (param (engine.getSynth().params, "arpOn") < 0.5f);
+            view.pressTrackButton (GrooveView::vocoder);
+            expect (engine.vocoderOn.load());
+            expectEquals (view.trackButtonText (GrooveView::vocoder), juce::String ("On"));
+
+            // Line in: on (and the audio input with it), its jack, and a loop of it.
+            engine.micOn = false;
+            expect (view.stateOf (GrooveView::lineIn).startsWith ("Off"));
+            view.pressTrackButton (GrooveView::lineIn);
+            expect (engine.inputOn.load() && engine.micOn.load());
+            view.selectTrack (GrooveView::lineIn);
+            expectEquals (view.numSteps(), 3);
+            view.pressStep (2);
+            expectEquals (engine.inputJack.load(), 2);
+            view.pressPattern (0);   // Loop it
+            runBlocks (engine, 1);
+            expectEquals (engine.getLooper().getLayer (0).source.load(), (int) RigLooper::line);
+            expect (engine.getLooper().getState (0) != RigLooper::State::empty);
+            expect (view.isGoing (GrooveView::loops));
+            view.pressTrackButton (GrooveView::lineIn);
+            expect (! engine.inputOn.load());
+
+            // Loops: Rec closes the layer that's recording, then records the next empty one.
+            view.pressTrackButton (GrooveView::loops);
+            runBlocks (engine, 1);
+            view.pressTrackButton (GrooveView::loops);
+            runBlocks (engine, 1);
+            expect (view.isGoing (GrooveView::loops), "and the next press records again");
+        }
+
+        beginTest ("the Machine track is the drum machine: every sound, the accents, the variation it edits");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            GrooveView view (engine);
+            view.setSize (1400, 860);
+            view.selectTrack (GrooveView::machine);
+            auto& d = engine.getDrums();
+            expectEquals (view.numRows(), crate::drums::kVoices + 1, "the accent row and all 12 sounds");
+            d.setPattern (0, {}, 0);
+            d.setPattern (0, {}, 1);
+            view.pressCell (0, 3);
+            expect (d.getPattern (0).accent[3], "row 0 is the accent");
+            view.pressCell (1 + crate::drums::cowbell, 5);
+            expectEquals ((int) d.getPattern (0).hits[crate::drums::cowbell][5], 1, "the cowbell has its own row");
+            // Its B variation, as the drum machine's own A / B buttons pick it.
+            view.pressPattern (crate::drums::kPatterns + 1);   // B
+            expectEquals (d.getVariation(), 1);
+            expectEquals (d.editVariation, 1);
+            view.pressCell (1 + crate::drums::kick, 0);
+            expectEquals ((int) d.getPattern (0, 1).hits[crate::drums::kick][0], 1, "edits B");
+            expectEquals ((int) d.getPattern (0, 0).hits[crate::drums::kick][0], 0, "A is untouched");
+            // An edit on the drum machine's page shows here.
+            auto p = d.getPattern (0, 1);
+            p.hits[crate::drums::clap][7] = 1;
+            d.setPattern (0, p, 1);
+            expect (view.stateOf (GrooveView::machine).contains ("1B"), "the card says which pattern and variation");
+            view.pressPattern (11);
+            expectEquals (d.getSelectedPattern(), 11, "all 16 patterns");
+        }
+
         beginTest ("bass: lighting a step turns the pattern on");
         {
             RigEngine engine;

@@ -26,7 +26,8 @@ public:
     std::function<void (int pad)> onPadReleased;
     std::function<void (int pad, const juce::StringArray& files)> onFilesDropped;
     std::function<void (int pad)> onClearPad;
-    std::function<void (int pad)> onPadDoubleClicked;
+    // The right-click menu's Trim and effects... (a double-click is just two hits).
+    std::function<void (int pad)> onEditPad;
     // 16 Levels: what each of the 16 pads on screen plays (slot 0 is pad 1), shown on the pad
     // instead of its own sound. Empty when 16 Levels is off.
     std::function<juce::String (int slot)> levelsText;
@@ -34,7 +35,6 @@ public:
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
-    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     bool isInterestedInFileDrag (const juce::StringArray&) override { return true; }
     void fileDragEnter (const juce::StringArray&, int x, int y) override { fileDragMove ({}, x, y); }

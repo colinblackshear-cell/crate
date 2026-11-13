@@ -108,6 +108,18 @@ public:
     // playing it comes in at the next bar; stopped, it starts the clock from the top.
     void playMpcSequence (int index);
     bool playMpcSong (int song);
+    // The MPC's beat on or off, like the other instruments' patterns: on, its sequence plays
+    // whenever the Rig plays (on the Rig's clock); off, the Rig's Play leaves it quiet and a beat
+    // playing stops at once. Its pads play either way. Saved with the show and in song parts.
+    bool isMpcBeatOn() const { return mpc.getSequencer().followHost.load(); }
+    void setMpcBeatOn (bool on);
+    // Plays the MPC's pads into the looper (message thread): the first empty layer records the
+    // MPC (pads, and its beat if that's on) from the next bar, for `bars` bars (0: until this is
+    // pressed again, then to the end of that bar). Pressed while that loop records, it ends it.
+    // Says what happened.
+    juce::String loopMpcPads (int bars);
+    // The layer recording (or waiting to record) the pads, or -1.
+    int getPadLoopLayer() const;
     RigRouting& getRouting() { return routing; }
 
     // (The vocoder came later, so it's last: saved shows keep their strip order.)
@@ -302,6 +314,8 @@ private:
     void applyStrip (int id, juce::AudioBuffer<float>&);
 
     MpcProcessor mpc;
+    int padLoopLayer = -1;
+    void mpcCommand (MpcProcessor::HostCommand);
     EditorProcessor sampler;
     VocoderProcessor vocoder;
     BassProcessor bass;

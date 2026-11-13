@@ -128,7 +128,7 @@ const std::vector<GuideView::Entry>& GuideView::entries()
           RigColours::sampler, Art::sampler, true, "F4" },
         { "Mixer", "The Mixer", "Every sound, on a fader. Every tool, one click away.",
           "A real mixing desk: a strip for each tool and each loop layer with its fader, meter, pan, mute, solo, effects "
-          "and two sends, to a shared reverb and an echo in time. Along the top, a button into every tool.",
+          "and two sends, to a shared reverb and an echo in time, plus the FX pad for the whole mix. Along the top, a button into every tool.",
           RigColours::master, Art::mixer, true, "F5" },
         { "Effects", "The Effects", "A pedalboard for everything that makes a noise.",
           "Plug in a guitar or bass, or pick any tool or loop, and stomp on thirteen pedals: amp, wah, chorus, phaser, delay, "
@@ -152,16 +152,12 @@ const std::vector<GuideView::Entry>& GuideView::entries()
           "A synth with named sounds, an arpeggiator that plays your chords for you, and a slot for your Arturia collection.",
           RigColours::synth, Art::synth, false, {} },
         { "Song", "The Song", "The running order of the evening.",
-          "Song parts A to H in order, with their names and lengths. It's the setlist the Stage and the footer play from.",
+          "Song parts A to H in order, with their names and lengths. It's the setlist the footer plays from.",
           RigColours::song, Art::song, false, {} },
         { "Sounds", "The Sounds", "Your crate, catalogued.",
           "Your samples and your Splice folder, sorted by kind, tempo and key. The perfect snare is in here somewhere. "
           "Statistically, near the bottom.",
           juce::Colour (0xffa1887f), Art::sounds, false, {} },
-        { "Stage", "The Big Stage", "Big buttons for small, dark rooms.",
-          "The view for playing to actual humans: giant Play and Rec, a tempo you can read from the back, mutes, loop lamps "
-          "and the FX pad. Esc brings you back down to earth (and to the Mixer).",
-          RigColours::master, Art::stage, false, {} },
         { "Setup", "The Setup", "What your keyboard plays, and where.",
           "Which tool the keys and pads play, the split, sampling one tool into another, knob Learn, the click and the mic. "
           "Set it once, then forget about it until the next gig.",

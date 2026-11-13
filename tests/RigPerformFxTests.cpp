@@ -1,7 +1,7 @@
 #include "TestHelpers.h"
 
 #include "PerformPad.h"
-#include "StageView.h"
+#include "MixerView.h"
 
 namespace
 {
@@ -163,7 +163,7 @@ struct RigPerformFxTests : juce::UnitTest
             expectEquals (r.fx.getRise(), 0.0f);
         }
 
-        beginTest ("the pad: touch plays, let go stops, Hold keeps it; on the Stage");
+        beginTest ("the pad: touch plays, let go stops, Hold keeps it; on the Mixer");
         {
             PerformFx fx;
             PerformPad pad (fx);
@@ -184,17 +184,19 @@ struct RigPerformFxTests : juce::UnitTest
 
             RigEngine engine;
             engine.prepare (kRate, kBlock);
-            StageView stage (engine);
-            stage.setBounds (0, 0, 1600, 1000);
-            expect (! stage.getPad().isVisible());
-            stage.padToggle.onClick();
-            expect (stage.isShowingPad() && stage.getPad().isVisible());
-            expect (! stage.mutes[0]->isVisible(), "the channels make way");
-            stage.getPad().touch (0.1f, 0.5f);
-            expect (engine.getPerformFx().engaged.load(), "the Stage's pad plays the Rig's mix");
-            stage.setShowPad (false);
+            MixerView mixer (engine);
+            mixer.setBounds (0, 0, 1600, 1000);
+            expect (! mixer.getPad().isVisible());
+            mixer.padBank.onClick();
+            expect (mixer.isShowingPad() && mixer.getPad().isVisible());
+            expect (! mixer.getPad().getBounds().isEmpty());
+            expect (! mixer.channelFor (RigEngine::bassStrip)->isVisible(), "the strips make way");
+            expect (mixer.channelFor (RigEngine::masterStrip)->isVisible(), "the master stays");
+            mixer.getPad().touch (0.1f, 0.5f);
+            expect (engine.getPerformFx().engaged.load(), "the Mixer's pad plays the Rig's mix");
+            mixer.showPad (false);
             expect (! engine.getPerformFx().engaged.load(), "and switching back lets go");
-            expect (stage.mutes[0]->isVisible());
+            expect (mixer.channelFor (RigEngine::bassStrip)->isVisible());
         }
     }
 };

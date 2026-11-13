@@ -48,8 +48,8 @@ public:
                 // As a click does (a Button's triggerClick only posts it).
                 if (auto* b = dynamic_cast<juce::Button*> (card); b != nullptr && b->onClick)
                     b->onClick();
-                const auto want = shown[(size_t) i].page == "Sampler editor" ? juce::String ("Sampler") : shown[(size_t) i].page;
-                expectEquals (view.getPage(), want);
+                // (The sample editor and the MPC are sides of the Sampler · MPC screen: places, not pages.)
+                expectEquals (view.getPlace(), shown[(size_t) i].page);
             }
 
             if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_GUIDE_SNAPSHOT", {}); path.isNotEmpty())

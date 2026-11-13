@@ -13,8 +13,7 @@ const std::vector<MoreView::ToolInfo>& MoreView::toolList()
         { "Bass", "Bass", "The bass synth in full: its sound, and its patterns.", RigColours::bass },
         { "Synth", "Synth", "The synth in full: oscillators, filter, LFO and the arp.", RigColours::synth },
         { "Sounds", "Sounds", "Your samples and Splice, by kind, tempo and key. Send them anywhere.", juce::Colour (0xffa1887f) },
-        { "Mixer", "Mixer", "Faders, pan, mute, solo, effects and sends for every tool and loop.", RigColours::master },
-        { "Stage", "Big stage", "Giant buttons and the FX pad, for playing live in a dark room.", RigColours::song },
+        { "Mixer", "Mixer", "Faders, pan, mute, solo, effects and sends for every tool and loop, and the FX pad.", RigColours::master },
         { "Setup", "Setup", "What the keys and pads play, the split, sampling between tools, knob Learn.", juce::Colour (0xff8fb8ff) },
     };
     return list;

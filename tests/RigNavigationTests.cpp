@@ -79,7 +79,8 @@ public:
             view.goBack();
             expectEquals (view.getPlace(), juce::String ("Sampler editor"));
             view.goBack();
-            expectEquals (view.getPage(), juce::String ("MPC"));
+            expectEquals (view.getPlace(), juce::String ("MPC"));
+            expectEquals (view.getPage(), juce::String ("Sampler"), "the MPC is the Sampler · MPC screen's Sequencer side");
             view.goBack();
             expectEquals (view.getPage(), juce::String ("Groove"));
             view.goBack();
@@ -232,7 +233,7 @@ public:
             if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_NAV_SNAPSHOT", {}); path.isNotEmpty())
             {
                 for (auto [w, h, page, suffix] : { std::tuple<int, int, const char*, const char*> { 1440, 960, "Groove", "" },
-                                                   { 1200, 860, "Groove", "-1200" }, { 1440, 960, "Stage", "-stage" } })
+                                                   { 1200, 860, "Groove", "-1200" }, { 1440, 960, "Mixer", "-mixer" } })
                 {
                     view.setSize (w, h);
                     view.goTo (page);
