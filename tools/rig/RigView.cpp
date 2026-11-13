@@ -350,11 +350,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         screen->setLookAndFeel (&vintageLook);
         screen->onSay = [this] (const juce::String& text) { say (text); };
         screen->onOpen = [this] (const juce::String& name) { showTab (name); };
-        screen->onSendToMpc = [this]
+        screen->onSendToMpc = [screen]
         {
-            if (auto* mpcView = dynamic_cast<MpcView*> (pages[(size_t) pageIndex ("MPC")].content.get()))
+            if (auto* mpcView = screen->getMpcView())
                 mpcView->exportToCard();
         };
+        screen->onSideChanged = [this] { if (currentPage() == "Sampler") pageChanged(); };
         // The full editor lives on the Sampler screen too (Edit · Effects · Keys), in a dark
         // well on the panel, so every one of its tools is on the one screen.
         samplerEditor->useHostLook (vintageLook, [samplerEditor] (juce::Graphics& g, juce::Rectangle<int> tools, juce::Rectangle<int> keys)
@@ -367,6 +368,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         });
         screen->ownEditor (samplerView);
         samplerView = nullptr;
+        // The MPC (kits, sequencer, songs, pad settings) is the screen's Sequencer · Kits side,
+        // beside the same pads: one MPC, not two.
+        screen->ownMpc (dynamic_cast<MpcView*> (engine.getMpc().createEditorAndMakeActive()));
         samplerScreen = screen;
         addPage ("Sampler", samplerColour, screen);
     }
@@ -389,7 +393,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         // The Mixer (F5): a strip per tool and loop layer, the Reverb and Echo returns, the
         // master, and a button into every tool.
         auto* view = new MixerView (engine);
-        view->onOpen = [this] (const juce::String& name) { showTab (name); };
+        view->onOpen = [this] (const juce::String& name) { openTool (name); };
         view->onFx = [this] (int strip) { showFx (strip); };
         view->onLayerFx = [this] (int layer) { showLayerFx (layer); };
         view->onLearn = [this] (int control, juce::Button& b) { startLearning (control, b); };
@@ -411,7 +415,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         effects = view;
         addPage ("Effects", RigColours::input, view);
     }
-    addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
+    if (samplerScreen == nullptr || samplerScreen->getMpcView() == nullptr)
+        addPage ("MPC", mpcColour, engine.getMpc().createEditorAndMakeActive());
     if (samplerView != nullptr)
         addPage ("Sampler", samplerColour, samplerView);
     addPage ("Drum machine", RigColours::drums, engine.getDrums().createEditorAndMakeActive());
@@ -432,7 +437,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     addPage ("Song", RigColours::song, songView);
     auto* soundsView = new SoundsView (engine);
     soundsView->onSay = [this] (const juce::String& text) { say (text); };
-    if (auto* mpcView = pageIndex ("MPC") >= 0 ? dynamic_cast<MpcView*> (pages[(size_t) pageIndex ("MPC")].content.get()) : nullptr)
+    if (auto* mpcView = samplerScreen != nullptr && samplerScreen->getMpcView() != nullptr ? samplerScreen->getMpcView()
+                        : pageIndex ("MPC") >= 0 ? dynamic_cast<MpcView*> (pages[(size_t) pageIndex ("MPC")].content.get()) : nullptr)
     {
         // The MPC's sound bank under its pads is the Sounds page's, and the keyboard's drum pads
         // (Launchkey, Launchpad) follow the pad bank the MPC shows.
@@ -447,7 +453,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         // The More page: the tools in full, your show and the set-up, as big buttons.
         auto* view = new MoreView (devices != nullptr);
         view->setLookAndFeel (&vintageLook);
-        view->onOpen = [this] (const juce::String& name) { showTab (name); };
+        view->onOpen = [this] (const juce::String& name) { openTool (name); };
         view->onSave = [this] { saveShow(); };
         view->onSaveAs = [this] { saveShowAs(); };
         view->onOpenShow = [this] { openShow(); };
@@ -464,15 +470,15 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         view->isClickOn = [this] { return engine.getTransport().metronome.load(); };
         view->isDark = [this] { return (bool) engine.screens.getProperty ("dark", false); };
         view->showName = [this] { return currentShow.getFileNameWithoutExtension(); };
-        view->hasPage = [this] (const juce::String& name) { return pageIndex (name) >= 0; };
+        view->hasPage = [this] (const juce::String& name) { return pageIndex (name) >= 0 || (name == "MPC" && samplerScreen != nullptr); };
         moreView = view;
         addPage ("More", Theme::text, view);
     }
 
     // The Guide: the front page, with an entry for every tool above (the ones the Rig has).
     auto* guideView = new GuideView ([this] (const juce::String& name)
-                                     { return pageIndex (name) >= 0 || (name == "Sampler editor" && samplerScreen != nullptr); });
-    guideView->onOpen = [this] (const juce::String& name) { showTab (name); };
+                                     { return pageIndex (name) >= 0 || ((name == "Sampler editor" || name == "MPC") && samplerScreen != nullptr); });
+    guideView->onOpen = [this] (const juce::String& name) { openTool (name); };
     guideView->onHelp = [this] { showHelp (true); };
     guideView->startsHere = [this] { return ! (bool) engine.screens.getProperty ("skipGuide", false); };
     guideView->setStartsHere = [this] (bool start)
@@ -600,12 +606,27 @@ void RigView::refresh()
     updateLearnButtons();
 }
 
+void RigView::openTool (const juce::String& name)
+{
+    // The Sampler's own button (on the Mixer, More and the Guide) shows its Chop side; the MPC's
+    // shows the Sequencer side of the same screen.
+    if (name == "Sampler" && samplerScreen != nullptr)
+        samplerScreen->setSide (SamplerScreen::chopSide);
+    showTab (name);
+}
+
 void RigView::showTab (const juce::String& name)
 {
     // The full sample editor is the Sampler screen's Edit side.
     if (name == "Sampler editor" && samplerScreen != nullptr)
     {
         samplerScreen->setEditMode (true);
+        return showTab ("Sampler");
+    }
+    // The MPC is the Sampler · MPC screen's Sequencer · Kits side (beside the same pads).
+    if (name == "MPC" && pageIndex ("MPC") < 0 && samplerScreen != nullptr)
+    {
+        samplerScreen->setSide (SamplerScreen::mpcSide);
         return showTab ("Sampler");
     }
     const int i = pageIndex (name);
@@ -1352,6 +1373,8 @@ juce::String RigView::currentPlace() const
     const auto page = currentPage();
     if (page == "Sampler" && samplerScreen != nullptr && samplerScreen->isEditMode())
         return "Sampler editor";
+    if (page == "Sampler" && samplerScreen != nullptr && samplerScreen->getSide() == SamplerScreen::mpcSide)
+        return "MPC";
     if (page == "Looper" && looper != nullptr)
     {
         if (looper->getTimeline() != nullptr)

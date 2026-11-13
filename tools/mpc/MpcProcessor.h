@@ -44,6 +44,7 @@ public:
     //==========================================================================
     // The sequencer. It plays the current sequence on the current kit.
     SequencerEngine& getSequencer() { return sequencer; }
+    const SequencerEngine& getSequencer() const { return sequencer; }
     // Starts or stops recording; saves an undo step first.
     void toggleRecord();
     // The track recorded notes go on (of the current sequence).
@@ -85,6 +86,17 @@ public:
 
     // Stop button: stops, leaves song mode and forgets a queued sequence.
     void stopTransport();
+
+    // The MPC's own Play, Stop and Rec (its buttons, Space, Play song) and its Follow switch.
+    // In a host that runs one clock for everything (the Rig), they go to `hostCommand`, so the
+    // MPC never runs on a clock of its own there and the host's Stop always stops it. Without
+    // one (the MPC app, Logic) they drive the sequencer as they always have.
+    enum class HostCommand { play, playFromStart, stop, record, beatOn, beatOff };
+    std::function<void (HostCommand)> hostCommand;
+    void pressPlay (bool fromStart);
+    void pressStop();
+    void pressRecord();
+    void setFollowing (bool follow);
     // Keeps the current sequence and song position in step with what's playing. Runs on the
     // timer; tests call it.
     void followTransport();

@@ -138,6 +138,8 @@ RigEngine::RigEngine()
     // The MPC changes sequence (and moves through its songs) on the Rig's bar lines.
     mpc.getSequencer().switchWhileFollowing = true;
     mpc.switchAtBar = true;
+    // The MPC's Play, Stop and Rec are the Rig's: one clock, and Stop always stops it.
+    mpc.hostCommand = [this] (MpcProcessor::HostCommand c) { mpcCommand (c); };
     // The drum machine waits for its Play (on the Groove screen), so a new Rig starts quiet.
     if (auto* p = drums.params.getParameter ("sequencer"))
         p->setValueNotifyingHost (0.0f);
@@ -178,6 +180,81 @@ bool RigEngine::playMpcSong (int song)
     if (! transport.isPlaying())
         transport.play();   // stopped is always at the top
     return true;
+}
+
+void RigEngine::setMpcBeatOn (bool on)
+{
+    mpc.getSequencer().followHost = on;
+    if (! on)
+        mpc.stopTransport();
+    controlsMoved = true;
+}
+
+void RigEngine::mpcCommand (MpcProcessor::HostCommand c)
+{
+    using C = MpcProcessor::HostCommand;
+    switch (c)
+    {
+        case C::play:
+        case C::playFromStart:
+            setMpcBeatOn (true);
+            if (! transport.isPlaying())
+                transport.play();   // stopped is always at the top
+            else if (c == C::playFromStart && ! mpc.isSongPlaying())
+                transport.setPosition (0.0);
+            break;
+        case C::stop:
+            transport.stop();
+            allNotesOff();
+            mpc.stopTransport();
+            break;
+        case C::record:
+            // Recording goes onto the MPC's sequence on the Rig's clock (from the top when stopped).
+            setMpcBeatOn (true);
+            mpc.toggleRecord();
+            if (! transport.isPlaying())
+                transport.play();
+            break;
+        case C::beatOn:  setMpcBeatOn (true); break;
+        case C::beatOff: setMpcBeatOn (false); break;
+    }
+}
+
+int RigEngine::getPadLoopLayer() const
+{
+    if (! juce::isPositiveAndBelow (padLoopLayer, RigLooper::kLayers))
+        return -1;
+    // (Just pressed, the layer is still empty until the audio thread takes the press.)
+    const auto state = looper.getState (padLoopLayer);
+    return state == RigLooper::State::armed || state == RigLooper::State::recording || state == RigLooper::State::empty ? padLoopLayer : -1;
+}
+
+juce::String RigEngine::loopMpcPads (int bars)
+{
+    if (const int busy = getPadLoopLayer(); busy >= 0)
+    {
+        const bool waiting = looper.getState (busy) == RigLooper::State::armed;
+        looper.pressRecord (busy);
+        padLoopLayer = -1;
+        return waiting ? "Loop " + juce::String (busy + 1) + " won't record after all."
+                       : "Loop " + juce::String (busy + 1) + " ends at the end of this bar, then plays round.";
+    }
+    int layer = -1;
+    for (int i = 0; i < RigLooper::kLayers && layer < 0; ++i)
+        if (looper.getState (i) == RigLooper::State::empty && ! looper.isSwapPending (i))
+            layer = i;
+    if (layer < 0)
+        return "Every looper layer has a loop. Clear one on the Looper (F3) to record the pads.";
+    auto& l = looper.getLayer (layer);
+    l.source = (int) RigLooper::mpc;
+    l.bars = juce::jmax (0, bars);
+    looper.pressRecord (layer);
+    padLoopLayer = layer;
+    juce::String text ("Loop " + juce::String (layer + 1) + " records the MPC from the next bar");
+    text << (bars > 0 ? ", for " + juce::String (bars) + (bars == 1 ? " bar." : " bars.") : juce::String (": press Loop pads again to end it."));
+    if (isMpcBeatOn())
+        text << " (The MPC's beat is on, so it goes in too; switch Beat off for just your pads.)";
+    return text;
 }
 
 RigEngine::~RigEngine()
@@ -1022,6 +1099,7 @@ juce::ValueTree RigEngine::saveShow() const
     show.setProperty ("captureBars", captureBars, nullptr);
     show.setProperty ("inputOn", inputOn.load(), nullptr);
     show.setProperty ("inputJack", inputJack.load(), nullptr);
+    show.setProperty ("mpcBeat", isMpcBeatOn(), nullptr);
 
     if (screens.getNumChildren() > 0 || screens.getNumProperties() > 0)
         show.appendChild (screens.createCopy(), nullptr);
@@ -1186,6 +1264,9 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     bassPlugin.fromTree (show.getChildWithProperty ("tool", "Bass").getChildWithName ("Plugin"));
     synthPlugin.fromTree (show.getChildWithProperty ("tool", "Synth").getChildWithName ("Plugin"));
     inputJack = juce::jlimit (0, 2, (int) show.getProperty ("inputJack", 0));
+    // (Shows from before the MPC had its own on/off played it whenever the Rig played.)
+    mpc.getSequencer().followHost = (bool) show.getProperty ("mpcBeat", true);
+    padLoopLayer = -1;
 
     for (int c = 0; c < RigRouting::numControls; ++c)
         routing.forget (c);
@@ -1366,6 +1447,7 @@ RigScene::State RigEngine::captureScene()
     s.arp = getParameter (synthTool.params, "arpOn") > 0.5f ? 1 : 0;
     s.drumPattern = juce::roundToInt (getParameter (drums.params, "pattern"));
     s.drumSequencer = getParameter (drums.params, "sequencer") > 0.5f ? 1 : 0;
+    s.mpcBeat = isMpcBeatOn() ? 1 : 0;
     s.vocoderOn = vocoderOn.load() ? 1 : 0;
     s.inputOn = inputOn.load() ? 1 : 0;
     s.loopBank = queuedLoopBank >= 0 ? queuedLoopBank : getCurrentLoopBank();
@@ -1398,6 +1480,9 @@ void RigEngine::applyScene (const RigScene::State& s, double beat)
         setParameter (synthTool.params, "arpOn", (float) s.arp);
     if (s.drumSequencer >= 0)
         setParameter (drums.params, "sequencer", (float) s.drumSequencer);
+    // (On the audio thread: switched off, the sequencer stops itself as it stops following.)
+    if (s.mpcBeat >= 0)
+        mpc.getSequencer().followHost = s.mpcBeat == 1;
 }
 
 void RigEngine::arrange (int n)

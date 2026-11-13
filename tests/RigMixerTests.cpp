@@ -245,7 +245,7 @@ public:
             {
                 view.goTo ("Mixer");
                 mixer->hub[i]->onClick();
-                expectEquals (view.getPage(), MixerView::hubPages()[i]);
+                expectEquals (view.getPlace(), MixerView::hubPages()[i]);   // (the MPC: a side of the Sampler · MPC screen)
             }
             view.goTo ("Stage");
             view.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
