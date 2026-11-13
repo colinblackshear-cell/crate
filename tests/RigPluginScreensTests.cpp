@@ -63,6 +63,15 @@ struct RigPluginScreensTests : juce::UnitTest
         {
             RigPlugin plugin;
             plugin.prepareToPlay (48000.0, 512);
+            // Twice: closing the window in Logic and opening it again gives the same screens.
+            for (int opening = 0; opening < 2; ++opening)
+                checkScreens (plugin, opening);
+        }
+    }
+
+    void checkScreens (RigPlugin& plugin, int opening)
+    {
+        {
             std::unique_ptr<juce::AudioProcessorEditor> editor (plugin.createEditor());
             expect (editor != nullptr);
             editor->setSize (1440, 960);
@@ -81,6 +90,10 @@ struct RigPluginScreensTests : juce::UnitTest
             {
                 view.goTo (place);
                 expect (view.getPlace() == place || view.getPage() == place, place + " opens (on " + view.getPage() + ")");
+                if (auto* page = view.getCurrentContent())
+                    expect (page->isVisible() && page->getWidth() > 0, place + " shows something");
+                else
+                    expect (false, place + " has a screen (window opened " + juce::String (opening + 1) + " times)");
                 std::vector<juce::Button*> buttons;
                 collect (*editor, buttons);
                 for (auto* b : buttons)
@@ -92,7 +105,7 @@ struct RigPluginScreensTests : juce::UnitTest
                 if (snapshot.isNotEmpty())
                 {
                     const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
-                    juce::File file (snapshot + "-" + place.replaceCharacter (' ', '-') + ".png");
+                    juce::File file (snapshot + (opening > 0 ? "-again-" : "-") + place.replaceCharacter (' ', '-') + ".png");
                     file.deleteFile();
                     juce::FileOutputStream stream (file);
                     juce::PNGImageFormat().writeImageToStream (image, stream);

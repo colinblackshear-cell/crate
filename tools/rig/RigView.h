@@ -51,6 +51,7 @@ public:
     // The page showing ("Guide", "Groove", "MPC"...), and going to one.
     juce::String getPage() const { return currentPage(); }
     void goTo (const juce::String& page) { showTab (page); }
+    juce::Component* getCurrentContent() const { return tabs.getCurrentContentComponent(); }
     class GuideView* getGuide() const { return guide; }
 
     // Back and forward through the screens you've been on (the arrows by the screen buttons,
