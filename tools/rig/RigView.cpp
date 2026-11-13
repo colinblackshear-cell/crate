@@ -4,7 +4,6 @@
 #include "LooperView.h"
 #include "SongView.h"
 #include "MoreView.h"
-#include "StageView.h"
 #include "MixerView.h"
 #include "GrooveView.h"
 #include "SoundsView.h"
@@ -308,7 +307,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     tabs.setOutline (0);
     auto* grooveView = new GrooveView (engine);
     grooveView->setLookAndFeel (&vintageLook);
-    grooveView->onOpen = [this] (const juce::String& name) { showTab (name); };
+    grooveView->onOpen = [this] (const juce::String& name)
+    {
+        // From Line in, the Effects page opens on Line in's pedals.
+        if (name == "Effects" && effects != nullptr && groove != nullptr && groove->getTrack() == GrooveView::lineIn)
+            effects->showSource (EffectsView::lineIn);
+        showTab (name);
+    };
     grooveView->onSay = [this] (const juce::String& text) { say (text); };
     grooveView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
     grooveView->onSample = [this] { toggleSampling(); };
@@ -374,21 +379,6 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         samplerScreen = screen;
         addPage ("Sampler", samplerColour, screen);
     }
-    auto* stageView = new StageView (engine);
-    stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
-    stageView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
-    stageView->onRecord = [this] { toggleRecordSet(); };
-    stageView->onTap = [this] { header.tap.onClick(); };
-    stageView->onNudgeTempo = [this] (double amount) { nudgeTempo (amount); };
-    stageView->recordState = [this]
-    {
-        // The Stage shows "armed" as a red ring, which it asks for as Lit::next.
-        const auto state = engine.getRecorder().getState();
-        return std::pair<juce::String, vintage::Lit> (header.rec.text, state == RigRecorder::State::armed ? vintage::Lit::next
-                                                                      : state == RigRecorder::State::recording ? vintage::Lit::arm
-                                                                                                               : vintage::Lit::none);
-    };
-    stage = stageView;
     {
         // The Mixer (F5): a strip per tool and loop layer, the Reverb and Echo returns, the
         // master, and a button into every tool.
@@ -402,7 +392,6 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         mixer = view;
         addPage ("Mixer", Theme::text, view);
     }
-    addPage ("Stage", Theme::text, stageView);
     {
         // The effects processor: a pedalboard for every sound (the line in, each tool, each loop).
         auto* view = new EffectsView (engine);
@@ -595,8 +584,6 @@ void RigView::refresh()
         looper->refresh();
     if (song != nullptr)
         song->refresh();
-    if (stage != nullptr)
-        stage->refresh();
     if (samplerScreen != nullptr)
         samplerScreen->refresh();
     if (vocoderScreen != nullptr)
@@ -622,6 +609,14 @@ void RigView::showTab (const juce::String& name)
     {
         samplerScreen->setEditMode (true);
         return showTab ("Sampler");
+    }
+    // The old Big stage is gone: its FX pad and everything else are on the Mixer.
+    if (name == "Stage")
+    {
+        showTab ("Mixer");
+        if (mixer != nullptr)
+            mixer->showPad (true);
+        return;
     }
     // The MPC is the Sampler · MPC screen's Sequencer · Kits side (beside the same pads).
     if (name == "MPC" && pageIndex ("MPC") < 0 && samplerScreen != nullptr)
@@ -649,15 +644,14 @@ void RigView::showTab (const juce::String& name)
     pageChanged();
 }
 
-// The Stage fills the window on a black panel: no top bar or footer (it has its own), and the
+// The Guide fills the window on a black panel (a night sky): no top bar or footer, and the
 // screen buttons go dark too. Leaving it puts the panel back as it was.
 void RigView::pageChanged()
 {
     screenBar.setCurrent (currentPage());
     navigation.visit (currentPlace());
     updateNavButtons();
-    // The Guide is a night sky: it fills the window the same way.
-    const bool onStage = currentPage() == "Stage" || currentPage() == "Guide";
+    const bool onStage = currentPage() == "Guide";
     if (onStage == stageShown)
         return;
     stageShown = onStage;
@@ -670,8 +664,6 @@ void RigView::pageChanged()
         c->repaint();
     if (groove != nullptr)
         groove->repaint();
-    if (stage != nullptr)
-        stage->repaint();
 }
 
 void RigView::popOutTab (const juce::String& tab)
@@ -1341,10 +1333,10 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         goForward();
         return true;
     }
-    // Esc leaves the big Stage, back to the Mixer it's opened from (the Guide: to the Groove).
+    // Esc leaves the Guide, back to the Groove.
     if (key == juce::KeyPress::escapeKey && stageShown)
     {
-        showTab (currentPage() == "Stage" ? "Mixer" : "Groove");
+        showTab ("Groove");
         return true;
     }
     // F1-F6: the screens.
@@ -1605,7 +1597,6 @@ void RigView::showMoreMenu()
                                { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
                                { "Synth", "Synth: sound and arp" }, { "Song", "Song builder: parts in order, lengths, names" },
                                { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer: levels, pan, solo, sends, effects" },
-                               { "Stage", "Big stage: giant buttons and the FX pad, for playing live" },
                                { "Setup", "Setup: keys, pads, split, sampling, knobs" } };
     const auto here = currentPage();
     for (int i = 0; i < (int) std::size (tools); ++i)
@@ -1623,7 +1614,7 @@ void RigView::showMoreMenu()
         menu.addItem (7, "Audio and MIDI set-up...");
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.more),
-                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer", "Stage", "Setup" }] (int result)
+                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer", "Setup" }] (int result)
                         {
                             if (safe == nullptr || result == 0)
                                 return;

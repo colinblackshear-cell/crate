@@ -102,7 +102,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Press Play song, or launch parts yourself from the song part buttons.",
             "Sing: your voice goes through the vocoder live. Record a part of it onto a loop if you want it to repeat.",
             "Press Rec (top bar) first to keep the whole performance as stems for Logic.",
-            "The Mixer (F5) has every level, pan, mute and solo; its Big stage button shows everything at once in giant buttons, with the FX pad for the whole mix." },
+            "The Mixer (F5) has every level, pan, mute and solo; its FX pad button swaps the strips for the FX pad on the whole mix (filter sweeps, repeat, tape stop)." },
           "" },
 
         { "Guitar, bass, keytar and other instruments",
@@ -137,7 +137,7 @@ int HelpPanel::guideFor (const juce::String& page)
     if (page == "Sampler" || page == "MPC") return 4;
     if (page == "Song") return 5;
     if (page == "Timeline") return 6;
-    if (page == "Stage" || page == "Mixer") return 8;
+    if (page == "Mixer") return 8;
     if (page == "Setup") return 9;
     if (page == "Effects") return 10;
     return 0;
