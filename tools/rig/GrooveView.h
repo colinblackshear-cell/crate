@@ -7,9 +7,10 @@
 
 // The Groove screen (F1): the Rig as one groovebox.
 //
-// Down the left are the seven tracks (Drums, Machine, Bass, Synth, Vocoder, Sampler, Loops), each a dark
-// card with its colour stripe, a lamp and a word for what it's doing (Playing, Muted, Ready...),
-// a mute and a solo. Tap one to pick it: the middle then shows that track, the keys play it, and
+// Down the left are the eight tracks (MPC, Machine, Bass, Synth, Vocoder, Sampler, Loops, Line in),
+// every instrument Kaleidobox has, each a dark card with its colour stripe, a lamp and a word for
+// what it's doing (Playing, Muted, Ready...), its own Play / Stop (or On / Off, or Rec), a mute and
+// a solo. Tap one to pick it: the middle then shows that track, the keys play it, and
 // the keyboard's eight knobs turn its eight knobs.
 //
 // The middle is the same for every track, so there's one way to work: a well of steps (the
@@ -24,8 +25,9 @@ public:
     explicit GrooveView (RigEngine&);
     ~GrooveView() override;
 
-    // Drums are the MPC; Machine is the analog drum machine.
-    enum Track { drums, machine, bass, synth, vocoder, sampler, loops, numTracks };
+    // Drums are the MPC (its card says MPC); Machine is the analog drum machine; Line in is the
+    // Input strip (a guitar, keytar or second mic on your interface).
+    enum Track { drums, machine, bass, synth, vocoder, sampler, loops, lineIn, numTracks };
     static juce::String trackName (int);
     static juce::Colour trackColour (int);
     static int stripFor (int track);
@@ -46,6 +48,16 @@ public:
     void pressPattern (int index);
     void pressPart (int part);
     void pressSolo (int track);
+
+    // Each card's own button, so every instrument starts and stops from here without opening it:
+    // MPC, Machine and Bass play / stop their pattern (and start Kaleidobox if it's stopped), the
+    // Synth's arp, the Sampler's sound; the Vocoder and Line in switch on and off; Loops records
+    // the next empty layer (press again to close it). isGoing: what the button shows as lit.
+    void pressTrackButton (int track);
+    bool isGoing (int track) const;
+    // The button's word ("Play", "Stop", "On", "Off", "Rec") and what it does.
+    juce::String trackButtonText (int track) const;
+    juce::String trackButtonTip (int track) const;
     int numSteps() const;
     int numRows() const;
 
@@ -62,7 +74,7 @@ public:
     void stepSound (int delta);
     juce::String soundName() const;
     int numSounds() const;
-    void pressPlay();   // the Bass's (or the drum machine's) pattern: on (and the Rig plays) or off
+    void pressPlay();   // the Bass's (or the drum machine's, or Line in's) pattern: on (and the Rig plays) or off
     // The drum machine: a step's hit becomes a roll of 2, 3, 4 hits, then a single hit again.
     void pressRoll (int row, int step);
     bool hasKeys() const { return track == bass || track == synth; }
@@ -110,7 +122,7 @@ private:
     Cell cellAt (int row, int step) const;
     juce::String rowName (int row) const;
     int playheadStep() const;
-    bool bigCells() const { return track == vocoder || track == sampler || track == loops; }
+    bool bigCells() const { return track == vocoder || track == sampler || track == loops || track == lineIn; }
     juce::Rectangle<float> cellRect (int row, int step) const;
     std::pair<int, int> cellAt (juce::Point<int>) const;
     int rowLabelAt (juce::Point<int>) const;
@@ -128,12 +140,19 @@ private:
     void setDrumHit (int pad, int step, bool on);
     void clearPattern();
 
-    // The drum machine: one row per sound (picked from its 12), and which 16 steps show.
-    static constexpr int kMachineRows = 5;
-    std::array<int, kMachineRows> machineRows { crate::drums::kick, crate::drums::snare, crate::drums::clap,
-                                                crate::drums::closedHat, crate::drums::openHat };
+    // Line in: on (and the audio input with it), which jack, and a loop of it.
+    bool lineInLive() const;
+    void setLineIn (bool on);
+    void loopLineIn();
+
+    // The drum machine, as its own page shows it: the accent row, then all 12 sounds in its order,
+    // the pattern and the variation (A or B) its page is editing, and which 16 steps show.
+    static constexpr int kMachineRows = crate::drums::kVoices + 1;
+    static int machineVoice (int row) { return row - 1; }   // row 0 is the accent
     int machinePage = 0;
-    void showMachineRowMenu (int row);
+    crate::drums::Pattern machinePattern() const;
+    void setMachinePattern (const crate::drums::Pattern&);
+    void auditionMachineRow (int row);
     int machineLength() const;
 
     RigEngine& engine;

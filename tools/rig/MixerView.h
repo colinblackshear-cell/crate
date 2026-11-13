@@ -4,11 +4,12 @@
 
 #include "RigEngine.h"
 #include "RigPanels.h"
+#include "PerformPad.h"
 
 // The Mixer (F5): a mixing desk for everything Kaleidobox plays, and the way into every tool.
 //
 // Along the top, a button for each instrument and tool (Groove, MPC, Drum machine, Bass,
-// Synth, Vocoder, Sampler, Looper, Song, Sounds, the Big stage and Setup); each lamp lights
+// Synth, Vocoder, Sampler, Looper, Song, Sounds and Setup); each lamp lights
 // while that tool is sounding. Below, a channel strip per tool, as on a real desk, top to
 // bottom: its name (click it to go into the tool), its on switch (the vocoder's, the Input's
 // with its jack), FX (the strip's effects rack), two sends (A to the shared Reverb, B to the
@@ -18,6 +19,8 @@
 //
 // "Loop layers" swaps the tool strips for the looper's eight layers: each with its lamp, Rec
 // (record / stop / overdub, on the bar), FX, Mute and its own fader, into the Loops strip.
+// "FX pad" swaps them for the performance pad on the whole mix (filter sweeps, repeat, tape
+// stop, gate, riser), with the returns and the master beside it (it was on the old Big stage).
 class MixerView : public juce::Component,
                   private juce::Timer
 {
@@ -31,7 +34,7 @@ public:
     // Re-reads every strip (after a show is loaded).
     void refresh();
 
-    // Go into a tool (the name of its page: "MPC", "Looper", "Stage"...).
+    // Go into a tool (the name of its page: "MPC", "Looper", "Setup"...).
     std::function<void (const juce::String& page)> onOpen;
     // A strip's FX button: show (or hide) that strip's effects. A layer's: its loop effects.
     std::function<void (int strip)> onFx;
@@ -57,6 +60,10 @@ public:
     // Loop layers in place of the tools' strips.
     void showLayers (bool);
     bool isShowingLayers() const { return layersShown; }
+    // The FX pad in place of the strips (the returns and master stay).
+    void showPad (bool);
+    bool isShowingPad() const { return padShown; }
+    PerformPad& getPad() { return pad; }
 
     class Channel;
     // A strip by its id (RigEngine::StripId), a return (`returnId`), or a layer; null if not shown.
@@ -67,7 +74,7 @@ public:
     std::vector<std::pair<juce::Button*, int>> learnButtons() const;
 
     juce::OwnedArray<rigpanels::PanelButton> hub;
-    rigpanels::PanelButton toolsBank { "Tools" }, layersBank { "Loop layers" }, clearSolo { "Clear solo" };
+    rigpanels::PanelButton toolsBank { "Tools" }, layersBank { "Loop layers" }, clearSolo { "Clear solo" }, padBank { "FX pad" };
 
 private:
     void timerCallback() override;
@@ -77,7 +84,8 @@ private:
     std::unique_ptr<juce::LookAndFeel> look;
     juce::OwnedArray<Channel> tools, layers, returnsAndMaster;
     juce::Component::SafePointer<juce::Component> panel;
-    bool layersShown = false;
+    bool layersShown = false, padShown = false;
+    PerformPad pad;
     juce::Rectangle<int> hubArea, deskArea, legendArea;
     juce::String shownHub;
 
