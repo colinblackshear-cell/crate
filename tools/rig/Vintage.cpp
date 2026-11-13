@@ -465,6 +465,49 @@ juce::Font LookAndFeel::getTextButtonFont (juce::TextButton& b, int height)
     return cond (size.isVoid() ? juce::jlimit (12.0f, 21.0f, height * 0.4f) : (float) size, Weight::extra, 0.08f);
 }
 
+// A fader (as on the Mixer): a slot with a scale and a cream cap with the setting's colour across it
+// (the slider's trackColourId).
+void LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float minPos, float maxPos,
+                                    juce::Slider::SliderStyle style, juce::Slider& s)
+{
+    if (style != juce::Slider::LinearVertical)
+        return juce::LookAndFeel_V4::drawLinearSlider (g, x, y, w, h, pos, minPos, maxPos, style, s);
+    const auto& p = pal();
+    const auto area = juce::Rectangle<int> (x, y, w, h).toFloat();
+    const float capH = juce::jlimit (16.0f, 30.0f, area.getHeight() * 0.11f);
+    const float top = area.getY() + capH * 0.5f, bottom = area.getBottom() - capH * 0.5f;
+
+    // The scale: 0 dB (where it starts), and every 6 dB down.
+    g.setFont (cond (10.0f, Weight::bold));
+    for (float level : { 1.0f, 0.8f, 0.6f, 0.4f, 0.2f, 0.0f })
+    {
+        const float ty = bottom - (bottom - top) * level;
+        g.setColour (p.wellInk2.withAlpha (level == 0.8f ? 0.9f : 0.45f));
+        g.fillRect (area.getX(), ty - 0.5f, area.getWidth(), level == 0.8f ? 1.5f : 1.0f);
+    }
+
+    // The slot.
+    const auto slot = juce::Rectangle<float> (area.getCentreX() - 3.0f, top, 6.0f, bottom - top);
+    g.setColour (juce::Colours::black.withAlpha (0.75f));
+    g.fillRoundedRectangle (slot, 3.0f);
+    const auto ring = s.findColour (juce::Slider::trackColourId);
+    g.setColour (ring.withAlpha (0.55f));
+    g.fillRoundedRectangle (slot.withTop (pos), 3.0f);
+
+    // The cap.
+    const float capW = juce::jmin (area.getWidth() - 2.0f, 44.0f);
+    auto cap = juce::Rectangle<float> (capW, capH).withCentre ({ area.getCentreX(), pos });
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
+    g.fillRoundedRectangle (cap.translated (0, 2.0f), 4.0f);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff4ead6), 0, cap.getY(), juce::Colour (0xffc9bda6), 0, cap.getBottom(), false));
+    g.fillRoundedRectangle (cap, 4.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.25f));
+    for (float dy : { -0.3f, 0.3f })
+        g.fillRect (cap.getX() + 4.0f, cap.getCentreY() + cap.getHeight() * dy, cap.getWidth() - 8.0f, 1.0f);
+    g.setColour (ring);
+    g.fillRect (cap.getX() + 3.0f, cap.getCentreY() - 1.5f, cap.getWidth() - 6.0f, 3.0f);
+}
+
 void LookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float, float, juce::Slider& s)
 {
     drawKnob (g, juce::Rectangle<int> (x, y, w, h).toFloat(), pos, s.findColour (juce::Slider::rotarySliderFillColourId));

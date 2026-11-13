@@ -318,8 +318,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     groove = grooveView;
     addPage ("Groove", RigColours::song, grooveView);
     {
-        // The pedalboard (Easy), over the vocoder's own window (Studio).
-        auto* screen = new VocoderScreen (engine, engine.getVocoder().createEditorAndMakeActive(), devices != nullptr);
+        // The pedalboard, and Full window: every setting on one page.
+        auto* screen = new VocoderScreen (engine, devices != nullptr);
         screen->setLookAndFeel (&vintageLook);
         screen->onSay = [this] (const juce::String& text) { say (text); };
         screen->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
