@@ -95,6 +95,10 @@ public:
     bool isSwapPending (int layer) const { return layers[(size_t) layer].swapPending.load(); }
     // Message thread: forgets a swap that hasn't happened yet.
     void cancelSwap (int layer);
+    // Message thread: new sound for a playing loop, the same length (quantizing it): it keeps its
+    // place in the bar, level and effects. False (and nothing changes) while it records or
+    // overdubs, or if the length differs.
+    bool replaceLayerAudio (int layer, juce::AudioBuffer<float> audio);
     // Message thread: a copy of a layer's loop (empty if it has none).
     juce::AudioBuffer<float> copyLayerAudio (int layer) const;
     // Message thread: the loop's loudness in `count` slices, for drawing it (also while it

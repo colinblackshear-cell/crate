@@ -2,7 +2,6 @@
 
 #include "RigEngine.h"
 #include "RigSong.h"
-#include "StageView.h"
 #include "RigView.h"
 #include "SongGrid.h"
 #include "RigExport.h"
@@ -162,51 +161,6 @@ struct RigSceneTests : juce::UnitTest
             expectEquals (mpc.getSequencer().getPlayingId(), 1, "and it moves on after two bars");
         }
 
-        beginTest ("the Stage: song parts, mutes, loop layers, vocoder parts, and into a tool");
-        {
-            RigEngine engine;
-            engine.prepare (kSceneRate, kSceneBlock);
-            engine.vocoderOn = false;
-            rigsong::addSection (engine.getTimeline(), "Verse", 4);
-            StageView stage (engine);
-            juce::StringArray opened;
-            stage.onOpen = [&] (const juce::String& tab) { opened.add (tab); };
-            stage.meterOf = [] (int) { return 0.5f; };
-            stage.setSize (1400, 700);
-            stage.refresh();
-            runBeats (engine, 1.0);
-            stage.refresh();
-            for (auto* child : stage.getChildren())
-                expect (! child->getBounds().isEmpty());
-
-            // The song's sections: Verse plays, an empty one saves what's playing as the next.
-            stage.parts[0]->onClick();
-            runBeats (engine, 1.0);
-            expect (engine.getTimeline().on.load() && engine.getTransport().isPlaying());
-            expectEquals (rigsong::sectionAt (engine.getTimeline(), engine.getTransport().getPositionInBeats() / 4), 0);
-            stage.parts[3]->onClick();
-            expectEquals ((int) rigsong::sections (engine.getTimeline()).size(), 2, "an empty part saves what's playing");
-
-            // Mutes, loop layers, the vocoder's parts.
-            stage.pressMute (2);   // (the drum machine is channel 1)
-            expect (engine.getStrip (RigEngine::bassStrip).mute.load());
-            stage.pressLayer (2, true);
-            expect (engine.getLooper().getLayer (2).mute.load());
-            stage.pressLayer (0, false);
-            runBeats (engine, 0.1);
-            expect (engine.getLooper().getState (0) != RigLooper::State::empty);
-            stage.pressVocoderPart (2);   // Robot
-            expect (engine.vocoderOn.load(), "switching a vocoder part on turns the vocoder on");
-
-            // A click on a channel's name goes into its tool.
-            const auto at = stage.channelArea (0).getCentre().withY (stage.channelArea (0).getY() + 20).toFloat();
-            const juce::MouseEvent click (juce::Desktop::getInstance().getMainMouseSource(), at, {}, juce::MouseInputSource::defaultPressure,
-                                          0.0f, 0.0f, 0.0f, 0.0f, &stage, &stage, juce::Time::getCurrentTime(), at,
-                                          juce::Time::getCurrentTime(), 1, false);
-            stage.mouseUp (click);
-            expect (opened.contains ("MPC"));
-        }
-
         beginTest ("a tab pops out into its own window, is saved with the show, and comes back");
         // Windows need an app with a screen; the test runner is a console program.
         if (juce::JUCEApplicationBase::getInstance() == nullptr || juce::Desktop::getInstance().getDisplays().displays.isEmpty())
@@ -232,14 +186,14 @@ struct RigSceneTests : juce::UnitTest
                 view.bringBack ("MPC");
                 expect (! view.isInOwnWindow ("MPC"));
                 expectEquals (engine.screens.getNumChildren(), 0);
-                view.popOutTab ("Stage");
+                view.popOutTab ("Looper");
             }   // closing the Rig with a window open is fine
 
             engine.loadShow (saved);
             expectEquals (engine.screens.getNumChildren(), 1, "loaded with the show");
             RigView view (engine, &devices);
             view.restoreWindows();
-            expect (view.isInOwnWindow ("MPC") && ! view.isInOwnWindow ("Stage"));
+            expect (view.isInOwnWindow ("MPC") && ! view.isInOwnWindow ("Looper"));
         }
 
         beginTest ("the how-to guide opens on the screen you're on");

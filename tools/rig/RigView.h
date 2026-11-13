@@ -12,7 +12,7 @@
 // The Rig's window, built like a piece of 70s/80s studio gear: the top bar (transport, tempo,
 // where the song is, VU meters), five big screen buttons (Groove, Vocoder, Looper, Sampler + MPC,
 // Mixer; F1-F5), the screen, and the song parts with "Live now" along the bottom. Everything else
-// (the MPC, Bass and Synth in full, the song list, the sound bank, the big Stage view and the
+// (the MPC, Bass and Synth in full, the song list, the sound bank and the
 // keyboard set-up) is under More, and the Mixer reaches every one of them too.
 class RigView : public juce::Component,
                 private juce::Timer,
@@ -73,6 +73,15 @@ public:
     void startPattern (int start);
     void keepAsSongPart();
 
+    // Quantize (the top bar's button, Cmd+U, and the tools' own Quantize buttons). What it works
+    // on follows the screen: the Groove's picked track, the Looper's picked loop (or all of
+    // them), the MPC, drum machine, Bass or Synth page. showQuantize opens the panel on a target
+    // (by `from`); quantizeNow does it straight away and says what it did.
+    int quantizeTarget() const;
+    void showQuantize (int target, juce::Component* from = nullptr);
+    juce::String quantizeNow();
+    class QuantizePanel* getQuantizePanel() const;
+
 private:
     // One strip's effects, along the bottom of the Mixer.
     class FxPanel : public StripFxPanel
@@ -96,6 +105,7 @@ private:
     void finishKnobLearn();
     void say (const juce::String&);
     juce::File currentShow;
+    juce::Component::SafePointer<juce::Component> quantizePanel;
     std::unique_ptr<class HelpPanel> helpPanel;
     // Hover over a button for a moment and it says what it does.
     juce::SharedResourcePointer<juce::TooltipWindow> tooltips;
@@ -173,7 +183,6 @@ private:
     class MixerView* mixer = nullptr;   // the Mixer (F5), owned by its page
     class LooperView* looper = nullptr;   // owned by the tabs
     class SongView* song = nullptr;
-    class StageView* stage = nullptr;
     class EffectsView* effects = nullptr;
     // The Effects screen, on one sound's pedals.
     void showEffectsFor (int strip, int loop = -1);
@@ -205,7 +214,7 @@ private:
     // puts the windows back as a loaded show had them.
     void storeWindows();
 
-    // Each strip's meter (0..1, falling slowly), shared by the mixer and the Stage.
+    // Each strip's meter (0..1, falling slowly), shared by the mixer and the Groove cards.
     std::array<float, RigEngine::numStrips> meters {};
 
     std::vector<double> taps;

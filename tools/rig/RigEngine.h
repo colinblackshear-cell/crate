@@ -18,6 +18,7 @@
 #include "RigTimeline.h"
 #include "RigRecorder.h"
 #include "RigCapture.h"
+#include "RigQuantize.h"
 
 #include <array>
 
@@ -57,6 +58,8 @@ public:
     static juce::String toolName (int id);
     RigTransport& getTransport() { return transport; }
     RigLooper& getLooper() { return looper; }
+    // Quantize, for every tool and loop (its settings are saved with the show and kept by New song).
+    RigQuantizer& getQuantizer() { return quantizer; }
     RigScenes& getScenes() { return scenes; }
     // The song on a timeline (lanes of blocks over the bar ruler). While it's on and the clock
     // plays, it brings loops and tools in and out, with their fades.
@@ -332,9 +335,10 @@ private:
     struct LoopRoom : juce::Timer
     {
         explicit LoopRoom (RigEngine& e) : engine (e) {}
-        void timerCallback() override { engine.looper.maintain(); engine.serviceLoopBanks(); }
+        void timerCallback() override { engine.looper.maintain(); engine.serviceLoopBanks(); engine.quantizer.service(); }
         RigEngine& engine;
     } loopRoom { *this };
+    RigQuantizer quantizer { *this };
     std::vector<LoopBank> loopBanks;
     int currentLoopBank = -1;
     // A switch waiting for its bar: each layer's effects, put on when its loop comes in.

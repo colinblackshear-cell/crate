@@ -135,8 +135,10 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
         b->fontSize = 20.0f;
         addAndMakeVisible (b);
     }
-    tap.fontSize = 18.0f;
+    tap.fontSize = 16.0f;
     addAndMakeVisible (tap);
+    quantize.fontSize = 13.0f;
+    addAndMakeVisible (quantize);
     for (auto* b : { &newSong, &newPattern })
     {
         b->fontSize = 13.0f;
@@ -152,6 +154,8 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
     up.setTooltip ("Tempo up (hold Shift for a tenth).");
     down.setTooltip ("Tempo down (hold Shift for a tenth).");
     tap.setTooltip ("Tap a few times in time to set the tempo.");
+    quantize.setTooltip ("Quantize: pulls what you've played onto the beat (the MPC, drum machine, Bass, Synth or loops), "
+                         "on the grid you pick. Cmd+U quantizes what's on screen straight away.");
 }
 
 void Header::update (const Shown& s)
@@ -168,7 +172,7 @@ void Header::resized()
     const int h = 66;
     // Room for everything? Narrow the VU meters, then drop them, then the wordmark, on a small
     // screen.
-    constexpr int fixed = 276 + 128 + 8 + 46 + 8 + 58 + 16 + 176 + 12 + 112 + 12 + 118;
+    constexpr int fixed = 276 + 128 + 8 + 46 + 8 + 84 + 16 + 176 + 12 + 112 + 12 + 118;
     constexpr int wordmark = 168 + 16, vuMin = 16 + 2 * 80 + 8, vuMax = 16 + 2 * 116 + 8;
     showVu = r.getWidth() >= wordmark + fixed + vuMin;
     showWordmark = r.getWidth() >= wordmark + fixed || showVu;
@@ -197,7 +201,13 @@ void Header::resized()
         down.setBounds (col);
     }
     r.removeFromLeft (8);
-    tap.setBounds (centreY (r.removeFromLeft (58), h));
+    {
+        // Tap over Quantize.
+        auto col = centreY (r.removeFromLeft (84), h + 6);
+        tap.setBounds (col.removeFromTop (col.getHeight() / 2 - 1));
+        col.removeFromTop (2);
+        quantize.setBounds (col);
+    }
     r.removeFromLeft (16);
     partArea = centreY (r.removeFromLeft (176), h);
     r.removeFromLeft (12);
@@ -328,7 +338,7 @@ ScreenBar::ScreenBar()
     back.setTooltip ("Back to the screen you were on (Cmd+[).");
     forward.setTooltip ("Forward again (Cmd+]).");
     more.fontSize = 18.0f;
-    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, the big Stage view, "
+    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, "
                      "the keyboard set-up, saving and opening shows, the dark panel.");
     addAndMakeVisible (more);
     help.fontSize = 20.0f;
@@ -386,7 +396,7 @@ int Footer::chipStrip (int chip)
 
 juce::String Footer::chipName (int chip)
 {
-    const char* names[] = { "Drums", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
+    const char* names[] = { "MPC", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
     return names[juce::jlimit (0, kChips - 1, chip)];
 }
 

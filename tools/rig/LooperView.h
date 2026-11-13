@@ -55,6 +55,8 @@ public:
     std::function<void()> onBarsView;
     // A loop's All pedals: its effects on the Effects screen.
     std::function<void (int layer)> onPedals;
+    // Quantize (the top row's button, a loop's menu): the Quantize panel on a RigQuantizer::Target.
+    std::function<void (int target, juce::Component* from)> onQuantize;
     SongGrid* getSongGrid() const { return songGrid.get(); }
     // Opens (or closes) the timeline: the song composer, lanes of blocks over a bar ruler.
     void showTimeline (bool show);
@@ -92,7 +94,7 @@ private:
     juce::Label help;
     int selected = -1, soloed = -1;
     std::array<bool, RigLooper::kLayers> mutesBeforeSolo {};
-    juce::TextButton recNext { "Rec next layer" }, overdub { "Overdub" }, undoButton { "Undo" };
+    juce::TextButton recNext { "Rec next layer" }, overdub { "Overdub" }, undoButton { "Undo" }, quantizeButton { "Quantize" };
     juce::OwnedArray<juce::TextButton> lengthButtons, sourceButtons;
     juce::Rectangle<int> controlsArea, lengthLabel, sourceLabel, syncArea, statusArea, headings;
     juce::String shownStatus;

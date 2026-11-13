@@ -239,7 +239,7 @@ public:
             auto* input = mixer->channelFor (RigEngine::inputStrip);
             expect (input->on.isVisible() && input->jack.isVisible());
 
-            // Every hub button goes to its tool (and the Big stage's Esc comes back here).
+            // Every hub button goes to its tool; the old Big stage is the Mixer's FX pad.
             expectEquals (mixer->hub.size(), MixerView::hubPages().size());
             for (int i = 0; i < mixer->hub.size(); ++i)
             {
@@ -247,9 +247,12 @@ public:
                 mixer->hub[i]->onClick();
                 expectEquals (view.getPlace(), MixerView::hubPages()[i]);   // (the MPC: a side of the Sampler · MPC screen)
             }
+            expect (! MixerView::hubPages().contains ("Stage"), "no Big stage any more");
             view.goTo ("Stage");
-            view.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
-            expectEquals (view.getPage(), juce::String ("Mixer"), "Esc leaves the big Stage for the Mixer");
+            expectEquals (view.getPage(), juce::String ("Mixer"), "an old link to the Stage opens the Mixer");
+            expect (mixer->isShowingPad(), "with its FX pad");
+            mixer->toolsBank.onClick();
+            expect (! mixer->isShowingPad());
 
             // FX opens the strip's effects along the bottom; again closes them.
             mixer->channelFor (RigEngine::bassStrip)->fx.onClick();
@@ -321,13 +324,13 @@ public:
             }
         }
 
-        beginTest ("the old More > Mixer page is Setup now; More and the Guide reach the Mixer, the Big stage and Setup");
+        beginTest ("the old More > Mixer page is Setup now; More and the Guide reach the Mixer and Setup");
         {
             RigEngine engine;
             engine.prepare (kRate, kBlock);
             RigView view (engine, nullptr);
             view.setSize (1440, 960);
-            for (auto page : { "Setup", "Stage", "Mixer" })
+            for (auto page : { "Setup", "Mixer" })
             {
                 view.goTo (page);
                 expectEquals (view.getPage(), juce::String (page));

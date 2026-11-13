@@ -374,6 +374,12 @@ private:
         menu.addItem ("Undo the last overdub", state == RigLooper::State::playing || state == RigLooper::State::overdubbing, false,
                       [this] { engine.getLooper().undo (index); });
         menu.addItem ("Clear this layer", state != RigLooper::State::empty, false, [this] { clearLayer(); });
+        menu.addItem ("Quantize this loop...", state == RigLooper::State::playing, false, [this]
+        {
+            owner.selected = index;
+            if (owner.onQuantize)
+                owner.onQuantize (RigQuantizer::loopTarget (index), this);
+        });
         menu.addSeparator();
         menu.addItem ("Import a loop, stretched to Kaleidobox's tempo...", [this] { importFile (false); });
         menu.addItem ("Import a song or loop, and set Kaleidobox's tempo to it...", [this] { importFile (true); });
@@ -571,10 +577,20 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     setLit (overdub, Lit::arm);
     undoButton.setTooltip ("Takes back the last overdub on the layer you picked last.");
     undoButton.onClick = [this] { pressUndo(); };
-    for (auto* b : { &recNext, &overdub, &undoButton })
+    quantizeButton.setTooltip ("Quantize: slides each hit of the layer you picked last (or every loop, if none is picked) onto the "
+                               "beat, on the grid you pick. Cmd+U does it straight away.");
+    quantizeButton.onClick = [this]
+    {
+        if (onQuantize)
+            onQuantize (juce::isPositiveAndBelow (selected, RigLooper::kLayers) && engine.getLooper().getState (selected) != RigLooper::State::empty
+                            ? RigQuantizer::loopTarget (selected) : (int) RigQuantizer::allLoops,
+                        &quantizeButton);
+    };
+    for (auto* b : { &recNext, &overdub, &undoButton, &quantizeButton })
         addAndMakeVisible (*b);
     overdub.getProperties().set ("fontSize", 17.0f);
     undoButton.getProperties().set ("fontSize", 17.0f);
+    quantizeButton.getProperties().set ("fontSize", 17.0f);
 
     for (int b : lengthChoices)
     {
@@ -1113,6 +1129,8 @@ void LooperView::resized()
         overdub.setBounds (t.removeFromLeft (narrow ? 96 : 110).reduced (0, 6));
         t.removeFromLeft (8);
         undoButton.setBounds (t.removeFromLeft (narrow ? 70 : 84).reduced (0, 6));
+        t.removeFromLeft (8);
+        quantizeButton.setBounds (t.removeFromLeft (narrow ? 92 : 104).reduced (0, 6));
         t.removeFromLeft (18);
         auto lengths = t.removeFromLeft (5 * 46 + 4 * 6);
         lengthLabel = lengths.removeFromTop (16);

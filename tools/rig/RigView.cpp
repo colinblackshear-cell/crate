@@ -4,7 +4,6 @@
 #include "LooperView.h"
 #include "SongView.h"
 #include "MoreView.h"
-#include "StageView.h"
 #include "MixerView.h"
 #include "GrooveView.h"
 #include "SoundsView.h"
@@ -17,6 +16,7 @@
 #include "GuideView.h"
 #include "EffectsView.h"
 #include "RigSongStart.h"
+#include "QuantizePanel.h"
 
 namespace Theme = crate::Theme;
 
@@ -245,6 +245,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     // Starting a song from nothing.
     header.newSong.onClick = [this] { askNewSong(); };
     header.newPattern.onClick = [this] { showPatternMenu(); };
+    header.quantize.onClick = [this] { showQuantize (quantizeTarget(), &header.quantize); };
 
     // The song parts and Live now.
     footer.onTrack = [this] (int strip)
@@ -308,12 +309,19 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     tabs.setOutline (0);
     auto* grooveView = new GrooveView (engine);
     grooveView->setLookAndFeel (&vintageLook);
-    grooveView->onOpen = [this] (const juce::String& name) { showTab (name); };
+    grooveView->onOpen = [this] (const juce::String& name)
+    {
+        // From Line in, the Effects page opens on Line in's pedals.
+        if (name == "Effects" && effects != nullptr && groove != nullptr && groove->getTrack() == GrooveView::lineIn)
+            effects->showSource (EffectsView::lineIn);
+        showTab (name);
+    };
     grooveView->onSay = [this] (const juce::String& text) { say (text); };
     grooveView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
     grooveView->onSample = [this] { toggleSampling(); };
     grooveView->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
     grooveView->showMic = devices != nullptr;
+    grooveView->onQuantize = [this] (int target, juce::Component* from) { showQuantize (target, from); };
     grooveView->refresh();
     groove = grooveView;
     addPage ("Groove", RigColours::song, grooveView);
@@ -336,6 +344,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     looperView->onSongBuilder = [this] { showTab ("Song"); if (song != nullptr) song->showBars (false); };
     looperView->onBarsView = [this] { showTab ("Song"); if (song != nullptr) song->showBars (true); };
     looperView->onPedals = [this] (int layer) { showEffectsFor (-1, layer); };
+    looperView->onQuantize = [this] (int target, juce::Component* from) { showQuantize (target, from); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
     // The Sampler · MPC screen, over the full sample editor (a page of its own, in More).
@@ -375,21 +384,6 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         samplerScreen = screen;
         addPage ("Sampler", samplerColour, screen);
     }
-    auto* stageView = new StageView (engine);
-    stageView->onOpen = [this] (const juce::String& name) { showTab (name); };
-    stageView->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
-    stageView->onRecord = [this] { toggleRecordSet(); };
-    stageView->onTap = [this] { header.tap.onClick(); };
-    stageView->onNudgeTempo = [this] (double amount) { nudgeTempo (amount); };
-    stageView->recordState = [this]
-    {
-        // The Stage shows "armed" as a red ring, which it asks for as Lit::next.
-        const auto state = engine.getRecorder().getState();
-        return std::pair<juce::String, vintage::Lit> (header.rec.text, state == RigRecorder::State::armed ? vintage::Lit::next
-                                                                      : state == RigRecorder::State::recording ? vintage::Lit::arm
-                                                                                                               : vintage::Lit::none);
-    };
-    stage = stageView;
     {
         // The Mixer (F5): a strip per tool and loop layer, the Reverb and Echo returns, the
         // master, and a button into every tool.
@@ -403,7 +397,6 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         mixer = view;
         addPage ("Mixer", Theme::text, view);
     }
-    addPage ("Stage", Theme::text, stageView);
     {
         // The effects processor: a pedalboard for every sound (the line in, each tool, each loop).
         auto* view = new EffectsView (engine);
@@ -597,8 +590,6 @@ void RigView::refresh()
         looper->refresh();
     if (song != nullptr)
         song->refresh();
-    if (stage != nullptr)
-        stage->refresh();
     if (samplerScreen != nullptr)
         samplerScreen->refresh();
     if (vocoderScreen != nullptr)
@@ -624,6 +615,14 @@ void RigView::showTab (const juce::String& name)
     {
         samplerScreen->setEditMode (true);
         return showTab ("Sampler");
+    }
+    // The old Big stage is gone: its FX pad and everything else are on the Mixer.
+    if (name == "Stage")
+    {
+        showTab ("Mixer");
+        if (mixer != nullptr)
+            mixer->showPad (true);
+        return;
     }
     // The MPC is the Sampler · MPC screen's Sequencer · Kits side (beside the same pads).
     if (name == "MPC" && pageIndex ("MPC") < 0 && samplerScreen != nullptr)
@@ -651,15 +650,14 @@ void RigView::showTab (const juce::String& name)
     pageChanged();
 }
 
-// The Stage fills the window on a black panel: no top bar or footer (it has its own), and the
+// The Guide fills the window on a black panel (a night sky): no top bar or footer, and the
 // screen buttons go dark too. Leaving it puts the panel back as it was.
 void RigView::pageChanged()
 {
     screenBar.setCurrent (currentPage());
     navigation.visit (currentPlace());
     updateNavButtons();
-    // The Guide is a night sky: it fills the window the same way.
-    const bool onStage = currentPage() == "Stage" || currentPage() == "Guide";
+    const bool onStage = currentPage() == "Guide";
     if (onStage == stageShown)
         return;
     stageShown = onStage;
@@ -672,8 +670,6 @@ void RigView::pageChanged()
         c->repaint();
     if (groove != nullptr)
         groove->repaint();
-    if (stage != nullptr)
-        stage->repaint();
 }
 
 void RigView::popOutTab (const juce::String& tab)
@@ -871,6 +867,13 @@ void RigView::timerCallback()
     }
     screenBar.setCurrent (currentPage());
     pageChanged();
+    if (auto& q = engine.getQuantizer(); q.lastAutoMessage.isNotEmpty())
+    {
+        const auto text = std::exchange (q.lastAutoMessage, {});
+        say (text);
+        if (auto* panel = getQuantizePanel())
+            panel->setStatus (text);
+    }
     if (moreView != nullptr && moreView->isShowing())
         moreView->tick();
 
@@ -1330,6 +1333,12 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         saveShow();
         return true;
     }
+    // Cmd+U: quantize what's on screen (as in Ableton; Logic's Q plays notes here).
+    if (key == juce::KeyPress ('u', juce::ModifierKeys::commandModifier, 0))
+    {
+        quantizeNow();
+        return true;
+    }
     // Cmd+[ and Cmd+]: back and forward, as in a web browser.
     if (key == juce::KeyPress ('[', juce::ModifierKeys::commandModifier, 0))
     {
@@ -1341,10 +1350,10 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         goForward();
         return true;
     }
-    // Esc leaves the big Stage, back to the Mixer it's opened from (the Guide: to the Groove).
+    // Esc leaves the Guide, back to the Groove.
     if (key == juce::KeyPress::escapeKey && stageShown)
     {
-        showTab (currentPage() == "Stage" ? "Mixer" : "Groove");
+        showTab ("Groove");
         return true;
     }
     // F1-F7: the screens.
@@ -1615,7 +1624,6 @@ void RigView::showMoreMenu()
                                { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
                                { "Synth", "Synth: sound and arp" }, { "Song", "Song: sections in order, what plays in each" },
                                { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer: levels, pan, solo, sends, effects" },
-                               { "Stage", "Big stage: giant buttons and the FX pad, for playing live" },
                                { "Setup", "Setup: keys, pads, split, sampling, knobs" } };
     const auto here = currentPage();
     for (int i = 0; i < (int) std::size (tools); ++i)
@@ -1633,7 +1641,7 @@ void RigView::showMoreMenu()
         menu.addItem (7, "Audio and MIDI set-up...");
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.more),
-                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer", "Stage", "Setup" }] (int result)
+                        [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer", "Setup" }] (int result)
                         {
                             if (safe == nullptr || result == 0)
                                 return;
@@ -1750,4 +1758,75 @@ void RigView::layoutSetup (juce::Rectangle<int> page)
         }
         routing.removeFromTop (4);
     }
+}
+
+//==============================================================================
+int RigView::quantizeTarget() const
+{
+    const auto page = currentPage();
+    if (page == "Groove" && groove != nullptr)
+    {
+        switch (groove->getTrack())
+        {
+            case GrooveView::drums:
+            case GrooveView::sampler:  return RigQuantizer::mpc;
+            case GrooveView::machine:  return RigQuantizer::machine;
+            case GrooveView::bass:     return RigQuantizer::bass;
+            case GrooveView::synth:    return RigQuantizer::synth;
+            default:                   return RigQuantizer::allLoops;
+        }
+    }
+    if (page == "Looper" && looper != nullptr)
+    {
+        const int layer = looper->getSelected();
+        return juce::isPositiveAndBelow (layer, RigLooper::kLayers)
+                && engine.getLooper().getState (layer) != RigLooper::State::empty
+            ? RigQuantizer::loopTarget (layer) : (int) RigQuantizer::allLoops;
+    }
+    if (page == "MPC" || page == "Sampler")
+        return RigQuantizer::mpc;
+    if (page == "Drum machine")
+        return RigQuantizer::machine;
+    if (page == "Bass")
+        return RigQuantizer::bass;
+    if (page == "Synth")
+        return RigQuantizer::synth;
+    return RigQuantizer::allLoops;
+}
+
+QuantizePanel* RigView::getQuantizePanel() const
+{
+    return dynamic_cast<QuantizePanel*> (quantizePanel.getComponent());
+}
+
+void RigView::showQuantize (int target, juce::Component* from)
+{
+    if (auto* open = getQuantizePanel(); open != nullptr && open->isShowing())
+    {
+        // Already open: point it at this.
+        open->setTarget (target);
+        return;
+    }
+    auto panel = std::make_unique<QuantizePanel> (engine, target);
+    panel->setLookAndFeel (&vintageLook);
+    panel->onSay = [this] (const juce::String& text) { say (text); };
+    quantizePanel = panel.get();
+    auto* anchor = from != nullptr ? from : static_cast<juce::Component*> (&header.quantize);
+    const auto area = getLocalArea (anchor, anchor->getLocalBounds());
+    juce::CallOutBox::launchAsynchronously (std::move (panel), area, this);
+}
+
+juce::String RigView::quantizeNow()
+{
+    const int target = quantizeTarget();
+    const auto text = engine.getQuantizer().apply (target);
+    say (text);
+    if (auto* panel = getQuantizePanel())
+    {
+        panel->setTarget (target);
+        panel->setStatus (text);
+    }
+    if (groove != nullptr)
+        groove->repaint();
+    return text;
 }

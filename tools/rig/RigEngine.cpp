@@ -145,13 +145,16 @@ RigEngine::RigEngine()
     if (auto* p = drums.params.getParameter ("sequencer"))
         p->setValueNotifyingHost (0.0f);
     blankShow = saveShow();
+    blankShow.removeChild (blankShow.getChildWithName ("Quantize"), nullptr);   // kept by New song
 }
 
 void RigEngine::newShow()
 {
     const auto keep = screens.createCopy();
+    const auto quantizeSettings = quantizer.settings;
     loadShow (blankShow);
     screens = keep;
+    quantizer.settings = quantizeSettings;
 }
 
 bool RigEngine::isBlank() const
@@ -161,6 +164,7 @@ bool RigEngine::isBlank() const
             return false;
     auto now = saveShow();
     now.removeChild (now.getChildWithName ("Screens"), nullptr);
+    now.removeChild (now.getChildWithName ("Quantize"), nullptr);
     return now.isEquivalentTo (blankShow);
 }
 
@@ -1104,6 +1108,7 @@ juce::ValueTree RigEngine::saveShow() const
 
     if (screens.getNumChildren() > 0 || screens.getNumProperties() > 0)
         show.appendChild (screens.createCopy(), nullptr);
+    show.appendChild (quantizer.toTree(), nullptr);
 
     for (int s = 0; s < numStrips; ++s)
     {
@@ -1282,6 +1287,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     }
     captureDest = juce::jlimit (0, RigCapture::numDests - 1, (int) show.getProperty ("captureDest", (int) RigCapture::toSampler));
     captureBars = juce::jlimit (0, 16, (int) show.getProperty ("captureBars", 0));
+    quantizer.fromTree (show.getChildWithName ("Quantize"));
     screens = show.getChildWithName ("Screens").isValid() ? show.getChildWithName ("Screens").createCopy() : juce::ValueTree ("Screens");
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {

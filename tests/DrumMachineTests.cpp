@@ -253,10 +253,10 @@ struct DrumMachineTests : juce::UnitTest
 
             // A step lit on the Groove screen plays the pattern.
             d.setPattern (0, {});
-            view.pressCell (0, 0);
+            view.pressCell (1 + drums::kick, 0);   // (row 0 is the accent, as on its page)
             expectEquals ((int) d.getPattern (0).hits[drums::kick][0], 1);
             expect (d.params.getRawParameterValue ("sequencer")->load() > 0.5f);
-            view.pressRoll (1, 4);
+            view.pressRoll (1 + drums::snare, 4);
             expectEquals ((int) d.getPattern (0).hits[drums::snare][4], 2, "right-click: a roll");
             view.pressPattern (2);
             expectEquals (d.getSelectedPattern(), 2);

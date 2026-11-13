@@ -15,6 +15,8 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
             "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
             "Press Play (or the space bar). Everything plays in time with Kaleidobox's clock.",
+            "Off the beat? Quantize (top bar, under Tap) pulls what's on screen onto a grid: 1/4 to 1/32, triplets, a strength "
+            "and swing. It works on the MPC, the drum machine, Bass, Synth arp and loops. Cmd+U does it straight away; Undo puts it back.",
             "Build the song on the Song screen (F7): sections in order, and what each track plays in each.",
             "Save show (Cmd+S) keeps everything. Export for Logic gives you the WAV files." },
           "Use headphones when the mic is on, so the speakers don't feed back into it." },
@@ -102,7 +104,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Switch the Song screen to Song and press Play, or jump between sections yourself with the A-H buttons.",
             "Sing: your voice goes through the vocoder live. Record a part of it onto a loop if you want it to repeat.",
             "Press Rec (top bar) first to keep the whole performance as stems for Logic.",
-            "The Mixer (F5) has every level, pan, mute and solo; its Big stage button shows everything at once in giant buttons, with the FX pad for the whole mix." },
+            "The Mixer (F5) has every level, pan, mute and solo; its FX pad button swaps the strips for the FX pad on the whole mix (filter sweeps, repeat, tape stop)." },
           "" },
 
         { "Guitar, bass, keytar and other instruments",
@@ -137,7 +139,7 @@ int HelpPanel::guideFor (const juce::String& page)
     if (page == "Sampler" || page == "MPC") return 4;
     if (page == "Song") return 5;
     if (page == "Timeline") return 6;
-    if (page == "Stage" || page == "Mixer") return 8;
+    if (page == "Mixer") return 8;
     if (page == "Setup") return 9;
     if (page == "Effects") return 10;
     return 0;
