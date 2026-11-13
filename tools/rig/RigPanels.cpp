@@ -327,7 +327,7 @@ ScreenBar::ScreenBar()
     back.setTooltip ("Back to the screen you were on (Cmd+[).");
     forward.setTooltip ("Forward again (Cmd+]).");
     more.fontSize = 18.0f;
-    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, the big Stage view, "
+    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, "
                      "the keyboard set-up, saving and opening shows, the dark panel.");
     addAndMakeVisible (more);
     help.fontSize = 20.0f;
@@ -385,7 +385,7 @@ int Footer::chipStrip (int chip)
 
 juce::String Footer::chipName (int chip)
 {
-    const char* names[] = { "Drums", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
+    const char* names[] = { "MPC", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
     return names[juce::jlimit (0, kChips - 1, chip)];
 }
 

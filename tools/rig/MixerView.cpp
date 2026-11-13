@@ -90,7 +90,7 @@ juce::String MixerView::pageFor (int strip)
 const juce::StringArray& MixerView::hubPages()
 {
     static const juce::StringArray pages { "Groove", "MPC", "Drum machine", "Bass", "Synth", "Vocoder", "Sampler", "Looper",
-                                           "Song", "Sounds", "Stage", "Setup" };
+                                           "Song", "Sounds", "Setup" };
     return pages;
 }
 
@@ -521,12 +521,12 @@ void MixerView::Channel::resized()
 }
 
 //==============================================================================
-MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage::LookAndFeel>())
+MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage::LookAndFeel>()), pad (e.getPerformFx())
 {
     setOpaque (true);
     setLookAndFeel (look.get());
 
-    const juce::StringArray labels { "Groove", "MPC", "Drums", "Bass", "Synth", "Vocoder", "Sampler", "Looper", "Song", "Sounds", "Big stage", "Setup" };
+    const juce::StringArray labels { "Groove", "MPC", "Drum machine", "Bass", "Synth", "Vocoder", "Sampler", "Looper", "Song", "Sounds", "Setup" };
     const juce::StringArray tips { "The Groove: every track's steps and patterns on one screen.",
                                    "The MPC: pads, programs, sequences and songs.",
                                    "The drum machine: analog sounds and patterns.",
@@ -537,7 +537,6 @@ MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage
                                    "The Looper: eight layers in time.",
                                    "The Song builder: parts and the timeline.",
                                    "Your sounds and Splice folder.",
-                                   "The big Stage view for playing live: giant buttons, the FX pad. Esc comes back.",
                                    "Set-up: what your keyboard's keys and pads play, the split, sampling between tools, knob Learn, the click and the mic." };
     for (int i = 0; i < hubPages().size(); ++i)
     {
@@ -548,7 +547,7 @@ MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage
         addAndMakeVisible (b);
     }
 
-    for (auto* b : { &toolsBank, &layersBank, &clearSolo })
+    for (auto* b : { &toolsBank, &layersBank, &padBank, &clearSolo })
     {
         b->fontSize = 14.0f;
         addAndMakeVisible (b);
@@ -556,6 +555,9 @@ MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage
     toolsBank.setTooltip ("A strip for each tool: the MPC, drum machine, bass, synth, vocoder, sampler, your audio input and the loops.");
     layersBank.setTooltip ("A strip for each of the looper's eight layers: record, effects, mute and level, into the Loops strip.");
     clearSolo.setTooltip ("Turns every Solo off, so you hear everything again.");
+    padBank.setTooltip ("The FX pad on the whole mix: filter sweeps, beat repeat, tape stop, gate and riser. Touch to play it, Hold keeps it.");
+    padBank.onClick = [this] { showPad (! padShown); };
+    addChildComponent (pad);
     toolsBank.onClick = [this] { showLayers (false); };
     layersBank.onClick = [this] { showLayers (true); };
     clearSolo.setEnabled (false);
@@ -607,14 +609,40 @@ void MixerView::setPanel (juce::Component* p)
 void MixerView::showLayers (bool show)
 {
     layersShown = show;
+    if (padShown)
+    {
+        // Leaving the pad lets go of it (unless Hold is on), as the Big stage's did.
+        pad.release();
+    }
+    padShown = false;
+    pad.setVisible (false);
     for (auto* c : tools)
         c->setVisible (! show || c->index == RigEngine::loopsStrip);
     for (auto* c : layers)
         c->setVisible (show);
     toolsBank.lit = show ? Lit::none : Lit::current;
     layersBank.lit = show ? Lit::current : Lit::none;
-    toolsBank.repaint();
-    layersBank.repaint();
+    padBank.lit = Lit::none;
+    for (auto* b : { &toolsBank, &layersBank, &padBank })
+        b->repaint();
+    resized();
+    repaint();
+}
+
+void MixerView::showPad (bool show)
+{
+    if (! show)
+        return showLayers (layersShown);
+    padShown = true;
+    for (auto* c : tools)
+        c->setVisible (false);
+    for (auto* c : layers)
+        c->setVisible (false);
+    pad.setVisible (true);
+    toolsBank.lit = layersBank.lit = Lit::none;
+    padBank.lit = Lit::current;
+    for (auto* b : { &toolsBank, &layersBank, &padBank })
+        b->repaint();
     resized();
     repaint();
 }
@@ -683,7 +711,7 @@ void MixerView::timerCallback()
 void MixerView::paint (juce::Graphics& g)
 {
     vintage::drawFace (g, getLocalBounds());
-    vintage::engraved (g, layersShown ? juce::String::fromUTF8 ("The looper's layers \xc2\xb7 into the Loops strip \xc2\xb7 sends A and B on every tool")
+    vintage::engraved (g, padShown ? juce::String::fromUTF8 ("The FX pad plays on the whole mix \xc2\xb7 touch it, let go to stop \xc2\xb7 Hold keeps it") : layersShown ? juce::String::fromUTF8 ("The looper's layers \xc2\xb7 into the Loops strip \xc2\xb7 sends A and B on every tool")
                                       : juce::String::fromUTF8 ("Click a name to go into the tool \xc2\xb7 A: reverb \xc2\xb7 B: echo \xc2\xb7 M mute \xc2\xb7 S solo"),
                        legendArea, juce::Justification::centredLeft, 12.0f);
 
@@ -718,6 +746,8 @@ void MixerView::resized()
     toolsBank.setBounds (bankRow.removeFromLeft (96));
     bankRow.removeFromLeft (6);
     layersBank.setBounds (bankRow.removeFromLeft (124));
+    bankRow.removeFromLeft (6);
+    padBank.setBounds (bankRow.removeFromLeft (96));
     bankRow.removeFromLeft (14);
     clearSolo.setBounds (bankRow.removeFromRight (120));
     legendArea = bankRow;
@@ -734,6 +764,22 @@ void MixerView::resized()
 
 void MixerView::layoutStrips (juce::Rectangle<int> area)
 {
+    if (padShown)
+    {
+        // The pad where the strips were; the returns and master keep their place on the right.
+        const int gap = 6, groupGap = 18;
+        const int w = juce::jlimit (70, 110, area.getWidth() / 12);
+        auto right = area.removeFromRight (w * returnsAndMaster.size() + gap + groupGap);
+        pad.setBounds (area.withTrimmedRight (groupGap));
+        right.removeFromLeft (groupGap - gap);
+        for (int i = 0; i < returnsAndMaster.size(); ++i)
+        {
+            returnsAndMaster[i]->setBounds (right.removeFromLeft (w));
+            right.removeFromLeft (i == 1 ? groupGap : gap);
+        }
+        return;
+    }
+
     std::vector<Channel*> left;
     for (auto* c : tools)
         if (c->isVisible() && c->index != RigEngine::loopsStrip)

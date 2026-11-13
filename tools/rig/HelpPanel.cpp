@@ -54,7 +54,9 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "FX (by the knobs) turns the picked pad's filter, decay, delay and reverb, live while it plays.",
             "16 Levels spreads the picked pad over all 16 pads: Tune plays it as a scale, Filter opens up, Velocity soft to loud, Decay short to long.",
             "Repeat: hold a pad and it plays again every 1/16 (or the rate you pick), in time. Record with the click on to keep the repeats.",
-            "More > MPC has the same tools, with the full kit, sequencer and Sound + FX page." },
+            "The Sequencer + Kits side (beside the same pads) is the rest of the MPC: Play, Rec and steps, songs, your kits, and the picked pad's settings. Tapping a pad only plays it; Edit opens its sound editor.",
+            "Beat on/off: the MPC's sequence plays whenever the Rig plays, or stays quiet (the pads still play). Its Play, Stop and Rec are the Rig's.",
+            "Loop pads records the MPC into the next empty looper layer from the next bar (Free, or 1 to 16 bars). Switch Beat off to loop just what you play." },
           "Hits you record with 16 Levels keep their level when the sequence plays them back." },
 
         { "Build a song",
@@ -102,7 +104,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Press Play song, or launch parts yourself from the song part buttons.",
             "Sing: your voice goes through the vocoder live. Record a part of it onto a loop if you want it to repeat.",
             "Press Rec (top bar) first to keep the whole performance as stems for Logic.",
-            "The Mixer (F5) has every level, pan, mute and solo; its Big stage button shows everything at once in giant buttons, with the FX pad for the whole mix." },
+            "The Mixer (F5) has every level, pan, mute and solo; its FX pad button swaps the strips for the FX pad on the whole mix (filter sweeps, repeat, tape stop)." },
           "" },
 
         { "Guitar, bass, keytar and other instruments",
@@ -137,7 +139,7 @@ int HelpPanel::guideFor (const juce::String& page)
     if (page == "Sampler" || page == "MPC") return 4;
     if (page == "Song") return 5;
     if (page == "Timeline") return 6;
-    if (page == "Stage" || page == "Mixer") return 8;
+    if (page == "Mixer") return 8;
     if (page == "Setup") return 9;
     if (page == "Effects") return 10;
     return 0;

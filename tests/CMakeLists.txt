@@ -14,6 +14,7 @@ target_sources(CrateTests PRIVATE
     RigTimelineTests.cpp
     RigGrooveTests.cpp
     RigSamplerScreenTests.cpp
+    RigMpcUnitTests.cpp
     RigVocoderScreenTests.cpp
     RigRecorderTests.cpp
     RigPluginTests.cpp
