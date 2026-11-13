@@ -1,6 +1,7 @@
 #include "TestHelpers.h"
 
 #include "RigEngine.h"
+#include "RigSong.h"
 #include "GrooveView.h"
 
 namespace
@@ -267,26 +268,29 @@ struct RigGrooveTests : juce::UnitTest
             expect (param (params, "latch") > 0.5f, "Hold is still Hold");
         }
 
-        beginTest ("song parts: an empty one saves what's playing, a full one plays it");
+        beginTest ("song sections: an empty key saves what's playing, a full one plays it");
         {
             RigEngine engine;
             engine.prepare (kRate, kBlock);
             engine.vocoderOn = false;
             GrooveView view (engine);
-            auto& scenes = engine.getScenes();
+            auto& tl = engine.getTimeline();
+            engine.getBass().params.getParameter ("sequencer")->setValueNotifyingHost (1.0f);
             view.pressPart (0);
-            expectEquals ((int) scenes.getScenes().size(), 1);
-            expectEquals (scenes.getScenes()[0].name, juce::String ("Part A"));
+            expectEquals ((int) rigsong::sections (tl).size(), 1);
+            expectEquals (rigsong::sections (tl)[0].name, juce::String ("Intro"));
+            const int bassLane = RigTimeline::laneForStrip (RigEngine::bassStrip);
+            expect (rigsong::boxBlock (tl, 0, bassLane) >= 0, "the intro plays the bass");
             engine.getStrip (RigEngine::bassStrip).mute = true;
-            view.pressPart (5);   // any empty one: the next part
-            expectEquals ((int) scenes.getScenes().size(), 2);
-            expectEquals (scenes.getScenes()[1].name, juce::String ("Part B"));
+            view.pressPart (5);   // any empty one: the next section
+            expectEquals ((int) rigsong::sections (tl).size(), 2);
+            expectEquals (rigsong::sections (tl)[1].name, juce::String ("Verse"));
+            expectEquals (rigsong::boxBlock (tl, 1, bassLane), -1, "the bass was muted: quiet in the verse");
 
-            engine.tickScenes();
             view.pressPart (0);
             runBlocks (engine, 2);
-            expect (! engine.getStrip (RigEngine::bassStrip).mute.load(), "Part A has the bass playing");
-            expectEquals (scenes.getCurrent(), 0);
+            expect (tl.on.load(), "a section key plays the song");
+            expect (! engine.getStrip (RigEngine::bassStrip).mute.load(), "the intro has the bass playing");
         }
 
         beginTest ("loops and vocoder");

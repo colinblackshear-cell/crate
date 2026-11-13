@@ -3,6 +3,7 @@
 #include "RigColours.h"
 #include "RigExport.h"
 #include "SongGrid.h"
+#include "RigSong.h"
 #include "core/ui/Theme.h"
 
 namespace Theme = crate::Theme;
@@ -237,7 +238,8 @@ public:
         g.setColour (Theme::text);
         g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
         if (r.getWidth() > 50)
-            g.drawText (laneName (b.lane), r.reduced (6, 2).withTrimmedTop (r.getHeight() * 0.45f), juce::Justification::bottomLeft, true);
+            g.drawText (b.clip >= 0 ? laneName (b.lane) + ": " + rigsong::clipName (engine, b.lane, b.clip) : laneName (b.lane),
+                        r.reduced (6, 2).withTrimmedTop (r.getHeight() * 0.45f), juce::Justification::bottomLeft, true);
         if (picked)
         {
             g.setColour (juce::Colours::white);

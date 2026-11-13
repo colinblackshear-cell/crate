@@ -51,6 +51,8 @@ public:
     void showSongGrid (bool show);
     // Set by the Rig: the Song button opens the Song builder page instead of the grid here.
     std::function<void()> onSongBuilder;
+    // And the Timeline button opens the Song screen's Bars view (the same song, bar by bar).
+    std::function<void()> onBarsView;
     // A loop's All pedals: its effects on the Effects screen.
     std::function<void (int layer)> onPedals;
     // Quantize (the top row's button, a loop's menu): the Quantize panel on a RigQuantizer::Target.

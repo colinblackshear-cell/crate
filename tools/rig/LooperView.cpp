@@ -610,7 +610,7 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     }
     setLit (songButton, Lit::current);
     songButton.getProperties().set ("fontSize", 17.0f);
-    songButton.setTooltip ("Build the song: which loops (and tools) play in each part, and for how many bars.");
+    songButton.setTooltip ("Build the song (the Song screen, F7): sections in order, and which loops and patterns play in each.");
     songButton.onClick = [this]
     {
         // In the Rig, the song is built on the Song builder page (the same parts, in full).
@@ -623,7 +623,13 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     setLit (timelineButton, Lit::current);
     timelineButton.getProperties().set ("fontSize", 17.0f);
     timelineButton.setTooltip ("Compose the song: lanes for your loops and tools over a bar ruler. Place blocks, stretch them, fade them.");
-    timelineButton.onClick = [this] { showTimeline (timeline == nullptr); };
+    timelineButton.onClick = [this]
+    {
+        if (onBarsView)
+            onBarsView();
+        else
+            showTimeline (timeline == nullptr);
+    };
     addAndMakeVisible (timelineButton);
 
     // The loop bank row.

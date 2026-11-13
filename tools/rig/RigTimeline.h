@@ -42,12 +42,20 @@ public:
         int lane = 0;
         double start = 0, length = 4;      // bars
         double fadeIn = 0, fadeOut = 0;    // bars (a beat is 1 / beats per bar)
+        // What it plays (the Song screen's boxes): the MPC's sequence, the bass or drum
+        // machine's pattern, the synth's arp (0 keys only, 1 arp). -1 leaves the tool as it is.
+        int clip = -1;
+        float level = 1.0f;                // 0..1, on top of the mixer's fader
         double end() const { return start + length; }
     };
+    // A marker names a section of the song (Verse, Chorus...). On the Song screen the sections
+    // sit end to end: each runs to the next marker, and the last one for its `bars`.
     struct Marker
     {
         double bar = 0;
         juce::String name;
+        double bars = 0;   // its length (0: up to the next marker, or 4 bars for the last)
+        int loopBank = -1;   // the Looper's bank of loops the section plays (-1: as it is)
     };
 
     //==========================================================================

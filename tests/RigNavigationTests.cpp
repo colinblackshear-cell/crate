@@ -1,6 +1,7 @@
 #include "TestHelpers.h"
 
 #include "RigEngine.h"
+#include "RigSong.h"
 #include "RigView.h"
 #include "RigNavigation.h"
 #include "RigSongStart.h"
@@ -197,10 +198,10 @@ public:
             view.startPattern (songstart::loop);
             expectEquals (view.getPage(), juce::String ("Looper"));
 
-            // Keep as the next song part.
-            expectEquals ((int) engine.getScenes().getScenes().size(), 0);
+            // Keep as the song's next section.
+            expectEquals ((int) rigsong::sections (engine.getTimeline()).size(), 0);
             view.keepAsSongPart();
-            expectEquals ((int) engine.getScenes().getScenes().size(), 1);
+            expectEquals ((int) rigsong::sections (engine.getTimeline()).size(), 1);
         }
 
         beginTest ("New song clears the Rig to a blank one, and keeps the windows as they were");
@@ -224,7 +225,7 @@ public:
 
             view.newSong (false, false);
             expect (engine.isBlank());
-            expectEquals ((int) engine.getScenes().getScenes().size(), 0);
+            expectEquals ((int) rigsong::sections (engine.getTimeline()).size(), 0, "no song");
             expectWithinAbsoluteError (engine.getTransport().getBpm(), blankBpm, 0.001);
             expect (engine.getBass().getPattern (0).steps[3].on == blankBass.steps[3].on);
             expect ((bool) engine.screens.getProperty ("dark", false), "the window's set-up stays");

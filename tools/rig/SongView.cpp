@@ -1,687 +1,1095 @@
 #include "SongView.h"
 #include "RigColours.h"
 #include "RigExport.h"
+#include "TimelineView.h"
 #include "Vintage.h"
+
+#include <deque>
 
 using namespace vintage;
 
 namespace
 {
-// The grid's sizes.
-constexpr int kNames = 178, kCol = 156, kColGap = 8, kHead = 80, kRow = 20, kRowGap = 3, kGroup = 16;
+constexpr int kHead = 46, kRuler = 18, kNamesW = 158, kInspectorW = 286;
+constexpr double kEps = 1.0e-6;
 
-juce::Colour loopColour() { return RigColours::loops; }
+juce::String dot() { return juce::String::fromUTF8 (" \xc2\xb7 "); }
 
-juce::String barsWord (int bars) { return bars == 1 ? "bar" : "bars"; }
-}
-
-//==============================================================================
-const std::vector<SongView::Track>& SongView::tracks()
+// Bars as a person says them in a fade: "1 beat", "2 bars".
+juce::String fadeText (double bars, int bpb)
 {
-    static const std::vector<Track> list = []
+    if (bars <= kEps)
+        return "Straight";
+    if (bars < 1.0 - kEps)
     {
-        std::vector<Track> t;
-        for (int s : { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip,
-                       RigEngine::samplerStrip, RigEngine::inputStrip })
-            t.push_back ({ false, s });
-        for (int l = 0; l < RigLooper::kLayers; ++l)
-            t.push_back ({ true, l });
-        return t;
-    }();
-    return list;
-}
-
-juce::String SongView::trackName (const Track& t)
-{
-    if (t.isLoop)
-        return "Loop " + juce::String (t.index + 1);
-    switch (t.index)
-    {
-        case RigEngine::mpcStrip:     return "MPC";
-        case RigEngine::drumsStrip:   return "Drum machine";
-        case RigEngine::bassStrip:    return "Bass";
-        case RigEngine::synthStrip:   return "Synth";
-        case RigEngine::vocoderStrip: return "Vocoder";
-        case RigEngine::samplerStrip: return "Sampler";
-        case RigEngine::inputStrip:   return "Line in";
-        default:                      return RigEngine::stripName (t.index);
+        const int beats = juce::roundToInt (bars * bpb);
+        return juce::String (beats) + (beats == 1 ? " beat" : " beats");
     }
+    return rigsong::barsText (bars);
+}
 }
 
-int SongView::cellValue (const RigScene& scene, const Track& t)
+juce::Colour SongView::laneColour (int lane)
 {
-    const int mute = t.isLoop ? scene.state.loopMutes[(size_t) t.index] : scene.state.stripMutes[(size_t) t.index];
-    return mute < 0 ? -1 : (mute == 1 ? 0 : 1);
-}
-
-void SongView::setCell (RigScene& scene, const Track& t, int value)
-{
-    const int mute = value < 0 ? -1 : (value == 1 ? 0 : 1);
-    if (t.isLoop)
-        scene.state.loopMutes[(size_t) t.index] = mute;
-    else
-        scene.state.stripMutes[(size_t) t.index] = mute;
-}
-
-juce::String SongView::lengthText (int bars)
-{
-    return bars <= 0 ? juce::String ("Hold") : juce::String (bars) + " " + barsWord (bars);
-}
-
-juce::String SongView::letterFor (int part)
-{
-    return part < 26 ? juce::String::charToString ((juce::juce_wchar) ('A' + part)) : juce::String (part + 1);
+    if (! juce::isPositiveAndBelow (lane, RigTimeline::kLanes))
+        return RigColours::song;
+    const auto& info = RigTimeline::lanes()[(size_t) lane];
+    return info.isLoop ? RigColours::loops : RigColours::forStrip (info.index);
 }
 
 //==============================================================================
-// The grid: track names down the left, a column per part, and a last column that saves a new one.
-class SongView::Grid : public juce::Component
+namespace
+{
+// A row of chips to pick from, wrapping onto more lines (the panel's choices).
+class Chips
 {
 public:
-    explicit Grid (SongView& o) : owner (o)
+    struct Item
     {
-        nameEditor.setFont (cond (17.0f, Weight::bold));
-        nameEditor.setJustification (juce::Justification::centredLeft);
-        nameEditor.onReturnKey = [this] { commitName(); };
-        nameEditor.onFocusLost = [this] { commitName(); };
-        nameEditor.onEscapeKey = [this] { editing = -1; nameEditor.setVisible (false); };
-        addChildComponent (nameEditor);
+        juce::String label;
+        int value;
+    };
+    std::vector<Item> items;
+    int chosen = -100000;
+    std::function<void (int)> onPick;
+
+    // Lays them out from `area`'s top-left; returns the height used.
+    int layout (juce::Rectangle<int> area)
+    {
+        rects.clear();
+        int x = area.getX(), y = area.getY();
+        const int h = 26, gap = 5;
+        for (const auto& item : items)
+        {
+            const int w = juce::roundToInt (juce::GlyphArrangement::getStringWidth (cond (15.0f, Weight::bold), item.label)) + 16;
+            if (x + w > area.getRight() && x > area.getX())
+            {
+                x = area.getX();
+                y += h + gap;
+            }
+            rects.push_back ({ x, y, juce::jmin (w, area.getWidth()), h });
+            x += w + gap;
+        }
+        return items.empty() ? 0 : y + h - area.getY();
     }
 
-    static int numTools()
+    void paint (juce::Graphics& g, juce::Colour colour) const
     {
-        int n = 0;
-        for (const auto& t : tracks())
-            n += t.isLoop ? 0 : 1;
-        return n;
+        for (size_t i = 0; i < items.size() && i < rects.size(); ++i)
+        {
+            const bool on = items[i].value == chosen;
+            const auto r = rects[i].toFloat();
+            drawButton (g, r, Lit::none, false, false, false, 6.0f);
+            if (on)
+            {
+                g.setColour (colour);
+                g.fillRoundedRectangle (r.reduced (2.0f), 5.0f);
+            }
+            g.setColour (on ? juce::Colour (0xff1a1410) : pal().btnInk);
+            g.setFont (cond (15.0f, Weight::bold));
+            g.drawFittedText (items[i].label, rects[i].reduced (6, 0), juce::Justification::centred, 1, 0.8f);
+        }
     }
 
-    int parts() const { return (int) scenes().getScenes().size(); }
-
-    void updateSize()
+    bool click (juce::Point<int> p)
     {
-        const int rows = (int) tracks().size();
-        setSize (kNames + (parts() + 1) * (kCol + kColGap), kHead + 6 + 2 * kGroup + rows * (kRow + kRowGap) + 4);
+        for (size_t i = 0; i < items.size() && i < rects.size(); ++i)
+            if (rects[i].contains (p))
+            {
+                if (onPick)
+                    onPick (items[i].value);
+                return true;
+            }
+        return false;
     }
 
-    // Where things are.
-    int rowY (int row) const
-    {
-        const int tools = numTools();
-        return kHead + 6 + kGroup + row * (kRow + kRowGap) + (row >= tools ? kGroup : 0);
-    }
-    juce::Rectangle<int> column (int part) const { return { kNames + part * (kCol + kColGap), 0, kCol, getHeight() }; }
-    juce::Rectangle<int> cell (int part, int row) const { return column (part).reduced (8, 0).withY (rowY (row)).withHeight (kRow); }
-    juce::Rectangle<int> header (int part) const { return column (part).withHeight (kHead).reduced (8, 7); }
-    juce::Rectangle<int> letterBox (int part) const { return header (part).removeFromTop (36).removeFromLeft (36); }
-    juce::Rectangle<int> nameBox (int part) const { return header (part).removeFromTop (36).withTrimmedLeft (44); }
-    juce::Rectangle<int> lengthBox (int part) const { return header (part).removeFromBottom (26).removeFromLeft (72); }
-    juce::Rectangle<int> playBox (int part) const { return header (part).removeFromBottom (26).withTrimmedLeft (78).withTrimmedRight (34); }
-    juce::Rectangle<int> menuBox (int part) const { return header (part).removeFromBottom (26).removeFromRight (28); }
-    // Over the part's loops: which loop bank it plays (click to pick).
-    juce::Rectangle<int> bankBox (int part) const { return column (part).reduced (8, 0).withY (rowY (numTools()) - kGroup).withHeight (kGroup); }
+private:
+    std::vector<juce::Rectangle<int>> rects;
+};
+}
+
+//==============================================================================
+// The track names down the left, beside the board (they stay put while the board scrolls).
+class SongView::Names : public juce::Component
+{
+public:
+    explicit Names (SongView& o) : owner (o) {}
+
+    int laneH = 40;
 
     void paint (juce::Graphics& g) override
     {
         const auto& p = pal();
-        const auto& list = scenes().getScenes();
-        const auto& rows = tracks();
-        const int current = scenes().getCurrent(), queued = scenes().getQueued();
-        const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
-
-        // The key, in the corner above the names.
+        drawWell (g, getLocalBounds().toFloat(), 8.0f);
+        g.setColour (p.wellInk2);
+        g.setFont (cond (12.0f, Weight::extra, 0.12f));
+        g.drawText ("TRACKS", getLocalBounds().removeFromTop (kHead).reduced (12, 6), juce::Justification::topLeft);
+        g.setFont (cond (11.0f, Weight::bold, 0.08f));
+        g.drawText ("BAR", getLocalBounds().withY (kHead).withHeight (kRuler).reduced (12, 0), juce::Justification::centredLeft);
+        const auto lanes = owner.shownLanes();
+        for (size_t i = 0; i < lanes.size(); ++i)
         {
-            auto key = juce::Rectangle<int> (6, 4, kNames - 12, kHead - 8);
-            const int h = key.getHeight() / 3;
-            const std::pair<int, const char*> keys[] = { { 1, "plays" }, { 0, "muted" }, { -1, "left alone" } };
-            for (auto [value, what] : keys)
+            const int lane = lanes[i];
+            auto r = juce::Rectangle<int> (0, kHead + kRuler + (int) i * laneH, getWidth(), laneH);
+            const bool picked = lane == owner.selLane;
+            if (picked)
             {
-                auto r = key.removeFromTop (h);
-                paintCell (g, r.removeFromLeft (64).reduced (0, 2).toFloat(), value, RigColours::loops, false);
-                r.removeFromLeft (8);
-                g.setColour (p.ink2);
-                g.setFont (barlow (13.0f));
-                g.drawText (what, r, juce::Justification::centredLeft);
+                g.setColour (juce::Colours::white.withAlpha (0.06f));
+                g.fillRect (r);
             }
-        }
-
-        // Track names, in two groups.
-        engraved (g, "Tools", { 6, kHead + 6, kNames - 12, kGroup }, juce::Justification::centredLeft, 12.0f);
-        engraved (g, "Loops", { 6, rowY (numTools()) - kGroup, kNames - 12, kGroup }, juce::Justification::centredLeft, 12.0f);
-        for (int r = 0; r < (int) rows.size(); ++r)
-        {
-            const auto& t = rows[(size_t) r];
-            auto area = juce::Rectangle<int> (6, rowY (r), kNames - 12, kRow);
-            const auto colour = t.isLoop ? loopColour() : RigColours::forStrip (t.index);
-            g.setColour (colour);
-            g.fillRoundedRectangle (area.removeFromLeft (6).toFloat(), 2.0f);
-            area.removeFromLeft (8);
-            juce::String status;
-            if (t.isLoop)
+            g.setColour (laneColour (lane));
+            g.fillRoundedRectangle (r.removeFromLeft (10).reduced (3, 6).toFloat(), 2.0f);
+            r.removeFromLeft (6);
+            g.setColour (p.wellInk);
+            g.setFont (cond (laneH >= 36 ? 17.0f : 15.0f, Weight::bold));
+            if (laneH >= 34)
             {
-                const auto& layer = owner.engine.getLooper().getLayer (t.index);
-                const double beats = layer.lengthBeats.load();
-                const int bpb = juce::jmax (1, owner.engine.getTransport().getBeatsPerBar());
-                status = owner.engine.getLooper().getState (t.index) == RigLooper::State::empty || beats <= 0.0
-                           ? juce::String ("empty")
-                           : juce::String (beats / bpb, std::abs (beats / bpb - std::round (beats / bpb)) < 0.05 ? 0 : 1) + " "
-                                 + barsWord ((int) std::round (beats / bpb));
+                g.drawText (rigsong::laneName (lane), r.removeFromTop (r.getHeight() / 2 + 2).withTrimmedTop (3), juce::Justification::bottomLeft);
+                g.setColour (p.wellInk2);
+                g.setFont (barlow (12.0f));
+                g.drawText (rigsong::laneHint (owner.engine, lane), r, juce::Justification::topLeft);
             }
-            g.setColour (status == "empty" ? p.ink2 : p.ink);
-            g.setFont (cond (17.0f, Weight::bold, 0.03f));
-            g.drawFittedText (trackName (t).toUpperCase(), area.removeFromLeft (118), juce::Justification::centredLeft, 1, 0.75f);
-            g.setColour (p.ink2);
-            g.setFont (barlow (12.0f));
-            g.drawText (status, area, juce::Justification::centredRight);
-        }
-
-        // The parts.
-        for (int i = 0; i < (int) list.size(); ++i)
-        {
-            const auto& scene = list[(size_t) i];
-            const auto col = column (i).toFloat();
-            const bool isCurrent = i == current, isQueued = i == queued;
-
-            // The column's card.
-            g.setColour (juce::Colours::black.withAlpha (vintage::isStage() ? 0.28f : 0.06f));
-            g.fillRoundedRectangle (col, 10.0f);
-            if (isCurrent)
-                glow (g, col, 10.0f, colours::play, 10.0f, 0.35f);
-            if (isCurrent || (isQueued && pulse))
-            {
-                g.setColour (isCurrent ? colours::play : colours::next);
-                g.drawRoundedRectangle (col.reduced (1.0f), 10.0f, 2.5f);
-            }
-
-            // Letter, name and what else it changes.
-            const auto letter = letterBox (i).toFloat();
-            drawButton (g, letter, isCurrent ? Lit::play : isQueued ? Lit::next : Lit::none, false, hovered == i, false, 8.0f);
-            g.setColour (isCurrent || isQueued ? juce::Colour (0xff1c1305) : p.btnInk);
-            g.setFont (cond (24.0f, Weight::extra));
-            g.drawText (letterFor (i), letter.withTrimmedBottom (3.0f).toNearestInt(), juce::Justification::centred);
-
-            auto name = nameBox (i);
-            if (editing != i)
-            {
-                g.setColour (p.ink);
-                g.setFont (cond (18.0f, Weight::extra, 0.04f));
-                g.drawFittedText (scene.name.toUpperCase(), name.removeFromTop (20), juce::Justification::centredLeft, 1, 0.7f);
-                g.setColour (isCurrent ? colours::play.darker (0.3f) : isQueued ? colours::next.darker (0.3f) : p.ink2);
-                g.setFont (cond (12.0f, Weight::bold, 0.1f));
-                g.drawFittedText (isCurrent ? juce::String::fromUTF8 ("\xe2\x96\xb6 Playing now") : isQueued ? juce::String ("Next, at the bar")
-                                                                                                         : summary (scene.state),
-                                  name, juce::Justification::centredLeft, 1, 0.7f);
-            }
-
-            // Length (an LCD), Play and the menu.
-            const auto len = lengthBox (i).toFloat();
-            drawLcd (g, len, 6.0f);
-            lcdText (g, scene.bars <= 0 ? juce::String ("HOLD") : juce::String (scene.bars) + " BAR" + (scene.bars == 1 ? "" : "S"), len, 20.0f);
-            const auto play = playBox (i).toFloat();
-            drawButton (g, play, isCurrent ? Lit::play : isQueued ? Lit::next : Lit::none, false, false, false, 7.0f);
-            {
-                // A play triangle (lit green while it plays, amber when it's next).
-                const auto ic = play.withTrimmedBottom (3.0f).withSizeKeepingCentre (12.0f, 13.0f);
-                juce::Path tri;
-                tri.addTriangle (ic.getX(), ic.getY(), ic.getRight(), ic.getCentreY(), ic.getX(), ic.getBottom());
-                g.setColour (isCurrent || isQueued ? juce::Colour (0xff1c1305) : p.btnInk);
-                g.fillPath (tri);
-            }
-            const auto menu = menuBox (i).toFloat();
-            drawButton (g, menu, Lit::none, false, false, false, 7.0f);
-            g.setColour (p.btnInk);
-            g.setFont (cond (18.0f, Weight::extra));
-            g.drawText (juce::String::fromUTF8 ("\xe2\x8b\xaf"), menu.withTrimmedBottom (3.0f).toNearestInt(), juce::Justification::centred);
-
-            // The part's loop bank, over its loops.
-            {
-                const auto& engine = owner.engine;
-                const int bank = scene.state.loopBank;
-                const auto text = bank >= 0 && bank < engine.getNumLoopBanks() ? engine.getLoopBankName (bank) : juce::String ("Loops as they are");
-                g.setColour (hovered == i ? p.ink : p.ink2);
-                g.setFont (cond (12.0f, Weight::bold, 0.06f));
-                g.drawFittedText (juce::String::fromUTF8 ("\xe2\x96\xbe ") + text, bankBox (i), juce::Justification::centredLeft, 1, 0.7f);
-            }
-
-            // The cells.
-            for (int r = 0; r < (int) rows.size(); ++r)
-                paintCell (g, cell (i, r).toFloat(), cellValue (scene, rows[(size_t) r]),
-                           rows[(size_t) r].isLoop ? loopColour() : RigColours::forStrip (rows[(size_t) r].index),
-                           hoverCell == juce::Point<int> (i, r));
-        }
-
-        // The last column: save what's playing as a new part.
-        if ((int) list.size() < RigScenes::kMaxScenes)
-        {
-            auto add = column ((int) list.size()).toFloat().reduced (2.0f);
-            g.setColour (hovered == (int) list.size() ? p.ink : p.line);
-            juce::Path outline;
-            outline.addRoundedRectangle (add, 10.0f);
-            const float dashes[] = { 7.0f, 5.0f };
-            juce::PathStrokeType (2.0f).createDashedStroke (outline, outline, dashes, 2);
-            g.fillPath (outline);
-            auto text = add.reduced (14.0f).toNearestInt();
-            g.setColour (p.ink);
-            g.setFont (cond (54.0f, Weight::extra));
-            g.drawText ("+", text.removeFromTop (kHead + 20), juce::Justification::centredBottom);
-            g.setFont (cond (17.0f, Weight::extra, 0.06f));
-            g.drawFittedText ("NEW PART " + letterFor ((int) list.size()), text.removeFromTop (26), juce::Justification::centred, 1);
-            g.setColour (p.ink2);
-            g.setFont (barlow (13.0f));
-            g.drawFittedText ("Click to keep what's playing now as the next part of the song.\n\nThen switch tracks on and off "
-                              "in its column.",
-                              text.removeFromTop (110), juce::Justification::centredTop, 7);
+            else
+                g.drawText (rigsong::laneName (lane), r, juce::Justification::centredLeft);
+            g.setColour (juce::Colours::black.withAlpha (0.35f));
+            g.drawHorizontalLine (kHead + kRuler + (int) (i + 1) * laneH - 1, 0.0f, (float) getWidth());
         }
     }
 
-    void paintCell (juce::Graphics& g, juce::Rectangle<float> r, int value, juce::Colour colour, bool over)
+private:
+    SongView& owner;
+};
+
+//==============================================================================
+// The sections, the ruler and the boxes. It sits in a viewport, so a long song scrolls.
+class SongView::Board : public juce::Component
+{
+public:
+    explicit Board (SongView& o) : owner (o) {}
+
+    double px = 24.0;   // per bar
+    int laneH = 40;
+
+    RigTimeline& tl() const { return owner.timeline(); }
+
+    void updateSize (int viewWidth, int viewHeight)
+    {
+        const double bars = juce::jmax (8.0, rigsong::songBars (tl()) + 2.0);
+        px = juce::jmax (16.0, (viewWidth - 8) / bars);
+        setSize (juce::jmax (viewWidth, (int) std::ceil (bars * px) + 8), viewHeight);
+    }
+
+    int laneY (int i) const { return kHead + kRuler + i * laneH; }
+    float xFor (double bar) const { return (float) (bar * px); }
+    double barAt (int x) const { return x / px; }
+
+    juce::Rectangle<int> sectionHead (const rigsong::Section& s) const
+    {
+        return juce::Rectangle<int> ((int) xFor (s.start), 0, (int) (s.bars * px), kHead);
+    }
+    juce::Rectangle<int> boxRect (const rigsong::Section& s, int row) const
+    {
+        return juce::Rectangle<int> ((int) xFor (s.start), laneY (row), (int) (s.bars * px), laneH).reduced (2, 4);
+    }
+
+    void paint (juce::Graphics& g) override
     {
         const auto& p = pal();
-        if (value == 1)
+        g.setColour (p.well);
+        g.fillRect (getLocalBounds());
+        const auto list = rigsong::sections (tl());
+        const auto lanes = owner.shownLanes();
+        const auto& engine = owner.engine;
+        auto& transport = owner.engine.getTransport();
+        const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+        const double nowBar = transport.getPositionInBeats() / bpb;
+        const bool playing = transport.isPlaying() && tl().on.load();
+        const int nowSection = playing ? rigsong::sectionAt (tl(), nowBar) : -1;
+        const double pending = tl().getPendingJump();
+        const int nextSection = playing && pending >= 0 ? rigsong::sectionAt (tl(), pending) : -1;
+        juce::ignoreUnused (engine);
+
+        // The sections along the top.
+        for (int i = 0; i < (int) list.size(); ++i)
         {
-            glow (g, r, 6.0f, colour, 6.0f, 0.3f);
-            g.setColour (over ? colour.brighter (0.15f) : colour);
-            g.fillRoundedRectangle (r, 6.0f);
-            g.setColour (juce::Colour (0xff1c1305));
-            g.setFont (cond (12.0f, Weight::extra, 0.12f));
-            g.drawText ("ON", r.toNearestInt(), juce::Justification::centred);
-        }
-        else if (value == 0)
-        {
-            drawWell (g, r, 6.0f);
-            drawLamp (g, { r.getX() + 13.0f, r.getCentreY() }, Lit::mute, 10.0f);
-            g.setColour (over ? p.wellInk : p.wellInk2);
-            g.setFont (cond (12.0f, Weight::extra, 0.12f));
-            g.drawText ("OFF", r.toNearestInt(), juce::Justification::centred);
-        }
-        else
-        {
-            g.setColour (over ? p.ink2 : p.line);
-            g.drawRoundedRectangle (r.reduced (1.0f), 6.0f, 1.5f);
-            g.setColour (p.ink2);
+            const auto& s = list[(size_t) i];
+            auto r = sectionHead (s);
+            const bool picked = i == owner.selSection && owner.selLane < 0;
+            g.setColour (i == nowSection ? juce::Colour (0xff3a3220) : picked ? juce::Colour (0xff332c24) : juce::Colour (0xff221e1a));
+            g.fillRect (r);
+            g.setColour (juce::Colours::black);
+            g.fillRect (r.removeFromLeft (2));
+            auto text = r.reduced (6, 4);
+            auto top = text.removeFromTop (20);
+            auto badge = top.removeFromLeft (20).toFloat();
+            g.setColour (i == nowSection ? colours::play : i == nextSection ? colours::next : RigColours::song);
+            g.fillRoundedRectangle (badge, 4.0f);
+            g.setColour (juce::Colour (0xff1a1410));
+            g.setFont (cond (15.0f, Weight::extra));
+            g.drawText (rigsong::letterFor (i), badge, juce::Justification::centred);
+            top.removeFromLeft (6);
+            g.setColour (p.wellInk);
+            g.setFont (cond (16.0f, Weight::extra, 0.04f));
+            g.drawFittedText (s.name.toUpperCase(), top, juce::Justification::centredLeft, 1, 0.7f);
+            g.setColour (p.wellInk2);
             g.setFont (barlow (12.0f));
-            g.drawText (juce::String::fromUTF8 ("\xe2\x80\x94  as is"), r.toNearestInt(), juce::Justification::centred);
+            juce::String sub = rigsong::barsText (s.bars);
+            if (i == nowSection)
+                sub = juce::String::fromUTF8 ("\xe2\x96\xb6 ") + sub;
+            else if (i == nextSection)
+                sub = "next" + dot() + sub;
+            if (i < (int) tl().getMarkers().size() && tl().getMarkers()[(size_t) i].loopBank >= 0)
+                sub += dot() + owner.engine.getLoopBankName (tl().getMarkers()[(size_t) i].loopBank);
+            g.drawFittedText (sub, text, juce::Justification::centredLeft, 1, 0.8f);
+            if (picked)
+            {
+                g.setColour (colours::selected);
+                g.drawRect (sectionHead (s), 2);
+            }
+            // The drag handle on its right edge.
+            g.setColour (juce::Colours::white.withAlpha (0.18f));
+            const auto edge = sectionHead (s).getRight();
+            g.fillRect (edge - 4, 12, 2, kHead - 24);
+        }
+
+        // The ruler.
+        {
+            auto ruler = juce::Rectangle<int> (0, kHead, getWidth(), kRuler);
+            g.setColour (juce::Colour (0xff181512));
+            g.fillRect (ruler);
+            const int every = px >= 30 ? 1 : px >= 15 ? 2 : 4;
+            g.setFont (barlow (11.0f));
+            const int maxBar = (int) std::ceil (getWidth() / px);
+            for (int b = 0; b <= maxBar; ++b)
+            {
+                const float x = xFor (b);
+                g.setColour (juce::Colours::white.withAlpha (b % 4 == 0 ? 0.25f : 0.1f));
+                g.drawVerticalLine ((int) x, (float) kHead + (b % every == 0 ? 6.0f : 12.0f), (float) (kHead + kRuler));
+                if (b % every == 0)
+                {
+                    g.setColour (p.wellInk2);
+                    g.drawText (juce::String (b + 1), (int) x + 3, kHead, 30, kRuler, juce::Justification::centredLeft);
+                }
+            }
+            if (tl().cycle.load())
+            {
+                g.setColour (RigColours::song.withAlpha (0.55f));
+                g.fillRect (juce::Rectangle<float> (xFor (tl().cycleStart.load()), (float) kHead + kRuler - 4,
+                                                    (float) ((tl().cycleEnd.load() - tl().cycleStart.load()) * px), 4.0f));
+            }
+            // Where Play starts.
+            const float sx = xFor (owner.engine.songStartBar);
+            juce::Path tri;
+            tri.addTriangle (sx, (float) kHead + kRuler - 1, sx - 6, (float) kHead + 4, sx + 6, (float) kHead + 4);
+            g.setColour (colours::play);
+            g.fillPath (tri);
+        }
+
+        // The boxes.
+        const auto& blocks = tl().getBlocks();
+        for (int row = 0; row < (int) lanes.size(); ++row)
+        {
+            const int lane = lanes[(size_t) row];
+            const auto colour = laneColour (lane);
+            const int y = laneY (row);
+            g.setColour (juce::Colours::black.withAlpha (0.35f));
+            g.drawHorizontalLine (y + laneH - 1, 0.0f, (float) getWidth());
+            // Empty boxes: a dashed outline and a +.
+            for (int i = 0; i < (int) list.size(); ++i)
+            {
+                if (rigsong::boxBlock (tl(), i, lane) >= 0)
+                    continue;
+                const auto r = boxRect (list[(size_t) i], row).toFloat();
+                juce::Path outline;
+                outline.addRoundedRectangle (r.reduced (1.0f), 5.0f);
+                juce::Path dashed;
+                const float dashes[] = { 4.0f, 4.0f };
+                juce::PathStrokeType (1.2f).createDashedStroke (dashed, outline, dashes, 2);
+                g.setColour (juce::Colours::white.withAlpha (0.13f));
+                g.fillPath (dashed);
+                g.setColour (juce::Colours::white.withAlpha (0.2f));
+                g.setFont (cond (18.0f, Weight::bold));
+                g.drawText ("+", r, juce::Justification::centred);
+            }
+            // The blocks themselves (a box is one; Bars view can make more).
+            for (const auto& b : blocks)
+            {
+                if (b.lane != lane)
+                    continue;
+                auto r = juce::Rectangle<float> (xFor (b.start) + 2.0f, (float) y + 4.0f, (float) (b.length * px) - 4.0f, (float) laneH - 8.0f);
+                if (r.getWidth() < 2.0f)
+                    continue;
+                juce::ColourGradient grad (colour, r.getX(), 0, colour, r.getRight(), 0, false);
+                const float alpha = 0.55f + 0.45f * b.level;
+                const auto c = colour.withAlpha (alpha);
+                grad = juce::ColourGradient (c, r.getX(), 0, c, r.getRight(), 0, false);
+                if (b.fadeIn > kEps)
+                {
+                    grad.clearColours();
+                    grad.addColour (0.0, c.withAlpha (0.08f));
+                    grad.addColour (juce::jlimit (0.01, 0.99, b.fadeIn / b.length), c);
+                    grad.addColour (1.0, c);
+                }
+                if (b.fadeOut > kEps)
+                {
+                    const double from = 1.0 - b.fadeOut / b.length;
+                    if (b.fadeIn <= kEps)
+                    {
+                        grad.clearColours();
+                        grad.addColour (0.0, c);
+                    }
+                    grad.addColour (juce::jlimit (0.02, 0.98, from), c);
+                    grad.addColour (1.0, c.withAlpha (0.08f));
+                }
+                g.setGradientFill (grad);
+                g.fillRoundedRectangle (r, 5.0f);
+                auto text = r.toNearestInt().reduced (7, 3);
+                if (b.fadeIn > kEps)
+                    text.removeFromLeft (juce::jmin (text.getWidth() / 3, (int) (b.fadeIn * px * 0.5)));
+                g.setColour (juce::Colour (0xff1a1410));
+                g.setFont (cond (laneH >= 36 ? 15.0f : 13.0f, Weight::bold));
+                const auto name = rigsong::clipName (owner.engine, lane, b.clip);
+                if (laneH >= 36)
+                {
+                    g.drawFittedText (name, text.removeFromTop (text.getHeight() / 2 + 2), juce::Justification::bottomLeft, 1, 0.75f);
+                    juce::StringArray extra;
+                    if (b.fadeIn > kEps)
+                        extra.add ("fades in");
+                    if (b.fadeOut > kEps)
+                        extra.add ("fades out");
+                    if (b.level < 0.99f)
+                        extra.add (juce::String (juce::roundToInt (b.level * 100)) + "%");
+                    g.setFont (barlow (11.0f));
+                    g.setColour (juce::Colour (0xff1a1410).withAlpha (0.75f));
+                    g.drawFittedText (extra.joinIntoString (dot()), text, juce::Justification::topLeft, 1, 0.8f);
+                }
+                else
+                    g.drawFittedText (name, text, juce::Justification::centredLeft, 1, 0.75f);
+            }
+        }
+
+        // The picked box.
+        if (owner.selLane >= 0 && juce::isPositiveAndBelow (owner.selSection, (int) list.size()))
+        {
+            const auto it = std::find (lanes.begin(), lanes.end(), owner.selLane);
+            if (it != lanes.end())
+            {
+                g.setColour (juce::Colours::white);
+                g.drawRoundedRectangle (boxRect (list[(size_t) owner.selSection], (int) (it - lanes.begin())).toFloat().expanded (1.0f), 6.0f, 2.5f);
+            }
+        }
+
+        // Where it's playing.
+        if (transport.isPlaying())
+        {
+            const float x = xFor (nowBar);
+            g.setColour (juce::Colours::white.withAlpha (0.9f));
+            g.fillRect (x - 1.0f, (float) kHead, 2.0f, (float) getHeight() - kHead);
         }
     }
 
-    // A part's other settings, in a few words.
-    juce::String summary (const RigScene::State& s) const
-    {
-        juce::StringArray parts;
-        auto& sequences = owner.engine.getMpc().getProject().getSequences();
-        if (juce::isPositiveAndBelow (s.mpcSequence, (int) sequences.size()))
-            parts.add ("Seq " + juce::String (s.mpcSequence + 1));
-        if (s.bassSequencer == 0)
-            parts.add ("Bass seq off");
-        else if (s.bassPattern >= 0)
-            parts.add ("Bass pat " + juce::String (s.bassPattern + 1));
-        if (s.arp == 1)
-            parts.add ("Arp");
-        if (s.vocoderOn == 0)
-            parts.add ("Voc off");
-        return parts.isEmpty() ? juce::String ("Click a cell to change") : parts.joinIntoString (juce::String::fromUTF8 (" \xc2\xb7 "));
-    }
-
-    //==========================================================================
-    int partAt (juce::Point<int> pos) const
-    {
-        for (int i = 0; i <= parts(); ++i)
-            if (column (i).contains (pos))
-                return i;
-        return -1;
-    }
-    int rowAt (int part, juce::Point<int> pos) const
-    {
-        for (int r = 0; r < (int) tracks().size(); ++r)
-            if (cell (part, r).expanded (0, kRowGap / 2).contains (pos))
-                return r;
-        return -1;
-    }
+    // Which section is under x (-1 past the end).
+    int sectionAtX (int x) const { return rigsong::sectionAt (tl(), barAt (x)); }
+    int rowAtY (int y) const { return y < kHead + kRuler ? -1 : (y - kHead - kRuler) / juce::jmax (1, laneH); }
 
     void mouseMove (const juce::MouseEvent& e) override
     {
-        const int part = partAt (e.getPosition());
-        const juce::Point<int> c = part >= 0 && part < parts() ? juce::Point<int> (part, rowAt (part, e.getPosition())) : juce::Point<int> (-1, -1);
-        if (part != hovered || c != hoverCell)
+        setMouseCursor (edgeAt (e.getPosition()) >= 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+    }
+
+    // The section whose right edge is under the mouse, on the section row.
+    int edgeAt (juce::Point<int> p) const
+    {
+        if (p.y >= kHead)
+            return -1;
+        const auto list = rigsong::sections (tl());
+        for (int i = 0; i < (int) list.size(); ++i)
+            if (std::abs (p.x - sectionHead (list[(size_t) i]).getRight()) <= 5)
+                return i;
+        return -1;
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = edgeAt (e.getPosition());
+        if (dragging >= 0)
+            return;
+        const auto pos = e.getPosition();
+        if (pos.y >= kHead && pos.y < kHead + kRuler)
         {
-            hovered = part;
-            hoverCell = c;
-            setMouseCursor (part >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+            // The ruler: where Play starts (while the song plays, it goes there at the next bar).
+            owner.engine.songStartBar = juce::jmax (0.0, std::floor (barAt (pos.x)));
+            if (owner.engine.getTransport().isPlaying() && tl().on.load())
+                tl().jumpTo (owner.engine.songStartBar);
             repaint();
+            return;
+        }
+        const int section = sectionAtX (pos.x);
+        if (section < 0)
+        {
+            owner.select (-1, -1);
+            return;
+        }
+        if (pos.y < kHead)
+        {
+            owner.select (section, -1);
+            if (e.mods.isPopupMenu())
+                owner.showSectionMenu (section);
+            else if (e.getNumberOfClicks() >= 2)
+                owner.renameSection (section);
+            return;
+        }
+        const auto lanes = owner.shownLanes();
+        const int row = rowAtY (pos.y);
+        if (! juce::isPositiveAndBelow (row, (int) lanes.size()))
+            return;
+        owner.select (section, lanes[(size_t) row]);
+        if (e.mods.isPopupMenu())
+            owner.showBoxMenu (section, lanes[(size_t) row]);
+        else if (e.getNumberOfClicks() >= 2 && rigsong::boxBlock (tl(), section, lanes[(size_t) row]) < 0)
+        {
+            // Double-click an empty box: it plays what that track has on now.
+            const auto choices = rigsong::clipChoices (owner.engine, lanes[(size_t) row]);
+            owner.pickClip (choices.size() > 1 ? choices[1].first : choices.front().first);
         }
     }
-    void mouseExit (const juce::MouseEvent&) override
+
+    void mouseDrag (const juce::MouseEvent& e) override
     {
-        hovered = -1;
-        hoverCell = { -1, -1 };
+        if (dragging < 0)
+            return;
+        const auto list = rigsong::sections (tl());
+        if (! juce::isPositiveAndBelow (dragging, (int) list.size()))
+            return;
+        const double bars = juce::jmax (1.0, std::round (barAt (e.x) - list[(size_t) dragging].start));
+        if (std::abs (bars - list[(size_t) dragging].bars) > kEps)
+        {
+            rigsong::setSectionBars (tl(), dragging, bars);
+            owner.edited();
+        }
+    }
+
+    void mouseUp (const juce::MouseEvent&) override { dragging = -1; }
+
+private:
+    SongView& owner;
+    int dragging = -1;
+};
+
+//==============================================================================
+// The panel on the right: what the picked box plays and how, or the picked section.
+class SongView::Inspector : public juce::Component
+{
+public:
+    explicit Inspector (SongView& o) : owner (o)
+    {
+        level.setSliderStyle (juce::Slider::LinearHorizontal);
+        level.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 22);
+        level.setRange (0.0, 100.0, 1.0);
+        level.setTextValueSuffix ("%");
+        level.onValueChange = [this] { owner.setLevel ((float) level.getValue() / 100.0f); };
+        addChildComponent (level);
+        for (auto* b : { &edit, &sameAs, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
+        {
+            b->fontSize = 15.0f;
+            addChildComponent (b);
+        }
+        edit.onClick = [this] { if (owner.onGoTo) owner.onGoTo (owner.pageForLane (owner.selLane)); };
+        sameAs.onClick = [this] { owner.showBoxMenu (owner.selSection, owner.selLane); };
+        playHere.onClick = [this] { owner.engine.launchSection (owner.selSection); };
+        loopIt.onClick = [this] { owner.loopSection (owner.selSection); };
+        copy.onClick = [this]
+        {
+            const int i = rigsong::duplicateSection (owner.timeline(), owner.selSection);
+            owner.edited();
+            if (i >= 0)
+                owner.select (i, -1);
+        };
+        moveLeft.onClick = [this] { move (-1); };
+        moveRight.onClick = [this] { move (1); };
+        remove.onClick = [this]
+        {
+            const auto name = rigsong::sections (owner.timeline())[(size_t) owner.selSection].name;
+            rigsong::removeSection (owner.timeline(), owner.selSection);
+            owner.select (-1, -1);
+            owner.edited();
+            owner.say ("Deleted " + name + ". Cmd+Z in Bars view brings it back.");
+        };
+        rename.onClick = [this] { owner.renameSection (owner.selSection); };
+    }
+
+    void move (int by)
+    {
+        const int n = (int) rigsong::sections (owner.timeline()).size();
+        const int to = juce::jlimit (0, n - 1, owner.selSection + by);
+        rigsong::moveSection (owner.timeline(), owner.selSection, to);
+        owner.select (to, -1);
+        owner.edited();
+    }
+
+    void update()
+    {
+        groups.clear();
+        const auto list = rigsong::sections (owner.timeline());
+        const int s = owner.selSection, lane = owner.selLane;
+        const bool haveSection = juce::isPositiveAndBelow (s, (int) list.size());
+        const int bpb = juce::jmax (1, owner.engine.getTransport().getBeatsPerBar());
+        for (auto* b : { &edit, &sameAs, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
+            b->setVisible (false);
+        level.setVisible (false);
+        title.clear();
+        sub.clear();
+        if (! haveSection)
+        {
+            resized();
+            repaint();
+            return;
+        }
+        const auto& sec = list[(size_t) s];
+        auto& tl = owner.timeline();
+        if (lane < 0)
+        {
+            title = rigsong::letterFor (s) + dot() + sec.name.toUpperCase();
+            sub = "Bars " + juce::String ((int) sec.start + 1) + juce::String::fromUTF8 ("\xe2\x80\x93") + juce::String ((int) std::ceil (sec.end() - kEps))
+                + dot() + rigsong::barsText (sec.bars);
+            auto& length = addGroup ("LENGTH", RigColours::song);
+            for (int b : { 1, 2, 4, 8, 12, 16, 32 })
+                length.items.push_back ({ juce::String (b), b });
+            length.chosen = juce::roundToInt (sec.bars);
+            length.onPick = [this] (int v) { owner.setSectionLength (v); };
+            if (owner.engine.getNumLoopBanks() > 1)
+            {
+                auto& bank = addGroup ("LOOP BANK", RigColours::loops);
+                bank.items.push_back ({ "As it is", -1 });
+                for (int b = 0; b < owner.engine.getNumLoopBanks(); ++b)
+                    bank.items.push_back ({ owner.engine.getLoopBankName (b), b });
+                bank.chosen = s < (int) tl.getMarkers().size() ? tl.getMarkers()[(size_t) s].loopBank : -1;
+                bank.onPick = [this] (int v) { owner.setSectionBank (v); };
+            }
+            for (auto* b : { &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
+                b->setVisible (true);
+            moveLeft.setEnabled (s > 0);
+            moveRight.setEnabled (s < (int) list.size() - 1);
+            loopIt.lit = tl.cycle.load() && std::abs (tl.cycleStart.load() - sec.start) < kEps ? Lit::current : Lit::none;
+            resized();
+            repaint();
+            return;
+        }
+
+        const auto colour = laneColour (lane);
+        title = sec.name.toUpperCase() + dot() + rigsong::laneName (lane).toUpperCase();
+        const int bi = rigsong::boxBlock (tl, s, lane);
+        const RigTimeline::Block* b = bi >= 0 ? &tl.getBlocks()[(size_t) bi] : nullptr;
+        if (b == nullptr)
+            sub = "Empty: quiet in this section. Pick what it plays.";
+        else if (b->start < sec.start - kEps)
+            sub = "Carries on from bar " + juce::String ((int) b->start + 1);
+        else
+            sub = rigsong::barsText (juce::jmin (b->end(), sec.end()) - b->start) + " from bar " + juce::String ((int) b->start + 1);
+
+        auto& plays = addGroup ("PLAYS", colour);
+        for (const auto& [clip, name] : rigsong::clipChoices (owner.engine, lane))
+            plays.items.push_back ({ name, clip });
+        plays.items.push_back ({ "Silent", kSilent });
+        plays.chosen = b != nullptr ? b->clip : kSilent;
+        plays.onPick = [this] (int v) { owner.pickClip (v); };
+        edit.setVisible (! RigTimeline::lanes()[(size_t) lane].isLoop || true);
+        sameAs.setVisible (true);
+        if (b != nullptr)
+        {
+            const double len = b->length;
+            auto& in = addGroup ("FADES IN", colour);
+            auto& out = addGroup ("FADES OUT", colour);
+            for (double f : { 0.0, 1.0 / bpb, 1.0, 2.0, 4.0 })
+                if (f < len - kEps || f == 0.0)
+                {
+                    in.items.push_back ({ fadeText (f, bpb), juce::roundToInt (f * 1000) });
+                    out.items.push_back ({ fadeText (f, bpb), juce::roundToInt (f * 1000) });
+                }
+            in.chosen = juce::roundToInt (b->fadeIn * 1000);
+            out.chosen = juce::roundToInt (b->fadeOut * 1000);
+            in.onPick = [this] (int v) { owner.setFadeIn (v / 1000.0); };
+            out.onPick = [this] (int v) { owner.setFadeOut (v / 1000.0); };
+            if (sec.bars > 1.0 + kEps && b->start >= sec.start - kEps)
+            {
+                auto& starts = addGroup ("COMES IN ON BAR", colour);
+                for (int bar = 1; bar <= juce::jmin (8, (int) std::ceil (sec.bars - kEps)); ++bar)
+                    starts.items.push_back ({ juce::String (bar), bar });
+                starts.chosen = juce::roundToInt (b->start - sec.start) + 1;
+                starts.onPick = [this] (int v) { owner.setStartBar (v); };
+            }
+            level.setVisible (true);
+            level.setValue (b->level * 100.0, juce::dontSendNotification);
+        }
+        resized();
         repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto& p = pal();
+        drawWell (g, getLocalBounds().toFloat(), 8.0f);
+        auto r = getLocalBounds().reduced (14, 12);
+        if (title.isEmpty())
+        {
+            g.setColour (p.wellInk);
+            g.setFont (cond (18.0f, Weight::extra, 0.04f));
+            g.drawText ("PICK A BOX", r.removeFromTop (26), juce::Justification::topLeft);
+            g.setColour (p.wellInk2);
+            g.setFont (barlow (14.0f));
+            g.drawFittedText ("Click a box to choose what that track plays in that section, and how it comes in and goes out.\n\n"
+                              "Click a section's name for its length, name and loop bank. Drag its right edge for more bars.\n\n"
+                              "Double-click an empty box: it plays what that track has on now.",
+                              r.removeFromTop (220), juce::Justification::topLeft, 12, 1.0f);
+            return;
+        }
+        g.setColour (p.wellInk);
+        g.setFont (cond (19.0f, Weight::extra, 0.05f));
+        g.drawFittedText (title, r.removeFromTop (24), juce::Justification::centredLeft, 1, 0.7f);
+        g.setColour (p.wellInk2);
+        g.setFont (barlow (13.0f));
+        g.drawFittedText (sub, r.removeFromTop (22), juce::Justification::topLeft, 1, 0.8f);
+        for (const auto& grp : groups)
+        {
+            g.setColour (p.wellInk2);
+            g.setFont (cond (11.5f, Weight::extra, 0.14f));
+            g.drawText (grp.label, grp.labelArea, juce::Justification::bottomLeft);
+            grp.chips.paint (g, grp.colour);
+        }
+        if (level.isVisible())
+        {
+            g.setColour (p.wellInk2);
+            g.setFont (cond (11.5f, Weight::extra, 0.14f));
+            g.drawText ("LEVEL", level.getBounds().withY (level.getY() - 18).withHeight (16), juce::Justification::bottomLeft);
+        }
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (14, 12);
+        r.removeFromTop (24 + 22);
+        for (auto& grp : groups)
+        {
+            grp.labelArea = r.removeFromTop (16);
+            r.removeFromTop (3);
+            const int h = grp.chips.layout (r);
+            r.removeFromTop (h + 6);
+        }
+        if (level.isVisible())
+        {
+            r.removeFromTop (16);
+            level.setBounds (r.removeFromTop (24));
+            r.removeFromTop (8);
+        }
+        auto row = [&r] (std::initializer_list<rigpanels::PanelButton*> bs)
+        {
+            int visible = 0;
+            for (auto* b : bs)
+                visible += b->isVisible() ? 1 : 0;
+            if (visible == 0)
+                return;
+            auto line = r.removeFromTop (32);
+            const int w = (line.getWidth() - (visible - 1) * 6) / visible;
+            for (auto* b : bs)
+                if (b->isVisible())
+                {
+                    b->setBounds (line.removeFromLeft (w));
+                    line.removeFromLeft (6);
+                }
+            r.removeFromTop (6);
+        };
+        row ({ &edit, &sameAs });
+        row ({ &playHere, &loopIt });
+        row ({ &rename, &copy });
+        row ({ &moveLeft, &moveRight });
+        row ({ &remove });
     }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (! e.mouseWasClicked())
-            return;
-        const auto pos = e.getPosition();
-        const int part = partAt (pos);
-        if (part < 0)
-            return;
-        if (part == parts())
-        {
-            owner.addPart();
-            return;
-        }
-        const bool popup = e.mods.isPopupMenu();
-        const int row = rowAt (part, pos);
-        if (row >= 0)
-        {
-            if (popup)
-                cellMenu (part, row);
-            else
-                owner.clickCell (part, row);
-        }
-        else if (bankBox (part).contains (pos))
-            bankMenu (part, bankBox (part));
-        else if (menuBox (part).contains (pos) || (popup && pos.y < kHead))
-            partMenu (part);
-        else if (lengthBox (part).contains (pos))
-            lengthMenu (part);
-        else if (nameBox (part).contains (pos) && e.getNumberOfClicks() >= 2)
-            startRename (part);
-        else if (playBox (part).contains (pos) || letterBox (part).contains (pos) || nameBox (part).contains (pos))
-            scenes().launch (part);
-        repaint();
+        for (auto& grp : groups)
+            if (grp.chips.click (e.getPosition()))
+                return;
     }
 
-    void mouseDoubleClick (const juce::MouseEvent& e) override
+private:
+    struct Group
     {
-        const int part = partAt (e.getPosition());
-        if (part >= 0 && part < parts() && nameBox (part).contains (e.getPosition()))
-            startRename (part);
-    }
-
-    void startRename (int part)
+        juce::String label;
+        juce::Colour colour;
+        Chips chips;
+        juce::Rectangle<int> labelArea;
+    };
+    Chips& addGroup (const juce::String& label, juce::Colour colour)
     {
-        editing = part;
-        nameEditor.setText (scenes().getScenes()[(size_t) part].name, false);
-        nameEditor.setBounds (nameBox (part).removeFromTop (24));
-        nameEditor.setVisible (true);
-        nameEditor.grabKeyboardFocus();
-        nameEditor.selectAll();
-        repaint();
+        groups.push_back ({ label, colour, {}, {} });
+        return groups.back().chips;
     }
-
-    void commitName()
-    {
-        auto& list = scenes().getScenes();
-        if (juce::isPositiveAndBelow (editing, (int) list.size()) && nameEditor.getText().trim().isNotEmpty())
-            list[(size_t) editing].name = nameEditor.getText().trim();
-        editing = -1;
-        nameEditor.setVisible (false);
-        repaint();
-    }
-
-    void lengthMenu (int part)
-    {
-        juce::PopupMenu menu;
-        addLengths (menu, part);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (lengthBox (part))));
-    }
-
-    void addLengths (juce::PopupMenu& menu, int part)
-    {
-        const int now = scenes().getScenes()[(size_t) part].bars;
-        for (int b : { 0, 1, 2, 4, 8, 12, 16, 24, 32, 64 })
-            menu.addItem (b == 0 ? "Hold (stays until you move on)" : lengthText (b), true, now == b,
-                          [this, part, b]
-                          {
-                              auto& l = scenes().getScenes();
-                              if (part < (int) l.size())
-                                  l[(size_t) part].bars = b;
-                              owner.repaint();
-                          });
-    }
-
-    void cellMenu (int part, int row)
-    {
-        const auto& t = tracks()[(size_t) row];
-        const int now = cellValue (scenes().getScenes()[(size_t) part], t);
-        juce::PopupMenu menu;
-        menu.addSectionHeader (trackName (t) + " in " + scenes().getScenes()[(size_t) part].name);
-        menu.addItem ("On: plays in this part", true, now == 1, [this, part, row] { owner.setCellTo (part, row, 1); });
-        menu.addItem ("Off: muted in this part", true, now == 0, [this, part, row] { owner.setCellTo (part, row, 0); });
-        menu.addItem ("As is: this part leaves it alone", true, now == -1, [this, part, row] { owner.setCellTo (part, row, -1); });
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (cell (part, row))));
-    }
-
-    void partMenu (int part)
-    {
-        auto& rigScenes = scenes();
-        const int count = parts();
-        juce::PopupMenu lengths;
-        addLengths (lengths, part);
-        juce::PopupMenu menu;
-        menu.addSectionHeader ("Part " + letterFor (part) + ": " + rigScenes.getScenes()[(size_t) part].name);
-        menu.addItem ("Play this part (at the next bar)", [this, part] { scenes().launch (part); });
-        menu.addItem ("Save what's playing now into this part", [this, part]
-                      {
-                          auto& l = scenes().getScenes();
-                          if (part < (int) l.size())
-                          {
-                              l[(size_t) part].state = owner.engine.captureScene();
-                              owner.say ("\"" + l[(size_t) part].name + "\" now has what's playing.");
-                          }
-                          owner.repaint();
-                      });
-        menu.addItem ("Rename...", [this, part] { startRename (part); });
-        menu.addSubMenu ("Length", lengths);
-        menu.addSubMenu ("Loop bank", bankItems (part));
-        menu.addSeparator();
-        menu.addItem (juce::String::fromUTF8 ("\xe2\x97\x80 Move earlier"), part > 0, false, [this, part] { scenes().move (part, part - 1); owner.refresh(); });
-        menu.addItem (juce::String::fromUTF8 ("Move later \xe2\x96\xb6"), part + 1 < count, false, [this, part] { scenes().move (part, part + 1); owner.refresh(); });
-        menu.addItem ("Copy (puts the copy right after it)", count < RigScenes::kMaxScenes, false, [this, part]
-                      {
-                          scenes().duplicate (part);
-                          owner.refresh();
-                      });
-        menu.addSeparator();
-        menu.addItem ("Delete this part", [this, part]
-                      {
-                          const auto name = scenes().getScenes()[(size_t) part].name;
-                          scenes().remove (part);
-                          owner.say ("Deleted \"" + name + "\".");
-                          owner.refresh();
-                      });
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (menuBox (part))));
-    }
-
-    juce::PopupMenu bankItems (int part)
-    {
-        juce::PopupMenu menu;
-        const int now = scenes().getScenes()[(size_t) part].state.loopBank;
-        auto& engine = owner.engine;
-        for (int b = 0; b < engine.getNumLoopBanks(); ++b)
-            menu.addItem (juce::String (b + 1) + ". " + engine.getLoopBankName (b), true, now == b, [this, part, b] { owner.setPartLoopBank (part, b); });
-        menu.addSeparator();
-        menu.addItem ("Leave the loops as they are", true, now < 0, [this, part] { owner.setPartLoopBank (part, -1); });
-        return menu;
-    }
-
-    void bankMenu (int part, juce::Rectangle<int> where)
-    {
-        bankItems (part).showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (where)));
-    }
-
-    RigScenes& scenes() const { return owner.engine.getScenes(); }
 
     SongView& owner;
-    juce::TextEditor nameEditor;
-    int editing = -1, hovered = -1;
-    juce::Point<int> hoverCell { -1, -1 };
+    std::deque<Group> groups;
+    juce::String title, sub;
+    juce::Slider level;
+    rigpanels::PanelButton edit { juce::String::fromUTF8 ("Edit \xe2\x86\x97") }, sameAs { "Same as..." },
+        playHere { juce::String::fromUTF8 ("\xe2\x96\xb6 Play here") }, loopIt { "Loop it" }, copy { "Copy" },
+        moveLeft { juce::String::fromUTF8 ("\xe2\x97\x80 Move") }, moveRight { juce::String::fromUTF8 ("Move \xe2\x96\xb6") },
+        remove { "Delete section" }, rename { "Rename" };
 };
 
 //==============================================================================
 SongView::SongView (RigEngine& e) : engine (e)
 {
-    grid = std::make_unique<Grid> (*this);
-    viewport.setViewedComponent (grid.get(), false);
-    viewport.setScrollBarsShown (true, true);
+    board = std::make_unique<Board> (*this);
+    names = std::make_unique<Names> (*this);
+    inspector = std::make_unique<Inspector> (*this);
+    viewport.setViewedComponent (board.get(), false);
+    viewport.setScrollBarsShown (false, true);
     addAndMakeVisible (viewport);
+    addAndMakeVisible (*names);
+    addAndMakeVisible (*inspector);
 
-    addButton.sub = "Save what's playing";
-    addButton.setTooltip ("Keeps what's playing now (which tracks and loops play, the MPC's sequence, the bass pattern, the arp, "
-                          "the vocoder) as the next part of the song.");
-    addButton.onClick = [this] { addPart(); };
-    playButton.sub = "From part A";
-    playButton.icon = rigpanels::PanelButton::Icon::none;
-    playButton.setTooltip ("Plays the song from part A, each part for its length, in order.");
-    playButton.onClick = [this] { playSong(); };
-    inOrder.sub = "Parts move on";
-    inOrder.setTooltip ("On: a part with a length plays that many bars, then the next part starts by itself (song mode). "
-                        "Off: a part plays until you launch another.");
-    inOrder.onClick = [this]
-    {
-        engine.getScenes().songMode = ! engine.getScenes().songMode;
-        say (engine.getScenes().songMode ? "In order: each part plays its bars, then the next one starts."
-                                         : "Parts now stay until you launch another one.");
-    };
-    back.sub = juce::String::fromUTF8 ("\xe2\x97\x80 Part");
-    next.sub = juce::String::fromUTF8 ("Part \xe2\x96\xb6");
-    back.onClick = [this] { engine.getScenes().back(); };
-    next.onClick = [this] { engine.getScenes().next(); };
-    back.setTooltip ("The part before this one, at the next bar.");
-    next.setTooltip ("The next part, at the next bar.");
-    keys.sub = "Next / Back";
-    keys.setTooltip ("Put Next and Back on buttons of your keyboard (the Launchkey's scene arrows, say).");
-    keys.onClick = [this] { showKeyboardMenu(); };
-    exportButton.sub = "For Logic";
-    exportButton.setTooltip ("Saves every loop as WAV files for Logic, all starting on bar 1, laid out over the song, with a tempo "
-                             "and part-marker MIDI file.");
+    bars = std::make_unique<TimelineView> (engine);
+    bars->onSay = [this] (const juce::String& s) { say (s); };
+    bars->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<SongView> (this)]
+                                                             { if (safe != nullptr) safe->showBars (false); }); };
+    addChildComponent (*bars);
+
+    addButton.sub = "empty, or what's playing";
+    addButton.setTooltip ("Adds a section at the end of the song: an empty one to fill in, or one that plays what's on now.");
+    addButton.onClick = [this] { showAddMenu(); };
+    jamButton.sub = "Play: what's on";
+    jamButton.setTooltip ("Play at the top plays whatever you've switched on, as you jam. The song waits.");
+    jamButton.onClick = [this] { setSongMode (false); };
+    songButton.sub = "Play: this song";
+    songButton.setTooltip ("Play at the top plays this song, section by section, from the green marker on the ruler.");
+    songButton.onClick = [this] { setSongMode (true); };
+    playButton.sub = "over the click";
+    playButton.setTooltip ("Plays the song from bar 1 (Song mode on).");
+    playButton.onClick = [this] { playFromStart(); };
+    loopButton.sub = "practise one part";
+    loopButton.setTooltip ("Plays the picked section over and over (pick one first). Again to stop looping.");
+    loopButton.onClick = [this] { loopSection (selSection); };
+    barsButton.sub = "fine edits, fades";
+    barsButton.setTooltip ("The same song as lanes of blocks over every bar: move, stretch and fade blocks anywhere.");
+    barsButton.onClick = [this] { showBars (! barsShown); };
+    recButton.sub = "stems for Logic";
+    recButton.setTooltip ("Plays the song once from bar 1 and records every track as its own WAV (and the mix, and MIDI). Sing along!");
+    recButton.onClick = [this] { if (bars != nullptr) bars->recordSong(); };
+    exportButton.sub = "loops for Logic";
+    exportButton.setTooltip ("Saves the loops, each on its own and laid out over the song, for Logic.");
     exportButton.onClick = [this]
     {
         if (onExport)
-        {
             onExport();
-            return;
+        else
+        {
+            const auto result = RigExport::exportForLogic (engine, RigExport::defaultFolder());
+            say (result.files > 0 ? "Exported " + juce::String (result.files) + " files to " + result.folder.getFullPathName() : result.error);
         }
-        const auto result = RigExport::exportForLogic (engine, RigExport::defaultFolder());
-        say (result.files > 0 ? "Exported " + juce::String (result.files) + " files to " + result.folder.getFullPathName() : result.error);
     };
-    for (auto* b : { &addButton, &playButton, &inOrder, &back, &next, &keys, &exportButton })
+    moreButton.setTooltip ("More: keyboard buttons for Next and Back, clear the song.");
+    moreButton.onClick = [this] { showMoreMenu(); };
+    for (auto* b : { &addButton, &jamButton, &songButton, &playButton, &loopButton, &barsButton, &recButton, &exportButton, &moreButton })
     {
-        b->fontSize = 17.0f;
-        b->subSize = 11.0f;
+        b->fontSize = 16.0f;
+        b->subSize = 10.5f;
         addAndMakeVisible (b);
     }
-    addButton.fontSize = 19.0f;
+    addButton.fontSize = 18.0f;
+    moreButton.fontSize = 22.0f;
 
-    bigAdd.sub = "Keeps which tracks and loops play now";
-    bigAdd.fontSize = 26.0f;
-    bigAdd.subSize = 12.0f;
+    bigAdd.sub = "the tracks and patterns on now become its boxes";
+    bigEmpty.sub = "then click its boxes to fill them";
+    for (auto* b : { &bigAdd, &bigEmpty })
+    {
+        b->fontSize = 22.0f;
+        b->subSize = 12.0f;
+        addChildComponent (b);
+    }
     bigAdd.lit = Lit::next;
-    bigAdd.setTooltip (addButton.getTooltip());
-    bigAdd.onClick = [this] { addPart(); };
-    addChildComponent (bigAdd);
+    bigAdd.onClick = [this] { addSectionFromPlaying(); };
+    bigEmpty.onClick = [this] { addEmptySection(); };
 
     refresh();
-    startTimerHz (15);
+    startTimerHz (30);
 }
 
 SongView::~SongView() { stopTimer(); }
 
+//==============================================================================
+std::vector<int> SongView::shownLanes() const
+{
+    // Tools first (the order you'd build a song in), then the loops.
+    static const int order[] = { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip,
+                                 RigEngine::samplerStrip, RigEngine::vocoderStrip, RigEngine::inputStrip };
+    std::vector<int> out;
+    for (int strip : order)
+    {
+        const int lane = RigTimeline::laneForStrip (strip);
+        if (lane >= 0 && (showingAllLanes || rigsong::laneHasSomething (engine, lane)))
+            out.push_back (lane);
+    }
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+        if (showingAllLanes || rigsong::laneHasSomething (engine, RigTimeline::laneForLoop (l)))
+            out.push_back (RigTimeline::laneForLoop (l));
+    return out;
+}
+
+juce::String SongView::pageForLane (int lane) const
+{
+    if (! juce::isPositiveAndBelow (lane, RigTimeline::kLanes))
+        return "Groove";
+    const auto& info = RigTimeline::lanes()[(size_t) lane];
+    if (info.isLoop)
+        return "Looper";
+    switch (info.index)
+    {
+        case RigEngine::vocoderStrip: return "Vocoder";
+        case RigEngine::samplerStrip: return "Sampler";
+        case RigEngine::inputStrip:   return "Effects";
+        default:                      return "Groove";
+    }
+}
+
 void SongView::refresh()
 {
-    knownParts = (int) engine.getScenes().getScenes().size();
-    grid->updateSize();
+    if (bars != nullptr)
+        bars->refresh();
+    edited();
+}
+
+void SongView::edited()
+{
+    const auto list = rigsong::sections (timeline());
+    if (selSection >= (int) list.size())
+        select (-1, -1);
     resized();
+    inspector->update();
+    board->repaint();
+    names->repaint();
     repaint();
 }
 
-void SongView::addPart()
+void SongView::select (int section, int lane)
 {
-    auto& list = engine.getScenes().getScenes();
-    if ((int) list.size() >= RigScenes::kMaxScenes)
+    selSection = section;
+    selLane = section < 0 ? -1 : lane;
+    inspector->update();
+    board->repaint();
+    names->repaint();
+}
+
+//==============================================================================
+int SongView::addEmptySection()
+{
+    const auto list = rigsong::sections (timeline());
+    const double bars = list.empty() ? 4.0 : juce::jmax (4.0, list.back().bars);
+    const auto name = rigsong::suggestName (timeline());
+    const int i = rigsong::addSection (timeline(), name, list.empty() ? 4.0 : bars);
+    if (i < 0)
     {
-        say ("A song can have up to " + juce::String (RigScenes::kMaxScenes) + " parts.");
+        say ("A song can have up to " + juce::String (rigsong::kMaxSections) + " sections.");
+        return -1;
+    }
+    select (i, -1);
+    edited();
+    viewport.setViewPosition (board->getWidth(), 0);
+    say (rigsong::letterFor (i) + " (" + name + ") added. Click its boxes to say what plays; double-click its name to rename it.");
+    return i;
+}
+
+int SongView::addSectionFromPlaying()
+{
+    const auto list = rigsong::sections (timeline());
+    const auto name = rigsong::suggestName (timeline());
+    const int i = rigsong::addSectionFromWhatsPlaying (engine, name, list.empty() ? 8.0 : juce::jmax (4.0, list.back().bars));
+    if (i < 0)
+    {
+        say ("A song can have up to " + juce::String (rigsong::kMaxSections) + " sections.");
+        return -1;
+    }
+    select (i, -1);
+    edited();
+    viewport.setViewPosition (board->getWidth(), 0);
+    say (rigsong::letterFor (i) + " (" + name + ") plays what's on now. Click a box to change it.");
+    return i;
+}
+
+void SongView::setSongMode (bool song)
+{
+    timeline().on = song;
+    if (! song)
+        timeline().cycle = false;
+    say (song ? "Song: Play (and space) plays this song from the green marker." : "Jam: Play runs whatever you've switched on. The song waits here.");
+    repaint();
+}
+
+void SongView::playFromStart()
+{
+    if (timeline().isEmpty() && timeline().getMarkers().empty())
+    {
+        say ("Add a section first (+ Section).");
         return;
     }
-    static const char* names[] = { "Intro", "Verse", "Chorus", "Verse 2", "Bridge", "Drop", "Break", "Outro" };
-    RigScene scene;
-    scene.name = list.size() < std::size (names) ? names[list.size()] : "Part " + letterFor ((int) list.size());
-    scene.bars = list.empty() ? 8 : list.back().bars;
-    scene.state = engine.captureScene();
-    list.push_back (scene);
-    refresh();
-    viewport.setViewPosition (grid->getWidth(), viewport.getViewPositionY());
-    say ("Part " + letterFor ((int) list.size() - 1) + " (\"" + scene.name + "\") keeps what's playing now. Click its cells to switch "
-         "tracks on or off; double-click its name to rename it.");
+    timeline().cycle = false;
+    engine.songStartBar = 0;
+    engine.getTransport().stop();
+    engine.playTimeline (0);
+    say ("Playing the song from bar 1.");
 }
 
-void SongView::playSong()
+void SongView::loopSection (int section)
 {
-    auto& scenes = engine.getScenes();
-    if (scenes.getScenes().empty())
+    const auto list = rigsong::sections (timeline());
+    if (! juce::isPositiveAndBelow (section, (int) list.size()))
     {
-        say ("Save a part first: get something playing, then + New part.");
+        say ("Click a section's name first, then Loop section plays it over and over.");
         return;
     }
-    scenes.songMode = true;
-    engine.getTimeline().on = false;   // the parts run it, not the timeline
-    scenes.launch (0);
-    const bool wasPlaying = engine.getTransport().isPlaying();
-    if (! wasPlaying)
-        engine.getTransport().play();
-    say (wasPlaying ? "The song starts from part A at the next bar." : "Playing the song from part A.");
-}
-
-void SongView::clickCell (int part, int row)
-{
-    auto& list = engine.getScenes().getScenes();
-    if (! juce::isPositiveAndBelow (part, (int) list.size()) || ! juce::isPositiveAndBelow (row, (int) tracks().size()))
-        return;
-    setCellTo (part, row, cellValue (list[(size_t) part], tracks()[(size_t) row]) == 1 ? 0 : 1);
-}
-
-void SongView::setCellTo (int part, int row, int value)
-{
-    auto& scenes = engine.getScenes();
-    auto& list = scenes.getScenes();
-    if (! juce::isPositiveAndBelow (part, (int) list.size()) || ! juce::isPositiveAndBelow (row, (int) tracks().size()))
-        return;
-    const auto& t = tracks()[(size_t) row];
-    setCell (list[(size_t) part], t, value);
-    // The part that's playing changes now.
-    if (part == scenes.getCurrent() && value >= 0)
+    const auto& s = list[(size_t) section];
+    auto& tl = timeline();
+    if (tl.cycle.load() && std::abs (tl.cycleStart.load() - s.start) < kEps && std::abs (tl.cycleEnd.load() - s.end()) < kEps)
     {
-        if (t.isLoop)
-            engine.getLooper().getLayer (t.index).mute = value == 0;
-        else
-            engine.getStrip (t.index).mute = value == 0;
+        tl.cycle = false;
+        say ("Looping off: the song carries on.");
     }
-    grid->repaint();
-}
-
-void SongView::setPartLoopBank (int part, int bank)
-{
-    auto& scenes = engine.getScenes();
-    auto& list = scenes.getScenes();
-    if (! juce::isPositiveAndBelow (part, (int) list.size()) || bank >= engine.getNumLoopBanks())
-        return;
-    auto& scene = list[(size_t) part];
-    scene.state.loopBank = juce::jmax (-1, bank);
-    if (bank >= 0)
+    else
     {
-        if (part == scenes.getCurrent())
-            say (engine.switchLoopBank (bank));
-        else
-            say ("Part " + letterFor (part) + " plays the loops in \"" + engine.getLoopBankName (bank) + "\".");
+        tl.cycleStart = s.start;
+        tl.cycleEnd = s.end();
+        tl.cycle = true;
+        engine.songStartBar = s.start;
+        engine.playTimeline (s.start);
+        say ("Looping " + s.name + " (" + rigsong::barsText (s.bars) + "). Press Loop again to let the song go on.");
     }
-    grid->repaint();
+    inspector->update();
+    board->repaint();
 }
 
-void SongView::showKeyboardMenu()
+void SongView::showBars (bool show)
+{
+    barsShown = show;
+    if (bars != nullptr)
+    {
+        bars->refresh();
+        bars->setVisible (show);
+        if (show)
+            bars->grabKeyboardFocus();
+    }
+    barsButton.lit = show ? Lit::current : Lit::none;
+    barsButton.text = show ? "Sections view" : "Bars view";
+    barsButton.repaint();
+    edited();
+}
+
+//==============================================================================
+void SongView::pickClip (int clip)
+{
+    if (selSection < 0 || selLane < 0)
+        return;
+    if (clip == kSilent)
+        rigsong::clearBox (timeline(), selSection, selLane);
+    else
+        rigsong::setBox (timeline(), selSection, selLane, clip);
+    edited();
+}
+
+namespace
+{
+RigTimeline::Block* pickedBlock (RigTimeline& tl, int section, int lane)
+{
+    const int i = rigsong::boxBlock (tl, section, lane);
+    return i >= 0 ? &tl.getBlocks()[(size_t) i] : nullptr;
+}
+}
+
+void SongView::setFadeIn (double barsIn)
+{
+    if (auto* b = pickedBlock (timeline(), selSection, selLane))
+    {
+        b->fadeIn = barsIn;
+        timeline().changed();
+        edited();
+    }
+}
+
+void SongView::setFadeOut (double barsOut)
+{
+    if (auto* b = pickedBlock (timeline(), selSection, selLane))
+    {
+        b->fadeOut = barsOut;
+        timeline().changed();
+        edited();
+    }
+}
+
+void SongView::setStartBar (int bar)
+{
+    const auto list = rigsong::sections (timeline());
+    auto* b = pickedBlock (timeline(), selSection, selLane);
+    if (b == nullptr || ! juce::isPositiveAndBelow (selSection, (int) list.size()))
+        return;
+    const auto& s = list[(size_t) selSection];
+    const double end = b->end();
+    b->start = juce::jlimit (s.start, s.end() - 0.25, s.start + bar - 1);
+    b->length = juce::jmax (0.25, end - b->start);
+    timeline().changed();
+    edited();
+}
+
+void SongView::setLevel (float level)
+{
+    if (auto* b = pickedBlock (timeline(), selSection, selLane))
+    {
+        b->level = level;
+        timeline().changed();
+        board->repaint();
+    }
+}
+
+void SongView::setSectionLength (double barsLong)
+{
+    rigsong::setSectionBars (timeline(), selSection, barsLong);
+    edited();
+}
+
+void SongView::setSectionBank (int bank)
+{
+    auto& markers = timeline().getMarkers();
+    if (! juce::isPositiveAndBelow (selSection, (int) markers.size()))
+        return;
+    markers[(size_t) selSection].loopBank = bank;
+    timeline().changed();
+    edited();
+}
+
+//==============================================================================
+void SongView::showAddMenu()
 {
     juce::PopupMenu menu;
-    for (auto [control, what] : { std::pair<int, const char*> { RigRouting::nextScene, "Next" }, { RigRouting::previousScene, "Back" } })
+    menu.addItem ("Empty section (" + rigsong::suggestName (timeline()) + ")", [this] { addEmptySection(); });
+    menu.addItem ("Section from what's playing now", [this] { addSectionFromPlaying(); });
+    if (juce::isPositiveAndBelow (selSection, (int) rigsong::sections (timeline()).size()))
+        menu.addItem ("Copy " + rigsong::sections (timeline())[(size_t) selSection].name + " to the end", [this]
+                      {
+                          const int n = (int) rigsong::sections (timeline()).size();
+                          const int i = rigsong::duplicateSection (timeline(), selSection);
+                          if (i >= 0)
+                              rigsong::moveSection (timeline(), i, n);
+                          edited();
+                      });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&addButton));
+}
+
+void SongView::showMoreMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (showingAllLanes ? "Show only the tracks in use" : "Show every track", [this]
+                  {
+                      showingAllLanes = ! showingAllLanes;
+                      edited();
+                  });
+    for (auto [control, what] : { std::pair<int, const char*> { RigRouting::nextScene, "Next section" }, { RigRouting::previousScene, "Back a section" } })
     {
         const auto [channel, cc] = engine.getRouting().getAssignment (control);
         juce::ignoreUnused (channel);
@@ -701,276 +1109,266 @@ void SongView::showKeyboardMenu()
                           }
                       });
     }
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&keys));
+    menu.addSeparator();
+    menu.addItem ("Clear the whole song", ! timeline().isEmpty() || ! timeline().getMarkers().empty(), false, [this]
+                  {
+                      timeline().clear();
+                      select (-1, -1);
+                      edited();
+                      say ("The song is empty. Your loops and patterns are all still there.");
+                  });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&moreButton));
 }
 
-void SongView::timerCallback()
+void SongView::showSectionMenu (int section)
 {
-    if ((int) engine.getScenes().getScenes().size() != knownParts)
-        refresh();
-    const auto lit = engine.getScenes().songMode ? Lit::current : Lit::none;
-    if (inOrder.lit != lit)
-    {
-        inOrder.lit = lit;
-        inOrder.repaint();
-    }
-    const auto playLit = engine.getScenes().songMode && engine.getTransport().isPlaying() && engine.getScenes().getCurrent() >= 0
-                             ? Lit::play : Lit::none;
-    if (playButton.lit != playLit)
-    {
-        playButton.lit = playLit;
-        playButton.repaint();
-    }
-    grid->repaint();
-    repaint (nowArea.getUnion (stripArea).expanded (6));
+    const auto list = rigsong::sections (timeline());
+    if (! juce::isPositiveAndBelow (section, (int) list.size()))
+        return;
+    juce::PopupMenu menu, length;
+    for (int b : { 1, 2, 4, 8, 12, 16, 24, 32 })
+        length.addItem (rigsong::barsText (b), true, std::abs (list[(size_t) section].bars - b) < kEps, [this, section, b]
+                        {
+                            rigsong::setSectionBars (timeline(), section, b);
+                            edited();
+                        });
+    menu.addItem (juce::String::fromUTF8 ("\xe2\x96\xb6 Play from here"), [this, section] { engine.launchSection (section); });
+    menu.addItem ("Loop it", [this, section] { loopSection (section); });
+    menu.addSeparator();
+    menu.addItem ("Rename...", [this, section] { renameSection (section); });
+    menu.addSubMenu ("Length", length);
+    menu.addItem ("Copy (right after it)", [this, section] { rigsong::duplicateSection (timeline(), section); edited(); });
+    menu.addItem ("Move left", section > 0, false, [this, section] { rigsong::moveSection (timeline(), section, section - 1); select (section - 1, -1); edited(); });
+    menu.addItem ("Move right", section < (int) list.size() - 1, false, [this, section]
+                  { rigsong::moveSection (timeline(), section, section + 1); select (section + 1, -1); edited(); });
+    menu.addSeparator();
+    menu.addItem ("Delete", [this, section] { rigsong::removeSection (timeline(), section); select (-1, -1); edited(); });
+    menu.showMenuAsync (juce::PopupMenu::Options());
+}
+
+void SongView::showBoxMenu (int section, int lane)
+{
+    const auto list = rigsong::sections (timeline());
+    if (! juce::isPositiveAndBelow (section, (int) list.size()) || lane < 0)
+        return;
+    juce::PopupMenu menu, same, plays;
+    for (const auto& [clip, name] : rigsong::clipChoices (engine, lane))
+        plays.addItem (name, [this, section, lane, c = clip] { select (section, lane); pickClip (c); });
+    plays.addItem ("Silent", [this, section, lane] { select (section, lane); pickClip (kSilent); });
+    for (int i = 0; i < (int) list.size(); ++i)
+        if (i != section)
+            same.addItem (rigsong::letterFor (i) + dot() + list[(size_t) i].name, [this, i, section, lane]
+                          {
+                              rigsong::copyBox (timeline(), i, section, lane);
+                              edited();
+                          });
+    menu.addSubMenu ("Plays", plays);
+    menu.addSubMenu ("Same as", same, list.size() > 1);
+    menu.addItem ("Copy to every section", rigsong::boxBlock (timeline(), section, lane) >= 0, false, [this, section, lane, n = (int) list.size()]
+                  {
+                      for (int i = 0; i < n; ++i)
+                          if (i != section)
+                              rigsong::copyBox (timeline(), section, i, lane);
+                      edited();
+                  });
+    menu.addItem ("Copy to the next section", section + 1 < (int) list.size() && rigsong::boxBlock (timeline(), section, lane) >= 0, false,
+                  [this, section, lane]
+                  {
+                      rigsong::copyBox (timeline(), section, section + 1, lane);
+                      edited();
+                  });
+    menu.addItem ("Edit " + rigsong::laneName (lane) + juce::String::fromUTF8 (" \xe2\x86\x97"), [this, lane] { if (onGoTo) onGoTo (pageForLane (lane)); });
+    menu.showMenuAsync (juce::PopupMenu::Options());
+}
+
+void SongView::renameSection (int section)
+{
+    const auto list = rigsong::sections (timeline());
+    if (! juce::isPositiveAndBelow (section, (int) list.size()))
+        return;
+    auto* w = new juce::AlertWindow ("Rename section " + rigsong::letterFor (section), "", juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("name", list[(size_t) section].name);
+    w->addButton ("Rename", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<SongView> (this), w, section] (int result)
+                                                                   {
+                                                                       if (result == 1 && safe != nullptr)
+                                                                       {
+                                                                           rigsong::renameSection (safe->timeline(), section, w->getTextEditorContents ("name"));
+                                                                           safe->edited();
+                                                                       }
+                                                                   }),
+                        true);
 }
 
 //==============================================================================
+void SongView::timerCallback()
+{
+    if (bars != nullptr)
+        bars->tick();
+    const bool song = timeline().on.load();
+    const auto setLit = [] (rigpanels::PanelButton& b, Lit lit)
+    {
+        if (b.lit != lit)
+        {
+            b.lit = lit;
+            b.repaint();
+        }
+    };
+    setLit (jamButton, song ? Lit::none : Lit::current);
+    setLit (songButton, song ? Lit::play : Lit::none);
+    setLit (loopButton, timeline().cycle.load() ? Lit::current : Lit::none);
+    const bool recording = engine.getRecorder().getState() != RigRecorder::State::idle;
+    setLit (recButton, recording ? Lit::arm : Lit::none);
+
+    // Redraw when the song changes (here, in Bars view, or by a section key) or while it plays.
+    int hash = (int) timeline().getBlocks().size() * 7919 + (int) timeline().getMarkers().size() * 31;
+    for (const auto& b : timeline().getBlocks())
+        hash = hash * 31 + juce::roundToInt (b.start * 64 + b.length * 8 + b.clip + b.fadeIn * 5 + b.fadeOut * 3 + b.level * 100);
+    for (const auto& m : timeline().getMarkers())
+        hash = hash * 31 + juce::roundToInt (m.bar * 16 + m.bars) + m.name.hashCode();
+    hash = hash * 31 + (int) shownLanes().size();
+    if (hash != lastHash)
+    {
+        lastHash = hash;
+        edited();
+    }
+    else if (engine.getTransport().isPlaying() || isMouseOverOrDragging (true))
+        board->repaint();
+}
+
 void SongView::paint (juce::Graphics& g)
 {
     const auto& p = pal();
-    drawFace (g, getLocalBounds());
-
-    // The title.
-    auto title = titleArea;
     g.setColour (p.ink);
-    g.setFont (cond (30.0f, Weight::extra, 0.06f));
-    g.drawText ("SONG BUILDER", title.removeFromTop (34), juce::Justification::bottomLeft);
+    g.setFont (cond (30.0f, Weight::extra, 0.12f));
+    auto t = titleArea;
+    g.drawText ("SONG", t.removeFromLeft (100), juce::Justification::centredLeft);
     g.setColour (p.ink2);
     g.setFont (barlow (13.0f));
-    g.drawFittedText ("Columns are the parts of your song, rows are tracks. Click a cell to switch it.", title,
-                      juce::Justification::topLeft, 2, 1.0f);
+    g.drawFittedText ("Your song is a row of sections. Each box is what one track plays there.", t, juce::Justification::centredLeft, 2, 0.9f);
 
-    paintStrip (g);
-
-    if (engine.getScenes().getScenes().empty())
-        paintSteps (g, stepsArea);
-}
-
-void SongView::paintSteps (juce::Graphics& g, juce::Rectangle<int> area)
-{
-    const auto& p = pal();
-    struct Step { const char* title; const char* body; juce::Colour colour; };
-    const Step steps[] = {
-        { "Get something playing", "Make a beat on Groove (F1), play the Bass or Synth, or record loops on the Looper (F3). "
-                                   "Mute what shouldn't play yet.", RigColours::mpc },
-        { "Save it as a part", "Press + New part. It remembers which tracks and loops play, the MPC sequence, the bass "
-                               "pattern and the arp. Change what's playing and save again for the next part.", RigColours::song },
-        { "Play them in order", "Give each part a length in bars and press Play song. Or jump to any part live with "
-                                "keys 1-8 or the A-H buttons along the bottom.", colours::play },
-    };
-    const int gap = 18;
-    const int w = (area.getWidth() - 2 * gap) / 3;
-    for (int i = 0; i < 3; ++i)
+    if (! stepsArea.isEmpty())
     {
-        auto card = area.removeFromLeft (w).toFloat();
-        area.removeFromLeft (gap);
-        drawWell (g, card, 14.0f);
-        auto inner = card.reduced (22.0f, 18.0f);
-        auto top = inner.removeFromTop (64.0f);
-        auto disc = top.removeFromLeft (64.0f);
-        g.setColour (steps[i].colour);
-        g.fillEllipse (disc);
-        g.setColour (juce::Colour (0xff1c1305));
-        g.setFont (cond (40.0f, Weight::extra));
-        g.drawText (juce::String (i + 1), disc.toNearestInt(), juce::Justification::centred);
-        top.removeFromLeft (16.0f);
+        const char* steps[] = { "Make sounds on Groove, Looper, Sampler", "+ Section for each part", "Click a box: pick what plays",
+                                "Song mode: Play runs it over the click", "Rec song: stems for Logic" };
+        auto r = stepsArea;
+        const int w = r.getWidth() / 5;
+        for (int i = 0; i < 5; ++i)
+        {
+            auto cell = r.removeFromLeft (w).reduced (3, 0);
+            g.setColour (p.btn1.withAlpha (0.6f));
+            g.fillRoundedRectangle (cell.toFloat(), 5.0f);
+            auto num = cell.removeFromLeft (26).toFloat().withSizeKeepingCentre (18.0f, 18.0f);
+            g.setColour (p.ink);
+            g.fillEllipse (num);
+            g.setColour (p.face);
+            g.setFont (cond (13.0f, Weight::extra));
+            g.drawText (juce::String (i + 1), num, juce::Justification::centred);
+            g.setColour (p.ink);
+            g.setFont (barlow (12.5f));
+            g.drawFittedText (steps[i], cell.reduced (2, 0), juce::Justification::centredLeft, 1, 0.75f);
+        }
+    }
+
+    if (! emptyArea.isEmpty())
+    {
+        drawWell (g, emptyArea.toFloat(), 10.0f);
+        auto r = emptyArea.reduced (30, 24);
         g.setColour (p.wellInk);
-        g.setFont (cond (26.0f, Weight::extra, 0.05f));
-        g.drawFittedText (juce::String (steps[i].title).toUpperCase(), top.toNearestInt(), juce::Justification::centredLeft, 2, 0.8f);
-        inner.removeFromTop (14.0f);
+        g.setFont (cond (30.0f, Weight::extra, 0.06f));
+        g.drawText ("NO SONG YET", r.removeFromTop (40), juce::Justification::centred);
         g.setColour (p.wellInk2);
         g.setFont (barlow (16.0f));
-        g.drawFittedText (steps[i].body, inner.toNearestInt(), juce::Justification::topLeft, 6, 1.0f);
-
-        // An arrow to the next step.
-        if (i < 2)
-        {
-            const float x = card.getRight() + gap * 0.5f, y = card.getCentreY();
-            juce::Path arrow;
-            arrow.addTriangle (x - 5.0f, y - 9.0f, x + 6.0f, y, x - 5.0f, y + 9.0f);
-            g.setColour (p.ink2);
-            g.fillPath (arrow);
-        }
+        g.drawFittedText ("Get a beat, a bass line or some loops going first (Groove, Looper, Sampler).\n"
+                          "Then make the song's first section from what's playing, or an empty one to fill in box by box.",
+                          r.removeFromTop (60), juce::Justification::centred, 3, 1.0f);
     }
-}
 
-void SongView::paintStrip (juce::Graphics& g)
-{
-    const auto& p = pal();
-    auto& scenes = engine.getScenes();
-    const auto& list = scenes.getScenes();
-    const auto& transport = engine.getTransport();
-    const int bpb = juce::jmax (1, transport.getBeatsPerBar());
-    const int current = scenes.getCurrent(), queued = scenes.getQueued();
-
-    // Now: which part, and how far into it.
-    const auto lcd = nowArea.toFloat();
-    drawLcd (g, lcd);
-    juce::String line1, line2;
-    double progress = -1.0;
-    if (list.empty())
-        line1 = "NO PARTS YET", line2 = "PRESS + NEW PART";
-    else if (juce::isPositiveAndBelow (current, (int) list.size()))
+    if (! moreLanesArea.isEmpty())
     {
-        const auto& scene = list[(size_t) current];
-        line1 = "NOW " + letterFor (current) + " " + scene.name.toUpperCase();
-        const double into = juce::jmax (0.0, transport.getPositionInBeats() - scenes.getCurrentStartBeat());
-        const int bar = (int) std::floor (into / bpb) + 1;
-        if (scene.bars > 0)
-        {
-            line2 = "BAR " + juce::String (juce::jmin (bar, scene.bars)) + " OF " + juce::String (scene.bars);
-            progress = juce::jlimit (0.0, 1.0, into / (scene.bars * bpb));
-        }
-        else
-            line2 = "BAR " + juce::String (bar) + " - HOLDING";
-        if (juce::isPositiveAndBelow (queued, (int) list.size()))
-            line2 << juce::String::fromUTF8 (" \xe2\x86\x92 ") << letterFor (queued);
-        if (! transport.isPlaying())
-            line2 = "STOPPED";
+        g.setColour (p.ink2);
+        g.setFont (barlow (12.5f));
+        int hidden = RigTimeline::kLanes - (int) shownLanes().size();
+        g.drawText (showingAllLanes ? juce::String ("Showing every track. Click to show only the ones in use.")
+                                    : hidden > 0 ? "+ " + juce::String (hidden) + " more tracks with nothing in them yet (empty loops, Sampler, Line in). Click to show."
+                                                 : juce::String(),
+                    moreLanesArea, juce::Justification::centredLeft);
     }
-    else
-        line1 = juce::String (list.size()) + " PARTS", line2 = juce::isPositiveAndBelow (queued, (int) list.size()) ? "STARTING " + letterFor (queued)
-                                                                                                                      : "PRESS PLAY SONG";
-    auto text = lcd.reduced (12.0f, 4.0f);
-    lcdText (g, line1, text.removeFromTop (text.getHeight() * 0.55f), 26.0f, juce::Justification::centredLeft);
-    lcdText (g, line2, text, 19.0f, juce::Justification::centredLeft, colours::lcdGreen);
-
-    // The song to scale.
-    const auto strip = stripArea.toFloat();
-    drawWell (g, strip, 10.0f);
-    auto inner = strip.reduced (8.0f, 7.0f);
-    if (list.empty())
-    {
-        g.setColour (p.wellInk2);
-        g.setFont (barlow (14.0f));
-        g.drawText ("Your song shows up here, part by part, to scale.", inner.toNearestInt(), juce::Justification::centred);
-        return;
-    }
-    int totalBars = 0;
-    bool anyHold = false;
-    for (const auto& s : list)
-    {
-        totalBars += s.bars > 0 ? s.bars : 0;
-        anyHold = anyHold || s.bars <= 0;
-    }
-    // The total, at the right.
-    const double seconds = totalBars * bpb * 60.0 / juce::jmax (1.0, transport.getBpm());
-    auto total = inner.removeFromRight (120.0f);
-    g.setColour (p.wellInk);
-    g.setFont (cond (16.0f, Weight::extra, 0.06f));
-    g.drawText (juce::String (totalBars) + " BARS" + (anyHold ? "+" : ""), total.removeFromTop (total.getHeight() * 0.55f).toNearestInt(),
-                juce::Justification::centredRight);
-    g.setColour (p.wellInk2);
-    g.setFont (barlow (12.0f));
-    g.drawText (juce::String ((int) seconds / 60) + ":" + juce::String ((int) seconds % 60).paddedLeft ('0', 2) + (anyHold ? " +" : ""),
-                total.toNearestInt(), juce::Justification::centredRight);
-    inner.removeFromRight (10.0f);
-
-    const auto weight = [] (const RigScene& s) { return (float) (s.bars > 0 ? s.bars : 4); };
-    float sum = 0;
-    for (const auto& s : list)
-        sum += weight (s);
-    float x = inner.getX();
-    const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
-    for (int i = 0; i < (int) list.size(); ++i)
-    {
-        const float w = inner.getWidth() * weight (list[(size_t) i]) / sum;
-        auto seg = juce::Rectangle<float> (x, inner.getY(), w, inner.getHeight()).reduced (1.5f, 0.0f);
-        x += w;
-        const bool isCurrent = i == current, isQueued = i == queued;
-        const auto colour = isCurrent ? colours::play : isQueued && pulse ? colours::next : juce::Colour (0xff4a433d);
-        g.setColour (colour.withAlpha (isCurrent ? 0.35f : 1.0f));
-        g.fillRoundedRectangle (seg, 5.0f);
-        if (isCurrent && progress >= 0.0 && transport.isPlaying())
-        {
-            g.setColour (colours::play);
-            g.fillRoundedRectangle (seg.withWidth (seg.getWidth() * (float) progress), 5.0f);
-        }
-        else if (isCurrent)
-        {
-            g.setColour (colours::play);
-            g.fillRoundedRectangle (seg, 5.0f);
-        }
-        if (list[(size_t) i].bars <= 0)
-        {
-            // Hold: a dashed end, it stays until you move on.
-            g.setColour (juce::Colours::black.withAlpha (0.35f));
-            for (float y = seg.getY() + 2.0f; y < seg.getBottom() - 2.0f; y += 6.0f)
-                g.fillRect (seg.getRight() - 4.0f, y, 2.0f, 3.0f);
-        }
-        g.setColour (isCurrent || (isQueued && pulse) ? juce::Colour (0xff1c1305) : p.wellInk);
-        g.setFont (cond (15.0f, Weight::extra, 0.05f));
-        g.drawFittedText (letterFor (i) + (seg.getWidth() > 70.0f ? "  " + list[(size_t) i].name.toUpperCase() : juce::String()),
-                          seg.reduced (6.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
-    }
-}
-
-int SongView::partAtStrip (juce::Point<int> pos) const
-{
-    const auto& list = engine.getScenes().getScenes();
-    if (list.empty() || ! stripArea.contains (pos))
-        return -1;
-    auto inner = stripArea.toFloat().reduced (8.0f, 7.0f);
-    inner.removeFromRight (130.0f);
-    float sum = 0;
-    for (const auto& s : list)
-        sum += (float) (s.bars > 0 ? s.bars : 4);
-    float x = inner.getX();
-    for (int i = 0; i < (int) list.size(); ++i)
-    {
-        x += inner.getWidth() * (float) (list[(size_t) i].bars > 0 ? list[(size_t) i].bars : 4) / sum;
-        if ((float) pos.x < x)
-            return i;
-    }
-    return -1;
 }
 
 void SongView::mouseUp (const juce::MouseEvent& e)
 {
-    if (! e.mouseWasClicked())
-        return;
-    const int part = partAtStrip (e.getPosition());
-    if (part >= 0)
-        engine.getScenes().launch (part);
+    if (moreLanesArea.contains (e.getPosition()))
+    {
+        showingAllLanes = ! showingAllLanes;
+        edited();
+    }
 }
 
 void SongView::resized()
 {
-    auto area = getLocalBounds().reduced (18, 12);
+    auto area = getLocalBounds().reduced (18, 10);
 
-    // The top: title, then the buttons.
-    auto top = area.removeFromTop (58);
-    const int buttonW = juce::jlimit (92, 128, (top.getWidth() - 360) / 7 - 8);
-    for (auto* b : { &exportButton, &keys, &next, &back, &inOrder, &playButton })
+    auto top = area.removeFromTop (52);
+    const int gap = 7;
+    moreButton.setBounds (top.removeFromRight (44));
+    top.removeFromRight (gap);
+    const int w = juce::jlimit (96, 132, (top.getWidth() - 330) / 8 - gap);
+    for (auto* b : { &exportButton, &recButton, &barsButton, &loopButton, &playButton })
     {
-        b->setBounds (top.removeFromRight (buttonW));
-        top.removeFromRight (8);
+        b->setBounds (top.removeFromRight (w));
+        top.removeFromRight (gap);
     }
     top.removeFromRight (6);
-    addButton.setBounds (top.removeFromRight (juce::jmin (176, buttonW + 40)));
-    top.removeFromRight (16);
+    songButton.setBounds (top.removeFromRight (w - 10));
+    jamButton.setBounds (top.removeFromRight (w - 10));
+    top.removeFromRight (gap + 6);
+    addButton.setBounds (top.removeFromRight (w + 30));
+    top.removeFromRight (10);
     titleArea = top;
 
-    area.removeFromTop (10);
-    auto strip = area.removeFromTop (50);
-    nowArea = strip.removeFromLeft (290);
-    strip.removeFromLeft (12);
-    stripArea = strip;
-    setMouseCursor (juce::MouseCursor::NormalCursor);
-
     area.removeFromTop (8);
-    const bool empty = engine.getScenes().getScenes().empty();
-    viewport.setVisible (! empty);
-    bigAdd.setVisible (empty);
+    const bool empty = timeline().isEmpty() && timeline().getMarkers().empty();
+    stepsArea = area.removeFromTop (28);
+    area.removeFromTop (8);
+
+    if (bars != nullptr)
+        bars->setBounds (area);
+    const bool board_ = ! empty && ! barsShown;
+    viewport.setVisible (board_);
+    names->setVisible (board_);
+    inspector->setVisible (board_);
+    bigAdd.setVisible (empty && ! barsShown);
+    bigEmpty.setVisible (empty && ! barsShown);
+    emptyArea = {};
+    moreLanesArea = {};
+    if (barsShown)
+        return;
     if (empty)
     {
-        auto cta = area.removeFromBottom (juce::jmin (76, area.getHeight() / 4));
-        bigAdd.setBounds (cta.withSizeKeepingCentre (juce::jmin (520, cta.getWidth()), cta.getHeight()));
-        area.removeFromBottom (14);
-        stepsArea = area;
+        emptyArea = area.reduced (juce::jmax (0, (area.getWidth() - 900) / 2), juce::jmax (0, (area.getHeight() - 300) / 2));
+        auto r = emptyArea.reduced (30, 24);
+        r.removeFromTop (110);
+        auto buttons = r.removeFromTop (78);
+        const int bw = (buttons.getWidth() - 16) / 2;
+        bigAdd.setBounds (buttons.removeFromLeft (bw));
+        buttons.removeFromLeft (16);
+        bigEmpty.setBounds (buttons);
         return;
     }
-    stepsArea = {};
+
+    inspector->setBounds (area.removeFromRight (kInspectorW));
+    area.removeFromRight (10);
+    moreLanesArea = area.removeFromBottom (22);
+    area.removeFromBottom (4);
+    boardArea = area;
+    names->setBounds (area.removeFromLeft (kNamesW));
     viewport.setBounds (area);
+    const int lanes = juce::jmax (1, (int) shownLanes().size());
+    const int laneH = juce::jlimit (24, 46, (area.getHeight() - kHead - kRuler - 12) / lanes);
+    board->laneH = laneH;
+    names->laneH = laneH;
+    board->updateSize (area.getWidth(), area.getHeight() - (viewport.getHorizontalScrollBar().isVisible() ? 10 : 0));
+    inspector->resized();
 }

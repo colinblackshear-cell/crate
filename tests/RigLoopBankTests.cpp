@@ -261,10 +261,12 @@ struct RigLoopBankTests : juce::UnitTest
 
             SongView song (engine);
             song.setSize (1200, 700);
-            song.addPart();
-            expectEquals (engine.getScenes().getScenes()[0].state.loopBank, 0);
-            song.setPartLoopBank (0, 1);
-            expectEquals (engine.getScenes().getScenes()[0].state.loopBank, 1);
+            expectEquals (song.addSectionFromPlaying(), 0);
+            auto& markers = engine.getTimeline().getMarkers();
+            expectEquals (markers[0].loopBank, 0, "a section keeps the loop bank that's on");
+            song.select (0, -1);
+            song.setSectionBank (1);
+            expectEquals (markers[0].loopBank, 1);
             if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_LOOP_BANK_SNAPSHOT", {}); path.isNotEmpty())
             {
                 const auto save = [] (juce::Component& c, const juce::String& file)
@@ -278,8 +280,8 @@ struct RigLoopBankTests : juce::UnitTest
                 save (view, path + "-looper.png");
                 save (song, path + "-song.png");
             }
-            song.setPartLoopBank (0, -1);
-            expectEquals (engine.getScenes().getScenes()[0].state.loopBank, -1);
+            song.setSectionBank (-1);
+            expectEquals (markers[0].loopBank, -1);
         }
     }
 };

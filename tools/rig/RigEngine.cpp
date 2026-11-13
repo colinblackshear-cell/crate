@@ -1,4 +1,5 @@
 #include "RigEngine.h"
+#include "RigSong.h"
 
 #include "core/control/Launchpad.h"
 
@@ -1425,6 +1426,8 @@ void RigEngine::loadShow (const juce::ValueTree& show)
                         fx[(size_t) st].setStateInformation (state.getData(), (int) state.getSize());
         }
     }
+    // Shows from before the Song screen: their song parts become its sections.
+    rigsong::sectionsFromParts (*this);
     controlsMoved = true;
 }
 
@@ -1585,8 +1588,121 @@ void RigEngine::playTimeline (double bar)
     controlsMoved = true;
 }
 
+void RigEngine::launchSection (int i)
+{
+    const auto list = rigsong::sections (timeline);
+    if (! juce::isPositiveAndBelow (i, (int) list.size()))
+        return;
+    playTimeline (list[(size_t) i].start);
+}
+
+void RigEngine::playOrStop()
+{
+    if (transport.isPlaying())
+    {
+        transport.togglePlay();
+        return;
+    }
+    if (timeline.on.load() && ! timeline.isEmpty())
+        playTimeline (songStartBar);
+    else
+        transport.togglePlay();
+}
+
+void RigEngine::applyClip (int lane, int clip)
+{
+    const auto& info = RigTimeline::lanes()[(size_t) lane];
+    if (info.isLoop || clip < 0)
+        return;
+    switch (info.index)
+    {
+        case mpcStrip:
+        {
+            auto& project = mpc.getProject();
+            if (clip < (int) project.getSequences().size() && (clip != project.getCurrentSequenceIndex() || mpc.isSongPlaying()))
+            {
+                const bool atBar = std::exchange (mpc.switchAtBar, true);
+                mpc.selectSequence (clip);
+                mpc.switchAtBar = atBar;
+            }
+            break;
+        }
+        case bassStrip:
+            setParameter (bass.params, "pattern", (float) clip);
+            setParameter (bass.params, "sequencer", 1.0f);
+            break;
+        case drumsStrip:
+            setParameter (drums.params, "pattern", (float) clip);
+            setParameter (drums.params, "sequencer", 1.0f);
+            break;
+        case synthStrip:
+            setParameter (synthTool.params, "arpOn", clip > 0 ? 1.0f : 0.0f);
+            break;
+        default:
+            break;
+    }
+}
+
+void RigEngine::tickSong()
+{
+    const bool running = timeline.on.load() && transport.isPlaying() && ! timeline.isEmpty();
+    if (! running)
+    {
+        // Stopped: the next start sets every box's pattern again.
+        songClipAt.fill (-2.0);
+        songSection = -2;
+        return;
+    }
+    const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+    // A moment early, so the MPC and the patterns are ready on the box's first beat (a jump
+    // that's waiting goes there instead).
+    double beat = transport.getPositionInBeats() + 0.25;
+    if (const double jump = timeline.getPendingJump(); jump >= 0 && std::ceil (beat / bpb - 1.0e-9) * bpb - beat < 0.5)
+        beat = jump * bpb;
+    const double bar = beat / bpb;
+    for (int lane = 0; lane < RigTimeline::kLanes; ++lane)
+    {
+        const int i = timeline.blockAt (lane, bar);
+        const double at = i >= 0 ? timeline.getBlocks()[(size_t) i].start : -1.0;
+        if (std::abs (at - songClipAt[(size_t) lane]) < 1.0e-9)
+            continue;
+        songClipAt[(size_t) lane] = at;
+        if (i >= 0)
+            applyClip (lane, timeline.getBlocks()[(size_t) i].clip);
+    }
+    // A section's loop bank comes in on its first beat.
+    const int section = rigsong::sectionAt (timeline, bar);
+    if (section == songSection)
+        return;
+    songSection = section;
+    if (section < 0 || section >= (int) timeline.getMarkers().size())
+        return;
+    const int bank = timeline.getMarkers()[(size_t) section].loopBank;
+    if (bank >= 0 && bank < getNumLoopBanks() && bank != (queuedLoopBank >= 0 ? queuedLoopBank : getCurrentLoopBank()))
+    {
+        juce::String why;
+        if (! loopBankBusy (why))
+        {
+            storeLoopBank();
+            putLoopBankOnLayers (bank, rigsong::sections (timeline)[(size_t) section].start * bpb, nullptr);
+        }
+    }
+}
+
 void RigEngine::tickScenes()
 {
+    // The keyboard's learned Next and Back step through the song's sections, when it has some.
+    if (const auto list = rigsong::sections (timeline); ! list.empty())
+    {
+        const int n = scenes.nextPresses.exchange (0), b = scenes.backPresses.exchange (0);
+        if (n != 0 || b != 0)
+        {
+            const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+            const int now = juce::jmax (0, rigsong::sectionAt (timeline, transport.getPositionInBeats() / bpb));
+            launchSection (juce::jlimit (0, (int) list.size() - 1, now + n - b));
+        }
+    }
+    tickSong();
     const int early = scenes.tick (transport.getPositionInBeats(), transport.isPlaying(), transport.getBeatsPerBar());
     if (! juce::isPositiveAndBelow (early, (int) scenes.getScenes().size()))
         return;

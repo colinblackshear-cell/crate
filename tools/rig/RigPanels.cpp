@@ -1,4 +1,5 @@
 #include "RigPanels.h"
+#include "RigSong.h"
 #include "RigColours.h"
 
 namespace rigpanels
@@ -307,7 +308,7 @@ void Header::mouseUp (const juce::MouseEvent& e)
 //==============================================================================
 const juce::StringArray& ScreenBar::screens()
 {
-    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Mixer", "Effects" };
+    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Mixer", "Effects", "Song" };
     return s;
 }
 
@@ -322,7 +323,7 @@ ScreenBar::ScreenBar()
     {
         auto* b = tabs.add (new PanelButton (label (i)));
         b->key = "F" + juce::String (i + 1);
-        b->fontSize = 21.0f;
+        b->fontSize = i == 3 ? 16.0f : 19.0f;   // (the longest name)
         b->setTooltip ("Shows the " + label (i) + " screen (F" + juce::String (i + 1) + ").");
         b->onClick = [this, i] { if (onScreen) onScreen (screens()[i]); };
         addAndMakeVisible (b);
@@ -423,36 +424,31 @@ Footer::Footer (RigEngine& e) : engine (e)
 
 void Footer::pressPart (RigEngine& engine, int i)
 {
-    auto& scenes = engine.getScenes();
-    auto& list = scenes.getScenes();
-    if (juce::isPositiveAndBelow (i, (int) list.size()))
-        scenes.launch (i);
-    else if (i >= 0 && (int) list.size() < RigScenes::kMaxScenes)
-    {
-        // An empty part saves what's playing now, in the next free part.
-        RigScene scene;
-        scene.name = "Part " + juce::String::charToString ((juce::juce_wchar) ('A' + (int) list.size()));
-        scene.state = engine.captureScene();
-        list.push_back (scene);
-    }
+    // The keys are the song's sections: a full one plays from the next bar (with the song on);
+    // an empty one keeps what's playing as the next new section.
+    auto& tl = engine.getTimeline();
+    const int count = (int) rigsong::sections (tl).size();
+    if (juce::isPositiveAndBelow (i, count))
+        engine.launchSection (i);
+    else if (i >= count)
+        rigsong::addSectionFromWhatsPlaying (engine, rigsong::suggestName (tl), count == 0 ? 8.0 : rigsong::sections (tl).back().bars);
 }
 
 void Footer::showPartMenu (int i)
 {
-    auto& list = engine.getScenes().getScenes();
-    if (! juce::isPositiveAndBelow (i, (int) list.size()))
+    const int count = (int) rigsong::sections (engine.getTimeline()).size();
+    if (! juce::isPositiveAndBelow (i, count))
         return;
     juce::PopupMenu menu;
-    menu.addItem (1, "Save what's playing now into this part");
-    menu.addItem (2, "Rename, reorder and set lengths (Song page)...");
+    menu.addItem (1, juce::String::fromUTF8 ("\xe2\x96\xb6 Play from here"));
+    menu.addItem (2, "Rename, lengths and what plays (Song screen)...");
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (parts[i]),
                         [safe = juce::Component::SafePointer<Footer> (this), i] (int result)
                         {
                             if (safe == nullptr)
                                 return;
-                            auto& scenes = safe->engine.getScenes().getScenes();
-                            if (result == 1 && juce::isPositiveAndBelow (i, (int) scenes.size()))
-                                scenes[(size_t) i].state = safe->engine.captureScene();
+                            if (result == 1)
+                                safe->engine.launchSection (i);
                             else if (result == 2 && safe->onEditParts)
                                 safe->onEditParts();
                         });
@@ -460,23 +456,29 @@ void Footer::showPartMenu (int i)
 
 void Footer::tick (const std::function<float (int)>& meterOf)
 {
-    auto& scenes = engine.getScenes();
-    const auto& list = scenes.getScenes();
+    const auto& tl = engine.getTimeline();
+    const auto list = rigsong::sections (tl);
     const int count = (int) list.size();
+    auto& clock = engine.getTransport();
+    const bool songOn = tl.on.load() && clock.isPlaying();
+    const int bpb = juce::jmax (1, clock.getBeatsPerBar());
+    const int current = songOn ? rigsong::sectionAt (tl, clock.getPositionInBeats() / bpb) : -1;
+    const double pending = tl.getPendingJump();
+    const int queued = songOn && pending >= 0 ? rigsong::sectionAt (tl, pending) : -1;
     const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
     for (int i = 0; i < parts.size(); ++i)
     {
         auto* b = parts[i];
-        const auto letter = juce::String::charToString ((juce::juce_wchar) ('A' + i));
+        const auto letter = rigsong::letterFor (i);
         const bool has = i < count;
         juce::String sub;
         Lit lit = Lit::none;
-        if (i == scenes.getCurrent())
-            sub = juce::String::fromUTF8 ("\xe2\x96\xb6 Now"), lit = Lit::play;
-        else if (i == scenes.getQueued())
+        if (i == queued && i != current)
             sub = "Next", lit = pulse ? Lit::next : Lit::none;
+        else if (i == current)
+            sub = juce::String::fromUTF8 ("\xe2\x96\xb6 ") + list[(size_t) i].name, lit = Lit::play;
         else if (has)
-            sub = list[(size_t) i].name == "Part " + letter ? juce::String() : list[(size_t) i].name;
+            sub = list[(size_t) i].name;
         else
             sub = i == count ? "+ Save" : "Empty";
         const bool empty = ! has && i != count;
@@ -485,9 +487,9 @@ void Footer::tick (const std::function<float (int)>& meterOf)
             b->sub = sub;
             b->lit = lit;
             b->empty = empty;
-            b->setTooltip (has ? "Plays part " + letter + " from the next bar (straight away when stopped). Right-click to save over it "
-                                 "or rename it. Key " + juce::String (i + 1) + "."
-                               : "Saves what's playing now (beats, patterns, mutes) as a song part. Then press it to come back to it.");
+            b->setTooltip (has ? "Plays section " + letter + " (" + list[(size_t) i].name + ") from the next bar, with the song on "
+                                 "(straight away when stopped). Right-click for the Song screen. Key " + juce::String (i + 1) + "."
+                               : "Keeps what's playing now (beats, patterns, loops) as the song's next section. Then press it to come back to it.");
             b->repaint();
         }
     }
@@ -581,7 +583,7 @@ void Footer::paint (juce::Graphics& g)
     g.fillRect (getLocalBounds().removeFromTop (2));
     message.setColour (juce::Label::textColourId, p.ink2);
 
-    engraved (g, juce::String::fromUTF8 ("Song parts \xc2\xb7 keys 1\xe2\x80\x93" "8 \xc2\xb7 switch on next bar"), partsLabel.withWidth (500));
+    engraved (g, juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1\xe2\x80\x93" "8"), partsLabel.withWidth (500));
     if (! showChips)
         return;
     engraved (g, "Live now", chipsLabel);
