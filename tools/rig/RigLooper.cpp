@@ -146,6 +146,26 @@ void RigLooper::applySwap (Layer& layer, int index)
     ++layer.version;
 }
 
+bool RigLooper::replaceLayerAudio (int index, juce::AudioBuffer<float> audio)
+{
+    auto& layer = layers[(size_t) index];
+    if (audio.getNumChannels() == 1)
+    {
+        audio.setSize (2, audio.getNumSamples(), true);
+        audio.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
+    }
+    {
+        const juce::SpinLock::ScopedLockType sl (layer.lock);
+        if ((State) layer.state.load() != State::playing || layer.length <= 0 || audio.getNumSamples() != layer.length)
+            return false;
+        std::swap (layer.audio, audio);
+        if (undoLayer == index)
+            undoLayer = -1;
+    }
+    ++layer.version;
+    return true;   // the old buffer is freed here, outside the lock
+}
+
 juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index) const
 {
     auto& layer = const_cast<Layer&> (layers[(size_t) index]);

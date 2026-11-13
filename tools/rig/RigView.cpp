@@ -16,6 +16,7 @@
 #include "GuideView.h"
 #include "EffectsView.h"
 #include "RigSongStart.h"
+#include "QuantizePanel.h"
 
 namespace Theme = crate::Theme;
 
@@ -244,6 +245,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     // Starting a song from nothing.
     header.newSong.onClick = [this] { askNewSong(); };
     header.newPattern.onClick = [this] { showPatternMenu(); };
+    header.quantize.onClick = [this] { showQuantize (quantizeTarget(), &header.quantize); };
 
     // The song parts and Live now.
     footer.onTrack = [this] (int strip)
@@ -319,6 +321,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     grooveView->onSample = [this] { toggleSampling(); };
     grooveView->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
     grooveView->showMic = devices != nullptr;
+    grooveView->onQuantize = [this] (int target, juce::Component* from) { showQuantize (target, from); };
     grooveView->refresh();
     groove = grooveView;
     addPage ("Groove", RigColours::song, grooveView);
@@ -340,6 +343,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     looperView->onSay = [this] (const juce::String& text) { say (text); };
     looperView->onSongBuilder = [this] { showTab ("Song"); };
     looperView->onPedals = [this] (int layer) { showEffectsFor (-1, layer); };
+    looperView->onQuantize = [this] (int target, juce::Component* from) { showQuantize (target, from); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
     // The Sampler · MPC screen, over the full sample editor (a page of its own, in More).
@@ -861,6 +865,13 @@ void RigView::timerCallback()
     }
     screenBar.setCurrent (currentPage());
     pageChanged();
+    if (auto& q = engine.getQuantizer(); q.lastAutoMessage.isNotEmpty())
+    {
+        const auto text = std::exchange (q.lastAutoMessage, {});
+        say (text);
+        if (auto* panel = getQuantizePanel())
+            panel->setStatus (text);
+    }
     if (moreView != nullptr && moreView->isShowing())
         moreView->tick();
 
@@ -1322,6 +1333,12 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         saveShow();
         return true;
     }
+    // Cmd+U: quantize what's on screen (as in Ableton; Logic's Q plays notes here).
+    if (key == juce::KeyPress ('u', juce::ModifierKeys::commandModifier, 0))
+    {
+        quantizeNow();
+        return true;
+    }
     // Cmd+[ and Cmd+]: back and forward, as in a web browser.
     if (key == juce::KeyPress ('[', juce::ModifierKeys::commandModifier, 0))
     {
@@ -1731,4 +1748,75 @@ void RigView::layoutSetup (juce::Rectangle<int> page)
         }
         routing.removeFromTop (4);
     }
+}
+
+//==============================================================================
+int RigView::quantizeTarget() const
+{
+    const auto page = currentPage();
+    if (page == "Groove" && groove != nullptr)
+    {
+        switch (groove->getTrack())
+        {
+            case GrooveView::drums:
+            case GrooveView::sampler:  return RigQuantizer::mpc;
+            case GrooveView::machine:  return RigQuantizer::machine;
+            case GrooveView::bass:     return RigQuantizer::bass;
+            case GrooveView::synth:    return RigQuantizer::synth;
+            default:                   return RigQuantizer::allLoops;
+        }
+    }
+    if (page == "Looper" && looper != nullptr)
+    {
+        const int layer = looper->getSelected();
+        return juce::isPositiveAndBelow (layer, RigLooper::kLayers)
+                && engine.getLooper().getState (layer) != RigLooper::State::empty
+            ? RigQuantizer::loopTarget (layer) : (int) RigQuantizer::allLoops;
+    }
+    if (page == "MPC" || page == "Sampler")
+        return RigQuantizer::mpc;
+    if (page == "Drum machine")
+        return RigQuantizer::machine;
+    if (page == "Bass")
+        return RigQuantizer::bass;
+    if (page == "Synth")
+        return RigQuantizer::synth;
+    return RigQuantizer::allLoops;
+}
+
+QuantizePanel* RigView::getQuantizePanel() const
+{
+    return dynamic_cast<QuantizePanel*> (quantizePanel.getComponent());
+}
+
+void RigView::showQuantize (int target, juce::Component* from)
+{
+    if (auto* open = getQuantizePanel(); open != nullptr && open->isShowing())
+    {
+        // Already open: point it at this.
+        open->setTarget (target);
+        return;
+    }
+    auto panel = std::make_unique<QuantizePanel> (engine, target);
+    panel->setLookAndFeel (&vintageLook);
+    panel->onSay = [this] (const juce::String& text) { say (text); };
+    quantizePanel = panel.get();
+    auto* anchor = from != nullptr ? from : static_cast<juce::Component*> (&header.quantize);
+    const auto area = getLocalArea (anchor, anchor->getLocalBounds());
+    juce::CallOutBox::launchAsynchronously (std::move (panel), area, this);
+}
+
+juce::String RigView::quantizeNow()
+{
+    const int target = quantizeTarget();
+    const auto text = engine.getQuantizer().apply (target);
+    say (text);
+    if (auto* panel = getQuantizePanel())
+    {
+        panel->setTarget (target);
+        panel->setStatus (text);
+    }
+    if (groove != nullptr)
+        groove->repaint();
+    return text;
 }
