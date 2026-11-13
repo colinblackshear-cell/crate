@@ -2,11 +2,18 @@
 
 #include "RigEngine.h"
 #include "VocoderScreen.h"
+#include "VocoderSettings.h"
 #include "Parameters.h"
 
 namespace
 {
 float param (RigEngine& engine, const char* id) { return engine.getVocoder().params.getRawParameterValue (id)->load(); }
+
+void setParam (RigEngine& engine, const char* id, float value)
+{
+    auto* p = engine.getVocoder().params.getParameter (id);
+    p->setValueNotifyingHost (p->convertTo0to1 (value));
+}
 }
 
 struct RigVocoderScreenTests : juce::UnitTest
@@ -19,7 +26,7 @@ struct RigVocoderScreenTests : juce::UnitTest
         {
             RigEngine engine;
             engine.prepare (48000.0, 480);
-            VocoderScreen screen (engine, nullptr, true);
+            VocoderScreen screen (engine, true);
             screen.setSize (1400, 600);
 
             for (int i = 0; i < VocoderScreen::numPedals; ++i)
@@ -86,7 +93,7 @@ struct RigVocoderScreenTests : juce::UnitTest
         {
             RigEngine engine;
             engine.prepare (48000.0, 480);
-            VocoderScreen screen (engine, nullptr, true);
+            VocoderScreen screen (engine, true);
             screen.setSize (1400, 600);
 
             int total = 0;
@@ -132,7 +139,7 @@ struct RigVocoderScreenTests : juce::UnitTest
         {
             RigEngine engine;
             engine.prepare (48000.0, 480);
-            VocoderScreen screen (engine, nullptr, true);
+            VocoderScreen screen (engine, true);
             screen.setSize (1400, 600);
 
             screen.stepSound (1);
@@ -159,7 +166,7 @@ struct RigVocoderScreenTests : juce::UnitTest
         {
             RigEngine engine;
             engine.prepare (48000.0, 480);
-            VocoderScreen screen (engine, new juce::Component(), true);
+            VocoderScreen screen (engine, true);
             screen.setSize (1400, 600);
 
             // The mic starts off (no feedback through speakers), so you can see your voice but not hear it.
@@ -216,6 +223,173 @@ struct RigVocoderScreenTests : juce::UnitTest
             screen.setStudio (false);
             expect (! screen.isStudio());
         }
+
+        beginTest ("Mix: your voice against the robot, the out level and the effects, right on the pedalboard");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            VocoderScreen screen (engine, true);
+            screen.setSize (1440, 600);
+
+            // The faders are the vocoder's own levels (the ones Full window's bottom bar used to have).
+            auto* voice = dynamic_cast<juce::Slider*> (findByTooltip (screen, "Your voice: how much"));
+            auto* robot = dynamic_cast<juce::Slider*> (findByTooltip (screen, "Robot: how loud"));
+            auto* level = dynamic_cast<juce::Slider*> (findByTooltip (screen, "Out: the vocoder's level"));
+            expect (voice != nullptr && robot != nullptr && level != nullptr, "three faders on the pedalboard");
+            if (voice == nullptr || robot == nullptr || level == nullptr)
+                return;
+            expect (voice->isVisible() && robot->isVisible() && level->isVisible());
+            voice->setValue (0.2, juce::sendNotificationSync);
+            expectWithinAbsoluteError (param (engine, ParamIDs::voiceLevel), 0.2f, 0.01f, "the voice fader turns your voice down");
+            robot->setValue (0.7, juce::sendNotificationSync);
+            expectWithinAbsoluteError (param (engine, ParamIDs::robotLevel), 0.7f, 0.01f);
+            level->setValue (-6.0, juce::sendNotificationSync);
+            expectWithinAbsoluteError (param (engine, ParamIDs::outputGain), -6.0f, 0.05f);
+            screen.setDryWet (1.0);
+            expectWithinAbsoluteError (voice->getValue(), 0.0, 0.01, "Blend moves the faders");
+            expectWithinAbsoluteError (robot->getValue(), 1.0, 0.01);
+
+            // FX: every effect at once, keeping their settings; on is always heard.
+            expect (screen.isEffectsOn(), "a new vocoder has its effects switch on");
+            screen.pressEffects();
+            expect (! screen.isEffectsOn());
+            expect (param (engine, ParamIDs::fxOn) < 0.5f);
+            screen.pressEffects();
+            expect (screen.isEffectsOn());
+            expect (screen.isOn (VocoderScreen::space), "with every effect down, Space comes up so it's heard");
+            screen.stomp (VocoderScreen::space);
+            setParam (engine, ParamIDs::delayMix, 0.4f);
+            screen.pressEffects();
+            screen.pressEffects();
+            expectWithinAbsoluteError (param (engine, ParamIDs::delayMix), 0.4f, 0.01f, "the effects keep their settings");
+            expect (! screen.isOn (VocoderScreen::space), "and Space isn't forced up when Echo is already there");
+        }
+
+        beginTest ("the robot always has something to sing (as the vocoder's own window did)");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            VocoderScreen screen (engine, true);
+            screen.watchRobot();
+            expectEquals (screen.getActiveChord(), -1);
+            setParam (engine, ParamIDs::robotOn, 1.0f);
+            screen.watchRobot();
+            expectEquals (screen.getActiveChord(), 0, "the robot comes on singing the key's own chord");
+            expect (screen.isOn (VocoderScreen::chords), "and the Chords pedal shows it");
+            screen.pressChord (0);
+            setParam (engine, ParamIDs::robotOn, 0.0f);
+            screen.watchRobot();
+            setParam (engine, ParamIDs::singToPlay, 1.0f);
+            setParam (engine, ParamIDs::robotOn, 1.0f);
+            screen.watchRobot();
+            expectEquals (screen.getActiveChord(), -1, "not with Sing to play: your voice gives the notes");
+        }
+
+        beginTest ("Full window: every setting on one page, no Easy / Studio / Advanced");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            VocoderScreen screen (engine, true);
+            screen.setSize (1440, 640);
+            screen.setStudio (true);
+            auto& page = screen.getSettings();
+            expect (page.isVisible() && page.getWidth() > 1000, "the page fills the screen");
+
+            // Every one of the vocoder's settings is here, apart from the vocoder app's own clock
+            // (Kaleidobox keeps the time).
+            const auto shown = page.shownIds();
+            for (auto* p : engine.getVocoder().getParameters())
+                if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
+                {
+                    const auto id = ranged->getParameterID();
+                    if (id != ParamIDs::tempo && id != ParamIDs::metronome)
+                        expect (shown.contains (id), "Full window shows " + id);
+                }
+            int knobs = 0;
+            for (int i = 0; i < VocoderSettings::numSections; ++i)
+                knobs += page.numKnobs (i);
+            expectEquals (knobs, shown.size() - 7, "a knob for each setting, a switch for each part");
+            expectEquals (shown.size(), (int) juce::StringArray (shown).size());
+            {
+                juce::StringArray unique (shown);
+                unique.removeDuplicates (false);
+                expectEquals (unique.size(), shown.size(), "each setting once");
+            }
+
+            // The parts' switches are the pedals'.
+            page.pressSwitch (VocoderSettings::robot);
+            expect (screen.isOn (VocoderScreen::robot));
+            page.pressSwitch (VocoderSettings::rhythm);
+            expect (screen.isOn (VocoderScreen::arp));
+            page.pressSwitch (VocoderSettings::vintageMic);
+            expect (param (engine, ParamIDs::vintageOn) > 0.5f);
+            page.pressSwitch (VocoderSettings::voice);
+            expect (screen.isMonitoring(), "Your voice's switch is Monitor");
+            page.pressSwitch (VocoderSettings::chords);
+            expect (screen.getActiveChord() >= 0, "Chords plays");
+            page.pressSwitch (VocoderSettings::chords);
+            expectEquals (screen.getActiveChord(), -1, "and stops");
+
+            // Reset: the part's settings back, its switch as it was.
+            setParam (engine, ParamIDs::bands, 33.0f);
+            page.resetSection (VocoderSettings::robot);
+            expectWithinAbsoluteError (param (engine, ParamIDs::bands), 20.0f, 0.5f);
+            expect (screen.isOn (VocoderScreen::robot), "reset keeps it on");
+
+            // Raw voice: back to just your voice.
+            page.pressRawVoice();
+            expect (! screen.isOn (VocoderScreen::robot) && ! screen.isOn (VocoderScreen::arp) && param (engine, ParamIDs::vintageOn) < 0.5f);
+            expectEquals (screen.getActiveChord(), -1);
+
+            // The keys, with Hold.
+            page.setHold (true);
+            expect (page.isHolding());
+            page.getKeyState().noteOn (1, 60, 0.8f);
+            page.pressStopAll();
+            expect (! page.getKeyState().isNoteOn (1, 60), "Stop all lets go of held keys");
+
+            // The pedalboard's controls hide; the sound row stays.
+            if (auto* fader = findByTooltip (screen, "Your voice: how much"))
+                expect (! fader->isVisible());
+            if (auto* sounds = findByTooltip (screen, "Every sound, by kind"))
+                expect (sounds->isVisible(), "the sounds stay along the top");
+
+            if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_VOCODER_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                setParam (engine, ParamIDs::robotOn, 1.0f);
+                setParam (engine, ParamIDs::reverbMix, 0.3f);
+                setParam (engine, ParamIDs::voiceLevel, 0.35f);
+                screen.pressChord (2);
+                vintage::LookAndFeel look;
+                screen.setLookAndFeel (&look);
+                for (auto [studio, w, h, suffix] : { std::tuple<bool, int, int, const char*> { false, 1440, 600, "-board" }, { true, 1440, 600, "-full" },
+                                                     { true, 1920, 900, "-full-big" } })
+                {
+                    screen.setSize (w, h);
+                    screen.setStudio (studio);
+                    screen.refresh();
+                    page.refresh();
+                    const auto image = screen.createComponentSnapshot (screen.getLocalBounds(), true, 1.0f);
+                    juce::File file (path + suffix + ".png");
+                    file.deleteFile();
+                    juce::FileOutputStream stream (file);
+                    juce::PNGImageFormat().writeImageToStream (image, stream);
+                }
+                screen.setLookAndFeel (nullptr);
+            }
+        }
+    }
+
+    static juce::Component* findByTooltip (juce::Component& root, const juce::String& start)
+    {
+        for (auto* c : root.getChildren())
+        {
+            if (auto* t = dynamic_cast<juce::SettableTooltipClient*> (c); t != nullptr && t->getTooltip().startsWith (start))
+                return c;
+            if (auto* found = findByTooltip (*c, start))
+                return found;
+        }
+        return nullptr;
     }
 };
 

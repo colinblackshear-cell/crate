@@ -33,6 +33,8 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
           { "Switch the mic on (top bar) and wear headphones.",
             "Start from your raw voice, then switch pedals on one at a time: Auto-Tune, Robot, Rhythm, Effects.",
             "The Robot needs a chord: play keys, or pick a chord on the Vocoder screen.",
+            "Mix (right of the pedals): the Voice fader is how much of your own voice you hear, Robot is the effect. Turn them on the fly.",
+            "Full window shows every setting on one page, each part with its switch, plus the keys.",
             "To keep a vocal part, record it on a loop: Looper > Record from > Vocoder." },
           "" },
 

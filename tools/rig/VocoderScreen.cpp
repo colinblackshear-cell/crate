@@ -1,4 +1,5 @@
 #include "VocoderScreen.h"
+#include "VocoderSettings.h"
 
 #include "Parameters.h"   // the vocoder's
 #include "Presets.h"
@@ -241,8 +242,8 @@ private:
 };
 
 //==============================================================================
-VocoderScreen::VocoderScreen (RigEngine& e, juce::Component* studioView, bool isStandalone)
-    : engine (e), standalone (isStandalone), studio (studioView)
+VocoderScreen::VocoderScreen (RigEngine& e, bool isStandalone)
+    : engine (e), standalone (isStandalone)
 {
     setOpaque (true);
     auto& params = engine.getVocoder().params;
@@ -256,7 +257,7 @@ VocoderScreen::VocoderScreen (RigEngine& e, juce::Component* studioView, bool is
     boardButton.onClick = [this] { setStudio (false); };
     studioButton.onClick = [this] { setStudio (true); };
     boardButton.setTooltip ("The pedalboard: stomp the pedals, click one to open every setting it has.");
-    studioButton.setTooltip ("The vocoder's own window.");
+    studioButton.setTooltip ("Every setting the vocoder has, on one page: each part with its switch, every knob, the tuner, the chords and the keys.");
 
     for (auto* b : { &prevSound, &nextSound, &soundsButton, &surpriseButton })
     {
@@ -387,12 +388,53 @@ VocoderScreen::VocoderScreen (RigEngine& e, juce::Component* studioView, bool is
     dryWet.setColour (juce::Slider::rotarySliderFillColourId, colours::vocoder);
     dryWet.setRange (0.0, 1.0, 0.01);
     dryWet.setDoubleClickReturnValue (true, 0.5);
-    dryWet.setTooltip ("Dry (your voice) to wet (the pedals). In the middle you hear both at full.");
+    dryWet.setTooltip ("Blend: your voice (left) to the robot (right). In the middle you hear both at full. It moves both faders.");
     dryWet.onValueChange = [this] { setDryWet (dryWet.getValue()); };
     addAndMakeVisible (dryWet);
 
-    if (studio != nullptr)
-        addChildComponent (*studio);
+    // Mix: Your voice and the Robot on faders, so how much of you against the effect is one move.
+    {
+        using Attachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+        voiceAttachment = std::make_unique<Attachment> (params, ParamIDs::voiceLevel, voiceFader);
+        robotAttachment = std::make_unique<Attachment> (params, ParamIDs::robotLevel, robotFader);
+        levelAttachment = std::make_unique<Attachment> (params, ParamIDs::outputGain, levelFader);
+        const std::pair<juce::Slider*, const char*> faders[] = {
+            { &voiceFader, "Your voice: how much of your own voice you hear, under the pedals. Double-click for where it starts." },
+            { &robotFader, "Robot: how loud the robot (the vocoder) is against your voice. Double-click for where it starts." },
+            { &levelFader, "Out: the vocoder's level. Double-click for 0 dB." } };
+        const juce::Colour colourOf[] = { juce::Colour (0xffd8c49a), colours::vocoder, colours::master };
+        for (int i = 0; i < 3; ++i)
+        {
+            auto* f = faders[i].first;
+            f->setTooltip (faders[i].second);
+            f->setColour (juce::Slider::trackColourId, colourOf[i]);
+            f->setMouseDragSensitivity (160);
+            f->onValueChange = [this] { dryWet.setValue (getDryWet(), juce::dontSendNotification); repaint (outWell); };
+            addAndMakeVisible (*f);
+        }
+        voiceFader.setDoubleClickReturnValue (true, 0.9);
+        robotFader.setDoubleClickReturnValue (true, 1.0);
+        levelFader.setDoubleClickReturnValue (true, 0.0);
+
+        for (auto* b : { &voiceSwitch, &robotSwitch, &fxSwitch })
+        {
+            setInWell (*b, true);
+            setLit (*b, Lit::play);
+            b->getProperties().set ("fontSize", 15.0f);
+            addAndMakeVisible (*b);
+        }
+        voiceSwitch.setTooltip ("Your voice on or off (the same as Monitor).");
+        robotSwitch.setTooltip ("The robot on or off (the same as its pedal).");
+        fxSwitch.setTooltip ("Effects on or off: Dirt, Chorus, Echo and Space all at once, keeping their settings.");
+        voiceSwitch.onClick = [this] { pressMonitor(); };
+        robotSwitch.onClick = [this] { pressRobot(); };
+        fxSwitch.onClick = [this] { pressEffects(); };
+    }
+
+    settings = std::make_unique<VocoderSettings> (engine, *this);
+    addChildComponent (*settings);
+    robotWasOn = param (ParamIDs::robotOn) > 0.5f;
+    soundsSeen = engine.getVocoder().getSoundChanges();
 
     inputHistory.assign (120, 0.0f);
     shownSound = engine.getVocoder().getProgramName (engine.getVocoder().getCurrentProgram());
@@ -404,6 +446,50 @@ VocoderScreen::VocoderScreen (RigEngine& e, juce::Component* studioView, bool is
 VocoderScreen::~VocoderScreen()
 {
     stopTimer();
+}
+
+void VocoderScreen::watchRobot()
+{
+    using namespace ParamIDs;
+    auto& vocoder = engine.getVocoder();
+    const bool robotNow = param (robotOn) > 0.5f;
+    const bool picked = vocoder.getSoundChanges() != soundsSeen;
+    soundsSeen = vocoder.getSoundChanges();
+    // Sing to play and Drone give it notes already.
+    if (robotNow && (! robotWasOn || picked) && param (singToPlay) < 0.5f && param (drone) < 0.5f && activeChord < 0)
+    {
+        bool held = false;
+        for (int note = 0; note < 128 && ! held; ++note)
+            held = vocoder.keyboardState.isNoteOnForChannels (0xffff, note);
+        if (! held)
+            pressChord (0);
+    }
+    robotWasOn = robotNow;
+}
+
+bool VocoderScreen::isEffectsOn() const
+{
+    return param (ParamIDs::fxOn) > 0.5f;
+}
+
+void VocoderScreen::pressEffects()
+{
+    using namespace ParamIDs;
+    if (isEffectsOn())
+        setParam (fxOn, 0.0f);
+    else
+    {
+        setParam (fxOn, 1.0f);
+        // On should always be heard: with every effect down, Space comes up.
+        bool any = false;
+        for (auto* id : { drive, crush, chorusMix, delayMix, reverbMix })
+            any = any || param (id) > 0.001f;
+        if (! any)
+            setParam (reverbMix, keptSpace > 0.005f ? keptSpace : 0.3f);
+    }
+    bypassed = false;
+    updateButtons();
+    repaint();
 }
 
 juce::String VocoderScreen::pedalName (int i)
@@ -855,12 +941,15 @@ double VocoderScreen::getDryWet() const
 
 void VocoderScreen::setStudio (bool show)
 {
-    studioShown = show && studio != nullptr;
+    studioShown = show;
+    // The sound row stays along the top; the page takes the place of the pedalboard.
+    const juce::Component* topRow[] = { &boardButton, &studioButton, &prevSound, &nextSound, &soundsButton, &surpriseButton, &notesButton, &bypassButton };
     for (auto* c : getChildren())
-        if (c != studio.get() && c != &boardButton && c != &studioButton)
+        if (c != settings.get() && std::find (std::begin (topRow), std::end (topRow), c) == std::end (topRow))
             c->setVisible (! studioShown);
-    if (studio != nullptr)
-        studio->setVisible (studioShown);
+    settings->setVisible (studioShown);
+    if (studioShown)
+        settings->refresh();
     selectPedal (selected);   // the rack's knobs and chords
     updateButtons();
     resized();
@@ -898,6 +987,19 @@ void VocoderScreen::updateButtons()
             looperLayer = -1;
     }
     toLooperButton.setToggleState (looping, juce::dontSendNotification);
+
+    auto onOff = [] (juce::TextButton& b, bool on, const juce::String& name)
+    {
+        b.setToggleState (on, juce::dontSendNotification);
+        const auto text = (name.isEmpty() ? juce::String() : name + " ") + (on ? "on" : "off");
+        if (b.getButtonText() != text)
+            b.setButtonText (text);
+    };
+    onOff (voiceSwitch, isMonitoring(), {});   // the fader's name is above it
+    onOff (robotSwitch, isOn (robot), {});
+    onOff (fxSwitch, isEffectsOn(), "FX");
+    voiceFader.setAlpha (isMonitoring() || engine.getVocoder().isVoiceStandingIn() ? 1.0f : 0.45f);
+    robotFader.setAlpha (isOn (robot) ? 1.0f : 0.45f);
     toLooperButton.setButtonText (looping ? "Loop it" : "To looper");
 
     const bool on = isOn (selected);
@@ -947,6 +1049,8 @@ void VocoderScreen::timerCallback()
         chordSignature = chordSig;
     }
 
+    watchRobot();
+
     if (! isShowing())
         return;
 
@@ -956,7 +1060,7 @@ void VocoderScreen::timerCallback()
     for (auto* p : pedals)
         sig << "/" << p->knob.getValue();
     sig << "/" << param (robotLevel) << "/" << param (voiceLevel) << "/" << (int) engine.micOn.load() << "/" << (int) engine.vocoderOn.load()
-        << "/" << engine.getVocoder().getCurrentProgram();
+        << "/" << engine.getVocoder().getCurrentProgram() << "/" << param (fxOn) << "/" << param (outputGain) << "/" << activeChord;
     if (sig != shownSignature)
     {
         shownSignature = sig;
@@ -979,9 +1083,6 @@ void VocoderScreen::paint (juce::Graphics& g)
     drawFace (g, getLocalBounds());
     const auto& p = pal();
 
-    if (studioShown)
-        return;
-
     // The sound's name.
     {
         const auto box = soundLcd.toFloat();
@@ -994,6 +1095,9 @@ void VocoderScreen::paint (juce::Graphics& g)
                  juce::Justification::centredLeft, colours::lcdGreen);
         lcdText (g, shownSound, text, 26.0f, juce::Justification::centredLeft);
     }
+
+    if (studioShown)
+        return;
 
     // The patch cable along the board.
     if (! pedals.isEmpty())
@@ -1067,13 +1171,30 @@ void VocoderScreen::paint (juce::Graphics& g)
         g.drawFittedText (info.description, rackText, juce::Justification::topLeft, 2, 0.9f);
     }
 
-    // Out.
+    // Mix.
     drawWell (g, outWell.toFloat(), 12.0f);
     g.setColour (p.wellInk);
     g.setFont (cond (21.0f, Weight::extra, 0.08f));
-    g.drawText ("OUT", outTitle, juce::Justification::centred);
+    g.drawText ("MIX", outTitle, juce::Justification::centredLeft);
+    engraved (g, juce::String::fromUTF8 ("you \xc2\xb7 robot \xc2\xb7 out"), outTitle.withTrimmedLeft (52), juce::Justification::centredLeft, 12.0f, true);
     drawLeds (g, outLeds.toFloat(), std::sqrt (outLevel), 14, true);
-    engraved (g, juce::String::fromUTF8 ("Dry/wet"), dryWetLabel, juce::Justification::centred, 12.0f, true);
+    engraved (g, "Blend", dryWetLabel, juce::Justification::centred, 12.0f, true);
+    {
+        const char* names[] = { "Voice", "Robot", "Out" };
+        juce::Slider* faders[] = { &voiceFader, &robotFader, &levelFader };
+        auto& params = engine.getVocoder().params;
+        const char* ids[] = { ParamIDs::voiceLevel, ParamIDs::robotLevel, ParamIDs::outputGain };
+        for (int i = 0; i < 3; ++i)
+        {
+            engraved (g, names[i], faderNames[(size_t) i], juce::Justification::centred, 13.0f, true);
+            const auto box = faderValues[(size_t) i].toFloat();
+            drawLcd (g, box, 4.0f);
+            auto value = readable (params.getParameter (ids[i]), faders[i]->getValue());
+            if (i == 2 && faders[i]->getValue() > 0.05)
+                value = "+" + value;
+            lcdText (g, value, box, juce::jmin (17.0f, box.getHeight() * 0.9f));
+        }
+    }
 }
 
 void VocoderScreen::resized()
@@ -1101,8 +1222,7 @@ void VocoderScreen::resized()
     }
     r.removeFromTop (12);
 
-    if (studio != nullptr)
-        studio->setBounds (r);
+    settings->setBounds (r);
 
     // The pedalboard.
     r.removeFromTop (22);   // its caption
@@ -1123,7 +1243,7 @@ void VocoderScreen::resized()
     // Raw voice | the rack | Out.
     rawWell = r.removeFromLeft (juce::jlimit (200, 250, r.getWidth() / 6));
     r.removeFromLeft (12);
-    outWell = r.removeFromRight (juce::jlimit (120, 150, r.getWidth() / 9));
+    outWell = r.removeFromRight (juce::jlimit (320, 360, r.getWidth() / 4));
     r.removeFromRight (12);
     rackWell = r;
     {
@@ -1146,15 +1266,36 @@ void VocoderScreen::resized()
         scopeArea = w;
     }
     {
-        auto o = outWell.reduced (12, 12);
+        // Voice | Robot | Out faders, each with its value and switch; the meter; Blend and To looper.
+        auto o = outWell.reduced (12, 10);
         outTitle = o.removeFromTop (24);
-        o.removeFromTop (6);
-        toLooperButton.setBounds (o.removeFromBottom (40));
-        o.removeFromBottom (8);
-        outLeds = o.removeFromLeft (22);
-        o.removeFromLeft (6);
-        dryWetLabel = o.removeFromBottom (16);
-        dryWet.setBounds (o.withSizeKeepingCentre (juce::jmin (o.getWidth(), 70), juce::jmin (o.getHeight(), 70)));
+        o.removeFromTop (4);
+        auto side = o.removeFromRight (juce::jmin (92, o.getWidth() / 4));
+        o.removeFromRight (4);
+        outLeds = o.removeFromRight (14).withTrimmedTop (18).withTrimmedBottom (34);
+        o.removeFromRight (4);
+        const int cw = o.getWidth() / 3;
+        juce::Slider* faders[] = { &voiceFader, &robotFader, &levelFader };
+        juce::TextButton* switches[] = { &voiceSwitch, &robotSwitch };
+        for (int i = 0; i < 3; ++i)
+        {
+            auto c = (i == 2 ? o : o.removeFromLeft (cw)).reduced (2, 0);
+            faderNames[(size_t) i] = c.removeFromTop (16);
+            if (i < 2)
+                switches[i]->setBounds (c.removeFromBottom (30));
+            else
+                c.removeFromBottom (30);
+            c.removeFromBottom (4);
+            faderValues[(size_t) i] = c.removeFromBottom (20);
+            c.removeFromBottom (2);
+            faders[i]->setBounds (c.withSizeKeepingCentre (juce::jmin (c.getWidth(), 48), c.getHeight()));
+        }
+        toLooperButton.setBounds (side.removeFromBottom (30));
+        side.removeFromBottom (6);
+        fxSwitch.setBounds (side.removeFromBottom (30));
+        side.removeFromBottom (6);
+        dryWetLabel = side.removeFromBottom (16);
+        dryWet.setBounds (side.withSizeKeepingCentre (juce::jmin (side.getWidth(), 66), juce::jmin (side.getHeight(), 66)));
     }
     layoutRack();
 }
