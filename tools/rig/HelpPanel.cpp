@@ -15,7 +15,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
             "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
             "Press Play (or the space bar). Everything plays in time with Kaleidobox's clock.",
-            "Build the song: More > Song builder (parts you switch between, in order) or Looper > Timeline (lay it out bar by bar, with fades).",
+            "Build the song on the Song screen (F7): sections in order, and what each track plays in each.",
             "Save show (Cmd+S) keeps everything. Export for Logic gives you the WAV files." },
           "Use headphones when the mic is on, so the speakers don't feed back into it." },
 
@@ -24,7 +24,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Click the 16 steps to program its pattern. The bar button shows the other bars of the beat.",
             "Your keyboard's keys and its 8 knobs follow the picked track.",
             "Mute or solo tracks on the left; a muted track keeps going silently, so it comes back in time.",
-            "The song parts along the bottom (A-H): an empty one saves what's playing; a full one plays it from the next bar." },
+            "The song's sections along the bottom (A-H): the next empty one saves what's playing as a section; a full one plays it from the next bar." },
           "Patterns play by themselves. To play over them, use the keys, or record a loop on top in the Looper." },
 
         { "Vocoder (F2): sing live",
@@ -55,25 +55,25 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "More > MPC has the same tools, with the full kit, sequencer and Sound + FX page." },
           "Hits you record with 16 Levels keep their level when the sequence plays them back." },
 
-        { "Build a song",
-          { "Open the Song builder: More > Song builder, or the Song button on the Looper. (Or skip it: New pattern > Keep "
-            "what's playing as the next song part does the same as + New part, from any screen.)",
-            "Get something playing: a beat on the Groove screen, the Bass or Synth, loops on the Looper. Mute what shouldn't play yet.",
-            "Press + New part. It keeps what's playing now as the next column: which tracks and loops play, the MPC sequence, "
-            "the bass pattern and the arp.",
-            "Each column is a part, each row a track. Click a cell: ON plays in that part, OFF is muted. Right-click it for "
-            "AS IS (the part leaves that track alone).",
-            "Click a part's length (the amber LCD) to set how many bars it plays. Hold stays until you move on.",
-            "Double-click a part's name to rename it. Its menu moves it earlier or later, copies it, saves what's playing into it, or deletes it.",
-            "Press Play song: it plays from part A, each part for its length, then the next one. The strip at the top shows the "
-            "whole song to scale and where you are.",
-            "A loop that comes in with a part starts from its top on the part's first beat.",
-            "Over each part's loops is its loop bank (from the Looper): click it to pick which batch of loops that part plays." },
-          "Jump to any part live: click its letter or its place in the strip, press keys 1-8, or the A-H buttons along the bottom. "
-          "Keys puts Next and Back on your keyboard's buttons." },
+        { "Build a song (Song, F7)",
+          { "Make your sounds first: a beat and a bass line on the Groove screen, loops on the Looper, pads on the Sampler.",
+            "Open Song (F7). Your song is a row of sections (Intro, Verse, Chorus...), each as wide as its bars. "
+            "Down the side are the tracks you're using.",
+            "+ Section adds one at the end: empty, or one that plays what's on now. (From any screen: New pattern > Keep what's playing.)",
+            "Each box is what one track plays in that section, by name: Beat 1, Pattern 2, Guitar. An empty box is quiet.",
+            "Click a box. The panel on the right picks what it plays (which sequence or pattern), how it comes in and goes out "
+            "(straight, or a fade), which bar it comes in on, and its level. Double-click an empty box: it plays what that track has on now.",
+            "Right-click a box: Same as another section, copy it to the next or to every section, or Edit (opens that track's screen).",
+            "Click a section's name for its length, name and loop bank, or to copy, move or delete it. Drag its right edge for more or fewer bars.",
+            "Jam or Song decides what the big Play (and space) does: Jam plays whatever you've switched on; Song plays this song "
+            "from the green marker. Click the ruler to move the marker.",
+            "From start plays the song from bar 1 over the click. Loop section plays the picked one over and over while you practise.",
+            "Bars view is the same song bar by bar, for fine edits: a loop that comes in on bar 3, a fade across two sections." },
+          "Jump to any section live with the A-H buttons along the bottom or keys 1-8: it goes there at the next bar. "
+          "The ... menu puts Next and Back on your keyboard's buttons." },
 
         { "Compose on the timeline",
-          { "Record your loops and make your patterns first. Then open Looper > Timeline.",
+          { "Record your loops and make your patterns first. Then open Song (F7) > Bars view: the same song, bar by bar.",
             "Each loop (1-8) and each tool (MPC, Bass, Synth, Vocoder, Sampler, Input) has a lane. Click a lane to put a block on it: "
             "that's where it plays.",
             "Drag a block to move it. Drag its right edge to make it longer (a loop repeats; thin lines show where), its left edge to start it later.",
@@ -84,12 +84,12 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "A lane with no blocks says \"live\": the timeline leaves it alone, so you can sing through the vocoder or play your guitar over the song.",
             "Rec onto song: record a loop while the song plays and it lands on its lane where you played it.",
             "Record song plays it once and keeps every tool as its own WAV. Export for Logic gives the loops laid out over the song." },
-          "Already built parts in the Song builder? From parts... lays them out on the timeline to shape further. Cmd+Z undoes, Delete removes a block, Cmd+D copies it." },
+          "The sections on the Song screen are the named sections here: change one and the other follows. Cmd+Z undoes, Delete removes a block, Cmd+D copies it." },
 
         { "Save and export",
           { "Save show (top bar, or Cmd+S): the show and its loops, together. The first time it asks for a name.",
             "More > Save show as... saves a copy under a new name; More > Open show... opens one.",
-            "Export for Logic (Song builder, or More): every loop as a WAV (with its effects and dry), each loop laid out over "
+            "Export for Logic (Song screen, or More): every loop as a WAV (with its effects and dry), each loop laid out over "
             "your song, and a MIDI file with the tempo and a marker per part. Every file starts on bar 1.",
             "Rec (top bar) records the whole set as you play it: a WAV per tool, the mix, and the notes as MIDI, in Music > Crate > Rig > Recordings.",
             "In Logic: set the same tempo and drag the files in at bar 1." },
@@ -97,7 +97,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
 
         { "Play live and sing over it",
           { "Build the song (see Build a song), then switch the mic on and pick your vocoder sound.",
-            "Press Play song, or launch parts yourself from the song part buttons.",
+            "Switch the Song screen to Song and press Play, or jump between sections yourself with the A-H buttons.",
             "Sing: your voice goes through the vocoder live. Record a part of it onto a loop if you want it to repeat.",
             "Press Rec (top bar) first to keep the whole performance as stems for Logic.",
             "The Mixer (F5) has every level, pan, mute and solo; its Big stage button shows everything at once in giant buttons, with the FX pad for the whole mix." },

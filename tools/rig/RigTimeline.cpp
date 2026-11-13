@@ -44,12 +44,16 @@ void RigTimeline::changed()
         b.length = juce::jmax (kMinLength, b.length);
         b.fadeIn = juce::jlimit (0.0, b.length, b.fadeIn);
         b.fadeOut = juce::jlimit (0.0, b.length - b.fadeIn, b.fadeOut);
+        b.level = juce::jlimit (0.0f, 1.0f, b.level);
     }
     std::stable_sort (blocks.begin(), blocks.end(), [] (const Block& a, const Block& b) { return a.start < b.start; });
     std::stable_sort (markers.begin(), markers.end(), [] (const Marker& a, const Marker& b) { return a.bar < b.bar; });
 
     const juce::SpinLock::ScopedLockType sl (lock);
     fill (pending, blocks);
+    // The song lasts to the end of its last section, even when that's quiet (an empty outro).
+    if (! markers.empty() && markers.back().bars > 0)
+        pending.end = juce::jmax (pending.end, markers.back().bar + markers.back().bars);
     ++pendingVersion;
 }
 
@@ -117,10 +121,10 @@ float RigTimeline::gainAt (const Block* list, int count, int lane, double bar, b
             g = juce::jmax (0.0, x) / b.fadeIn;
         if (b.fadeOut > kEpsilon && b.length - x < b.fadeOut)
             g = juce::jmin (g, (b.length - x) / b.fadeOut);
-        gain = juce::jmax (gain, g);
+        // An equal-power feel: a fade sounds even, not as if it drops out at the end.
+        gain = juce::jmax (gain, std::sin (g * juce::MathConstants<double>::halfPi) * (double) b.level);
     }
-    // An equal-power feel: a fade sounds even, not as if it drops out at the end.
-    return (float) std::sin (gain * juce::MathConstants<double>::halfPi);
+    return (float) gain;
 }
 
 double RigTimeline::blockStartAt (const Block* list, int count, int lane, double bar)
@@ -152,6 +156,10 @@ juce::ValueTree RigTimeline::toTree() const
         node.setProperty ("length", b.length, nullptr);
         node.setProperty ("fadeIn", b.fadeIn, nullptr);
         node.setProperty ("fadeOut", b.fadeOut, nullptr);
+        if (b.clip >= 0)
+            node.setProperty ("clip", b.clip, nullptr);
+        if (b.level < 1.0f)
+            node.setProperty ("level", b.level, nullptr);
         tree.appendChild (node, nullptr);
     }
     for (const auto& m : markers)
@@ -159,6 +167,10 @@ juce::ValueTree RigTimeline::toTree() const
         juce::ValueTree node ("Marker");
         node.setProperty ("bar", m.bar, nullptr);
         node.setProperty ("name", m.name, nullptr);
+        if (m.bars > 0)
+            node.setProperty ("bars", m.bars, nullptr);
+        if (m.loopBank >= 0)
+            node.setProperty ("loopBank", m.loopBank, nullptr);
         tree.appendChild (node, nullptr);
     }
     return tree;
@@ -185,11 +197,14 @@ void RigTimeline::fromTree (const juce::ValueTree& tree)
                 b.length = node.getProperty ("length", 4.0);
                 b.fadeIn = node.getProperty ("fadeIn", 0.0);
                 b.fadeOut = node.getProperty ("fadeOut", 0.0);
+                b.clip = node.getProperty ("clip", -1);
+                b.level = (float) (double) node.getProperty ("level", 1.0);
                 blocks.push_back (b);
             }
             else if (node.hasType ("Marker"))
             {
-                markers.push_back ({ (double) node.getProperty ("bar", 0.0), node.getProperty ("name").toString() });
+                markers.push_back ({ (double) node.getProperty ("bar", 0.0), node.getProperty ("name").toString(),
+                                     (double) node.getProperty ("bars", 0.0), (int) node.getProperty ("loopBank", -1) });
             }
         }
     }

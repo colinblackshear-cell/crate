@@ -581,7 +581,7 @@ MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<Console
                                    "The Vocoder: your voice through the pedals.",
                                    "The Sampler and MPC pads, with the full sample editor.",
                                    "The Looper: eight layers in time.",
-                                   "The Song builder: parts and the timeline.",
+                                   "The Song: sections in order, what plays in each, Bars view.",
                                    "Your sounds and Splice folder.",
                                    "The big Stage view for playing live: giant buttons, the FX pad. Esc comes back.",
                                    "Set-up: what your keyboard's keys and pads play, the split, sampling between tools, knob Learn, the click and the mic." };

@@ -64,6 +64,12 @@ public:
     // Plays the timeline from `bar` (message thread): turns it on, song mode off, and unmutes
     // the loops and tools it uses (it brings them in and out itself).
     void playTimeline (double bar);
+    // The Song screen's sections (rigsong): plays section `i` (from the next bar while
+    // playing), with the song on. And the Play/Stop at the top: in Song mode (the timeline on)
+    // Play starts the song from `songStartBar`; in Jam it just runs the clock.
+    void launchSection (int i);
+    void playOrStop();
+    double songStartBar = 0;
 
     // Record the set (message thread): every strip and the mix as WAVs, and what's played on
     // the keys and pads as MIDI, into `folder`; it starts at the next bar. Call stopRecording()
@@ -324,6 +330,11 @@ private:
     void putLoopBankOnLayers (int bank, double beat, const RigScene::State* scene);
     RigScenes scenes;
     RigTimeline timeline;
+    // Message thread: what each box asks a tool to play, just before it starts.
+    void tickSong();
+    void applyClip (int lane, int clip);
+    std::array<double, RigTimeline::kLanes> songClipAt = [] { std::array<double, RigTimeline::kLanes> a; a.fill (-2.0); return a; }();
+    int songSection = -2;
     // Audio thread: the timeline's level for each strip over this block, and where each loop
     // was last started from (so a block starts its loop once).
     std::array<float, numStrips> arrangeFrom {}, arrangeTo {};

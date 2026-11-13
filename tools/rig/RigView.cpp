@@ -195,7 +195,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto& transport = engine.getTransport();
 
     // The top bar.
-    header.play.onClick = [&transport] { transport.togglePlay(); };
+    header.play.onClick = [this] { engine.playOrStop(); };
     header.stop.onClick = [this, &transport]
     {
         transport.stop();
@@ -302,7 +302,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
                            "The first time it asks for a name; after that it saves straight away (Cmd+S). More > Save show as... for a copy.");
     openButton.onClick = [this] { openShow(); };
 
-    // The six screens first (F1-F6), then what More shows. The tab bar is hidden: the screen
+    // The seven screens first (F1-F7), then what More shows. The tab bar is hidden: the screen
     // buttons and More pick the page.
     tabs.setTabBarDepth (0);
     tabs.setOutline (0);
@@ -333,7 +333,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     auto* looperView = new LooperView (engine);
     looperView->setLookAndFeel (&vintageLook);
     looperView->onSay = [this] (const juce::String& text) { say (text); };
-    looperView->onSongBuilder = [this] { showTab ("Song"); };
+    looperView->onSongBuilder = [this] { showTab ("Song"); if (song != nullptr) song->showBars (false); };
+    looperView->onBarsView = [this] { showTab ("Song"); if (song != nullptr) song->showBars (true); };
     looperView->onPedals = [this] (int layer) { showEffectsFor (-1, layer); };
     looper = looperView;
     addPage ("Looper", loopsColour, looperView);
@@ -428,6 +429,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     songView->setLookAndFeel (&vintageLook);
     songView->onSay = [this] (const juce::String& text) { say (text); };
     songView->onExport = [this] { exportForLogic(); };
+    songView->onGoTo = [this] (const juce::String& page) { showTab (page); };
     song = songView;
     addPage ("Song", RigColours::song, songView);
     auto* soundsView = new SoundsView (engine);
@@ -911,27 +913,25 @@ void RigView::timerCallback()
         const int bar = (int) std::floor (beats / beatsPerBar) + 1;
         const int beat = (int) std::floor (std::fmod (beats, (double) beatsPerBar)) + 1;
         shown.barBeat = juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat);
-        auto& scenes = engine.getScenes();
-        const auto& list = scenes.getScenes();
-        const int current = scenes.getCurrent(), queued = scenes.getQueued();
-        auto nameOf = [&list] (int i)
+        // The song's section: where it plays now (with the song on), and the one it goes to next.
+        const auto& tl = engine.getTimeline();
+        const auto list = rigsong::sections (tl);
+        const bool songOn = tl.on.load() && ! list.empty();
+        const int current = songOn ? rigsong::sectionAt (tl, beats / juce::jmax (1, beatsPerBar)) : -1;
+        const double pending = tl.getPendingJump();
+        const int queued = songOn && pending >= 0 ? rigsong::sectionAt (tl, pending) : -1;
+        if (juce::isPositiveAndBelow (current, (int) list.size()))
         {
-            const auto letter = juce::String::charToString ((juce::juce_wchar) ('A' + i));
-            const auto& n = list[(size_t) i].name;
-            return n == "Part " + letter ? juce::String ("Part ") + letter : n;
-        };
-        if (juce::isPositiveAndBelow (current, (int) list.size()) && current < 26)
-        {
-            shown.partLetter = juce::String::charToString ((juce::juce_wchar) ('A' + current));
-            shown.partName = nameOf (current);
+            shown.partLetter = rigsong::letterFor (current);
+            shown.partName = list[(size_t) current].name;
         }
-        if (juce::isPositiveAndBelow (queued, (int) list.size()) && queued < 26)
+        if (juce::isPositiveAndBelow (queued, (int) list.size()) && queued != current)
         {
             shown.partQueued = true;
-            shown.partName = "Next: " + juce::String::charToString ((juce::juce_wchar) ('A' + queued)) + " " + nameOf (queued);
+            shown.partName = "Next: " + rigsong::letterFor (queued) + " " + list[(size_t) queued].name;
         }
         else
-            shown.partName = (shown.partName.isNotEmpty() ? shown.partName + juce::String::fromUTF8 (" \xc2\xb7 ") : juce::String())
+            shown.partName = (shown.partName.isNotEmpty() ? shown.partName + juce::String::fromUTF8 (" \xc2\xb7 ") : (songOn ? juce::String::fromUTF8 ("Song \xc2\xb7 ") : juce::String()))
                            + "Bar.Beat";
         // VU: -20 dB at the left end, 0 at three quarters, +3 at the right.
         auto vu = [] (float gain)
@@ -1252,7 +1252,7 @@ void RigView::showHelp (bool show)
     if (show)
     {
         auto page = currentPage();
-        if (page == "Looper" && looper != nullptr && looper->getTimeline() != nullptr)
+        if ((page == "Looper" && looper != nullptr && looper->getTimeline() != nullptr) || (page == "Song" && song != nullptr && song->isShowingBars()))
             page = "Timeline";
         else if (page == "Looper" && looper != nullptr && looper->getSongGrid() != nullptr)
             page = "Song";
@@ -1301,7 +1301,7 @@ bool RigView::keyPressed (const juce::KeyPress& key)
 {
     if (key == juce::KeyPress::spaceKey)
     {
-        engine.getTransport().togglePlay();
+        engine.playOrStop();
         return true;
     }
     if (key == juce::KeyPress ('s', juce::ModifierKeys::commandModifier, 0))
@@ -1326,7 +1326,7 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         showTab (currentPage() == "Stage" ? "Mixer" : "Groove");
         return true;
     }
-    // F1-F6: the screens.
+    // F1-F7: the screens.
     for (int i = 0; i < rigpanels::ScreenBar::screens().size(); ++i)
         if (key.getKeyCode() == juce::KeyPress::F1Key + i)
         {
@@ -1352,6 +1352,8 @@ juce::String RigView::currentPlace() const
     const auto page = currentPage();
     if (page == "Sampler" && samplerScreen != nullptr && samplerScreen->isEditMode())
         return "Sampler editor";
+    if (page == "Song" && song != nullptr && song->isShowingBars())
+        return "Song / Bars";
     if (page == "Looper" && looper != nullptr)
     {
         if (looper->getTimeline() != nullptr)
@@ -1364,6 +1366,14 @@ juce::String RigView::currentPlace() const
 
 void RigView::goToPlace (const juce::String& place)
 {
+    if (place.startsWith ("Song"))
+    {
+        showTab ("Song");
+        if (song != nullptr)
+            song->showBars (place == "Song / Bars");
+        pageChanged();
+        return;
+    }
     if (place.startsWith ("Looper / "))
     {
         showTab ("Looper");
@@ -1403,8 +1413,8 @@ void RigView::updateNavButtons()
     // "Back to the Groove", so you know where it goes.
     auto nameOf = [] (juce::String place)
     {
-        if (place == "Song")
-            place = "Song builder";
+        if (place == "Song / Bars")
+            place = "Song: Bars view";
         return place.replace (" / ", ": ");
     };
     auto set = [] (rigpanels::PanelButton& b, bool can, const juce::String& tip)
@@ -1480,9 +1490,9 @@ void RigView::showPatternMenu()
         menu.addItem (s + 1, songstart::name (s));
     menu.addSeparator();
     menu.addSectionHeader ("The song");
-    const int parts = (int) engine.getScenes().getScenes().size();
-    menu.addItem (100, "Keep what's playing as the next song part (" + SongView::letterFor (parts) + ")", parts < RigScenes::kMaxScenes);
-    menu.addItem (101, "Open the song builder");
+    const int parts = (int) rigsong::sections (engine.getTimeline()).size();
+    menu.addItem (100, "Keep what's playing as the song's next section (" + rigsong::letterFor (parts) + ")", parts < rigsong::kMaxSections);
+    menu.addItem (101, "Open the Song screen");
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.newPattern),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                         {
@@ -1519,7 +1529,7 @@ void RigView::keepAsSongPart()
 {
     if (song == nullptr)
         return;
-    song->addPart();   // (it says which part, and how to change it)
+    song->addSectionFromPlaying();   // (it says which section, and how to change it)
     footer.repaint();
 }
 
@@ -1558,7 +1568,7 @@ void RigView::showPopOutMenu()
     menu.addSectionHeader ("Put a screen in its own window");
     for (int i = 0; i < (int) pages.size(); ++i)
         if (pages[(size_t) i].name != "More")
-            menu.addItem (i + 1, (pages[(size_t) i].name == "Song" ? juce::String ("Song builder") : pages[(size_t) i].name)
+            menu.addItem (i + 1, pages[(size_t) i].name
                                      + (pages[(size_t) i].window != nullptr ? " (out: bring to front)" : ""));
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (moreView),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
@@ -1580,7 +1590,7 @@ void RigView::showMoreMenu()
     menu.addSectionHeader ("Tools in full");
     const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Drum machine", "Drum machine: analog sounds and patterns" },
                                { "Sampler editor", "Sampler: record, trim, effects" }, { "Bass", "Bass: sound and patterns" },
-                               { "Synth", "Synth: sound and arp" }, { "Song", "Song builder: parts in order, lengths, names" },
+                               { "Synth", "Synth: sound and arp" }, { "Song", "Song: sections in order, what plays in each" },
                                { "Sounds", "Sounds: your samples and Splice" }, { "Mixer", "Mixer: levels, pan, solo, sends, effects" },
                                { "Stage", "Big stage: giant buttons and the FX pad, for playing live" },
                                { "Setup", "Setup: keys, pads, split, sampling, knobs" } };

@@ -1,4 +1,5 @@
 #include "StageView.h"
+#include "RigSong.h"
 #include "RigColours.h"
 
 using vintage::Lit;
@@ -34,6 +35,44 @@ juce::String partName (const RigScene& s, int i)
 {
     return s.name == "Part " + letter (i) ? juce::String() : s.name;
 }
+
+// The song's sections (the Song screen's), as parts: which plays now and which comes next.
+struct SongNow
+{
+    std::vector<RigScene> list;
+    int current = -1, queued = -1;
+    double startBeat = 0;
+
+    const std::vector<RigScene>& getScenes() const { return list; }
+    int getCurrent() const { return current; }
+    int getQueued() const { return queued; }
+    double getCurrentStartBeat() const { return startBeat; }
+
+    explicit SongNow (RigEngine& engine)
+    {
+        const auto& tl = engine.getTimeline();
+        auto& clock = engine.getTransport();
+        const int bpb = juce::jmax (1, clock.getBeatsPerBar());
+        const auto sections = rigsong::sections (tl);
+        for (const auto& sec : sections)
+        {
+            RigScene s;
+            s.name = sec.name;
+            s.bars = juce::roundToInt (sec.bars);
+            list.push_back (s);
+        }
+        if (tl.on.load() && clock.isPlaying())
+        {
+            current = rigsong::sectionAt (tl, clock.getPositionInBeats() / bpb);
+            if (current >= 0)
+                startBeat = sections[(size_t) current].start * bpb;
+            if (const double pending = tl.getPendingJump(); pending >= 0)
+                queued = rigsong::sectionAt (tl, pending);
+            if (queued == current)
+                queued = -1;
+        }
+    }
+};
 }
 
 //==============================================================================
@@ -224,7 +263,7 @@ void StageView::timerCallback()
     clipHold = master >= 0.99f ? 1.0f : juce::jmax (0.0f, clipHold - 1.0f / 60.0f);
 
     // Song parts.
-    auto& scenes = engine.getScenes();
+    const SongNow scenes (engine);
     const auto& list = scenes.getScenes();
     const int count = (int) list.size();
     const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
@@ -327,7 +366,7 @@ void StageView::paint (juce::Graphics& g)
         auto r = partArea.toFloat();
         vintage::drawWell (g, r, 14.0f);
         auto inner = r.reduced (22.0f, 18.0f);
-        auto& scenes = engine.getScenes();
+        const SongNow scenes (engine);
         const auto& list = scenes.getScenes();
         const int current = scenes.getCurrent(), queued = scenes.getQueued();
         const bool has = juce::isPositiveAndBelow (current, (int) list.size());

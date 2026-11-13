@@ -6,7 +6,7 @@ using namespace vintage;
 const std::vector<MoreView::ToolInfo>& MoreView::toolList()
 {
     static const std::vector<ToolInfo> list {
-        { "Song", "Song builder", "Save what's playing as parts, switch tracks on and off in each, and play them in order.", RigColours::song },
+        { "Song", "Song", "Sections in order (Intro, Verse, Chorus...), and what every track plays in each. Play it, loop it, record it.", RigColours::song },
         { "MPC", "MPC", "Pads, programs and sequences. Sends kits to your 2000XL.", RigColours::mpc },
         { "Drum machine", "Drum machine", "Analog drums: sixteen steps, accents and swing.", RigColours::drums },
         { "Sampler editor", "Sampler editor", "Record, trim, chop, effects, and play a sample across the keys.", RigColours::sampler },

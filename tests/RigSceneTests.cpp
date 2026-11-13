@@ -1,12 +1,12 @@
 #include "TestHelpers.h"
 
 #include "RigEngine.h"
+#include "RigSong.h"
 #include "StageView.h"
 #include "RigView.h"
 #include "SongGrid.h"
 #include "RigExport.h"
 #include "HelpPanel.h"
-#include "SongView.h"
 #include "MoreView.h"
 
 namespace
@@ -167,9 +167,7 @@ struct RigSceneTests : juce::UnitTest
             RigEngine engine;
             engine.prepare (kSceneRate, kSceneBlock);
             engine.vocoderOn = false;
-            RigScene verse;
-            verse.name = "Verse";
-            engine.getScenes().getScenes().push_back (verse);
+            rigsong::addSection (engine.getTimeline(), "Verse", 4);
             StageView stage (engine);
             juce::StringArray opened;
             stage.onOpen = [&] (const juce::String& tab) { opened.add (tab); };
@@ -181,12 +179,13 @@ struct RigSceneTests : juce::UnitTest
             for (auto* child : stage.getChildren())
                 expect (! child->getBounds().isEmpty());
 
-            // The song parts: Verse plays, the next empty one saves.
+            // The song's sections: Verse plays, an empty one saves what's playing as the next.
             stage.parts[0]->onClick();
             runBeats (engine, 1.0);
-            expectEquals (engine.getScenes().getCurrent(), 0);
+            expect (engine.getTimeline().on.load() && engine.getTransport().isPlaying());
+            expectEquals (rigsong::sectionAt (engine.getTimeline(), engine.getTransport().getPositionInBeats() / 4), 0);
             stage.parts[3]->onClick();
-            expectEquals ((int) engine.getScenes().getScenes().size(), 2, "an empty part saves what's playing");
+            expectEquals ((int) rigsong::sections (engine.getTimeline()).size(), 2, "an empty part saves what's playing");
 
             // Mutes, loop layers, the vocoder's parts.
             stage.pressMute (2);   // (the drum machine is channel 1)
@@ -494,51 +493,6 @@ struct RigSceneTests : juce::UnitTest
             expect (scenes.getCurrent() == before || scenes.getCurrent() == -1, "the deleted part never started");
         }
 
-        beginTest ("the Song builder: + New part, cells on and off, Play song");
-        {
-            RigEngine engine;
-            engine.prepare (kSceneRate, kSceneBlock);
-            engine.getTransport().setBpm (120.0);
-            SongView view (engine);
-            view.setSize (1400, 560);
-            view.addPart();
-            view.addPart();
-            auto& list = engine.getScenes().getScenes();
-            expectEquals ((int) list.size(), 2);
-            expectEquals (list[0].name, juce::String ("Intro"));
-            expectEquals (list[1].name, juce::String ("Verse"));
-            expectEquals (list[0].bars, 8, "a new song's parts start at 8 bars");
-
-            // Row 2 is the bass: on -> off -> on; right-click "as is" leaves it alone.
-            expectEquals (SongView::trackName (SongView::tracks()[2]), juce::String ("Bass"));
-            expectEquals (SongView::cellValue (list[1], SongView::tracks()[2]), 1);
-            view.clickCell (1, 2);
-            expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], 1);
-            view.clickCell (1, 2);
-            expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], 0);
-            view.setCellTo (1, 2, -1);
-            expectEquals (list[1].state.stripMutes[(size_t) RigEngine::bassStrip], -1);
-            // Loops come after the seven tools (MPC, drum machine, bass, synth, vocoder, sampler, line in).
-            expectEquals (SongView::trackName (SongView::tracks()[1]), juce::String ("Drum machine"));
-            expect (SongView::tracks()[7].isLoop && SongView::tracks()[7].index == 0);
-            view.clickCell (0, 7);
-            expectEquals (list[0].state.loopMutes[0], 1);
-
-            expectEquals (SongView::lengthText (0), juce::String ("Hold"));
-            expectEquals (SongView::lengthText (1), juce::String ("1 bar"));
-            expectEquals (SongView::letterFor (2), juce::String ("C"));
-
-            view.playSong();
-            expect (engine.getScenes().songMode);
-            runBeats (engine, 0.2);
-            expect (engine.getTransport().isPlaying());
-            expectEquals (engine.getScenes().getCurrent(), 0);
-            // The part that's playing changes as you click.
-            view.clickCell (0, 2);
-            expect (engine.getStrip (RigEngine::bassStrip).mute.load());
-            engine.getTransport().stop();
-        }
-
         beginTest ("the More page: a button for every tool, and they open");
         {
             MoreView more (true);
@@ -564,41 +518,6 @@ struct RigSceneTests : juce::UnitTest
             view.goTo ("Song");
             expectEquals (view.getPage(), juce::String ("Song"));
 
-            // Screenshots, for the pull request: CRATE_SONG_SNAPSHOT=<folder>.
-            if (auto folder = juce::SystemStats::getEnvironmentVariable ("CRATE_SONG_SNAPSHOT", {}); folder.isNotEmpty())
-            {
-                const auto shoot = [&view] (const juce::String& file)
-                {
-                    const auto image = view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f);
-                    juce::File f (file);
-                    f.deleteFile();
-                    juce::FileOutputStream stream (f);
-                    juce::PNGImageFormat().writeImageToStream (image, stream);
-                };
-                shoot (folder + "/song-empty.png");
-                view.goTo ("More");
-                shoot (folder + "/more.png");
-                auto& scenes = engine.getScenes().getScenes();
-                for (auto [name, bars] : { std::pair<const char*, int> { "Intro", 4 }, { "Verse", 8 }, { "Chorus", 8 }, { "Break", 4 },
-                                           { "Chorus 2", 8 }, { "Outro", 0 } })
-                {
-                    RigScene s;
-                    s.name = name;
-                    s.bars = bars;
-                    s.state = engine.captureScene();
-                    scenes.push_back (s);
-                }
-                for (int p = 0; p < (int) scenes.size(); ++p)
-                    for (int r = 0; r < (int) SongView::tracks().size(); ++r)
-                        SongView::setCell (scenes[(size_t) p], SongView::tracks()[(size_t) r], (p * 3 + r * 5) % 7 < 2 ? 0 : (r == 9 ? -1 : 1));
-                engine.getTransport().play();
-                engine.getScenes().launch (1);
-                runBeats (engine, 13.0);
-                view.goTo ("Song");
-                view.refresh();
-                shoot (folder + "/song.png");
-                engine.getTransport().stop();
-            }
         }
 
         beginTest ("scenes are saved with the show");
