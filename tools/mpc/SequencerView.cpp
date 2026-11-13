@@ -71,12 +71,12 @@ TransportBar::TransportBar (MpcProcessor& p) : processor (p), project (p.getProj
     };
 
     playStart.setTooltip ("Play from the start");
-    playStart.onClick = [this, &engine] { if (processor.isSongPlaying()) processor.stopTransport(); engine.play (true); };
+    playStart.onClick = [this] { if (processor.isSongPlaying()) processor.stopTransport(); processor.pressPlay (true); };
     play.setTooltip ("Play from where it stopped (Space starts and stops)");
-    play.onClick = [&engine] { engine.isPlaying() ? engine.stop() : engine.play (false); };
-    stop.onClick = [this] { processor.stopTransport(); };
+    play.onClick = [this, &engine] { engine.isPlaying() ? processor.pressStop() : processor.pressPlay (false); };
+    stop.onClick = [this] { processor.pressStop(); };
     rec.setTooltip ("Record what you play onto the selected track. From stop it counts in a bar first; while playing it punches in and out.");
-    rec.onClick = [this] { processor.toggleRecord(); };
+    rec.onClick = [this] { processor.pressRecord(); };
 
     position.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 24.0f, juce::Font::bold));
     position.setJustificationType (juce::Justification::centred);
@@ -124,9 +124,11 @@ TransportBar::TransportBar (MpcProcessor& p) : processor (p), project (p.getProj
     const bool inLogic = processor.wrapperType == juce::AudioProcessor::wrapperType_AudioUnit;
     const bool inRig = processor.wrapperType == juce::AudioProcessor::wrapperType_Undefined;
     const juce::String hostName = inLogic ? "Logic" : inRig ? "the Rig" : "the host";
-    followHost.setButtonText (inLogic ? "Play with Logic" : inRig ? "Follow the Rig" : "Follow host");
-    followHost.setTooltip ("When " + hostName + " plays, the sequence plays along at its tempo and position");
-    followHost.onClick = [this, &engine] { engine.followHost = followHost.getToggleState(); };
+    followHost.setButtonText (inLogic ? "Play with Logic" : inRig ? "Beat on" : "Follow host");
+    followHost.setTooltip (inRig ? juce::String ("The MPC's beat: on, it plays whenever the Rig plays; off, the Rig's Play leaves it quiet "
+                                                 "(the pads still play). The Groove screen's MPC card switches it too.")
+                                 : "When " + hostName + " plays, the sequence plays along at its tempo and position");
+    followHost.onClick = [this] { processor.setFollowing (followHost.getToggleState()); };
     followHost.setVisible (processor.wrapperType != juce::AudioProcessor::wrapperType_Standalone);
     addChildComponent (followHost);
 
@@ -192,6 +194,9 @@ void TransportBar::timerCallback()
     else if (wasFollowing)
         tempo.setValue (project.currentSequence().bpm, juce::dontSendNotification);
     wasFollowing = following;
+    // (The Rig's Groove screen switches the beat too.)
+    if (followHost.getToggleState() != engine.followHost.load())
+        followHost.setToggleState (engine.followHost.load(), juce::dontSendNotification);
 }
 
 void TransportBar::paint (juce::Graphics& g)
@@ -203,26 +208,58 @@ void TransportBar::paint (juce::Graphics& g)
 void TransportBar::resized()
 {
     auto r = getLocalBounds().reduced (10, 6);
-    sequence.setBounds (r.removeFromLeft (160));
-    r.removeFromLeft (12);
+    // Narrow and tall (the Rig's MPC screen): two rows, the transport and then its settings.
+    if (getHeight() >= 70 && getWidth() < 1100)
+    {
+        auto row = r.removeFromTop ((r.getHeight() - 6) / 2);
+        r.removeFromTop (6);
+        sequence.setBounds (row.removeFromLeft (juce::jmin (200, row.getWidth() / 4)));
+        row.removeFromLeft (12);
+        for (auto* b : { &playStart, &play, &stop, &rec })
+        {
+            b->setBounds (row.removeFromLeft (b == &playStart ? 44 : 76));
+            row.removeFromLeft (6);
+        }
+        row.removeFromLeft (8);
+        position.setBounds (row.removeFromLeft (juce::jmin (150, row.getWidth())));
+        if (followHost.isVisible())
+            followHost.setBounds (row.removeFromRight (juce::jmin (120, row.getWidth())));
+
+        tempoLabel.setBounds (r.removeFromLeft (48));
+        tempo.setBounds (r.removeFromLeft (108));
+        r.removeFromLeft (12);
+        barsLabel.setBounds (r.removeFromLeft (38));
+        bars.setBounds (r.removeFromLeft (96));
+        r.removeFromLeft (12);
+        loop.setBounds (r.removeFromLeft (64));
+        countIn.setBounds (r.removeFromLeft (92));
+        r.removeFromLeft (6);
+        click.setBounds (r.removeFromLeft (juce::jmin (r.getWidth(), 150)));
+        return;
+    }
+    // Narrow and short, the row squeezes rather than lose any of it.
+    const float scale = juce::jlimit (0.6f, 1.0f, (float) r.getWidth() / (followHost.isVisible() ? 1240.0f : 1110.0f));
+    auto take = [&r, scale] (int width) { return r.removeFromLeft (juce::roundToInt (width * scale)); };
+    sequence.setBounds (take (160));
+    take (12);
     for (auto* b : { &playStart, &play, &stop, &rec })
     {
-        b->setBounds (r.removeFromLeft (b == &playStart ? 40 : 62));
-        r.removeFromLeft (4);
+        b->setBounds (take (b == &playStart ? 40 : 62));
+        take (4);
     }
-    r.removeFromLeft (8);
-    position.setBounds (r.removeFromLeft (120));
-    r.removeFromLeft (14);
-    tempoLabel.setBounds (r.removeFromLeft (44));
-    tempo.setBounds (r.removeFromLeft (108));
-    r.removeFromLeft (10);
-    barsLabel.setBounds (r.removeFromLeft (38));
-    bars.setBounds (r.removeFromLeft (96));
-    r.removeFromLeft (10);
-    loop.setBounds (r.removeFromLeft (60));
-    countIn.setBounds (r.removeFromLeft (86));
+    take (8);
+    position.setBounds (take (120));
+    take (14);
+    tempoLabel.setBounds (take (44));
+    tempo.setBounds (take (108));
+    take (10);
+    barsLabel.setBounds (take (38));
+    bars.setBounds (take (96));
+    take (10);
+    loop.setBounds (take (60));
+    countIn.setBounds (take (86));
     if (followHost.isVisible())
-        followHost.setBounds (r.removeFromRight (juce::jmin (134, r.getWidth() / 2)));
+        followHost.setBounds (r.removeFromRight (juce::jmin (juce::roundToInt (134 * scale), r.getWidth() / 2)));
     click.setBounds (r.removeFromLeft (juce::jmin (r.getWidth(), 140)));
 }
 

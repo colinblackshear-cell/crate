@@ -30,6 +30,7 @@ juce::ValueTree RigScene::toTree() const
     t.setProperty ("arp", state.arp, nullptr);
     t.setProperty ("drumPattern", state.drumPattern, nullptr);
     t.setProperty ("drumSequencer", state.drumSequencer, nullptr);
+    t.setProperty ("mpcBeat", state.mpcBeat, nullptr);
     t.setProperty ("vocoderOn", state.vocoderOn, nullptr);
     t.setProperty ("inputOn", state.inputOn, nullptr);
     if (state.loopBank >= 0)
@@ -50,6 +51,7 @@ RigScene RigScene::fromTree (const juce::ValueTree& t)
     s.state.arp = t.getProperty ("arp", -1);
     s.state.drumPattern = t.getProperty ("drumPattern", -1);
     s.state.drumSequencer = t.getProperty ("drumSequencer", -1);
+    s.state.mpcBeat = t.getProperty ("mpcBeat", -1);
     s.state.vocoderOn = t.getProperty ("vocoderOn", -1);
     s.state.inputOn = t.getProperty ("inputOn", -1);
     s.state.loopBank = juce::jmax (-1, (int) t.getProperty ("loopBank", -1));

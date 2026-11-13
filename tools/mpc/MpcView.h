@@ -51,6 +51,20 @@ public:
     void setSixteenLevels (int type);
     void setNoteRepeat (bool on, int grid = -1);
     int getSelectedPad() const { return grid.getSelectedPad(); }
+    void selectPad (int pad);
+
+    // Inside the Rig's MPC screen, which has the pads (and 16 Levels, Note repeat, Full level and
+    // the sound bank) itself: this shows everything else, in the host's look. The kit, the
+    // sequencer and its songs, the kits and library down the side, and in the middle the picked
+    // pad's settings (Pad) or the sequence as steps (Steps). `paintBackground` paints behind it.
+    void setHosted (juce::LookAndFeel*, std::function<void (juce::Graphics&)> paintBackground);
+    bool isHosted() const { return hosted; }
+    bool isShowingSequencer() const { return sequencer.isVisible(); }
+    // The picked pad's sound editor: trim, fades and effects (its Trim and effects... button).
+    void editPadSound() { openSoundEditor (true); }
+    bool isEditingSound() const { return soundEditor.isVisible(); }
+    // Pads double-clicked used to open the sound editor, which fired while finger-drumming; pads
+    // only play now, and the pad's Trim and effects... button opens it.
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -60,7 +74,6 @@ private:
     void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
     void selectedRowsChanged (int row) override;
 
-    void selectPad (int pad);
     void showPadBank (int padBank);
     void updatePadTools();
     juce::String levelText (int slot) const;
@@ -115,6 +128,9 @@ private:
     std::array<bool, 16> keyDown {};
     std::array<int, 16> keyPad {};
     juce::Label status;
+    bool hosted = false;
+    std::function<void (juce::Graphics&)> hostPaint;
+    void layoutHosted (juce::Rectangle<int>);
 
     std::unique_ptr<juce::FileChooser> chooser;
 

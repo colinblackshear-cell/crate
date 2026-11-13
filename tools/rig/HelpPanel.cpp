@@ -52,7 +52,9 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "FX (by the knobs) turns the picked pad's filter, decay, delay and reverb, live while it plays.",
             "16 Levels spreads the picked pad over all 16 pads: Tune plays it as a scale, Filter opens up, Velocity soft to loud, Decay short to long.",
             "Repeat: hold a pad and it plays again every 1/16 (or the rate you pick), in time. Record with the click on to keep the repeats.",
-            "More > MPC has the same tools, with the full kit, sequencer and Sound + FX page." },
+            "The Sequencer + Kits side (beside the same pads) is the rest of the MPC: Play, Rec and steps, songs, your kits, and the picked pad's settings. Tapping a pad only plays it; Edit opens its sound editor.",
+            "Beat on/off: the MPC's sequence plays whenever the Rig plays, or stays quiet (the pads still play). Its Play, Stop and Rec are the Rig's.",
+            "Loop pads records the MPC into the next empty looper layer from the next bar (Free, or 1 to 16 bars). Switch Beat off to loop just what you play." },
           "Hits you record with 16 Levels keep their level when the sequence plays them back." },
 
         { "Build a song",

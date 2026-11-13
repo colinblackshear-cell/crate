@@ -7,8 +7,13 @@
 #include "BankBrowser.h"
 
 class EditorView;
+class MpcView;
 
-// The Sampler · MPC screen (F4): chop a sound and play it from the MPC's pads, on one screen.
+// The Sampler · MPC screen (F4): the MPC and the Sampler as one unit. The MPC's 16 pads are always
+// on the right; the left is one of three sides: Chop · Pads (below), Sequencer · Kits (the MPC's
+// sequencer, songs, kits and each pad's settings, which was the separate MPC page), and Edit ·
+// Effects · Keys (the full sample editor). Across the top: the MPC's Beat on/off (like every
+// instrument's pattern on the Rig's one clock) and Loop pads, which plays the pads into the looper.
 //
 // On the left, the Sampler's sound in a dark well: its name and length, how to chop it
 // (Transients finds the hits, Even 16 cuts it in sixteen, By hand lets you click the ruler to
@@ -43,8 +48,25 @@ public:
     // The full sample editor (record, trim, fades, effects, keys, library) lives on this screen
     // too, a click away: Edit shows it, Chop shows the chop and the pads. Takes ownership.
     void ownEditor (juce::Component* fullEditor);
-    void setEditMode (bool);
-    bool isEditMode() const { return editMode; }
+    // The MPC's own window (kits, sequencer, songs, pad settings), shown beside the pads on the
+    // Sequencer · Kits side. Takes ownership.
+    void ownMpc (MpcView*);
+    MpcView* getMpcView() const { return mpcView; }
+
+    enum Side { chopSide, mpcSide, editSide };
+    void setSide (int);
+    int getSide() const { return mode; }
+    void setEditMode (bool on) { setSide (on ? editSide : chopSide); }
+    bool isEditMode() const { return mode == editSide; }
+    // Called when the side changes (so the Rig's Back and Forward know where you are).
+    std::function<void()> onSideChanged;
+
+    // Across the top, as a click does: the MPC's beat on or off; Loop pads (into the looper,
+    // for `loopBars` bars, 0 until pressed again); and the picked pad's sound editor.
+    void pressBeat();
+    void pressLoopPads();
+    int loopBars = 0;
+    void pressEditPad();
 
     std::function<void (const juce::String&)> onSay;
     // Opens a page of the Rig ("Sampler editor", "MPC").
@@ -117,10 +139,15 @@ private:
     bool draggingScroll = false;
     double scrollGrab = 0;
     juce::String shownSignature;
-    std::unique_ptr<juce::Component> ownedEditor;
-    bool editMode = false;
-    juce::TextButton chopModeButton { juce::String::fromUTF8 ("Chop \xc2\xb7 Pads") }, editModeButton { juce::String::fromUTF8 ("Edit \xc2\xb7 Effects \xc2\xb7 Keys") },
-        recordButton { "Rec" };
+    std::unique_ptr<juce::Component> ownedEditor, ownedMpc;
+    MpcView* mpcView = nullptr;
+    int mode = chopSide;
+    juce::TextButton chopModeButton { juce::String::fromUTF8 ("Chop \xc2\xb7 Pads") },
+        mpcModeButton { juce::String::fromUTF8 ("Sequencer \xc2\xb7 Kits") },
+        editModeButton { juce::String::fromUTF8 ("Edit \xc2\xb7 Effects \xc2\xb7 Keys") },
+        recordButton { "Rec" }, beatButton { "Beat on" }, loopPadsButton { "Loop pads" }, loopBarsButton { "Free" },
+        editPadButton { "Edit" };
+    void updateTopButtons();
     juce::Rectangle<int> modeRow;
 
     juce::TextButton chopButtons[3] { juce::TextButton ("Transients"), juce::TextButton ("Even 16"), juce::TextButton ("By hand") };

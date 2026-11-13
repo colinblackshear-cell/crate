@@ -178,7 +178,9 @@ MpcView::MpcView (MpcProcessor& p)
 
     editor.onChop = [this] (int slices) { chopSelectedPad (slices); };
     editor.onEditSound = [this] { openSoundEditor (true); };
-    grid.onPadDoubleClicked = [this] (int pad) { selectPad (pad); openSoundEditor (true); };
+    // A double-click on a pad is just two hits (finger drumming): the pad's Trim and effects...
+    // button, or its right-click menu, opens the sound editor.
+    grid.onEditPad = [this] (int pad) { selectPad (pad); openSoundEditor (true); };
 
     addChildComponent (soundEditor);
     soundEditor.onClose = [this] { openSoundEditor (false); };
@@ -306,13 +308,41 @@ juce::String MpcView::levelText (int slot) const
     return levels::stepText (processor.levelsType.load(), slot);
 }
 
+void MpcView::setHosted (juce::LookAndFeel* look, std::function<void (juce::Graphics&)> paintBackground)
+{
+    hosted = true;
+    hostPaint = std::move (paintBackground);
+    setLookAndFeel (look);
+    // The host's screen has these.
+    for (auto* c : std::initializer_list<juce::Component*> { &grid, &browser, &levelsLabel, &levelsChoice, &noteRepeatButton,
+                                                             &repeatLabel, &repeatRate, &fullLevelButton })
+        c->setVisible (false);
+    for (auto& tab : bankTabs)
+        tab.setVisible (false);
+    padsTab.setButtonText ("Pad");
+    padsTab.setTooltip ("The picked pad's settings: name, level, tune, how it plays, and its sound and effects");
+    sequenceTab.setButtonText ("Steps");
+    for (auto* c : std::initializer_list<juce::Component*> { &kitList, &libraryList })
+        c->setColour (juce::ListBox::backgroundColourId, juce::Colour (0xff1b1814));
+    status.setColour (juce::Label::textColourId, juce::Colour (0xffc9bfa8));
+    memory.setTooltip ("How much of the MPC's memory the kit uses");
+    refresh();
+    showSequencer (sequencer.isVisible());
+}
+
 void MpcView::showSequencer (bool show)
 {
     sequenceTab.setToggleState (show, juce::dontSendNotification);
     padsTab.setToggleState (! show, juce::dontSendNotification);
     sequencer.setVisible (show);
-    grid.setVisible (! show);
-    browser.setVisible (! show);
+    grid.setVisible (! show && ! hosted);
+    browser.setVisible (! show && ! hosted);
+    if (hosted)
+    {
+        editorScroll.setVisible (! show);
+        if (soundEditor.isVisible())
+            openSoundEditor (false);
+    }
     resized();
     if (show)
         setStatus ("Click steps to add hits, or press Rec and play pads (keys Z-V, A-F, Q-R, 1-4 play the 16 pads). Space plays and stops.");
@@ -323,7 +353,7 @@ bool MpcView::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress::spaceKey)
     {
         auto& engine = processor.getSequencer();
-        engine.isPlaying() ? processor.stopTransport() : engine.play (false);
+        engine.isPlaying() ? processor.pressStop() : processor.pressPlay (false);
         return true;
     }
     if (key.getTextCharacter() == 't' || key.getTextCharacter() == 'T')
@@ -365,12 +395,68 @@ bool MpcView::keyStateChanged (bool)
 
 void MpcView::paint (juce::Graphics& g)
 {
+    if (hostPaint != nullptr)
+        return hostPaint (g);
     g.fillAll (Theme::background);
+}
+
+void MpcView::layoutHosted (juce::Rectangle<int> r)
+{
+    // The kit: name and tempo on the left, the card on the right.
+    auto header = r.removeFromTop (32);
+    exportButton.setBounds (header.removeFromRight (128));
+    header.removeFromRight (6);
+    openButton.setBounds (header.removeFromRight (100));
+    header.removeFromRight (6);
+    ram.setBounds (header.removeFromRight (132));
+    kitLabel.setBounds (header.removeFromLeft (34));
+    kitName.setBounds (header.removeFromLeft (130));
+    header.removeFromLeft (8);
+    bpmLabel.setBounds (header.removeFromLeft (36));
+    bpm.setBounds (header.removeFromLeft (96));
+    header.removeFromLeft (6);
+    keepInTime.setBounds (header.removeFromLeft (112));
+    memory.setBounds (header.reduced (4, 0));
+
+    r.removeFromTop (8);
+    transport.setBounds (r.removeFromTop (78));
+    r.removeFromTop (6);
+    live.setBounds (r.removeFromTop (64));
+    r.removeFromTop (8);
+    status.setBounds (r.removeFromBottom (22));
+    r.removeFromBottom (4);
+
+    auto left = r.removeFromLeft (juce::jlimit (170, 220, r.getWidth() / 5));
+    auto kits = left.removeFromTop (juce::jmax (120, left.getHeight() / 2));
+    auto leftButtons = kits.removeFromBottom (30);
+    newKit.setBounds (leftButtons.removeFromLeft (leftButtons.getWidth() / 2 - 3));
+    leftButtons.removeFromLeft (6);
+    removeKit.setBounds (leftButtons);
+    kits.removeFromBottom (6);
+    kitList.setBounds (kits);
+    left.removeFromTop (10);
+    libraryList.setBounds (left);
+    r.removeFromLeft (12);
+
+    // The middle: the picked pad's settings, or the steps.
+    auto top = r.removeFromTop (30);
+    sequenceTab.setBounds (top.removeFromRight (80));
+    top.removeFromRight (6);
+    padsTab.setBounds (top.removeFromRight (80));
+    r.removeFromTop (6);
+    sequencer.setBounds (r);
+    soundEditor.setBounds (r);
+    editorScroll.setBounds (r);
+    const int needed = 610;
+    const bool scrolls = r.getHeight() < needed;
+    editor.setBounds (0, 0, r.getWidth() - (scrolls ? editorScroll.getScrollBarThickness() : 0), juce::jmax (r.getHeight(), needed));
 }
 
 void MpcView::resized()
 {
     auto r = getLocalBounds().reduced (16, 12);
+    if (hosted)
+        return layoutHosted (r);
 
     auto header = r.removeFromTop (34);
     exportButton.setBounds (header.removeFromRight (150));
@@ -488,7 +574,7 @@ void MpcView::refresh()
 
     const auto used = bank.memoryBytes();
     const auto available = (size_t) project.ramMegabytes * 1024 * 1024;
-    memory.setText ("Kit uses " + SampleTools::formatMegabytes (used) + " of " + juce::String (project.ramMegabytes) + " MB",
+    memory.setText ((hosted ? juce::String() : juce::String ("Kit uses ")) + SampleTools::formatMegabytes (used) + " of " + juce::String (project.ramMegabytes) + " MB",
                     juce::dontSendNotification);
     memory.setColour (juce::Label::textColourId, used > available ? Theme::record : Theme::text);
 
