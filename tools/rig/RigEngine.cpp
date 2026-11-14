@@ -875,6 +875,11 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         master.peak = peak;
 }
 
+juce::File RigEngine::logicFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Crate").getChildFile ("Rig").getChildFile ("To Logic");
+}
+
 juce::String RigEngine::serviceCapture()
 {
     if (capture.getState() != RigCapture::State::done)
@@ -888,6 +893,28 @@ juce::String RigEngine::serviceCapture()
 
     const auto name = RigCapture::sourceName (source).upToFirstOccurrenceOf (" /", false, false)
                       + (bars > 0 ? " " + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String());
+    if (captureDest == RigCapture::toLogic)
+    {
+        // A WAV, exactly the bars recorded from the bar it started on, to drag onto a Logic track
+        // at that bar.
+        auto folder = logicFolder();
+        folder.createDirectory();
+        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M.%S");
+        const auto file = folder.getChildFile (name.removeCharacters ("/\\:*?\"<>|").trim() + " " + stamp + ".wav");
+        bool written = false;
+        if (std::unique_ptr<juce::OutputStream> stream (file.createOutputStream()); stream != nullptr)
+        {
+            juce::WavAudioFormat wav;
+            auto options = juce::AudioFormatWriterOptions().withSampleRate (crate::kSampleRate)
+                               .withNumChannels (audio.getNumChannels()).withBitsPerSample (24);
+            if (auto writer = wav.createWriterFor (stream, options))
+                written = writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+        }
+        if (! written)
+            return "Couldn't save the recording for Logic in " + folder.getFullPathName() + ".";
+        lastLogicFile = file;
+        return "Recorded " + RigCapture::sourceName (source) + " for Logic: drag it from Drag to Logic (Effects screen) onto a track, at the bar you started it.";
+    }
     if (captureDest == RigCapture::toMpcPad)
     {
         const auto padName = putOnMpcPad (std::move (audio), name, bars > 0 ? beats : 0);

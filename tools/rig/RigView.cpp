@@ -601,9 +601,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     sampleSource.setTooltip ("What Sample records: the mic, any tool as you hear it (after its effects and level), or the whole mix.");
     sampleDest.addItem ("into Sampler", RigCapture::toSampler + 1);
     sampleDest.addItem ("onto MPC pad", RigCapture::toMpcPad + 1);
+    sampleDest.addItem ("for Logic (WAV)", RigCapture::toLogic + 1);
     sampleDest.onChange = [this] { engine.captureDest = sampleDest.getSelectedId() - 1; };
     sampleDest.setTooltip ("Where it goes: the Sampler (play it from the keys, chop it), or the next empty pad of the MPC "
-                           "(in the bank your keyboard's pads play).");
+                           "(in the bank your keyboard's pads play), or a WAV for Logic (drag it from Drag to Logic on the Effects screen).");
     for (int bars : RigCapture::barChoices())
         sampleBars.addItem (bars == 0 ? "Free" : juce::String (bars) + (bars == 1 ? " bar" : " bars"), bars + 1);
     sampleBars.onChange = [this] { engine.captureBars = sampleBars.getSelectedId() - 1; };
