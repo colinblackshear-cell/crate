@@ -69,10 +69,11 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Pedalboard.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/EffectsView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigQuantize.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RigLogicImport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/QuantizePanel.cpp
     PARENT_SCOPE)
 
-target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp
+target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigLogicImport.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -132,7 +133,7 @@ juce_add_plugin(KaleidoboxPlugin
 
 # What every Kaleidobox plugin is made of (the instrument and the Input version share it all).
 macro(kaleidobox_plugin_parts target)
-    target_sources(${target} PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp
+    target_sources(${target} PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigLogicImport.cpp
         ${MPC_SOURCES}
         ${VOCODER_SOURCES}
         ${BASS_SOURCES}
@@ -181,6 +182,70 @@ if(APPLE)
         COPY_PLUGIN_AFTER_BUILD FALSE)
     kaleidobox_plugin_parts(KaleidoboxInputPlugin)
     target_compile_definitions(KaleidoboxInputPlugin PRIVATE RIG_PLUGIN_INPUT=1)
+endif()
+
+# One tool each, on its own Logic track: Kaleidobox Vocoder, MPC, Drums, Bass and Synth. Each is
+# the box with only that tool in it (RigEngine::setOnlyTool): the same screens, sounds and
+# effects, its own MIDI, automation, Freeze and Bounce in Logic, and its menu gets its sound from
+# a Kaleidobox in the song (or a show, or a tool sound) and sends it back. Drums, Bass and Synth
+# keep the codes of the first Kaleidobox Drums, Bass and Synth plugins (now just apps), so songs
+# made with those open on these. The tool is a RigEngine::StripId.
+function(kaleidobox_tool_plugin target name code tool bundle)
+    set(formats AU VST3)
+    if(NOT APPLE)
+        set(formats VST3)
+    endif()
+    juce_add_plugin(${target}
+        COMPANY_NAME "Colin Blackshear"
+        BUNDLE_ID "com.colinblackshear.crate.rigplugin.${bundle}"
+        PLUGIN_MANUFACTURER_CODE Cblk
+        PLUGIN_CODE ${code}
+        FORMATS ${formats}
+        PRODUCT_NAME "Kaleidobox ${name}"
+        ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/icon/kaleidobox-icon.png"
+        IS_SYNTH TRUE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+        MICROPHONE_PERMISSION_ENABLED TRUE
+        MICROPHONE_PERMISSION_TEXT "Kaleidobox hears your microphone through Logic."
+        VST3_CATEGORIES Instrument
+        AU_MAIN_TYPE kAudioUnitType_MusicDevice
+        COPY_PLUGIN_AFTER_BUILD FALSE)
+    kaleidobox_plugin_parts(${target})
+    target_compile_definitions(${target} PRIVATE RIG_PLUGIN_TOOL=${tool})
+endfunction()
+
+option(KALEIDOBOX_TOOL_PLUGINS "Build Kaleidobox MPC, Drums, Bass, Synth and Vocoder" ON)
+if(KALEIDOBOX_TOOL_PLUGINS)
+    kaleidobox_tool_plugin(KaleidoboxMpcPlugin   "MPC"   CRgM 0 mpc)
+    kaleidobox_tool_plugin(KaleidoboxBassPlugin  "Bass"  CBas 4 bass)
+    kaleidobox_tool_plugin(KaleidoboxSynthPlugin "Synth" CSyn 5 synth)
+    kaleidobox_tool_plugin(KaleidoboxDrumsPlugin "Drums" CDrm 8 drums)
+    # The vocoder needs your voice, so it's the kind of plugin Logic gives side chain audio to (an
+    # AU MIDI-controlled effect, like Kaleidobox Input and the Vocoder itself).
+    if(APPLE)
+        juce_add_plugin(KaleidoboxVocoderPlugin
+            COMPANY_NAME "Colin Blackshear"
+            BUNDLE_ID "com.colinblackshear.crate.rigplugin.vocoder"
+            PLUGIN_MANUFACTURER_CODE Cblk
+            PLUGIN_CODE CRgV
+            FORMATS AU
+            PRODUCT_NAME "Kaleidobox Vocoder"
+            ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/icon/kaleidobox-icon.png"
+            IS_SYNTH FALSE
+            NEEDS_MIDI_INPUT TRUE
+            NEEDS_MIDI_OUTPUT FALSE
+            IS_MIDI_EFFECT FALSE
+            EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+            MICROPHONE_PERMISSION_ENABLED TRUE
+            MICROPHONE_PERMISSION_TEXT "Kaleidobox Vocoder hears your voice through Logic's Side Chain."
+            AU_MAIN_TYPE kAudioUnitType_MusicEffect
+            COPY_PLUGIN_AFTER_BUILD FALSE)
+        kaleidobox_plugin_parts(KaleidoboxVocoderPlugin)
+        target_compile_definitions(KaleidoboxVocoderPlugin PRIVATE RIG_PLUGIN_INPUT=1 RIG_PLUGIN_TOOL=3)
+    endif()
 endif()
 
 # The Sample Editor's plugin entry is built in too; the plugin's own is RigPlugin's.

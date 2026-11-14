@@ -1,7 +1,18 @@
 #include "RigPlugin.h"
 #include "RigView.h"
 
-juce::AudioProcessor::BusesProperties RigPlugin::buses()
+namespace
+{
+    // Kaleidobox Vocoder, MPC, Drums, Bass and Synth: this box with one tool in it (a StripId);
+    // -1 is the whole box.
+#if defined (RIG_PLUGIN_TOOL)
+    constexpr int kOnlyTool = RIG_PLUGIN_TOOL;
+#else
+    constexpr int kOnlyTool = -1;
+#endif
+}
+
+juce::AudioProcessor::BusesProperties RigPlugin::buses (int onlyTool)
 {
 #if defined (RIG_PLUGIN_INPUT)
     // Kaleidobox Input (an AU MIDI-controlled effect): the track's audio comes in on the main
@@ -15,19 +26,27 @@ juce::AudioProcessor::BusesProperties RigPlugin::buses()
                  .withInput ("Input", juce::AudioChannelSet::stereo(), false)
                  .withInput ("Side chain", juce::AudioChannelSet::stereo(), false)
                  .withOutput ("Rig", juce::AudioChannelSet::stereo(), true);
-    for (int s = 0; s < RigEngine::numStems; ++s)
-        b = b.withOutput (RigEngine::stemName (s), juce::AudioChannelSet::stereo(), false);
+    // A one-tool plugin is its own track already: no outputs per tool.
+    if (onlyTool < 0)
+        for (int s = 0; s < RigEngine::numStems; ++s)
+            b = b.withOutput (RigEngine::stemName (s), juce::AudioChannelSet::stereo(), false);
     return b;
 #endif
 }
 
-RigPlugin::RigPlugin() : AudioProcessor (buses())
+RigPlugin::RigPlugin (int tool) : AudioProcessor (buses (tool)), onlyTool (tool)
 {
     // The tools inside are the Rig's, not plugins of their own: they behave as they do in the
     // Rig app (they'd think they were in Logic otherwise).
     juce::AudioProcessor::setTypeOfNextNewPlugin (wrapperType_Undefined);
     engine = std::make_unique<RigEngine>();
     engine->micOn = true;   // Logic's Side Chain decides
+    engine->setOnlyTool (onlyTool);
+}
+
+const juce::String RigPlugin::getName() const
+{
+    return onlyTool < 0 ? juce::String ("Kaleidobox") : "Kaleidobox " + RigEngine::onlyToolName (onlyTool);
 }
 
 RigPlugin::~RigPlugin() = default;
@@ -158,15 +177,40 @@ void RigPlugin::setStateInformation (const void* data, int size)
     {
         const auto tree = juce::ValueTree::fromXml (*xml);
         if (! tree.hasType (RigEngine::kShowType))
+        {
+            setOldToolState (data, size);
             return;
+        }
         engine->loadShow (tree);
         songId = tree.getProperty ("logicSong").toString();
         if (songId.isNotEmpty())
             engine->readLoopAudio (loopsFile());
     }
+    else
+    {
+        setOldToolState (data, size);
+    }
+}
+
+// Songs made with the first Kaleidobox Bass, Synth and Drums plugins (the tools on their own,
+// before they were the box's) saved just the tool: it goes on the tool here, so they still sound
+// as they did.
+void RigPlugin::setOldToolState (const void* data, int size)
+{
+    auto& e = *engine;
+    juce::AudioProcessor* tool = nullptr;
+    switch (onlyTool)
+    {
+        case RigEngine::bassStrip:  tool = &e.getBass(); break;
+        case RigEngine::synthStrip: tool = &e.getSynth(); break;
+        case RigEngine::drumsStrip: tool = &e.getDrums(); break;
+        default: break;
+    }
+    if (tool != nullptr && size > 0)
+        tool->setStateInformation (data, size);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new RigPlugin();
+    return new RigPlugin (kOnlyTool);
 }

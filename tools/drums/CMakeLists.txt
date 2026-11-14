@@ -1,7 +1,6 @@
-set(DRUMS_FORMATS VST3 Standalone)
-if(APPLE)
-    list(APPEND DRUMS_FORMATS AU)
-endif()
+# Just the app now: in Logic, Kaleidobox Drums is the box's own (tools/rig, a one-tool
+# Kaleidobox), which took over this plugin's name and code so songs made with it still open.
+set(DRUMS_FORMATS Standalone)
 
 juce_add_plugin(KaleidoboxDrums
     COMPANY_NAME "Colin Blackshear"

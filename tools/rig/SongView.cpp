@@ -1134,6 +1134,11 @@ void SongView::showMoreMenu()
                       });
     }
     menu.addSeparator();
+    menu.addItem ("Import a song from Logic (stems + markers)...", onImportFromLogic != nullptr, false, [this]
+                  {
+                      if (onImportFromLogic)
+                          onImportFromLogic();
+                  });
     menu.addItem ("Clear the whole song", ! timeline().isEmpty() || ! timeline().getMarkers().empty(), false, [this]
                   {
                       timeline().clear();

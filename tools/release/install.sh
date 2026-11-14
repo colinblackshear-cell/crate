@@ -70,6 +70,11 @@ install_one "$SRC/$NAME.app" "$APPS"
 [ -d "$SRC/$NAME.component" ] && install_one "$SRC/$NAME.component" "$COMPONENTS"
 [ -d "$SRC/$NAME.vst3" ] && install_one "$SRC/$NAME.vst3" "$VST3"
 [ -d "$SRC/$NAME Input.component" ] && install_one "$SRC/$NAME Input.component" "$COMPONENTS"
+# Each tool on its own Logic track.
+for t in MPC Bass Synth Drums Vocoder; do
+    [ -d "$SRC/$NAME $t.component" ] && install_one "$SRC/$NAME $t.component" "$COMPONENTS"
+    [ -d "$SRC/$NAME $t.vst3" ] && install_one "$SRC/$NAME $t.vst3" "$VST3"
+done
 
 # Make Logic notice the new Audio Unit without a restart of the Mac.
 killall -9 AudioComponentRegistrar >/dev/null 2>&1 || true

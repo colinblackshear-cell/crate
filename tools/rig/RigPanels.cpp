@@ -377,10 +377,15 @@ void ScreenBar::resized()
     r.removeFromRight (10);
     sounds.setBounds (r.removeFromRight (util));
     r.removeFromRight (28);
-    const int n = tabs.size();
+    int n = 0;
+    for (auto* b : tabs)
+        n += b->isVisible() ? 1 : 0;
+    n = juce::jmax (1, n);
     const int w = juce::jmin (220, (r.getWidth() - 12 * (n - 1)) / n);
     for (auto* b : tabs)
     {
+        if (! b->isVisible())
+            continue;
         b->setBounds (r.removeFromLeft (w));
         r.removeFromLeft (12);
     }
@@ -529,6 +534,17 @@ void Footer::resized()
 {
     auto r = getLocalBounds().reduced (22, 0);
     auto content = r.withSizeKeepingCentre (r.getWidth(), 64 + 22);
+    for (auto* b : parts)
+        b->setVisible (partsShown);
+    if (! partsShown)
+    {
+        // A one-tool plugin has no song sections: the footer is just for messages.
+        partsLabel = partsArea = {};
+        message.setBounds (content.withTrimmedBottom (4));
+        message.setJustificationType (juce::Justification::centred);
+        message.setFont (barlow (15.0f));
+        return;
+    }
 
     partsLabel = content.removeFromTop (22);
     const int gap = 10;
@@ -564,6 +580,7 @@ void Footer::paint (juce::Graphics& g)
     g.setColour (p.line);
     g.fillRect (getLocalBounds().removeFromTop (2));
     message.setColour (juce::Label::textColourId, p.ink2);
-    engraved (g, juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1\xe2\x80\x93" "8 \xc2\xb7 right-click to edit"), partsLabel.withWidth (500));
+    if (partsShown)
+        engraved (g, juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1\xe2\x80\x93" "8 \xc2\xb7 right-click to edit"), partsLabel.withWidth (500));
 }
 }
