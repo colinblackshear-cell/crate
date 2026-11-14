@@ -94,6 +94,7 @@ void RigPlugin::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer
             out = ptrs.data();
         }
         engine->setStemOutput (s, out);
+        engine->setStemOn (s, out != nullptr);
     }
 
     auto main = getBusBuffer (buffer, false, 0);
