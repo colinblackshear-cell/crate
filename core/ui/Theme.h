@@ -3,17 +3,34 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 // The look every Crate tool shares: dark grey panels with one warm accent.
+//
+// Kaleidobox shows these tools inside its vintage panel, so it switches them to warm dark wells
+// (useWarmWells) before it makes any of them: the same layout, in the panel's colours.
 namespace crate::Theme
 {
-    inline const juce::Colour background { 0xff1c1d20 };
-    inline const juce::Colour panel { 0xff26272b };
-    inline const juce::Colour raised { 0xff33353a };
-    inline const juce::Colour outline { 0xff44464d };
-    inline const juce::Colour waveform { 0xff8fd3c8 };
-    inline const juce::Colour accent { 0xffff8a3d };
-    inline const juce::Colour record { 0xffff4d4d };
-    inline const juce::Colour text { 0xffeeeeee };
-    inline const juce::Colour textDim { 0xff9a9ca3 };
+    inline juce::Colour background { 0xff1c1d20 };
+    inline juce::Colour panel { 0xff26272b };
+    inline juce::Colour raised { 0xff33353a };
+    inline juce::Colour outline { 0xff44464d };
+    inline juce::Colour waveform { 0xff8fd3c8 };
+    inline juce::Colour accent { 0xffff8a3d };
+    inline juce::Colour record { 0xffff4d4d };
+    inline juce::Colour text { 0xffeeeeee };
+    inline juce::Colour textDim { 0xff9a9ca3 };
+
+    // The vintage panel's wells: warm near-black, cream ink, amber for what's picked.
+    inline void useWarmWells()
+    {
+        background = juce::Colour (0xff15110e);
+        panel = juce::Colour (0xff1e1a16);
+        raised = juce::Colour (0xff2c2620);
+        outline = juce::Colour (0xff4a4036);
+        waveform = juce::Colour (0xffffc35a);
+        accent = juce::Colour (0xffffb23e);
+        record = juce::Colour (0xffe8432f);
+        text = juce::Colour (0xfff1e7d1);
+        textDim = juce::Colour (0xffbdaf97);
+    }
 
     class LookAndFeel : public juce::LookAndFeel_V4
     {
