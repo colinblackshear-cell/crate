@@ -19,6 +19,7 @@
 #include "RigRecorder.h"
 #include "RigCapture.h"
 #include "RigQuantize.h"
+#include "RigChords.h"
 
 #include <array>
 
@@ -61,6 +62,8 @@ public:
     // Quantize, for every tool and loop (its settings are saved with the show and kept by New song).
     RigQuantizer& getQuantizer() { return quantizer; }
     RigScenes& getScenes() { return scenes; }
+    // The chord builder: your own chords, onto any instrument (saved with the show; kept by New song).
+    RigChords& getChords() { return chords; }
     // The song on a timeline (lanes of blocks over the bar ruler). While it's on and the clock
     // plays, it brings loops and tools in and out, with their fades.
     RigTimeline& getTimeline() { return timeline; }
@@ -355,6 +358,7 @@ private:
         RigEngine& engine;
     } loopRoom { *this };
     RigQuantizer quantizer { *this };
+    RigChords chords;
     std::vector<LoopBank> loopBanks;
     int currentLoopBank = -1;
     // A switch waiting for its bar: each layer's effects, put on when its loop comes in.

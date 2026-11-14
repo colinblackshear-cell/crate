@@ -8,6 +8,7 @@
 #include "core/ui/ParamControls.h"
 #include "RigPanels.h"
 #include "RigNavigation.h"
+#include "ChordsView.h"
 
 // The Rig's window, built like a piece of 70s/80s studio gear: the top bar (your show, transport,
 // tempo, where the song is, VU meters), the view buttons (Play, Edit, Song, Mix; F1-F4) with
@@ -74,6 +75,10 @@ public:
     // The Sounds drawer, over the right of whichever view is showing (F5).
     void showSounds (bool show);
     bool isSoundsOpen() const { return soundsOpen; }
+    // The chord builder, over the bottom of whichever view is showing (F7).
+    void showChords (bool show);
+    bool isChordsOpen() const { return chordsOpen; }
+    ChordsView& getChordsView() { return *chordsDrawer; }
     const rigpanels::TrackRail& getRail() const { return rail; }
     // The show menu (the show's name in the top bar): New song, Open, Save, Save as, Export, Guide.
     void showShowMenu();
@@ -165,6 +170,8 @@ private:
     class Drawer;
     std::unique_ptr<Drawer> soundsDrawer;
     bool soundsOpen = false;
+    std::unique_ptr<ChordsView> chordsDrawer;
+    bool chordsOpen = false;
     juce::String viewOfPlace (const juce::String& place) const;
     int trackOfPlace (const juce::String& place) const;
     bool railShown() const;

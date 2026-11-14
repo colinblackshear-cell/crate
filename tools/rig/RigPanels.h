@@ -77,12 +77,13 @@ public:
     // track's instrument in full), Song, and Mix (the mixer and the effects).
     static const juce::StringArray& views();
     // Which view is lit ("" for none), and whether the Sounds drawer and Settings are.
-    void setCurrent (const juce::String& view, bool soundsOpen = false, bool settingsOpen = false);
+    void setCurrent (const juce::String& view, bool soundsOpen = false, bool settingsOpen = false, bool chordsOpen = false);
 
     juce::OwnedArray<PanelButton> tabs;
     // Back and forward through the screens you've been on (Cmd+[ and Cmd+]).
     PanelButton back { "Back" }, forward { "Forward" };
     PanelButton sounds { "Sounds" };   // the sound library, as a drawer over any view (F5)
+    PanelButton chords { "Chords" };   // the chord builder, as a drawer over any view (F7)
     PanelButton settings { "Settings" };   // keys and pads, split, sampling, knobs, click, audio, look (F6)
     PanelButton help { "?" };   // the how-to guide
     std::function<void (const juce::String& view)> onView;
