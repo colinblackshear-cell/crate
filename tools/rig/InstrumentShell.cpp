@@ -4,10 +4,15 @@ using namespace analog;
 
 InstrumentShell::InstrumentShell (PluginSlot& s, const juce::String& name, juce::Colour a) : slot (s), trackName (name), accent (a)
 {
-    for (auto* b : { &load, &window, &remove, &prev, &next, &presets, &autoMap })
+    for (auto* b : { &load, &window, &remove, &prev, &next, &presets, &autoMap, &screenButton })
         addAndMakeVisible (b);
+    screenView.setViewedComponent (&holder, false);
+    screenView.setScrollBarsShown (true, true);
+    addChildComponent (screenView);
+    screenButton.setTooltip ("The plugin's own interface, right here on the panel (Arturia's whole synth). Press again for the 8 knobs.");
+    screenButton.onClick = [this] { showScreen (! isShowingScreen()); };
     load.setTooltip ("Pick one of your instrument plugins (Arturia and the rest) to play the " + name + " track.");
-    window.setTooltip ("Opens the plugin's own window, with all of its controls.");
+    window.setTooltip ("Moves the plugin's own interface to a window of its own (for a second screen). Its screen brings it back here.");
     remove.setTooltip ("Takes the plugin out. The " + name + "'s own sound plays again.");
     prev.setTooltip ("The plugin's previous preset.");
     next.setTooltip ("The plugin's next preset.");
@@ -96,7 +101,8 @@ void InstrumentShell::say (const juce::String& text)
 juce::String InstrumentShell::signature() const
 {
     juce::String s;
-    s << (slot.isLoaded() ? slot.getName() : juce::String ("-")) << "|" << slot.currentProgram() << "|" << (int) slot.bypassed.load();
+    s << (slot.isLoaded() ? slot.getName() : juce::String ("-")) << "|" << slot.currentProgram() << "|" << (int) slot.bypassed.load()
+      << "|" << (int) slot.isWindowOpen() << "|" << (int) isShowingScreen();
     for (int i = 0; i < PluginSlot::kMacros; ++i)
         s << "|" << slot.getMacro (i);
     return s;
@@ -119,11 +125,80 @@ void InstrumentShell::refresh()
         k.repaint();
     }
     level.slider.setValue (slot.level.load(), juce::dontSendNotification);
+    syncScreen();
     repaint();
+}
+
+void InstrumentShell::showScreen (bool show)
+{
+    wantScreen = show;
+    if (show && slot.isLoaded() && slot.isWindowOpen())
+        slot.closeWindow();   // its interface comes back from its window onto the panel
+    refresh();
+}
+
+void InstrumentShell::syncScreen()
+{
+    const bool show = isShowingScreen();
+    if (show)
+    {
+        auto* editor = slot.getEmbeddedEditor();
+        if (editor != nullptr && editor != editorShown.getComponent())
+        {
+            holder.addAndMakeVisible (editor);
+            editorShown = editor;
+        }
+    }
+    else
+    {
+        // Not on the panel: let it go, so its window (or the next plugin) can have it.
+        if (editorShown != nullptr && slot.isEmbedded())
+            slot.releaseEmbeddedEditor();
+        editorShown = nullptr;
+    }
+    screenView.setVisible (show && editorShown != nullptr);
+    for (auto& m : macros)
+        m->setVisible (! show);
+    level.setVisible (! show);
+    autoMap.setVisible (! show);
+    screenButton.setEnabled (slot.isLoaded());
+    screenButton.lit = show;
+    screenButton.setButtonText (show ? "8 knobs" : "Its screen");
+    screenButton.setTooltip (show ? "The 8 knobs on the plugin's main settings, and its level, instead of its own interface."
+                                  : "The plugin's own interface, right here on the panel (Arturia's whole synth). Press again for the 8 knobs.");
+    screenButton.repaint();
+    if (show != screenWasShown)
+    {
+        screenWasShown = show;
+        resized();
+        if (onLayout)
+            onLayout();
+    }
+    else
+    {
+        layoutScreen();
+    }
+}
+
+void InstrumentShell::layoutScreen()
+{
+    auto* editor = editorShown.getComponent();
+    if (editor == nullptr)
+        return;
+    editorSize = editor->getBounds().withZeroOrigin();
+    const auto visible = screenView.getLocalBounds();
+    const int w = juce::jmax (visible.getWidth() - (editor->getHeight() > visible.getHeight() ? screenView.getScrollBarThickness() : 0), editor->getWidth());
+    const int h = juce::jmax (visible.getHeight() - (editor->getWidth() > visible.getWidth() ? screenView.getScrollBarThickness() : 0), editor->getHeight());
+    holder.setSize (w, h);
+    // In the middle when it's smaller than the panel.
+    editor->setTopLeftPosition ((w - editor->getWidth()) / 2, (h - editor->getHeight()) / 2);
 }
 
 void InstrumentShell::timerCallback()
 {
+    // A plugin can resize its own interface (a bigger zoom, a panel opening).
+    if (auto* editor = editorShown.getComponent(); editor != nullptr && editor->getBounds().withZeroOrigin() != editorSize)
+        layoutScreen();
     if (signature() != shown)
     {
         refresh();
@@ -276,7 +351,25 @@ void InstrumentShell::showMacroMenu (int knob)
 
 void InstrumentShell::paint (juce::Graphics& g)
 {
+    if (isShowingScreen())
+        drawPanel (g, getLocalBounds());   // it covers the arp / step section: the panel under it
     drawSection (g, getLocalBounds(), "Instrument shell", accent);
+
+    if (isShowingScreen())
+    {
+        // Its own interface, in a dark well, and what's loaded on the button row.
+        g.setColour (juce::Colour (0xff0e0c0a));
+        g.fillRoundedRectangle (screenView.getBounds().toFloat().expanded (3.0f), 5.0f);
+        auto label = topRow.withTrimmedLeft (juce::jmax (0, screenButton.getRight() - topRow.getX() + 14));
+        g.setColour (colours::legend);
+        g.setFont (vintage::barlow (15.0f));
+        juce::String text = slot.getName();
+        if (const int n = slot.numPrograms(); n > 1)
+            text << "  " << juce::String::fromUTF8 ("\xc2\xb7") << "  " << slot.programName (slot.currentProgram()).trim();
+        text << "  " << juce::String::fromUTF8 ("\xc2\xb7") << "  " << (slot.bypassed.load() ? "switched off" : "plays the " + trackName);
+        g.drawFittedText (text, label, juce::Justification::centredLeft, 1);
+        return;
+    }
 
     // The LCD: what's loaded, by whom, and its preset.
     auto lcd = lcdArea.toFloat();
@@ -317,6 +410,24 @@ void InstrumentShell::paint (juce::Graphics& g)
 void InstrumentShell::resized()
 {
     auto area = getLocalBounds().reduced (14, 0).withTrimmedTop (26).withTrimmedBottom (10);
+    if (isShowingScreen())
+    {
+        // One row of buttons, then the plugin's own interface as big as the panel allows.
+        topRow = area.removeFromTop (30);
+        auto row = topRow;
+        auto place = [&row] (juce::Component& c, int w) { c.setBounds (row.removeFromLeft (w)); row.removeFromLeft (6); };
+        place (load, 112);
+        place (window, 120);
+        place (remove, 84);
+        place (prev, 34);
+        place (presets, 90);
+        place (next, 34);
+        place (screenButton, 96);
+        area.removeFromTop (10);
+        screenView.setBounds (area.reduced (3));
+        layoutScreen();
+        return;
+    }
     auto left = area.removeFromLeft (juce::jlimit (300, 440, area.getWidth() * 34 / 100));
     area.removeFromLeft (20);
     macroArea = area;
@@ -334,6 +445,8 @@ void InstrumentShell::resized()
     next.setBounds (row.removeFromLeft (40).reduced (3, 0));
     presets.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (3, 0));
     autoMap.setBounds (row.reduced (3, 0));
+    left.removeFromTop (6);
+    screenButton.setBounds (left.removeFromTop (30).reduced (3, 0));
     left.removeFromTop (6);
     hintArea = left;
 

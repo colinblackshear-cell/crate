@@ -70,6 +70,9 @@ public:
     // The Song screen's sections (rigsong): plays section `i` (from the next bar while
     // playing), with the song on. And the Play/Stop at the top: in Song mode (the timeline on)
     // Play starts the song from `songStartBar`; in Jam it just runs the clock.
+    // Puts a tool on what a Song box plays (the MPC's sequence, a pattern, the synth's arp).
+    // Message thread.
+    void applyClip (int lane, int clip);
     void launchSection (int i);
     void playOrStop();
     double songStartBar = 0;
@@ -353,7 +356,6 @@ private:
     RigTimeline timeline;
     // Message thread: what each box asks a tool to play, just before it starts.
     void tickSong();
-    void applyClip (int lane, int clip);
     std::array<double, RigTimeline::kLanes> songClipAt = [] { std::array<double, RigTimeline::kLanes> a; a.fill (-2.0); return a; }();
     int songSection = -2;
     // Audio thread: the timeline's level for each strip over this block, and where each loop

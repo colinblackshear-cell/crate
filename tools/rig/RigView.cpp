@@ -1,6 +1,7 @@
 #include "RigView.h"
 #include "RigExport.h"
 #include "HelpPanel.h"
+#include "RigSong.h"
 #include "LooperView.h"
 #include "SongView.h"
 #include "MoreView.h"
@@ -306,7 +307,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     setupPage = new SetupPage (*this);
     for (auto* c : std::initializer_list<juce::Component*> { &clickButton, &micButton, &learnPlay, &learnStop, &learnPlayLabel, &learnStopLabel,
                                                              &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
-                                                             &darkButton, &popOutButton,
+                                                             &darkButton, &popOutButton, &pluginsButton, &pluginsLabel, &pluginsHint,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
                                                              &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
         setupPage->addAndMakeVisible (c);
@@ -352,6 +353,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     darkButton.onClick = [this] { setDarkPanel (darkButton.getToggleState()); };
     popOutButton.setTooltip ("Puts a screen in its own window, to move onto a second screen.");
     popOutButton.onClick = [this] { showPopOutMenu(); };
+    pluginsButton.setTooltip ("Your own plugins: Arturia's synths (or any instrument) on the Bass or Synth, with their own screens; "
+                              "effects like Quake at the end of any track's effects; and the scan that finds them.");
+    pluginsButton.onClick = [this] { showPluginsMenu(); };
+    pluginsHint.setText ("Instruments play the Bass or Synth, with their own screen in Edit (F2). Effects go on any track: Mix (F4) > Effects > + Plugin.",
+                         juce::dontSendNotification);
+    pluginsHint.setColour (juce::Label::textColourId, Theme::textDim);
+    pluginsHint.setFont (juce::FontOptions (13.0f));
 
     // The seven screens first (F1-F7), then what More shows. The tab bar is hidden: the screen
     // buttons and More pick the page.
@@ -482,6 +490,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     songView->onSay = [this] (const juce::String& text) { say (text); };
     songView->onExport = [this] { exportForLogic(); };
     songView->onGoTo = [this] (const juce::String& page) { showTab (page); };
+    songView->onOpenBox = [this] (int lane, int clip, bool edit) { openSongBox (lane, clip, edit); };
     song = songView;
     addPage ("Song", RigColours::song, songView);
     auto* soundsView = new SoundsView (engine);
@@ -827,6 +836,46 @@ void RigView::pickTrack (int t)
     // On Edit, the instrument you picked shows in full; the other views stay where they are.
     if (getView() == "Edit")
         showView ("Edit");
+}
+
+int RigView::trackForLane (int lane)
+{
+    if (! juce::isPositiveAndBelow (lane, RigTimeline::kLanes))
+        return -1;
+    const auto& info = RigTimeline::lanes()[(size_t) lane];
+    if (info.isLoop)
+        return GrooveView::loops;
+    switch (info.index)
+    {
+        case RigEngine::mpcStrip:     return GrooveView::drums;
+        case RigEngine::drumsStrip:   return GrooveView::machine;
+        case RigEngine::bassStrip:    return GrooveView::bass;
+        case RigEngine::synthStrip:   return GrooveView::synth;
+        case RigEngine::vocoderStrip: return GrooveView::vocoder;
+        case RigEngine::samplerStrip: return GrooveView::sampler;
+        case RigEngine::inputStrip:   return GrooveView::lineIn;
+        default:                      return -1;
+    }
+}
+
+void RigView::openSongBox (int lane, int clip, bool edit)
+{
+    const int t = trackForLane (lane);
+    if (t < 0)
+        return;
+    // The tool goes to the box's pattern, so what you change is what that box plays (and every
+    // other box playing the same pattern).
+    if (clip >= 0)
+        engine.applyClip (lane, clip);
+    pickTrack (t);
+    showView (edit ? "Edit" : "Play");
+    const auto& info = RigTimeline::lanes()[(size_t) lane];
+    if (info.isLoop && edit && looper != nullptr)
+        looper->editLoop (info.index);
+    const auto what = rigsong::laneName (lane) + (clip >= 0 ? ", " + rigsong::clipName (engine, lane, clip) : juce::String());
+    say (clip >= 0 ? what + ": changes here play in every Song box with " + rigsong::clipName (engine, lane, clip)
+                         + ". Song (F3) goes back."
+                   : what + ". Song (F3) goes back.");
 }
 
 void RigView::showView (const juce::String& view)
@@ -2063,6 +2112,101 @@ void RigView::layoutSetup (juce::Rectangle<int> page)
         }
         routing.removeFromTop (4);
     }
+
+    // Your plugins.
+    routing.removeFromTop (10);
+    auto row = routing.removeFromTop (30);
+    pluginsLabel.setBounds (row.removeFromLeft (124));
+    pluginsButton.setBounds (row.removeFromLeft (160).reduced (0, 1));
+    pluginsHint.setBounds (routing.removeFromTop (40).withTrimmedLeft (124));
+}
+
+void RigView::showPluginsMenu()
+{
+    juce::SharedResourcePointer<PluginHost> host;
+    auto instruments = host->instruments();
+    std::stable_partition (instruments.begin(), instruments.end(), [] (const juce::PluginDescription& d)
+                           { return d.manufacturerName.containsIgnoreCase ("arturia"); });
+    juce::PopupMenu menu;
+    const std::pair<int, const char*> targets[] = { { GrooveView::bass, "Bass" }, { GrooveView::synth, "Synth" } };
+    menu.addSectionHeader ("Instruments (Arturia...): play a track, with their own screen");
+    for (int i = 0; i < 2; ++i)
+    {
+        auto* slot = i == 0 ? &engine.getBassPlugin() : &engine.getSynthPlugin();
+        juce::PopupMenu sub;
+        if (instruments.empty())
+            sub.addItem (-1, host->hasScanned() ? "No instrument plugins found" : "Scan first (below)", false, false);
+        else
+            PluginMenu::addPlugins (sub, instruments, 10000 * (i + 1));
+        if (slot->isLoaded())
+        {
+            sub.addSeparator();
+            sub.addItem (500 + i, "Open " + slot->getName() + "'s screen (Edit)");
+        }
+        menu.addSubMenu (juce::String ("On the ") + targets[i].second + (slot->isLoaded() ? " (" + slot->getName() + ")" : juce::String()), sub);
+    }
+    menu.addSectionHeader ("Effects (Quake...): at the end of any track's effects");
+    menu.addItem (600, "Pick a track's effects: Mix > Effects > + Plugin");
+    menu.addSeparator();
+    menu.addItem (700, host->hasScanned() ? "Scan for plugins again" : "Scan for plugins (Arturia, Quake...)");
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (pluginsButton),
+                        [safe = juce::Component::SafePointer<RigView> (this), instruments] (int result)
+                        {
+                            if (safe == nullptr || result <= 0)
+                                return;
+                            if (result >= 10000)
+                            {
+                                const int which = result / 10000 - 1, index = result % 10000;
+                                if (juce::isPositiveAndBelow (index, (int) instruments.size()))
+                                    safe->loadInstrumentPlugin (which == 0 ? GrooveView::bass : GrooveView::synth, instruments[(size_t) index]);
+                            }
+                            else if (result == 500 || result == 501)
+                            {
+                                const int t = result == 500 ? GrooveView::bass : GrooveView::synth;
+                                safe->pickTrack (t);
+                                safe->showView ("Edit");
+                                if (auto* screen = dynamic_cast<AnalogScreen*> (safe->pageContent (editPageFor (t))))
+                                {
+                                    screen->showEngine (true);
+                                    screen->getShell().showScreen (true);
+                                }
+                            }
+                            else if (result == 600)
+                            {
+                                safe->showTab ("Effects");
+                            }
+                            else if (result == 700)
+                            {
+                                PluginMenu::scan ([safe] (const juce::String& t) { if (safe != nullptr) safe->say (t); },
+                                                  [safe] { if (safe != nullptr) safe->showPluginsMenu(); });
+                            }
+                        });
+}
+
+void RigView::loadInstrumentPlugin (int t, const juce::PluginDescription& d)
+{
+    auto& slot = t == GrooveView::bass ? engine.getBassPlugin() : engine.getSynthPlugin();
+    say ("Loading " + d.name + "...");
+    slot.load (d, [safe = juce::Component::SafePointer<RigView> (this), t, &slot, name = d.name] (const juce::String& error)
+               {
+                   if (safe == nullptr)
+                       return;
+                   if (error.isNotEmpty())
+                   {
+                       safe->say (name + " didn't load: " + error);
+                       return;
+                   }
+                   slot.bypassed = false;
+                   safe->pickTrack (t);
+                   safe->showView ("Edit");
+                   if (auto* screen = dynamic_cast<AnalogScreen*> (safe->pageContent (editPageFor (t))))
+                   {
+                       screen->showEngine (true);
+                       screen->getShell().showScreen (true);
+                   }
+                   safe->say (name + " plays the " + GrooveView::trackName (t) + " now, its own screen in Edit. "
+                              "Its steps and patterns are on Play (F1).");
+               });
 }
 
 //==============================================================================

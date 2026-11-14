@@ -446,7 +446,12 @@ public:
         owner.select (section, lanes[(size_t) row]);
         if (e.mods.isPopupMenu())
             owner.showBoxMenu (section, lanes[(size_t) row]);
-        else if (e.getNumberOfClicks() >= 2 && rigsong::boxBlock (tl(), section, lanes[(size_t) row]) < 0)
+        else if (e.getNumberOfClicks() >= 2 && rigsong::boxBlock (tl(), section, lanes[(size_t) row]) >= 0)
+        {
+            // Double-click a box: off to the tool it was made in, on that pattern, to change it.
+            owner.openBox (section, lanes[(size_t) row], true);
+        }
+        else if (e.getNumberOfClicks() >= 2)
         {
             // Double-click an empty box: it plays what that track has on now.
             const auto choices = rigsong::clipChoices (owner.engine, lanes[(size_t) row]);
@@ -489,12 +494,15 @@ public:
         level.setTextValueSuffix ("%");
         level.onValueChange = [this] { owner.setLevel ((float) level.getValue() / 100.0f); };
         addChildComponent (level);
-        for (auto* b : { &edit, &sameAs, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
+        for (auto* b : { &edit, &openPlay, &sameAs, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
         {
             b->fontSize = 15.0f;
             addChildComponent (b);
         }
-        edit.onClick = [this] { if (owner.onGoTo) owner.onGoTo (owner.pageForLane (owner.selLane)); };
+        edit.onClick = [this] { owner.openBox (owner.selSection, owner.selLane, true); };
+        edit.setTooltip ("Opens this track in Edit (F2) on the pattern this box plays, to change it. Double-clicking the box does the same.");
+        openPlay.onClick = [this] { owner.openBox (owner.selSection, owner.selLane, false); };
+        openPlay.setTooltip ("Opens this track in Play (F1) on the pattern this box plays: its steps and 8 knobs.");
         sameAs.onClick = [this] { owner.showBoxMenu (owner.selSection, owner.selLane); };
         playHere.onClick = [this] { owner.engine.launchSection (owner.selSection); };
         loopIt.onClick = [this] { owner.loopSection (owner.selSection); };
@@ -534,7 +542,7 @@ public:
         const int s = owner.selSection, lane = owner.selLane;
         const bool haveSection = juce::isPositiveAndBelow (s, (int) list.size());
         const int bpb = juce::jmax (1, owner.engine.getTransport().getBeatsPerBar());
-        for (auto* b : { &edit, &sameAs, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
+        for (auto* b : { &edit, &openPlay, &sameAs, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
             b->setVisible (false);
         level.setVisible (false);
         title.clear();
@@ -593,7 +601,8 @@ public:
         plays.items.push_back ({ "Silent", kSilent });
         plays.chosen = b != nullptr ? b->clip : kSilent;
         plays.onPick = [this] (int v) { owner.pickClip (v); };
-        edit.setVisible (! RigTimeline::lanes()[(size_t) lane].isLoop || true);
+        edit.setVisible (true);
+        openPlay.setVisible (true);
         sameAs.setVisible (true);
         if (b != nullptr)
         {
@@ -639,6 +648,7 @@ public:
             g.setFont (barlow (14.0f));
             g.drawFittedText ("Click a box to choose what that track plays in that section, and how it comes in and goes out.\n\n"
                               "Click a section's name for its length, name and loop bank. Drag its right edge for more bars.\n\n"
+                              "Double-click a box to change what it plays: its track opens in Edit on that pattern. "
                               "Double-click an empty box: it plays what that track has on now.",
                               r.removeFromTop (220), juce::Justification::topLeft, 12, 1.0f);
             return;
@@ -698,7 +708,8 @@ public:
                 }
             r.removeFromTop (6);
         };
-        row ({ &edit, &sameAs });
+        row ({ &edit, &openPlay });
+        row ({ &sameAs });
         row ({ &playHere, &loopIt });
         row ({ &rename, &copy });
         row ({ &moveLeft, &moveRight });
@@ -730,7 +741,8 @@ private:
     std::deque<Group> groups;
     juce::String title, sub;
     juce::Slider level;
-    rigpanels::PanelButton edit { juce::String::fromUTF8 ("Edit \xe2\x86\x97") }, sameAs { "Same as..." },
+    rigpanels::PanelButton edit { juce::String::fromUTF8 ("Edit \xe2\x80\xba") }, openPlay { juce::String::fromUTF8 ("Open in Play \xe2\x80\xba") },
+        sameAs { "Same as..." },
         playHere { juce::String::fromUTF8 ("\xe2\x96\xb6 Play here") }, loopIt { "Loop it" }, copy { "Copy" },
         moveLeft { juce::String::fromUTF8 ("\xe2\x97\x80 Move") }, moveRight { juce::String::fromUTF8 ("Move \xe2\x96\xb6") },
         remove { "Delete section" }, rename { "Rename" };
@@ -833,6 +845,18 @@ std::vector<int> SongView::shownLanes() const
         if (showingAllLanes || rigsong::laneHasSomething (engine, RigTimeline::laneForLoop (l)))
             out.push_back (RigTimeline::laneForLoop (l));
     return out;
+}
+
+void SongView::openBox (int section, int lane, bool inEdit)
+{
+    if (! juce::isPositiveAndBelow (lane, RigTimeline::kLanes))
+        return;
+    const int bi = rigsong::boxBlock (timeline(), section, lane);
+    const int clip = bi >= 0 ? timeline().getBlocks()[(size_t) bi].clip : -1;
+    if (onOpenBox)
+        onOpenBox (lane, clip, inEdit);
+    else if (onGoTo)
+        onGoTo (pageForLane (lane));
 }
 
 juce::String SongView::pageForLane (int lane) const
@@ -1177,7 +1201,8 @@ void SongView::showBoxMenu (int section, int lane)
                       rigsong::copyBox (timeline(), section, section + 1, lane);
                       edited();
                   });
-    menu.addItem ("Edit " + rigsong::laneName (lane) + juce::String::fromUTF8 (" \xe2\x86\x97"), [this, lane] { if (onGoTo) onGoTo (pageForLane (lane)); });
+    menu.addItem ("Edit " + rigsong::laneName (lane) + juce::String::fromUTF8 (" \xe2\x80\xba"), [this, section, lane] { openBox (section, lane, true); });
+    menu.addItem ("Open in Play" + juce::String::fromUTF8 (" \xe2\x80\xba"), [this, section, lane] { openBox (section, lane, false); });
     menu.showMenuAsync (juce::PopupMenu::Options());
 }
 

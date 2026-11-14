@@ -60,6 +60,15 @@ public:
     // play it, and on Edit its instrument shows.
     int getTrack() const;
     void pickTrack (int track);
+    // A Song box, double-clicked: its track (the lane's), on the pattern the box plays (clip, -1
+    // leaves it), in Edit or Play. A loop layer opens its start/end editor in Edit.
+    void openSongBox (int lane, int clip, bool edit);
+    // Settings > Your plugins: your Arturia synths (and any instrument) onto the Bass or Synth,
+    // effects (Quake...) onto any track's effects, and the scan.
+    void showPluginsMenu();
+    // Loads an instrument plugin onto the Bass or Synth and opens its own screen in Edit.
+    void loadInstrumentPlugin (int track, const juce::PluginDescription&);
+    static int trackForLane (int lane);
     // The page that shows a track in full ("MPC", "Drum machine", "Bass"...).
     static juce::String editPageFor (int track);
     // The Sounds drawer, over the right of whichever view is showing (F5).
@@ -184,7 +193,8 @@ private:
     void toggleRecordSet();
     void updateRecordButton();
     juce::TextButton audioButton { "Audio + MIDI" }, saveButton { "Save show" }, openButton { "Open show" };
-    juce::TextButton darkButton { "Dark panel" }, popOutButton { "Second screen..." };
+    juce::TextButton darkButton { "Dark panel" }, popOutButton { "Second screen..." }, pluginsButton { "Your plugins..." };
+    juce::Label pluginsLabel { {}, "Plugins" }, pluginsHint;
     juce::String keyboardName;
     bool keyboardFound = false, keyboardActive = false;
     float vuLevel = 0;
@@ -234,6 +244,11 @@ private:
     std::vector<Page> pages;
     void addPage (const juce::String& name, juce::Colour, juce::Component*);
     int pageIndex (const juce::String& name) const;
+    juce::Component* pageContent (const juce::String& name) const
+    {
+        const int i = pageIndex (name);
+        return i >= 0 ? pages[(size_t) i].content.get() : nullptr;
+    }
     void popOut (int page, juce::Rectangle<int> bounds = {});
     void dockBack (int page);
     // Keeps the engine's list of popped-out windows up to date (it's saved with the show), and

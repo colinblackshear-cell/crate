@@ -153,6 +153,7 @@ PluginSlot::~PluginSlot()
 {
     *alive = false;
     closeWindow();
+    releaseEmbeddedEditor();
 }
 
 void PluginSlot::prepare (double sampleRate, int maxBlock)
@@ -193,6 +194,7 @@ void PluginSlot::load (const juce::PluginDescription& description, std::function
 void PluginSlot::setInstance (std::unique_ptr<juce::AudioPluginInstance> made)
 {
     closeWindow();
+    releaseEmbeddedEditor();
     if (made != nullptr)
     {
         // Stereo where it can be; whatever it has where it can't.
@@ -237,6 +239,8 @@ void PluginSlot::showWindow()
         window->toFront (true);
         return;
     }
+    // Its editor can only be in one place: out of the page, into the window.
+    releaseEmbeddedEditor();
     window = std::make_unique<PluginWindow> (*instance, [this] { juce::MessageManager::callAsync ([this, weak = std::weak_ptr<bool> (alive)]
                                                                                                   {
                                                                                                       if (! weak.expired())
@@ -247,6 +251,28 @@ void PluginSlot::showWindow()
 void PluginSlot::closeWindow()
 {
     window.reset();
+}
+
+juce::Component* PluginSlot::getEmbeddedEditor()
+{
+    if (instance == nullptr)
+        return nullptr;
+    if (embedded == nullptr)
+    {
+        closeWindow();
+        if (auto* editor = instance->hasEditor() ? instance->createEditorIfNeeded() : nullptr)
+            embedded.reset (editor);
+        else
+            embedded = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
+        if (auto* generic = dynamic_cast<juce::GenericAudioProcessorEditor*> (embedded.get()))
+            generic->setSize (juce::jmax (generic->getWidth(), 520), juce::jmax (generic->getHeight(), 300));
+    }
+    return embedded.get();
+}
+
+void PluginSlot::releaseEmbeddedEditor()
+{
+    embedded.reset();
 }
 
 int PluginSlot::numPrograms() const { return instance != nullptr ? instance->getNumPrograms() : 0; }
