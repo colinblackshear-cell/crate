@@ -189,7 +189,7 @@ public:
             shownStatus = now;
             shownDetail = detail;
             shownSelected = selected;
-            setTooltip (owner.stateOf (index));
+            setTooltip ((detail.isNotEmpty() ? detail + ". " : juce::String()) + owner.stateOf (index));
             repaint();
         }
     }
@@ -222,9 +222,13 @@ public:
         const auto name = trackName (index).toUpperCase();
         const int nameWidth = juce::jmin (top.getWidth() / 2 + 20, (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), name) + 6);
         g.drawText (name, top.removeFromLeft (nameWidth), juce::Justification::centredLeft, false);
-        g.setColour (p.wellInk2);
-        g.setFont (vintage::barlow (13.0f));
-        g.drawFittedText (shownDetail, top, juce::Justification::centredRight, 1, 0.8f);
+        // (A short card has no room for the detail beside its buttons: it's in the tooltip.)
+        if (getHeight() >= 74)
+        {
+            g.setColour (p.wellInk2);
+            g.setFont (vintage::barlow (13.0f));
+            g.drawFittedText (shownDetail, top, juce::Justification::centredRight, 1, 0.8f);
+        }
 
         auto row = area;
         row.removeFromRight (go.getWidth() + mute.getWidth() + solo.getWidth() + 16);
@@ -247,7 +251,11 @@ public:
     void mouseUp (const juce::MouseEvent& e) override
     {
         if (e.mouseWasClicked())
+        {
             owner.selectTrack (index);
+            if (owner.onTrackPicked)
+                owner.onTrackPicked (index);
+        }
     }
 
     juce::TextButton go, mute { "M" }, solo { "S" };
@@ -268,7 +276,7 @@ juce::String GrooveView::trackName (int t)
     switch (t)
     {
         case drums:   return "MPC";
-        case machine: return "Machine";
+        case machine: return "Drums";
         case bass:    return "Bass";
         case synth:   return "Synth";
         case vocoder: return "Vocoder";
@@ -814,6 +822,20 @@ void GrooveView::refresh()
     repaint();
 }
 
+juce::Array<juce::Component*> GrooveView::takeTrackCards()
+{
+    cardsElsewhere = true;
+    juce::Array<juce::Component*> list;
+    for (auto* c : cards)
+    {
+        removeChildComponent (c);
+        list.add (c);
+    }
+    resized();
+    repaint();
+    return list;
+}
+
 void GrooveView::selectTrack (int t)
 {
     if (! juce::isPositiveAndBelow (t, (int) numTracks))
@@ -1037,8 +1059,8 @@ void GrooveView::buildTrack()
             }
     }
 
-    openButton.setButtonText ("Open " + tabFor (track) + juce::String::fromUTF8 (" \xe2\x80\xba"));
-    openButton.setTooltip ("Everything " + trackName (track) + " can do, on its own page.");
+    openButton.setButtonText ("Edit " + trackName (track) + juce::String::fromUTF8 (" \xe2\x80\xba"));
+    openButton.setTooltip ("Everything " + trackName (track) + " can do, in full (Edit, F2).");
     micButton.setVisible (track == vocoder && showMic);
     extraButton.setVisible (track == bass || track == vocoder || track == machine || track == lineIn);
     for (auto* b : { &soundButton, &soundPrev, &soundNext })
@@ -2104,7 +2126,8 @@ void GrooveView::paint (juce::Graphics& g)
     const auto colour = trackColour (track);
     vintage::drawFace (g, getLocalBounds());
 
-    vintage::engraved (g, juce::String::fromUTF8 ("Tracks \xc2\xb7 tap to select"), tracksArea.withHeight (18));
+    if (! cardsElsewhere)
+        vintage::engraved (g, juce::String::fromUTF8 ("Tracks \xc2\xb7 tap to select"), tracksArea.withHeight (18));
 
     // The steps' well.
     vintage::drawWell (g, wellArea.toFloat());
@@ -2276,7 +2299,11 @@ void GrooveView::resized()
 {
     auto area = getLocalBounds().withTrimmedTop (6).withTrimmedBottom (14).reduced (22, 0);
 
-    // Tracks down the left.
+    // Tracks down the left (unless they're on the window's track rail).
+    if (cardsElsewhere)
+        tracksArea = {};
+    else
+    {
     tracksArea = area.removeFromLeft (juce::jmin (kTrackWidth, area.getWidth() / 4 + 20));
     {
         auto list = tracksArea.withTrimmedTop (24);
@@ -2289,6 +2316,7 @@ void GrooveView::resized()
         }
     }
     area.removeFromLeft (16);
+    }
 
     // The knobs below, the steps above.
     // The vocoder's parts have knobs of their own up top, so its eight knobs give them a little room.

@@ -16,6 +16,8 @@ class TimelineView;
 //   + Section          adds one at the end: empty, or what's playing now
 //   Click a box        the panel on the right picks what it plays, how it fades in and out,
 //                      which bar it starts on and how loud it is
+//   Double-click one   its track opens in Edit on the pattern it plays (Bass pattern 3), to
+//                      change it; "Open in Play" opens it on the Play view instead
 //   Click a section    its name, length, loop bank; copy, move or delete it.
 //                      Drag its right edge for more or fewer bars
 //   Click the ruler    where Play starts
@@ -44,6 +46,10 @@ public:
     std::function<void()> onExport;
     // "Edit" on a box: the screen where that track's patterns are made.
     std::function<void (const juce::String& page)> onGoTo;
+    // Double-click on a box (or its Edit / Open in Play): its track, opened on the pattern the box
+    // plays (clip, -1 for "as it is"), in Edit (true) or Play.
+    std::function<void (int lane, int clip, bool edit)> onOpenBox;
+    void openBox (int section, int lane, bool edit);
 
     //==========================================================================
     // What the buttons and clicks do (public for the tests).

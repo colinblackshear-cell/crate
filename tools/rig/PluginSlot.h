@@ -66,6 +66,12 @@ public:
     void showWindow();
     void closeWindow();
     bool isWindowOpen() const { return window != nullptr; }
+    // Its own screen inside a Kaleidobox page instead (the Bass or Synth's Edit view). There's one
+    // at a time: showing the window takes it out of the page, and this closes the window. The slot
+    // owns it (the page only shows it); it goes when the plugin changes. Null when nothing's loaded.
+    juce::Component* getEmbeddedEditor();
+    void releaseEmbeddedEditor();
+    bool isEmbedded() const { return embedded != nullptr; }
 
     // Its sounds (the plugin's programs), for the Rig's sound picker.
     int numPrograms() const;
@@ -108,6 +114,7 @@ private:
     double rate = 44100.0;
     int block = 512;
     std::unique_ptr<juce::DocumentWindow> window;
+    std::unique_ptr<juce::AudioProcessorEditor> embedded;
     std::array<int, kMacros> macros;
     std::shared_ptr<bool> alive = std::make_shared<bool> (true);
 

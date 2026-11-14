@@ -4,6 +4,7 @@
 #include "RigSong.h"
 #include "RigScenes.h"
 #include "RigView.h"
+#include "GrooveView.h"
 #include "SongView.h"
 #include "TimelineView.h"
 
@@ -249,7 +250,49 @@ struct RigSongTests : juce::UnitTest
             expect (! sectionsFromParts (engine), "only once");
         }
 
-        beginTest ("the Song screen: F7, sections, boxes, the panel, Jam / Song, Bars view, the section keys");
+        beginTest ("double-click a Song box: its track opens in Edit on the pattern the box plays");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            RigView view (engine, nullptr);
+            view.setSize (1440, 900);
+            view.showView ("Song");
+            auto* song = findIn<SongView> (view);
+            expect (song != nullptr);
+            if (song == nullptr)
+                return;
+            const int bass = laneOf (RigEngine::bassStrip), drums = laneOf (RigEngine::drumsStrip), voc = laneOf (RigEngine::vocoderStrip);
+            expectEquals (song->addEmptySection(), 0);
+            song->select (0, bass);
+            song->pickClip (2);
+            song->select (0, drums);
+            song->pickClip (3);
+            song->select (0, voc);
+            song->pickClip (-1);
+
+            song->openBox (0, bass, true);
+            expectEquals (view.getView(), juce::String ("Edit"));
+            expectEquals (view.getPlace(), juce::String ("Bass"));
+            expectEquals (view.getTrack(), (int) GrooveView::bass);
+            expectEquals (juce::roundToInt (engine.getBass().params.getRawParameterValue ("pattern")->load()), 2, "on the box's pattern");
+
+            view.showView ("Song");
+            song->openBox (0, drums, false);
+            expectEquals (view.getView(), juce::String ("Play"), "Open in Play");
+            expectEquals (view.getTrack(), (int) GrooveView::machine);
+            expectEquals (juce::roundToInt (engine.getDrums().params.getRawParameterValue ("pattern")->load()), 3);
+
+            view.showView ("Song");
+            song->openBox (0, voc, true);
+            expectEquals (view.getPlace(), juce::String ("Vocoder"));
+
+            view.showView ("Song");
+            song->openBox (0, laneOf (RigEngine::inputStrip), true);
+            expectEquals (view.getTrack(), (int) GrooveView::lineIn, "an empty box opens its track too");
+            expectEquals (RigView::trackForLane (0), (int) GrooveView::loops, "a loop layer is the Loops track");
+        }
+
+        beginTest ("the Song screen: F3, sections, boxes, the panel, Jam / Song, Bars view, the section keys");
         {
             RigEngine engine;
             engine.prepare (48000.0, 480);
@@ -258,7 +301,7 @@ struct RigSongTests : juce::UnitTest
             // CRATE_SONG_SNAPSHOT=/folder saves pictures of it there.
             const auto folder = juce::SystemStats::getEnvironmentVariable ("CRATE_SONG_SNAPSHOT", {});
 
-            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F7Key)));
+            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F3Key)));
             expectEquals (view.getPage(), juce::String ("Song"));
             auto* song = findIn<SongView> (view);
             expect (song != nullptr);
@@ -389,7 +432,7 @@ struct RigSongTests : juce::UnitTest
             expectGreaterOrEqual (b, 0);
             expectEquals (engine.getTimeline().getBlocks()[(size_t) b].clip, 5);
             expectEquals (clipName (engine, laneOf (RigEngine::bassStrip), 5), juce::String ("Pattern 6"));
-            expectEquals (laneName (laneOf (RigEngine::drumsStrip)), juce::String ("Drum machine"));
+            expectEquals (laneName (laneOf (RigEngine::drumsStrip)), juce::String ("Drums"));
         }
     }
 };

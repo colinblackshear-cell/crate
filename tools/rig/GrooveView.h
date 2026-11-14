@@ -84,6 +84,12 @@ public:
     void refresh();
 
     std::function<void (const juce::String& tab)> onOpen;
+    // A track card was clicked (picked), wherever the cards are.
+    std::function<void (int track)> onTrackPicked;
+
+    // The track cards, for the window's track rail: they move there (and stay this view's), and
+    // the Groove's middle takes the whole width.
+    juce::Array<juce::Component*> takeTrackCards();
     std::function<void (const juce::String&)> onSay;
     std::function<float (int strip)> meterOf;
     std::function<void()> onSample;
@@ -159,6 +165,7 @@ private:
 
     RigEngine& engine;
     int track = vocoder;
+    bool cardsElsewhere = false;
     std::array<int, kDrumRows> drumRows { -1, -1, -1, -1 };   // pad in the bank, -1 = pick from the kit
     int drumBar = 0;
     int heldCell = -1, dragStep = -1, dragStartNote = 0, dragStartY = 0;

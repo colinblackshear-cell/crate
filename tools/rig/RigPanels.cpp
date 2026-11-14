@@ -139,14 +139,11 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
     addAndMakeVisible (tap);
     quantize.fontSize = 13.0f;
     addAndMakeVisible (quantize);
-    for (auto* b : { &newSong, &newPattern })
-    {
-        b->fontSize = 13.0f;
-        addAndMakeVisible (b);
-    }
-    newSong.setTooltip ("Starts a new song from nothing: saves the one you're on first, then clears every tool, loop and part.");
-    newPattern.setTooltip ("Starts the next thing in the song on an empty pattern: a beat, a bass line, keys, the vocoder, a loop "
-                           "or a sample. Also keeps what's playing as the next song part.");
+    show.fontSize = 15.0f;
+    show.subSize = 11.0f;
+    show.sub = juce::String::fromUTF8 ("Not saved yet \xc2\xb7 menu");
+    show.setTooltip ("Your show: New song, Open, Save (Cmd+S), Save as, Export for Logic, and the Guide.");
+    addAndMakeVisible (show);
     play.setTooltip ("Starts and stops every tool together (space bar).");
     stop.setTooltip ("Stops, goes back to the start, and silences any notes still sounding.");
     rec.setTooltip ("Records the set for Logic, from the next bar: every tool as its own WAV, the mix, and what you play as MIDI. "
@@ -172,7 +169,7 @@ void Header::resized()
     const int h = 66;
     // Room for everything? Narrow the VU meters, then drop them, then the wordmark, on a small
     // screen.
-    constexpr int fixed = 276 + 128 + 8 + 46 + 8 + 84 + 16 + 176 + 12 + 112 + 12 + 118;
+    constexpr int fixed = 276 + 128 + 8 + 46 + 8 + 84 + 16 + 176 + 12 + 150 + 12 + 118;
     constexpr int wordmark = 168 + 16, vuMin = 16 + 2 * 80 + 8, vuMax = 16 + 2 * 116 + 8;
     showVu = r.getWidth() >= wordmark + fixed + vuMin;
     showWordmark = r.getWidth() >= wordmark + fixed || showVu;
@@ -211,13 +208,8 @@ void Header::resized()
     r.removeFromLeft (16);
     partArea = centreY (r.removeFromLeft (176), h);
     r.removeFromLeft (12);
-    {
-        // New song over New pattern, beside the song's place.
-        auto col = centreY (r.removeFromLeft (112), h + 6);
-        newSong.setBounds (col.removeFromTop (col.getHeight() / 2 - 1));
-        col.removeFromTop (2);
-        newPattern.setBounds (col);
-    }
+    // Your show, beside the song's place: its name and its menu.
+    show.setBounds (centreY (r.removeFromLeft (150), h));
     r.removeFromLeft (12);
 
     lampsArea = centreY (r.removeFromRight (118), 72);
@@ -306,26 +298,26 @@ void Header::mouseUp (const juce::MouseEvent& e)
 }
 
 //==============================================================================
-const juce::StringArray& ScreenBar::screens()
+const juce::StringArray& ScreenBar::views()
 {
-    static const juce::StringArray s { "Groove", "Vocoder", "Looper", "Sampler", "Mixer", "Effects", "Song" };
-    return s;
-}
-
-juce::String ScreenBar::label (int i)
-{
-    return i == 3 ? juce::String::fromUTF8 ("Sampler \xc2\xb7 MPC") : screens()[i];
+    static const juce::StringArray v { "Play", "Edit", "Song", "Mix" };
+    return v;
 }
 
 ScreenBar::ScreenBar()
 {
-    for (int i = 0; i < screens().size(); ++i)
+    const char* tips[] = { "Play (F1): the picked track's steps, patterns and eight knobs. Every track works the same way here.",
+                           "Edit (F2): the picked track's instrument in full: the MPC and Sampler, the drum machine, Bass, Synth, "
+                           "the Vocoder's pedals, the Loops, or Line in's amp.",
+                           "Song (F3): the song's sections in order, and what every track plays in each. Build it, play it, record it.",
+                           "Mix (F4): a fader, pan, sends and effects for every track and loop layer, and the FX pad." };
+    for (int i = 0; i < views().size(); ++i)
     {
-        auto* b = tabs.add (new PanelButton (label (i)));
+        auto* b = tabs.add (new PanelButton (views()[i]));
         b->key = "F" + juce::String (i + 1);
-        b->fontSize = i == 3 ? 16.0f : 19.0f;   // (the longest name)
-        b->setTooltip ("Shows the " + label (i) + " screen (F" + juce::String (i + 1) + ").");
-        b->onClick = [this, i] { if (onScreen) onScreen (screens()[i]); };
+        b->fontSize = 20.0f;
+        b->setTooltip (tips[i]);
+        b->onClick = [this, i] { if (onView) onView (views()[i]); };
         addAndMakeVisible (b);
     }
     for (auto* b : { &back, &forward })
@@ -337,33 +329,37 @@ ScreenBar::ScreenBar()
     }
     back.setTooltip ("Back to the screen you were on (Cmd+[).");
     forward.setTooltip ("Forward again (Cmd+]).");
-    more.fontSize = 18.0f;
-    more.setTooltip ("Everything else: the MPC, Bass and Synth in full, the song list, the sound bank, "
-                     "the keyboard set-up, saving and opening shows, the dark panel.");
-    addAndMakeVisible (more);
+    sounds.fontSize = 16.0f;
+    sounds.key = "F5";
+    sounds.setTooltip ("Your samples and Splice folder, in a drawer over any view: find a sound by kind, tempo or key, hear it, "
+                       "and send it onto an MPC pad, into the Sampler or onto a loop layer (F5).");
+    addAndMakeVisible (sounds);
+    settings.fontSize = 16.0f;
+    settings.key = "F6";
+    settings.setTooltip ("Settings: what the keys and pads play, the split, sampling one tool into another, knob Learn, the click, "
+                         "audio and MIDI, the dark panel and a second screen (F6).");
+    addAndMakeVisible (settings);
     help.fontSize = 20.0f;
     help.setTooltip ("How to: step-by-step guides for this screen, recording loops, building a song, saving and exporting, "
                      "singing live and plugging in a guitar.");
     addAndMakeVisible (help);
 }
 
-void ScreenBar::setCurrent (const juce::String& page)
+void ScreenBar::setCurrent (const juce::String& view, bool soundsOpen, bool settingsOpen)
 {
-    for (int i = 0; i < tabs.size(); ++i)
+    auto set = [] (PanelButton& b, bool on)
     {
-        const auto lit = screens()[i] == page ? Lit::current : Lit::none;
-        if (tabs[i]->lit != lit)
+        const auto lit = on ? Lit::current : Lit::none;
+        if (b.lit != lit)
         {
-            tabs[i]->lit = lit;
-            tabs[i]->repaint();
+            b.lit = lit;
+            b.repaint();
         }
-    }
-    const auto moreLit = screens().contains (page) || page == "Guide" ? Lit::none : Lit::current;
-    if (more.lit != moreLit)
-    {
-        more.lit = moreLit;
-        more.repaint();
-    }
+    };
+    for (int i = 0; i < tabs.size(); ++i)
+        set (*tabs[i], views()[i] == view);
+    set (sounds, soundsOpen);
+    set (settings, settingsOpen);
 }
 
 void ScreenBar::resized()
@@ -375,11 +371,14 @@ void ScreenBar::resized()
     forward.setBounds (r.removeFromLeft (60));
     r.removeFromLeft (16);
     help.setBounds (r.removeFromRight (56));
-    r.removeFromRight (12);
-    more.setBounds (r.removeFromRight (juce::jmin (120, r.getWidth() / 8)));
-    r.removeFromRight (12);
+    r.removeFromRight (10);
+    const int util = juce::jlimit (110, 150, r.getWidth() / 9);
+    settings.setBounds (r.removeFromRight (util));
+    r.removeFromRight (10);
+    sounds.setBounds (r.removeFromRight (util));
+    r.removeFromRight (28);
     const int n = tabs.size();
-    const int w = (r.getWidth() - 12 * (n - 1)) / n;
+    const int w = juce::jmin (220, (r.getWidth() - 12 * (n - 1)) / n);
     for (auto* b : tabs)
     {
         b->setBounds (r.removeFromLeft (w));
@@ -388,24 +387,55 @@ void ScreenBar::resized()
 }
 
 //==============================================================================
-int Footer::chipStrip (int chip)
+TrackRail::TrackRail()
 {
-    const int strips[] = { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip, RigEngine::vocoderStrip, RigEngine::loopsStrip };
-    return strips[juce::jlimit (0, kChips - 1, chip)];
+    newPattern.fontSize = 14.0f;
+    newPattern.setTooltip ("Starts the next thing in the song on an empty pattern: a beat, a bass line, keys, the vocoder, a loop "
+                           "or a sample. Also keeps what's playing as the next section.");
+    addAndMakeVisible (newPattern);
 }
 
-juce::String Footer::chipName (int chip)
+void TrackRail::setCards (const juce::Array<juce::Component*>& list)
 {
-    const char* names[] = { "MPC", "Machine", "Bass", "Synth", "Vocoder", "Loops" };
-    return names[juce::jlimit (0, kChips - 1, chip)];
+    cards.clear();
+    for (auto* c : list)
+    {
+        cards.add (c);
+        addAndMakeVisible (c);
+    }
+    resized();
 }
 
+void TrackRail::paint (juce::Graphics&)
+{
+}
+
+void TrackRail::resized()
+{
+    auto r = getLocalBounds();
+    auto top = r.removeFromTop (40);
+    newPattern.setBounds (top.withTrimmedRight (4).withHeight (36));
+    r.removeFromTop (6);
+    const int n = cards.size();
+    if (n == 0)
+        return;
+    const int gap = 2;
+    const int h = juce::jmin (96, (r.getHeight() - gap * (n - 1)) / n);
+    for (auto& c : cards)
+    {
+        if (c != nullptr)
+            c->setBounds (r.removeFromTop (h).expanded (4, 0).withTrimmedLeft (4));
+        r.removeFromTop (gap);
+    }
+}
+
+//==============================================================================
 Footer::Footer (RigEngine& e) : engine (e)
 {
     for (int i = 0; i < 8; ++i)
     {
         auto* b = parts.add (new PanelButton (juce::String::charToString ((juce::juce_wchar) ('A' + i))));
-        b->fontSize = 38.0f;
+        b->fontSize = 30.0f;
         b->subSize = 12.0f;
         b->onClick = [this, i]
         {
@@ -454,7 +484,7 @@ void Footer::showPartMenu (int i)
                         });
 }
 
-void Footer::tick (const std::function<float (int)>& meterOf)
+void Footer::tick()
 {
     const auto& tl = engine.getTimeline();
     const auto list = rigsong::sections (tl);
@@ -474,7 +504,7 @@ void Footer::tick (const std::function<float (int)>& meterOf)
         juce::String sub;
         Lit lit = Lit::none;
         if (i == queued && i != current)
-            sub = "Next", lit = pulse ? Lit::next : Lit::none;
+            sub = juce::String::fromUTF8 ("Next \xc2\xb7 ") + (has ? list[(size_t) i].name : juce::String()), lit = pulse ? Lit::next : Lit::none;
         else if (i == current)
             sub = juce::String::fromUTF8 ("\xe2\x96\xb6 ") + list[(size_t) i].name, lit = Lit::play;
         else if (has)
@@ -493,72 +523,25 @@ void Footer::tick (const std::function<float (int)>& meterOf)
             b->repaint();
         }
     }
-
-    // Live now: what each track is doing.
-    auto& transport = engine.getTransport();
-    bool changed = false;
-    for (int c = 0; c < kChips; ++c)
-    {
-        const int strip = chipStrip (c);
-        const float m = meterOf ? meterOf (strip) : 0.0f;
-        heard[(size_t) c] = m > 0.003f ? 1.0f : heard[(size_t) c] * 0.97f;
-        Chip chip;
-        bool recording = false;
-        if (strip == RigEngine::loopsStrip)
-            for (int l = 0; l < RigLooper::kLayers; ++l)
-            {
-                const auto st = engine.getLooper().getState (l);
-                recording = recording || st == RigLooper::State::recording || st == RigLooper::State::overdubbing || st == RigLooper::State::armed;
-            }
-        if (engine.getStrip (strip).mute.load())
-            chip = { "Muted", Lit::mute };
-        else if (strip == RigEngine::vocoderStrip && ! engine.vocoderOn.load())
-            chip = { "Off", Lit::none };
-        else if (recording)
-            chip = { "Rec", Lit::arm };
-        else if (heard[(size_t) c] > 0.05f)
-            chip = { "Playing", Lit::play };
-        else
-            chip = { transport.isPlaying() ? "Quiet" : "Ready", Lit::none };
-        if (chip.text != chips[(size_t) c].text || chip.lit != chips[(size_t) c].lit)
-        {
-            chips[(size_t) c] = chip;
-            changed = true;
-        }
-    }
-    if (changed)
-        repaint (chipsArea.expanded (4));
 }
 
 void Footer::resized()
 {
     auto r = getLocalBounds().reduced (22, 0);
-    auto content = r.withSizeKeepingCentre (r.getWidth(), 76 + 22);
-
-    // Parts on the left, Live now on the right; on a small screen the chips go first.
-    const int chipsWidth = kChips * kChipWidth + (kChips - 1) * 8;
-    showChips = content.getWidth() >= 8 * 64 + 7 * 8 + 22 + chipsWidth;
-    if (showChips)
-    {
-        chipsArea = content.removeFromRight (chipsWidth);
-        chipsLabel = chipsArea.removeFromTop (22);
-        content.removeFromRight (22);
-    }
-    else
-        chipsArea = chipsLabel = {};
+    auto content = r.withSizeKeepingCentre (r.getWidth(), 64 + 22);
 
     partsLabel = content.removeFromTop (22);
     const int gap = 10;
-    const int w = juce::jlimit (56, 84, (content.getWidth() - 7 * gap) / 8);
+    // Each key is wide enough for its section's name; messages go beside them when there's room.
+    const int w = juce::jlimit (60, 132, (content.getWidth() - 7 * gap - 280) / 8);
     partsArea = content.withWidth (8 * w + 7 * gap);
     auto row = partsArea;
     for (auto* b : parts)
     {
-        b->setBounds (row.removeFromLeft (w).withHeight (76));
+        b->setBounds (row.removeFromLeft (w).withHeight (64));
         row.removeFromLeft (gap);
     }
     content.removeFromLeft (partsArea.getWidth() + 16);
-    // Messages go beside the parts; when there's no room there, on the line above them.
     if (content.getWidth() >= 200)
     {
         message.setBounds (content.withTrimmedBottom (4));
@@ -567,8 +550,7 @@ void Footer::resized()
     }
     else
     {
-        const int right = showChips ? chipsArea.getX() - 12 : partsArea.getRight();
-        message.setBounds (juce::Rectangle<int>::leftTopRightBottom (partsLabel.getX() + 350, partsLabel.getY(), right, partsLabel.getBottom()));
+        message.setBounds (juce::Rectangle<int>::leftTopRightBottom (partsLabel.getX() + 350, partsLabel.getY(), partsArea.getRight(), partsLabel.getBottom()));
         message.setJustificationType (juce::Justification::centredLeft);
         message.setFont (barlow (13.0f));
     }
@@ -582,37 +564,6 @@ void Footer::paint (juce::Graphics& g)
     g.setColour (p.line);
     g.fillRect (getLocalBounds().removeFromTop (2));
     message.setColour (juce::Label::textColourId, p.ink2);
-
-    engraved (g, juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1\xe2\x80\x93" "8"), partsLabel.withWidth (500));
-    if (! showChips)
-        return;
-    engraved (g, "Live now", chipsLabel);
-    auto r = chipsArea.withHeight (76);
-    for (int c = 0; c < kChips; ++c)
-    {
-        auto chip = r.removeFromLeft (kChipWidth).toFloat();
-        r.removeFromLeft (8);
-        drawWell (g, chip);
-        auto inner = chip.reduced (10.0f, 8.0f);
-        auto top = inner.removeFromTop (24.0f);
-        g.setColour (RigColours::forStrip (chipStrip (c)));
-        g.fillRoundedRectangle (top.removeFromLeft (12.0f).withSizeKeepingCentre (12.0f, 12.0f), 3.0f);
-        top.removeFromLeft (7.0f);
-        g.setColour (p.wellInk);
-        g.setFont (cond (18.0f, Weight::extra, 0.06f));
-        g.drawFittedText (chipName (c).toUpperCase(), top.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
-        auto bottom = inner.removeFromBottom (20.0f);
-        drawLamp (g, { bottom.getX() + 8.0f, bottom.getCentreY() }, chips[(size_t) c].lit);
-        engraved (g, chips[(size_t) c].text, bottom.withTrimmedLeft (22.0f).toNearestInt(), juce::Justification::centredLeft, 12.0f, true);
-    }
-}
-
-void Footer::mouseUp (const juce::MouseEvent& e)
-{
-    if (! e.mouseWasClicked() || ! showChips || ! chipsArea.contains (e.getPosition()))
-        return;
-    const int c = (e.x - chipsArea.getX()) / (kChipWidth + 8);
-    if (juce::isPositiveAndBelow (c, kChips) && onTrack)
-        onTrack (chipStrip (c));
+    engraved (g, juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1\xe2\x80\x93" "8 \xc2\xb7 right-click to edit"), partsLabel.withWidth (500));
 }
 }

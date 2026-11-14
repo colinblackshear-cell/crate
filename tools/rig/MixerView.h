@@ -56,6 +56,8 @@ public:
     static juce::String pageFor (int strip);
     // The hub's buttons, as their pages are named.
     static const juce::StringArray& hubPages();
+    // The row of buttons into every tool along the top (off when the window has a track rail).
+    void showHub (bool);
 
     // Loop layers in place of the tools' strips.
     void showLayers (bool);
@@ -74,6 +76,7 @@ public:
     std::vector<std::pair<juce::Button*, int>> learnButtons() const;
 
     juce::OwnedArray<rigpanels::PanelButton> hub;
+    bool hubShown = true;
     rigpanels::PanelButton toolsBank { "Tools" }, layersBank { "Loop layers" }, clearSolo { "Clear solo" }, padBank { "FX pad" };
 
 private:

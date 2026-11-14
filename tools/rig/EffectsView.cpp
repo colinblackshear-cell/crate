@@ -41,7 +41,7 @@ const std::vector<EffectsView::Source>& EffectsView::sources()
             { "Bass", "the bass synth", RigEngine::bassStrip, -1, "Bass", RigLooper::bass, RigCapture::bass },
             { "Synth", "the poly synth", RigEngine::synthStrip, -1, "Synth", RigLooper::synth, RigCapture::synth },
             { "MPC", "pads and sequences", RigEngine::mpcStrip, -1, "MPC", RigLooper::mpc, RigCapture::mpc },
-            { "Drum machine", "the analog drums", RigEngine::drumsStrip, -1, "Drum machine", RigLooper::drums, RigCapture::drums },
+            { "Drums", "the drum machine", RigEngine::drumsStrip, -1, "Drum machine", RigLooper::drums, RigCapture::drums },
             { "Sampler", "the sampler's keys", RigEngine::samplerStrip, -1, "Sampler", RigLooper::sampler, RigCapture::sampler },
         };
         static const char* loopNames[] = { "Loop 1", "Loop 2", "Loop 3", "Loop 4", "Loop 5", "Loop 6", "Loop 7", "Loop 8" };

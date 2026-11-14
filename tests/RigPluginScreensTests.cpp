@@ -92,7 +92,10 @@ struct RigPluginScreensTests : juce::UnitTest
             for (const auto& place : places)
             {
                 view.goTo (place);
-                expect (view.getPlace() == place || view.getPage() == place, place + " opens (on " + view.getPage() + ")");
+                if (place == "Sounds")
+                    expect (view.isSoundsOpen(), "Sounds opens as a drawer");
+                else
+                    expect (view.getPlace() == place || view.getPage() == place, place + " opens (on " + view.getPage() + ")");
                 if (auto* page = view.getCurrentContent())
                     expect (page->isVisible() && page->getWidth() > 0, place + " shows something");
                 else
@@ -113,9 +116,10 @@ struct RigPluginScreensTests : juce::UnitTest
                     juce::FileOutputStream stream (file);
                     juce::PNGImageFormat().writeImageToStream (image, stream);
                 }
+                view.showSounds (false);
             }
 
-            // The screen buttons along the top open their screens.
+            // The view buttons along the top open their views.
             std::vector<ScreenBar*> bars;
             collect (*editor, bars);
             expectEquals ((int) bars.size(), 1);
@@ -123,7 +127,7 @@ struct RigPluginScreensTests : juce::UnitTest
                 for (int i = 0; i < bars.front()->tabs.size(); ++i)
                 {
                     bars.front()->tabs[i]->onClick();
-                    expectEquals (view.getPage(), ScreenBar::screens()[i]);
+                    expectEquals (view.getView(), ScreenBar::views()[i]);
                 }
         }
     }

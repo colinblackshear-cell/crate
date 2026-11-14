@@ -24,13 +24,14 @@ public:
             if (guide == nullptr)
                 return;
 
-            // The six screens first, then the rest; nothing for a page the Rig lacks.
+            // The views first (Play, Song, Mix and the Sounds drawer), then each track in full;
+            // nothing for a page the Rig lacks.
             const auto& shown = guide->getShown();
             expect (shown.size() >= 10, "an entry per tool");
-            const char* six[] = { "Groove", "Vocoder", "Looper", "Sampler", "Mixer", "Effects" };
-            for (int i = 0; i < 6; ++i)
+            const char* views[] = { "Groove", "Song", "Mixer", "Sounds" };
+            for (int i = 0; i < 4; ++i)
             {
-                expectEquals (shown[(size_t) i].page, juce::String (six[i]));
+                expectEquals (shown[(size_t) i].page, juce::String (views[i]));
                 expect (shown[(size_t) i].main);
             }
             for (const auto& e : shown)
@@ -49,7 +50,14 @@ public:
                 if (auto* b = dynamic_cast<juce::Button*> (card); b != nullptr && b->onClick)
                     b->onClick();
                 // (The sample editor and the MPC are sides of the Sampler · MPC screen: places, not pages.)
-                expectEquals (view.getPlace(), shown[(size_t) i].page);
+                // (Sounds is a drawer over Play.)
+                if (shown[(size_t) i].page == "Sounds")
+                {
+                    expect (view.isSoundsOpen(), "the Sounds drawer opens");
+                    view.showSounds (false);
+                }
+                else
+                    expectEquals (view.getPlace(), shown[(size_t) i].page);
             }
 
             if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_GUIDE_SNAPSHOT", {}); path.isNotEmpty())

@@ -25,6 +25,9 @@ AnalogScreen::AnalogScreen (juce::AudioProcessorValueTreeState& p, PluginSlot& s
     addAndMakeVisible (keys);
     addChildComponent (shell);
     shell.onSay = [this] (const juce::String& text) { say (text); };
+    // The plugin's own interface wants room: it takes the arp / step section's place too (those
+    // are on Play, F1, and come back with 8 knobs).
+    shell.onLayout = [this] { resized(); repaint(); };
     shell.onChanged = [this]
     {
         // Loading a plugin shows it; taking it out goes back to the built-in sound.
@@ -295,7 +298,15 @@ void AnalogScreen::resized()
     shell.setVisible (shellShown);
     if (shellShown)
     {
-        shell.setBounds (area);
+        if (shell.isShowingScreen())
+        {
+            shell.setBounds (area.getUnion (play));
+            shell.toFront (false);
+        }
+        else
+        {
+            shell.setBounds (area);
+        }
         for (auto& s : sections)
             if (s->sound)
                 s->bounds = {};

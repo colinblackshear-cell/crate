@@ -8,6 +8,16 @@
 #include "core/AudioFiles.h"
 #include "core/Edits.h"
 
+juce::String RigEngine::stripLabel (int id)
+{
+    switch (id)
+    {
+        case drumsStrip: return "Drums";
+        case inputStrip: return "Line in";
+        default:         return stripName (id);
+    }
+}
+
 juce::String RigEngine::stripName (int id)
 {
     switch (id)

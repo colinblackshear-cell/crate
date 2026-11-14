@@ -12,6 +12,10 @@
 // own window, a level, and 8 macro knobs, mapped by themselves to the plugin's most useful
 // settings (Arturia's Brightness, Timbre, Time and Movement first). Click a knob's name to put
 // another setting on it.
+//
+// With a plugin loaded, "Its screen" shows the plugin's own interface right here, full size (it
+// scrolls when it's bigger than the panel); press it again for the 8 knobs. "Open window" moves
+// its interface to a window of its own instead (a second screen, say).
 class InstrumentShell : public juce::Component,
                         private juce::Timer
 {
@@ -26,6 +30,14 @@ public:
     // Something loaded, cleared or switched (the screen updates its engine switch).
     std::function<void()> onChanged;
 
+    // The plugin's own interface on the panel (true), or the 8 knobs. Only with a plugin loaded
+    // and its window closed.
+    void showScreen (bool);
+    bool isShowingScreen() const { return slot.isLoaded() && wantScreen && ! slot.isWindowOpen(); }
+    // The screen came or went: the page gives the shell more room for it.
+    std::function<void()> onLayout;
+    juce::Viewport& getScreenView() { return screenView; }
+
     void showLoadMenu();
     void showPresetMenu();
     void showMacroMenu (int knob);
@@ -37,13 +49,20 @@ private:
     void timerCallback() override;
     void say (const juce::String&);
     juce::String signature() const;
+    void syncScreen();
+    void layoutScreen();
 
     PluginSlot& slot;
     juce::String trackName;
     juce::Colour accent;
 
     analog::Button load { "Load plugin" }, window { "Open window" }, remove { "Remove" }, prev { "<" }, next { ">" },
-        presets { "Presets" }, autoMap { "Auto-map" };
+        presets { "Presets" }, autoMap { "Auto-map" }, screenButton { "Its screen" };
+    juce::Viewport screenView;
+    juce::Component holder;
+    juce::Component::SafePointer<juce::Component> editorShown;
+    juce::Rectangle<int> editorSize, topRow;
+    bool wantScreen = true, screenWasShown = false;
     std::vector<std::unique_ptr<analog::Knob>> macros;
     analog::Knob level { "Level", analog::colours::legend };
     juce::Rectangle<int> lcdArea, hintArea, macroArea;

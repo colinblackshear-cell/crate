@@ -9,11 +9,11 @@
 #include "RigPanels.h"
 #include "RigNavigation.h"
 
-// The Rig's window, built like a piece of 70s/80s studio gear: the top bar (transport, tempo,
-// where the song is, VU meters), five big screen buttons (Groove, Vocoder, Looper, Sampler + MPC,
-// Mixer; F1-F5), the screen, and the song parts with "Live now" along the bottom. Everything else
-// (the MPC, Bass and Synth in full, the song list, the sound bank and the
-// keyboard set-up) is under More, and the Mixer reaches every one of them too.
+// The Rig's window, built like a piece of 70s/80s studio gear: the top bar (your show, transport,
+// tempo, where the song is, VU meters), the view buttons (Play, Edit, Song, Mix; F1-F4) with
+// Sounds (a drawer over any view), Settings and the guide, the track rail down the left (every
+// instrument; pick one and the keys, knobs and Edit follow it), the screen, and the song's
+// sections along the bottom.
 class RigView : public juce::Component,
                 private juce::Timer,
                 private juce::AudioProcessorListener
@@ -51,6 +51,32 @@ public:
     // The page showing ("Guide", "Groove", "MPC"...), and going to one.
     juce::String getPage() const { return currentPage(); }
     void goTo (const juce::String& page) { showTab (page); }
+
+    // The views along the top: "Play", "Edit" (the picked track in full), "Song", "Mix". getView
+    // is the one lit ("" on the Guide or Settings).
+    void showView (const juce::String& view);
+    juce::String getView() const;
+    // The track picked on the rail (a GrooveView::Track), and picking one: the keys and knobs
+    // play it, and on Edit its instrument shows.
+    int getTrack() const;
+    void pickTrack (int track);
+    // A Song box, double-clicked: its track (the lane's), on the pattern the box plays (clip, -1
+    // leaves it), in Edit or Play. A loop layer opens its start/end editor in Edit.
+    void openSongBox (int lane, int clip, bool edit);
+    // Settings > Your plugins: your Arturia synths (and any instrument) onto the Bass or Synth,
+    // effects (Quake...) onto any track's effects, and the scan.
+    void showPluginsMenu();
+    // Loads an instrument plugin onto the Bass or Synth and opens its own screen in Edit.
+    void loadInstrumentPlugin (int track, const juce::PluginDescription&);
+    static int trackForLane (int lane);
+    // The page that shows a track in full ("MPC", "Drum machine", "Bass"...).
+    static juce::String editPageFor (int track);
+    // The Sounds drawer, over the right of whichever view is showing (F5).
+    void showSounds (bool show);
+    bool isSoundsOpen() const { return soundsOpen; }
+    const rigpanels::TrackRail& getRail() const { return rail; }
+    // The show menu (the show's name in the top bar): New song, Open, Save, Save as, Export, Guide.
+    void showShowMenu();
     juce::Component* getCurrentContent() const { return tabs.getCurrentContentComponent(); }
     class GuideView* getGuide() const { return guide; }
 
@@ -135,6 +161,13 @@ private:
     rigpanels::Header header;
     rigpanels::ScreenBar screenBar;
     rigpanels::Footer footer;
+    rigpanels::TrackRail rail;
+    class Drawer;
+    std::unique_ptr<Drawer> soundsDrawer;
+    bool soundsOpen = false;
+    juce::String viewOfPlace (const juce::String& place) const;
+    int trackOfPlace (const juce::String& place) const;
+    bool railShown() const;
     void showMoreMenu();
     void showPopOutMenu();
     class MoreView* moreView = nullptr;   // owned by its page
@@ -160,6 +193,8 @@ private:
     void toggleRecordSet();
     void updateRecordButton();
     juce::TextButton audioButton { "Audio + MIDI" }, saveButton { "Save show" }, openButton { "Open show" };
+    juce::TextButton darkButton { "Dark panel" }, popOutButton { "Second screen..." }, pluginsButton { "Your plugins..." };
+    juce::Label pluginsLabel { {}, "Plugins" }, pluginsHint;
     juce::String keyboardName;
     bool keyboardFound = false, keyboardActive = false;
     float vuLevel = 0;
@@ -209,6 +244,11 @@ private:
     std::vector<Page> pages;
     void addPage (const juce::String& name, juce::Colour, juce::Component*);
     int pageIndex (const juce::String& name) const;
+    juce::Component* pageContent (const juce::String& name) const
+    {
+        const int i = pageIndex (name);
+        return i >= 0 ? pages[(size_t) i].content.get() : nullptr;
+    }
     void popOut (int page, juce::Rectangle<int> bounds = {});
     void dockBack (int page);
     // Keeps the engine's list of popped-out windows up to date (it's saved with the show), and

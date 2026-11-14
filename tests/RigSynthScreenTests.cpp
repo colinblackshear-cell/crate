@@ -343,7 +343,29 @@ struct RigSynthScreenTests : juce::UnitTest
             screen.showEngine (true);
             expect (screen.isShowingShell() && slot.isPlaying());
             screen.getShell().refresh();
+
+            // Its own interface, right on the panel, with the room of the arp section too.
+            auto& shell = screen.getShell();
+            expect (shell.isShowingScreen(), "a loaded plugin shows its own screen first");
+            shell.showScreen (false);
+            const int knobsHeight = shell.getHeight();
             snapshot (screen, "CRATE_SHELL_SNAPSHOT");
+            shell.showScreen (true);
+            expect (shell.isShowingScreen() && slot.isEmbedded(), "its screen is on the panel");
+            expect (shell.getScreenView().isVisible() && shell.getScreenView().getViewedComponent() != nullptr);
+            expect (shell.getHeight() > knobsHeight, "it gets more room than the knobs");
+            expect (screen.getLocalBounds().contains (shell.getBounds()));
+            snapshot (screen, "CRATE_SHELL_SCREEN_SNAPSHOT");
+            shell.showScreen (false);
+            expect (! shell.isShowingScreen() && ! slot.isEmbedded(), "8 knobs lets its interface go");
+            expectEquals (shell.getHeight(), knobsHeight);
+            shell.showScreen (true);
+            slot.clear();   // taken out while it's on the panel
+            shell.refresh();
+            expect (! shell.isShowingScreen() && ! slot.isEmbedded());
+            slot.setInstance (std::make_unique<FakeArturia>());
+            shell.refresh();
+            expect (shell.isShowingScreen(), "the next plugin shows its screen too");
             screen.showEngine (false);
             expect (slot.isLoaded() && slot.bypassed.load(), "Built-in keeps the plugin, switched off");
             expect (! slot.isPlaying());

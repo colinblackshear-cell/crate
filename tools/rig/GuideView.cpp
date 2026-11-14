@@ -110,33 +110,38 @@ void waveform (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, int 
 const std::vector<GuideView::Entry>& GuideView::entries()
 {
     static const std::vector<Entry> e {
-        { "Groove", "The Groove", "Where everyone agrees what time it is.",
-          "Drums, bass, synth and friends on sixteen steps each. Light up steps, pick a pattern, turn the eight knobs, "
+        // The views along the top (F1, F3, F4) and the Sounds drawer (F5).
+        { "Groove", "Play", "Where everyone agrees what time it is.",
+          "Every track on sixteen steps: pick one on the left, light up steps, pick a pattern, turn the eight knobs, "
           "and all of Kaleidobox falls in behind you. New to this planet? Land here first.",
           RigColours::song, Art::groove, true, "F1" },
+        { "Song", "The Song", "The running order of the evening.",
+          "Sections in order (Intro, Verse, Chorus...) over a bar ruler, and what every track plays in each. Build it box by box, "
+          "play it over the click, loop a section, record it, or export it for Logic.",
+          RigColours::song, Art::song, true, "F3" },
+        { "Mixer", "Mix", "Every sound, on a fader.",
+          "A real mixing desk: a strip for each track and each loop layer with its fader, meter, pan, mute, solo, effects "
+          "and two sends, to a shared reverb and an echo in time, plus the FX pad for the whole mix.",
+          RigColours::master, Art::mixer, true, "F4" },
+        { "Sounds", "The Sounds", "Your crate, catalogued.",
+          "Your samples and your Splice folder, sorted by kind, tempo and key, in a drawer over any view. The perfect snare "
+          "is in here somewhere. Statistically, near the bottom.",
+          juce::Colour (0xffa1887f), Art::sounds, true, "F5" },
+
+        // Each track in full: pick it on the left, then Edit (F2).
         { "Vocoder", "The Vocoder", "Teaches your voice to speak synthesizer.",
           "Sing into the mic and play chords: your words come out as a choir of robots with excellent pitch. "
           "Thirteen pedals change the weather. Side effects may include spontaneous funk.",
-          RigColours::vocoder, Art::vocoder, true, "F2" },
-        { "Looper", "The Looper", "Time, folded neatly.",
+          RigColours::vocoder, Art::vocoder, false, {} },
+        { "Looper", "The Loops", "Time, folded neatly.",
           "Record a bar, record another on top, repeat until the room is full. Eight layers that never drift off the beat, "
-          "up to ten minutes each, with their own effects and a timeline for building whole songs.",
-          RigColours::loops, Art::looper, true, "F3" },
+          "up to ten minutes each, with their own effects, in banks you can switch on the bar.",
+          RigColours::loops, Art::looper, false, {} },
         { "Sampler", utf8 ("The Sampler \xc2\xb7 MPC"), "Any sound, caught and put to work.",
           "Catch a noise from the mic, a tool or your crate, then trim it, chop it and spread it across the keys or the pads. "
           "Most of the universe can be sampled, given patience and a decent cable.",
-          RigColours::sampler, Art::sampler, true, "F4" },
-        { "Mixer", "The Mixer", "Every sound, on a fader. Every tool, one click away.",
-          "A real mixing desk: a strip for each tool and each loop layer with its fader, meter, pan, mute, solo, effects "
-          "and two sends, to a shared reverb and an echo in time, plus the FX pad for the whole mix. Along the top, a button into every tool.",
-          RigColours::master, Art::mixer, true, "F5" },
-        { "Effects", "The Effects", "A pedalboard for everything that makes a noise.",
-          "Plug in a guitar or bass, or pick any tool or loop, and stomp on thirteen pedals: amp, wah, chorus, phaser, delay, "
-          "reverb and friends, each sound with its own settings. There's a tuner, for the honest.",
-          RigColours::input, Art::effects, true, "F6" },
-
-        // Under More.
-        { "Drum machine", "The Drum Machine", "Sixteen steps of pure analog swagger.",
+          RigColours::sampler, Art::sampler, false, {} },
+        { "Drum machine", "The Drums", "Sixteen steps of pure analog swagger.",
           "Classic hand-built drum sounds, kick to cowbell, each with its own tune and decay. For when the beat needs to boom.",
           RigColours::mpc, Art::drumMachine, false, {} },
         { "MPC", "The MPC", "Sixty-four pads and a long memory.",
@@ -151,17 +156,14 @@ const std::vector<GuideView::Entry>& GuideView::entries()
         { "Synth", "The Synth", "Chords, leads and the arpeggiator.",
           "A synth with named sounds, an arpeggiator that plays your chords for you, and a slot for your Arturia collection.",
           RigColours::synth, Art::synth, false, {} },
-        { "Song", "The Song", "The running order of the evening.",
-          "Song parts A to H in order, with their names and lengths. It's the setlist the footer plays from.",
-          RigColours::song, Art::song, false, {} },
-        { "Sounds", "The Sounds", "Your crate, catalogued.",
-          "Your samples and your Splice folder, sorted by kind, tempo and key. The perfect snare is in here somewhere. "
-          "Statistically, near the bottom.",
-          juce::Colour (0xffa1887f), Art::sounds, false, {} },
-        { "Setup", "The Setup", "What your keyboard plays, and where.",
-          "Which tool the keys and pads play, the split, sampling one tool into another, knob Learn, the click and the mic. "
-          "Set it once, then forget about it until the next gig.",
-          RigColours::master, Art::generic, false, {} },
+        { "Effects", "Line in and Effects", "A pedalboard for everything that makes a noise.",
+          "Plug in a guitar or bass, or pick any track or loop, and stomp on thirteen pedals: amp, wah, chorus, phaser, delay, "
+          "reverb and friends, each sound with its own settings. There's a tuner, for the honest.",
+          RigColours::input, Art::effects, false, {} },
+        { "Setup", "Settings", "What your keyboard plays, and where.",
+          "Which tool the keys and pads play, the split, sampling one tool into another, knob Learn, the click, the mic, "
+          "audio and MIDI, the dark panel. Set it once, then forget about it until the next gig.",
+          RigColours::master, Art::generic, false, "F6" },
     };
     return e;
 }
@@ -262,7 +264,7 @@ public:
         howTo.onClick = [this] { if (guide.onHelp) guide.onHelp(); };
         addAndMakeVisible (howTo);
 
-        startHere.setTooltip ("When lit, Kaleidobox opens on this page. F1-F6 and More still go straight to the tools.");
+        startHere.setTooltip ("When lit, Kaleidobox opens on this page. F1-F4 still go straight to the views.");
         startHere.onClick = [this]
         {
             if (guide.setStartsHere)
@@ -381,8 +383,8 @@ public:
             g.setColour (kInk.withAlpha (0.12f));
             g.fillRect (r.withSizeKeepingCentre (r.getWidth(), 1));
         };
-        section (mainLabel, "THE SIX SCREENS", utf8 ("F1\xe2\x80\x93" "F6, along the top. Start with any of them."));
-        section (moreLabel, "DEEPER IN", "Each tool in full. Also under More.");
+        section (mainLabel, "THE VIEWS", "Along the top: Play, Edit, Song and Mix (F1 to F4), and the Sounds drawer (F5).");
+        section (moreLabel, "EDIT: EACH TRACK IN FULL", "Each track in full: pick it on the left, then Edit (F2).");
 
         g.setFont (vintage::barlow (13.0f));
         g.setColour (kInk3);

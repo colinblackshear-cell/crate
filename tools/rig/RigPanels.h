@@ -3,9 +3,10 @@
 #include "Vintage.h"
 #include "RigEngine.h"
 
-// The Rig's frame, around whichever screen is showing: the top bar (transport, tempo, where the
-// song is, the master VU meters, what's plugged in), the screen buttons (F1-F5), and the song
-// parts with "Live now" along the bottom.
+// The Rig's frame, around whichever screen is showing: the top bar (your show, transport, tempo,
+// where the song is, the master VU meters, what's plugged in), the view buttons (Play, Edit, Song,
+// Mix; F1-F4) with Sounds, Settings and the guide, the track rail down the left, and the song's
+// sections along the bottom.
 namespace rigpanels
 {
 // A chunky panel button: a word (and maybe a small line under it, an icon and a key hint),
@@ -36,9 +37,9 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
     PanelButton play { "Play" }, stop { "Stop" }, rec { "Rec" }, up { "+" }, down { juce::String::fromUTF8 ("\xe2\x88\x92") }, tap { "Tap" };
-    // Starting a song from nothing: a blank song, then its first pattern (a beat, a bass line,
-    // keys...), and the next.
-    PanelButton newSong { "New song" }, newPattern { "New pattern" };
+    // Your show: its name, whether it's saved, and a menu (New song, Open, Save, Save as, Export
+    // for Logic, the Guide).
+    PanelButton show { "Unsaved show" };
     // Quantize what's on screen (under Tap): opens the Quantize panel. Cmd+U does it straight away.
     PanelButton quantize { "Quantize" };
     std::function<void()> onMic;
@@ -72,17 +73,41 @@ public:
     ScreenBar();
     void resized() override;
 
-    // The six screens, as their pages are named.
-    static const juce::StringArray& screens();
-    static juce::String label (int);
-    void setCurrent (const juce::String& page);
+    // The four views (F1-F4): Play (the picked track's steps, patterns and knobs), Edit (that
+    // track's instrument in full), Song, and Mix (the mixer and the effects).
+    static const juce::StringArray& views();
+    // Which view is lit ("" for none), and whether the Sounds drawer and Settings are.
+    void setCurrent (const juce::String& view, bool soundsOpen = false, bool settingsOpen = false);
 
     juce::OwnedArray<PanelButton> tabs;
     // Back and forward through the screens you've been on (Cmd+[ and Cmd+]).
     PanelButton back { "Back" }, forward { "Forward" };
-    PanelButton more { "More" };
+    PanelButton sounds { "Sounds" };   // the sound library, as a drawer over any view (F5)
+    PanelButton settings { "Settings" };   // keys and pads, split, sampling, knobs, click, audio, look (F6)
     PanelButton help { "?" };   // the how-to guide
-    std::function<void (const juce::String& page)> onScreen;
+    std::function<void (const juce::String& view)> onView;
+};
+
+//==============================================================================
+// The tracks, down the left of every view: every instrument Kaleidobox has (the Groove's track
+// cards), each with what it's playing, its own Play, Mute and Solo. Picking one makes the keys
+// and knobs play it, and Edit shows it in full.
+class TrackRail : public juce::Component
+{
+public:
+    TrackRail();
+    void setCards (const juce::Array<juce::Component*>&);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+    // The next thing in the song, on an empty pattern (a beat, a bass line, keys...).
+    PanelButton newPattern { "+ New pattern" };
+
+    static constexpr int kWidth = 232;
+
+private:
+    juce::Array<juce::Component::SafePointer<juce::Component>> cards;
+    juce::Rectangle<int> labelArea;
 };
 
 //==============================================================================
@@ -92,32 +117,21 @@ public:
     explicit Footer (RigEngine&);
     void paint (juce::Graphics&) override;
     void resized() override;
-    void mouseUp (const juce::MouseEvent&) override;
 
-    // Re-reads the song parts and the tracks (RigView calls it on its timer).
-    void tick (const std::function<float (int strip)>& meterOf);
+    // Re-reads the song's sections (RigView calls it on its timer).
+    void tick();
 
     // Song parts: a full one plays from the next bar; an empty one saves what's playing.
     static void pressPart (RigEngine&, int part);
 
     juce::OwnedArray<PanelButton> parts;
     juce::Label message;
-    std::function<void (int strip)> onTrack;   // a Live now chip clicked
     std::function<void()> onEditParts;
-
-    // The tracks Live now shows: their mixer strips.
-    static constexpr int kChips = 6, kChipWidth = 94;   // six chips fit beside the parts
-    static int chipStrip (int chip);
-    static juce::String chipName (int chip);
 
 private:
     void showPartMenu (int part);
 
     RigEngine& engine;
-    struct Chip { juce::String text; vintage::Lit lit = vintage::Lit::none; };
-    std::array<Chip, kChips> chips;
-    std::array<float, kChips> heard {};
-    juce::Rectangle<int> partsArea, chipsArea, partsLabel, chipsLabel;
-    bool showChips = true;
+    juce::Rectangle<int> partsArea, partsLabel;
 };
 }

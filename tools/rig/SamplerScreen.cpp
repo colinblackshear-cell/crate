@@ -121,7 +121,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     addAndMakeVisible (editPadButton);
     setLit (recordButton, Lit::arm);
     recordButton.getProperties().set ("fontSize", 18.0f);
-    recordButton.setTooltip ("Record from your audio input into the Sampler. Press again to stop. (To sample a tool of Kaleidobox, use More > Sample.)");
+    recordButton.setTooltip ("Record from your audio input into the Sampler. Press again to stop. (To sample a tool of Kaleidobox, use Settings > Sample.)");
     recordButton.onClick = [this] { editor.toggleRecord(); };
     addAndMakeVisible (recordButton);
 
@@ -519,7 +519,7 @@ void SamplerScreen::pressChop (int mode)
     const auto& doc = engine.getSampler().getDocument();
     juce::String text;
     if (! doc.hasAudio())
-        text = "There's no sound to chop yet: drop one here, press Open, or sample a tool (More > Sample).";
+        text = "There's no sound to chop yet: drop one here, press Open, or sample a tool (Settings > Sample).";
     else if (chopMode == transients)
     {
         editor.runChop ("findHits");
@@ -1022,7 +1022,7 @@ void SamplerScreen::paint (juce::Graphics& g)
             {
                 g.setColour (p.wellInk2);
                 g.setFont (barlow (16.0f));
-                g.drawText ("Drop a sound here, press Open, or sample any tool (More > Sample).", waveArea, juce::Justification::centred);
+                g.drawText ("Drop a sound here, press Open, or sample any tool (Settings > Sample).", waveArea, juce::Justification::centred);
             }
             else
             {
@@ -1122,10 +1122,10 @@ void SamplerScreen::paint (juce::Graphics& g)
             g.setColour (p.ink);
             g.setFont (cond (22.0f, Weight::extra, 0.1f));
             auto t = sliceTitle;
-            t.setRight (fxButton.getX() - 8);
+            t.setRight ((editPadButton.isVisible() ? editPadButton.getX() : fxButton.getX()) - 8);
             g.drawText (title.toUpperCase(), t, juce::Justification::centredLeft, true);
 
-            if (doc.hasAudio() && selectedSlice < numSlices())
+            if (doc.hasAudio() && selectedSlice < numSlices() && toPadsButton.getRight() + 186 <= sliceTitle.getRight())
             {
                 const auto r = sliceRange (selectedSlice);
                 const auto box = juce::Rectangle<float> (0, 0, 176, 32).withPosition ((float) sliceTitle.getRight() - 176,
@@ -1245,14 +1245,17 @@ void SamplerScreen::resized()
     // Pads.
     padsHeader = right.removeFromTop (46);
     {
+        // The banks and Full level share the row, narrower when the column is.
         auto h = padsHeader;
-        h.removeFromLeft (88);
+        h.removeFromLeft (h.getWidth() >= 400 ? 88 : 72);
+        const int full = juce::jlimit (84, 120, h.getWidth() - 4 * (44 + 6));
+        const int bank = juce::jlimit (36, 52, (h.getWidth() - full - 8 - 3 * 6) / 4);
         for (auto& b : bankButtons)
         {
-            b.setBounds (h.removeFromLeft (52));
-            h.removeFromLeft (8);
+            b.setBounds (h.removeFromLeft (bank));
+            h.removeFromLeft (6);
         }
-        fullLevel.setBounds (h.removeFromRight (juce::jmin (120, h.getWidth())));
+        fullLevel.setBounds (h.removeFromRight (juce::jmin (full, h.getWidth())));
     }
     right.removeFromTop (12);
     {
@@ -1326,7 +1329,10 @@ void SamplerScreen::resized()
     {
         auto s = sliceBox.reduced (16, 12);
         sliceTitle = s.removeFromTop (34);
-        toPadsButton.setBounds (sliceTitle.getRight() - 176 - 10 - 96, sliceTitle.getY(), 96, sliceTitle.getHeight());
+        // Edit, FX and To pads beside the title (along its right when the box is narrow).
+        const int room = sliceTitle.getWidth() - (60 + 8 + 52 + 8 + 96);
+        const int right = room >= 186 ? sliceTitle.getRight() - 176 - 10 : sliceTitle.getRight();
+        toPadsButton.setBounds (right - 96, sliceTitle.getY(), 96, sliceTitle.getHeight());
         fxButton.setBounds (toPadsButton.getX() - 8 - 52, sliceTitle.getY(), 52, sliceTitle.getHeight());
         editPadButton.setBounds (fxButton.getX() - 8 - 60, sliceTitle.getY(), 60, sliceTitle.getHeight());
         s.removeFromTop (6);

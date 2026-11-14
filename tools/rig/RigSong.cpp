@@ -486,7 +486,7 @@ juce::String laneName (int lane)
     switch (stripOf (lane))
     {
         case RigEngine::mpcStrip:     return "MPC";
-        case RigEngine::drumsStrip:   return "Drum machine";
+        case RigEngine::drumsStrip:   return "Drums";
         case RigEngine::bassStrip:    return "Bass";
         case RigEngine::synthStrip:   return "Synth";
         case RigEngine::vocoderStrip: return "Vocoder";

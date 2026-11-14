@@ -288,27 +288,63 @@ void SoundsView::paint (juce::Graphics& g)
 void SoundsView::resized()
 {
     auto area = getLocalBounds().reduced (10);
+    // Narrow (as the drawer over a view): the search gets its own line, the kinds go on two rows
+    // and the buttons under the list on two.
+    const bool narrow = area.getWidth() < 900;
     auto top = area.removeFromTop (30);
-    folders.setBounds (top.removeFromRight (100));
-    top.removeFromRight (6);
-    hearButton.setBounds (top.removeFromRight (110));
-    top.removeFromRight (6);
-    nearTempo.setBounds (top.removeFromRight (100));
-    top.removeFromRight (6);
-    length.setBounds (top.removeFromRight (160));
-    top.removeFromRight (10);
-    search.setBounds (top);
-
-    area.removeFromTop (8);
-    auto kinds = area.removeFromTop (28);
-    const int w = (kinds.getWidth() - 3 * (kindButtons.size() - 1)) / kindButtons.size();
-    for (auto* b : kindButtons)
+    if (narrow)
     {
-        b->setBounds (kinds.removeFromLeft (w));
-        kinds.removeFromLeft (3);
+        search.setBounds (top);
+        area.removeFromTop (6);
+        top = area.removeFromTop (30);
+        const int w = (top.getWidth() - 18) / 4;
+        for (auto* c : std::initializer_list<juce::Component*> { &length, &nearTempo, &hearButton, &folders })
+        {
+            c->setBounds (top.removeFromLeft (w));
+            top.removeFromLeft (6);
+        }
+    }
+    else
+    {
+        folders.setBounds (top.removeFromRight (100));
+        top.removeFromRight (6);
+        hearButton.setBounds (top.removeFromRight (110));
+        top.removeFromRight (6);
+        nearTempo.setBounds (top.removeFromRight (100));
+        top.removeFromRight (6);
+        length.setBounds (top.removeFromRight (160));
+        top.removeFromRight (10);
+        search.setBounds (top);
     }
 
     area.removeFromTop (8);
+    const int rows = narrow ? 2 : 1;
+    const int perRow = (kindButtons.size() + rows - 1) / rows;
+    for (int r = 0; r < rows; ++r)
+    {
+        auto kinds = area.removeFromTop (28);
+        const int w = (kinds.getWidth() - 3 * (perRow - 1)) / perRow;
+        for (int i = r * perRow; i < juce::jmin (kindButtons.size(), (r + 1) * perRow); ++i)
+        {
+            kindButtons[i]->setBounds (kinds.removeFromLeft (w));
+            kinds.removeFromLeft (3);
+        }
+        if (r + 1 < rows)
+            area.removeFromTop (4);
+    }
+
+    area.removeFromTop (8);
+    if (narrow)
+    {
+        auto sends = area.removeFromBottom (30);
+        const int w = (sends.getWidth() - 12) / 3;
+        for (auto* b : { &toMpc, &toSampler, &toLoop })
+        {
+            b->setBounds (sends.removeFromLeft (w));
+            sends.removeFromLeft (6);
+        }
+        area.removeFromBottom (6);
+    }
     auto bottom = area.removeFromBottom (30);
     for (auto* b : { &play, &stop })
     {
@@ -316,11 +352,12 @@ void SoundsView::resized()
         bottom.removeFromLeft (6);
     }
     bottom.removeFromLeft (10);
-    for (auto* b : { &toMpc, &toSampler, &toLoop })
-    {
-        b->setBounds (bottom.removeFromLeft (130));
-        bottom.removeFromLeft (6);
-    }
+    if (! narrow)
+        for (auto* b : { &toMpc, &toSampler, &toLoop })
+        {
+            b->setBounds (bottom.removeFromLeft (130));
+            bottom.removeFromLeft (6);
+        }
     status.setBounds (bottom);
     area.removeFromBottom (8);
     list.setBounds (area);
