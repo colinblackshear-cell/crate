@@ -243,6 +243,11 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     soundsDrawer = std::make_unique<Drawer> (*this);
     soundsDrawer->setLookAndFeel (&vintageLook);
     addChildComponent (*soundsDrawer);
+    chordsDrawer = std::make_unique<ChordsView> (engine);
+    chordsDrawer->setLookAndFeel (&vintageLook);
+    chordsDrawer->onClose = [this] { showChords (false); };
+    chordsDrawer->onSay = [this] (const juce::String& text) { say (text); };
+    addChildComponent (*chordsDrawer);
 
     auto& transport = engine.getTransport();
 
@@ -283,6 +288,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     // The views, the Sounds drawer and Settings.
     screenBar.onView = [this] (const juce::String& view) { showView (view); };
     screenBar.sounds.onClick = [this] { showSounds (! soundsOpen); };
+    screenBar.chords.onClick = [this] { showChords (! chordsOpen); };
     // Settings (right-click: the quick menu of every tool, as More had).
     screenBar.settings.onClick = [this]
     {
@@ -395,6 +401,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         screen->onRecVoice = [this] { toggleSampling(); };
         screen->isSampling = [this] { return engine.getCapture().getState() != RigCapture::State::idle; };
         screen->onMic = [this] { if (header.onMic) header.onMic(); };
+        screen->onOpenChords = [this] { showChords (true); };
         vocoderScreen = screen;
         addPage ("Vocoder", vocoderColour, screen);
     }
@@ -552,7 +559,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
     // The Rig opens on the Guide (unless it was switched off there), else on the Groove.
     showTab (engine.screens.getProperty ("skipGuide", false) ? "Groove" : "Guide");
-    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More");
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
 
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).addListener (this);
@@ -736,7 +743,7 @@ void RigView::pageChanged()
     if (groove != nullptr)
         if (const int t = trackOfPlace (currentPlace()); t >= 0 && t != groove->getTrack())
             groove->selectTrack (t);
-    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More");
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
     navigation.visit (currentPlace());
     updateNavButtons();
     const bool onStage = currentPage() == "Guide";
@@ -905,8 +912,24 @@ void RigView::showView (const juce::String& view)
     showTab (editPageFor (t));
 }
 
+void RigView::showChords (bool show)
+{
+    if (show == chordsOpen)
+        return;
+    if (show && soundsOpen)
+        showSounds (false);
+    chordsOpen = show;
+    chordsDrawer->setVisible (show);
+    if (show)
+        chordsDrawer->refresh();
+    resized();
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
+}
+
 void RigView::showSounds (bool show)
 {
+    if (show && chordsOpen)
+        showChords (false);
     const int i = pageIndex ("Sounds");
     if (i < 0 || show == soundsOpen)
         return;
@@ -943,7 +966,7 @@ void RigView::showSounds (bool show)
         page.placeholder.reset();
     }
     resized();
-    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More");
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
 }
 
 void RigView::showShowMenu()
@@ -1172,7 +1195,7 @@ void RigView::timerCallback()
         header.play.text = playing ? "Playing" : "Play";
         header.play.repaint();
     }
-    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More");
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
     pageChanged();
     if (auto& q = engine.getQuantizer(); q.lastAutoMessage.isNotEmpty())
     {
@@ -1671,10 +1694,15 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         goForward();
         return true;
     }
-    // Esc closes the Sounds drawer, or leaves the Guide for Play.
+    // Esc closes the Sounds or Chords drawer, or leaves the Guide for Play.
     if (key == juce::KeyPress::escapeKey && soundsOpen)
     {
         showSounds (false);
+        return true;
+    }
+    if (key == juce::KeyPress::escapeKey && chordsOpen)
+    {
+        showChords (false);
         return true;
     }
     if (key == juce::KeyPress::escapeKey && stageShown)
@@ -1692,6 +1720,11 @@ bool RigView::keyPressed (const juce::KeyPress& key)
     if (key.getKeyCode() == juce::KeyPress::F5Key)
     {
         showSounds (! soundsOpen);
+        return true;
+    }
+    if (key.getKeyCode() == juce::KeyPress::F7Key)
+    {
+        showChords (! chordsOpen);
         return true;
     }
     if (key.getKeyCode() == juce::KeyPress::F6Key)
@@ -1923,7 +1956,7 @@ void RigView::setDarkPanel (bool dark)
     vintage::setStage (dark || stageShown);
     engine.screens.setProperty ("dark", dark, nullptr);
     repaint();
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &rail, soundsDrawer.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &rail, soundsDrawer.get(), chordsDrawer.get() })
         c->repaint();
     if (groove != nullptr)
         groove->repaint();
@@ -2054,6 +2087,12 @@ void RigView::resized()
         auto drawerArea = tabs.getBounds();
         soundsDrawer->setBounds (drawerArea.removeFromRight (juce::jlimit (480, 760, drawerArea.getWidth() * 60 / 100)));
         soundsDrawer->toFront (false);
+    }
+    if (chordsOpen)
+    {
+        auto drawerArea = tabs.getBounds();
+        chordsDrawer->setBounds (drawerArea.removeFromBottom (juce::jmin (drawerArea.getHeight() - 120, ChordsView::kPreferredHeight)));
+        chordsDrawer->toFront (false);
     }
     if (helpPanel != nullptr)
     {

@@ -156,15 +156,18 @@ RigEngine::RigEngine()
         p->setValueNotifyingHost (0.0f);
     blankShow = saveShow();
     blankShow.removeChild (blankShow.getChildWithName ("Quantize"), nullptr);   // kept by New song
+    blankShow.removeChild (blankShow.getChildWithName (RigChords::kTreeType), nullptr);   // so are your chords
 }
 
 void RigEngine::newShow()
 {
     const auto keep = screens.createCopy();
     const auto quantizeSettings = quantizer.settings;
+    const auto keepChords = chords.toTree();
     loadShow (blankShow);
     screens = keep;
     quantizer.settings = quantizeSettings;
+    chords.fromTree (keepChords);
 }
 
 bool RigEngine::isBlank() const
@@ -175,6 +178,7 @@ bool RigEngine::isBlank() const
     auto now = saveShow();
     now.removeChild (now.getChildWithName ("Screens"), nullptr);
     now.removeChild (now.getChildWithName ("Quantize"), nullptr);
+    now.removeChild (now.getChildWithName (RigChords::kTreeType), nullptr);
     return now.isEquivalentTo (blankShow);
 }
 
@@ -304,6 +308,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
 {
     sampleRate = rate > 0 ? rate : 44100.0;
     maxBlock = juce::jmax (16, maximumBlockSize);
+    chords.prepare (sampleRate);
 
     for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder, &bass, &synthTool, &drums })
     {
@@ -565,8 +570,12 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     drumsMidi.clear();
     RigRouting::Result controls;
     std::array<juce::MidiBuffer*, RigRouting::kNumDests> destinations { nullptr, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi };
+    // The chord builder's pads and keys come out first (they play chords, not their own notes).
+    chords.takeTriggers (midiIn, routing.padChannel.load(), routing.splitNote.load());
     routing.route (midiIn, destinations, controls);
     applyControls (controls);
+    if (notesOffRequested.load())
+        chords.stopAll();
     if (notesOffRequested.exchange (false))
         for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
         {
@@ -588,6 +597,18 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         }
     }
     arrange (n);
+
+    // The chord builder's chords, into the instruments they're sent to (before the recorder,
+    // so Record set has them).
+    {
+        RigChords::Clock chordClock;
+        chordClock.beat = transport.getBlockPosition();
+        chordClock.bpm = transport.getBpm();
+        chordClock.sampleRate = sampleRate;
+        chordClock.beatsPerBar = transport.getBeatsPerBar();
+        chordClock.playing = transport.isPlayingThisBlock();
+        chords.process (chordClock, n, routing.keysTo.load(), destinations);
+    }
 
     // Recording the set: what's played, by tool, before the tools see it.
     RigRecorder::Clock recClock;
@@ -1140,6 +1161,7 @@ juce::ValueTree RigEngine::saveShow() const
     if (screens.getNumChildren() > 0 || screens.getNumProperties() > 0)
         show.appendChild (screens.createCopy(), nullptr);
     show.appendChild (quantizer.toTree(), nullptr);
+    show.appendChild (chords.toTree(), nullptr);
 
     for (int s = 0; s < numStrips; ++s)
     {
@@ -1320,6 +1342,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     captureDest = juce::jlimit (0, RigCapture::numDests - 1, (int) show.getProperty ("captureDest", (int) RigCapture::toSampler));
     captureBars = juce::jlimit (0, 16, (int) show.getProperty ("captureBars", 0));
     quantizer.fromTree (show.getChildWithName ("Quantize"));
+    chords.fromTree (show.getChildWithName (RigChords::kTreeType));
     screens = show.getChildWithName ("Screens").isValid() ? show.getChildWithName ("Screens").createCopy() : juce::ValueTree ("Screens");
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {

@@ -44,6 +44,8 @@ public:
     std::function<bool()> isSampling;
     // The mic switch (standalone).
     std::function<void()> onMic;
+    // Build your own (the Chords pedal): opens the chord builder.
+    std::function<void()> onOpenChords;
 
     // The pedals, in the chain's order.
     enum PedalId { tune, harmony, robot, character, synth, chords, arp, filter, vintageMic, dirt, chorus, echo, space, numPedals };
@@ -120,6 +122,7 @@ private:
         recVoiceButton { "Rec voice" }, toLooperButton { "To looper" }, notesButton, prevSound { "<" }, nextSound { ">" },
         soundsButton { "Sounds" }, surpriseButton { "Surprise me" }, rackPower { "On" }, rackReset { "Reset" };
     juce::TextButton chordButtons[7];
+    juce::TextButton buildChordsButton { "Build your own..." };
     std::unique_ptr<vintage::Knob> micGain;
     juce::Slider dryWet;
     // Mix: the faders and their switches.

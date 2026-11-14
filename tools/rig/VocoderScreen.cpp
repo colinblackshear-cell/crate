@@ -351,6 +351,11 @@ VocoderScreen::VocoderScreen (RigEngine& e, bool isStandalone)
         b.onClick = [this, i] { pressChord (i); };
         addChildComponent (b);
     }
+    buildChordsButton.getProperties().set ("fontSize", 15.0f);
+    buildChordsButton.setTooltip ("The chord builder (F7): your own chords on 16 pads, a keyboard to build them on, your Launchkey's "
+                                  "pads or keys to play them, and a progression for loops and Logic. Its chords play the vocoder too.");
+    buildChordsButton.onClick = [this] { if (onOpenChords) onOpenChords(); };
+    addChildComponent (buildChordsButton);
 
     // Raw voice and Out.
     micGain = std::make_unique<Knob> (params, ParamIDs::inputGain, "Mic gain", colours::vocoder);
@@ -456,7 +461,9 @@ void VocoderScreen::watchRobot()
     const bool picked = vocoder.getSoundChanges() != soundsSeen;
     soundsSeen = vocoder.getSoundChanges();
     // Sing to play and Drone give it notes already.
-    if (robotNow && (! robotWasOn || picked) && param (singToPlay) < 0.5f && param (drone) < 0.5f && activeChord < 0)
+    // (Nor does it when the chord builder is already giving it chords.)
+    if (robotNow && (! robotWasOn || picked) && param (singToPlay) < 0.5f && param (drone) < 0.5f && activeChord < 0
+        && ! engine.getChords().anySounding())
     {
         bool held = false;
         for (int note = 0; note < 128 && ! held; ++note)
@@ -662,6 +669,7 @@ void VocoderScreen::selectPedal (int pedal)
     }
     for (auto& b : chordButtons)
         b.setVisible (! studioShown && selected == chords);
+    buildChordsButton.setVisible (! studioShown && selected == chords);
     layoutRack();
     updateButtons();
     repaint (rackWell);
@@ -1312,6 +1320,11 @@ void VocoderScreen::layoutRack()
     head.removeFromRight (8);
     rackPower.setBounds (head.removeFromRight (110).reduced (0, 2));
     head.removeFromRight (12);
+    if (selected == chords)
+    {
+        buildChordsButton.setBounds (head.removeFromRight (150).reduced (0, 2));
+        head.removeFromRight (8);
+    }
     rackTitle = head;
     rackText = w.removeFromTop (36);
     w.removeFromTop (6);
