@@ -186,6 +186,64 @@ private:
 };
 
 //==============================================================================
+namespace
+{
+// "Drag to Logic": the last recording made with To Logic, as a chip you drag onto a Logic track
+// (or into Finder, or any app that takes audio files).
+class DragToLogic : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit DragToLogic (RigEngine& e) : engine (e)
+    {
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        setTooltip ("Drag this onto a Logic track (at the bar you started recording) to put the recording there.");
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto file = engine.lastLogicFile;
+        const bool has = file.existsAsFile();
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (juce::Colours::white.withAlpha (has ? 0.10f : 0.04f));
+        g.fillRoundedRectangle (r, 6.0f);
+        g.setColour (juce::Colours::white.withAlpha (has ? 0.45f : 0.15f));
+        g.drawRoundedRectangle (r, 6.0f, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (has ? 0.9f : 0.4f));
+        g.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+        g.drawFittedText (has ? juce::String::fromUTF8 ("\xe2\x87\xa2 Drag to Logic: ") + file.getFileNameWithoutExtension()
+                              : juce::String ("Drag to Logic: nothing yet"),
+                          getLocalBounds().reduced (8, 2), juce::Justification::centredLeft, 1, 0.8f);
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const auto file = engine.lastLogicFile;
+        if (dragging || ! file.existsAsFile() || e.getDistanceFromDragStart() < 4)
+            return;
+        dragging = true;
+        juce::DragAndDropContainer::performExternalDragDropOfFiles ({ file.getFullPathName() }, false, this,
+                                                                    [safe = juce::Component::SafePointer<DragToLogic> (this)]
+                                                                    { if (safe != nullptr) safe->dragging = false; });
+    }
+
+    void mouseUp (const juce::MouseEvent&) override { dragging = false; }
+
+    void mouseDoubleClick (const juce::MouseEvent&) override
+    {
+        // Shows it in Finder, with the others.
+        const auto file = engine.lastLogicFile;
+        if (file.existsAsFile())
+            file.revealToUser();
+        else
+            RigEngine::logicFolder().revealToUser();
+    }
+
+private:
+    RigEngine& engine;
+    bool dragging = false;
+};
+}
+
 EffectsView::EffectsView (RigEngine& e) : engine (e)
 {
     setOpaque (true);
@@ -271,7 +329,7 @@ EffectsView::EffectsView (RigEngine& e) : engine (e)
     };
 
     // The source's side.
-    for (auto* b : { &plugInButton, &toLooperButton, &toSamplerButton, &toPadButton, &openTool })
+    for (auto* b : { &plugInButton, &toLooperButton, &toSamplerButton, &toPadButton, &toLogicButton, &openTool })
     {
         b->getProperties().set ("fontSize", b == &plugInButton || b == &openTool ? 15.0f : 13.5f);
         setInWell (*b, true);
@@ -281,8 +339,13 @@ EffectsView::EffectsView (RigEngine& e) : engine (e)
     plugInButton.setTooltip ("Switches the Line in on: what you plug into your audio interface (a guitar, bass, keytar) comes through "
                              "these pedals to the speakers. Use headphones with a mic, so it can't feed back.");
     plugInButton.onClick = [this] { pressPlugIn(); };
-    for (auto* b : { &toLooperButton, &toSamplerButton, &toPadButton })
+    for (auto* b : { &toLooperButton, &toSamplerButton, &toPadButton, &toLogicButton })
         setLit (*b, Lit::arm);
+    toLogicButton.setTooltip ("Records this sound, with its pedals, from the next bar into a WAV for Logic. Press again to stop. "
+                              "Then drag it from Drag to Logic onto a Logic track, at the bar you started.");
+    toLogicButton.onClick = [this] { pressRecTo (RigCapture::toLogic); };
+    dragToLogic = std::make_unique<DragToLogic> (engine);
+    addAndMakeVisible (*dragToLogic);
     toLooperButton.setTooltip ("Records this sound, with its pedals, onto the next empty loop layer from the next bar. Press again to loop it.");
     toLooperButton.onClick = [this] { pressRecToLooper(); };
     toSamplerButton.setTooltip ("Samples this sound, with its pedals, into the Sampler from the next bar. Press again to stop.");
@@ -718,7 +781,8 @@ void EffectsView::updateButtons()
     const auto& capture = engine.getCapture();
     const bool capturing = capture.getState() != RigCapture::State::idle && capture.getSource() == source.captureSource;
     for (auto [button, dest, text] : { std::tuple<juce::TextButton*, int, const char*> { &toSamplerButton, RigCapture::toSampler, "To sampler" },
-                                       { &toPadButton, RigCapture::toMpcPad, "To MPC pad" } })
+                                       { &toPadButton, RigCapture::toMpcPad, "To MPC pad" },
+                                       { &toLogicButton, RigCapture::toLogic, "To Logic" } })
     {
         button->setVisible (source.captureSource >= 0);
         const bool mine = capturing && engine.captureDest == dest;
@@ -727,6 +791,7 @@ void EffectsView::updateButtons()
         if (button->getButtonText() != t)
             button->setButtonText (t);
     }
+    dragToLogic->setVisible (source.captureSource >= 0);
     openTool.setVisible (juce::String (source.page).isNotEmpty());
 
     for (int i = 0; i < stomps.size(); ++i)
@@ -742,6 +807,8 @@ void EffectsView::updateButtons()
 
 void EffectsView::timerCallback()
 {
+    if (dragToLogic != nullptr && isShowing())
+        dragToLogic->repaint();
     if (! isShowing())
     {
         if (rack().tunerListening.load())
@@ -996,6 +1063,12 @@ void EffectsView::resized()
         toSamplerButton.setBounds (recRow.removeFromLeft (third));
         recRow.removeFromLeft (4);
         toPadButton.setBounds (recRow);
+        w.removeFromBottom (4);
+        // Above them: record it for Logic, and drag the recording out.
+        auto logicRow = w.removeFromBottom (28);
+        toLogicButton.setBounds (logicRow.removeFromLeft (third));
+        logicRow.removeFromLeft (4);
+        dragToLogic->setBounds (logicRow);
         w.removeFromBottom (8);
         outLeds = w.removeFromBottom (9).withTrimmedLeft (34);
         w.removeFromBottom (6);

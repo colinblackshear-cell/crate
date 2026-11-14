@@ -18,7 +18,7 @@ class RigCapture
 public:
     enum Source { mic, mpc, vocoder, bass, synth, input, sampler, loops, mix, drums, numSources };
     static juce::String sourceName (int);
-    enum Dest { toSampler, toMpcPad, numDests };
+    enum Dest { toSampler, toMpcPad, toLogic, numDests };   // toLogic: a WAV file to drag into Logic
     static juce::String destName (int);
     static const std::array<int, 6>& barChoices();   // 0 (until you press again), 1, 2, 4, 8, 16
 

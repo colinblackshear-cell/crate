@@ -340,6 +340,15 @@ The whole Rig also runs inside Logic, as an instrument called **Kaleidobox**:
 6. Logic saves the show with the song. The loops are kept as WAVs in
    `~/Music/Crate/Rig/In Logic`.
 
+**Into Logic, quickly:** on the Effects screen pick any sound (the MPC, the drums, the bass, a loop,
+the vocoder, the Master...) and press **To Logic**: from the next bar it records that sound, with its
+pedals, into a WAV (`~/Music/Crate/Rig/To Logic`). Press again to stop (or set the bars in Setup).
+Then drag **Drag to Logic** beside it onto a Logic audio track, at the bar you started on.
+
+To record live in Logic: set the Kaleidobox track's output to a Bus, make an audio track with that
+Bus as its input, arm it and record. To vocode a track that's already in Logic, set Side Chain to
+that track and play Logic.
+
 To record: arm the Kaleidobox track (and its tool tracks) and record in Logic as usual; you get
 the MIDI you played, and Bounce in Place or the tool tracks give you audio. **Record set** in the
 Rig works too.

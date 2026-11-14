@@ -104,6 +104,10 @@ public:
     void preview (std::shared_ptr<const juce::AudioBuffer<float>>);
     bool isPreviewing() const { return previewPlaying.load(); }
     int captureDest = RigCapture::toSampler;
+    // The last recording made "for Logic" (a WAV to drag onto a Logic track), and where they go:
+    // ~/Music/Crate/Rig/To Logic. Message thread.
+    juce::File lastLogicFile;
+    static juce::File logicFolder();
 
     // Scenes (message thread): what's playing now, as a scene; and the regular check that
     // moves song mode on and gets the MPC and bass ready for a scene about to start. The
