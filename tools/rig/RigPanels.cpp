@@ -334,6 +334,11 @@ ScreenBar::ScreenBar()
     sounds.setTooltip ("Your samples and Splice folder, in a drawer over any view: find a sound by kind, tempo or key, hear it, "
                        "and send it onto an MPC pad, into the Sampler or onto a loop layer (F5).");
     addAndMakeVisible (sounds);
+    chords.fontSize = 16.0f;
+    chords.key = "F7";
+    chords.setTooltip ("The chord builder, in a drawer over any view: your own chords on 16 pads, played on the picked track "
+                       "(or any instrument) from a click, your Launchkey's pads or keys; a progression on the clock, to a loop or to Logic (F7).");
+    addAndMakeVisible (chords);
     settings.fontSize = 16.0f;
     settings.key = "F6";
     settings.setTooltip ("Settings: what the keys and pads play, the split, sampling one tool into another, knob Learn, the click, "
@@ -345,7 +350,7 @@ ScreenBar::ScreenBar()
     addAndMakeVisible (help);
 }
 
-void ScreenBar::setCurrent (const juce::String& view, bool soundsOpen, bool settingsOpen)
+void ScreenBar::setCurrent (const juce::String& view, bool soundsOpen, bool settingsOpen, bool chordsOpen)
 {
     auto set = [] (PanelButton& b, bool on)
     {
@@ -359,6 +364,7 @@ void ScreenBar::setCurrent (const juce::String& view, bool soundsOpen, bool sett
     for (int i = 0; i < tabs.size(); ++i)
         set (*tabs[i], views()[i] == view);
     set (sounds, soundsOpen);
+    set (chords, chordsOpen);
     set (settings, settingsOpen);
 }
 
@@ -376,6 +382,8 @@ void ScreenBar::resized()
     settings.setBounds (r.removeFromRight (util));
     r.removeFromRight (10);
     sounds.setBounds (r.removeFromRight (util));
+    r.removeFromRight (10);
+    chords.setBounds (r.removeFromRight (util));
     r.removeFromRight (28);
     const int n = tabs.size();
     const int w = juce::jmin (220, (r.getWidth() - 12 * (n - 1)) / n);

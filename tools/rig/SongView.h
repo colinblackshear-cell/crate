@@ -8,7 +8,7 @@
 
 class TimelineView;
 
-// The Song screen (F7). Your song is a row of sections (Intro, Verse, Chorus...) left to right,
+// The Song screen (F3). Your song is a row of sections (Intro, Verse, Chorus...) left to right,
 // each as wide as its bars, over a bar ruler and the click. Down the side are the tracks you're
 // using; each box is what that track plays in that section, by name ("Beat 1", "Pattern 2",
 // "Guitar"). An empty box is silent.
