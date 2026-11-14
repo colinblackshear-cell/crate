@@ -205,10 +205,10 @@ struct RigSceneTests : juce::UnitTest
             view.goTo ("Groove");   // the Rig opens on the Guide; its ? opens Getting started
             view.showHelp (true);
             expect (view.getHelp() != nullptr && view.getHelp()->isVisible());
-            expectEquals (HelpPanel::guides()[(size_t) HelpPanel ("Looper").getShown()].title, juce::String ("Looper (F3): record loops"));
+            expectEquals (HelpPanel::guides()[(size_t) HelpPanel ("Looper").getShown()].title, juce::String ("Loops (pick it, then Edit): record loops"));
             if (view.getHelp() != nullptr)
             {
-                expectEquals (HelpPanel::guides()[(size_t) view.getHelp()->getShown()].title, juce::String ("Groove (F1): patterns"), "it opens on the Groove screen's guide");
+                expectEquals (HelpPanel::guides()[(size_t) view.getHelp()->getShown()].title, juce::String ("Play (F1): patterns"), "it opens on the Play view's guide");
                 for (const auto& g : HelpPanel::guides())
                     expect (g.steps.size() >= 3, g.title);
                 if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_HELP_SNAPSHOT", {}); path.isNotEmpty())

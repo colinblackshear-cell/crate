@@ -30,7 +30,7 @@ juce::Colour laneColour (int lane)
 juce::String laneName (int lane)
 {
     const auto& info = RigTimeline::lanes()[(size_t) lane];
-    return info.isLoop ? "Loop " + juce::String (info.index + 1) : RigEngine::stripName (info.index);
+    return info.isLoop ? "Loop " + juce::String (info.index + 1) : RigEngine::stripLabel (info.index);
 }
 
 juce::String barsText (double bars)

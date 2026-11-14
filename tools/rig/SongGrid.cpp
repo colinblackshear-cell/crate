@@ -89,7 +89,7 @@ public:
             area.removeFromLeft (8);
             g.setColour (Theme::text);
             g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            const juce::String name = row.isLoop ? "Loop " + juce::String (row.index + 1) : RigEngine::stripName (row.index);
+            const juce::String name = row.isLoop ? "Loop " + juce::String (row.index + 1) : RigEngine::stripLabel (row.index);
             g.drawText (name, area, juce::Justification::centredLeft);
             if (row.isLoop)
             {

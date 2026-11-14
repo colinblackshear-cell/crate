@@ -249,7 +249,7 @@ struct RigSongTests : juce::UnitTest
             expect (! sectionsFromParts (engine), "only once");
         }
 
-        beginTest ("the Song screen: F7, sections, boxes, the panel, Jam / Song, Bars view, the section keys");
+        beginTest ("the Song screen: F3, sections, boxes, the panel, Jam / Song, Bars view, the section keys");
         {
             RigEngine engine;
             engine.prepare (48000.0, 480);
@@ -258,7 +258,7 @@ struct RigSongTests : juce::UnitTest
             // CRATE_SONG_SNAPSHOT=/folder saves pictures of it there.
             const auto folder = juce::SystemStats::getEnvironmentVariable ("CRATE_SONG_SNAPSHOT", {});
 
-            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F7Key)));
+            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F3Key)));
             expectEquals (view.getPage(), juce::String ("Song"));
             auto* song = findIn<SongView> (view);
             expect (song != nullptr);

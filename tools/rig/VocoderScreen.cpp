@@ -1203,14 +1203,16 @@ void VocoderScreen::resized()
     modeRow = r.removeFromTop (44);
     {
         auto m = modeRow;
-        boardButton.setBounds (m.removeFromLeft (130));
-        studioButton.setBounds (m.removeFromLeft (130));
-        m.removeFromLeft (18);
-        bypassButton.setBounds (m.removeFromRight (124));
+        // Beside the track rail the row is tighter: the buttons give the sound's name more room.
+        const bool tight = m.getWidth() < 1100;
+        boardButton.setBounds (m.removeFromLeft (tight ? 120 : 130));
+        studioButton.setBounds (m.removeFromLeft (tight ? 120 : 130));
+        m.removeFromLeft (tight ? 10 : 18);
+        bypassButton.setBounds (m.removeFromRight (tight ? 110 : 124));
         m.removeFromRight (8);
-        notesButton.setBounds (m.removeFromRight (180));
-        m.removeFromRight (18);
-        surpriseButton.setBounds (m.removeFromRight (120));
+        notesButton.setBounds (m.removeFromRight (tight ? 156 : 180));
+        m.removeFromRight (tight ? 10 : 18);
+        surpriseButton.setBounds (m.removeFromRight (tight ? 106 : 120));
         m.removeFromRight (6);
         soundsButton.setBounds (m.removeFromRight (96));
         m.removeFromRight (6);

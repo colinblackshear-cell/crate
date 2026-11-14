@@ -1250,7 +1250,7 @@ void SongView::paint (juce::Graphics& g)
 
     if (! stepsArea.isEmpty())
     {
-        const char* steps[] = { "Make sounds on Groove, Looper, Sampler", "+ Section for each part", "Click a box: pick what plays",
+        const char* steps[] = { "Make sounds on Play, Loops, Sampler", "+ Section for each part", "Click a box: pick what plays",
                                 "Song mode: Play runs it over the click", "Rec song: stems for Logic" };
         auto r = stepsArea;
         const int w = r.getWidth() / 5;
@@ -1280,7 +1280,7 @@ void SongView::paint (juce::Graphics& g)
         g.drawText ("NO SONG YET", r.removeFromTop (40), juce::Justification::centred);
         g.setColour (p.wellInk2);
         g.setFont (barlow (16.0f));
-        g.drawFittedText ("Get a beat, a bass line or some loops going first (Groove, Looper, Sampler).\n"
+        g.drawFittedText ("Get a beat, a bass line or some loops going first (Play, Loops, Sampler).\n"
                           "Then make the song's first section from what's playing, or an empty one to fill in box by box.",
                           r.removeFromTop (60), juce::Justification::centred, 3, 1.0f);
     }

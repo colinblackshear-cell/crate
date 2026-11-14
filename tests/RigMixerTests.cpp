@@ -175,13 +175,13 @@ public:
             expectEquals (loaded.getReturn (RigEngine::echoReturn).time.load(), 1);
         }
 
-        beginTest ("the Mixer is F5: a strip for every tool, the returns and the master; its buttons go into every tool");
+        beginTest ("the Mixer is Mix (F4): a strip for every tool, the returns and the master; its buttons go into every tool");
         {
             RigEngine engine;
             engine.prepare (kRate, kBlock);
             RigView view (engine, nullptr);
             view.setSize (1440, 960);
-            expectEquals (rigpanels::ScreenBar::screens()[4], juce::String ("Mixer"));
+            expectEquals (rigpanels::ScreenBar::views()[3], juce::String ("Mix"));
             view.goTo ("Mixer");
             expectEquals (view.getPage(), juce::String ("Mixer"));
             auto* mixer = view.getMixer();
@@ -245,7 +245,13 @@ public:
             {
                 view.goTo ("Mixer");
                 mixer->hub[i]->onClick();
-                expectEquals (view.getPlace(), MixerView::hubPages()[i]);   // (the MPC: a side of the Sampler · MPC screen)
+                if (MixerView::hubPages()[i] == "Sounds")
+                {
+                    expect (view.isSoundsOpen(), "Sounds is a drawer");
+                    view.showSounds (false);
+                }
+                else
+                    expectEquals (view.getPlace(), MixerView::hubPages()[i]);   // (the MPC: a side of the Sampler · MPC screen)
             }
             expect (! MixerView::hubPages().contains ("Stage"), "no Big stage any more");
             view.goTo ("Stage");

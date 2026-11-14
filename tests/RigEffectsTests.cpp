@@ -2,6 +2,7 @@
 
 #include "RigEngine.h"
 #include "RigView.h"
+#include "GrooveView.h"
 #include "EffectsView.h"
 #include "Pedalboard.h"
 #include "SynthScreens.h"
@@ -402,7 +403,7 @@ struct RigEffectsTests : juce::UnitTest
             view.setLookAndFeel (nullptr);
         }
 
-        beginTest ("in the window: F6 is Effects, and the Bass screen's Effects button opens its board");
+        beginTest ("in the window: Line in's Edit is its board, Mix (F4) is the Mixer, and the Bass screen's Effects button opens its board");
         {
             RigEngine engine;
             engine.prepare (kRate, 480);
@@ -411,10 +412,12 @@ struct RigEffectsTests : juce::UnitTest
             view.goTo ("Effects");
             expectEquals (view.getPage(), juce::String ("Effects"));
             view.goTo ("Groove");
-            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F6Key)));
-            expectEquals (view.getPage(), juce::String ("Effects"));
-            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F5Key)));
-            expectEquals (view.getPage(), juce::String ("Mixer"), "F5 is still the Mixer");
+            view.pickTrack (GrooveView::lineIn);
+            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F2Key)));
+            expectEquals (view.getPage(), juce::String ("Effects"), "Edit on Line in is its pedalboard");
+            expectEquals (view.getView(), juce::String ("Edit"));
+            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F4Key)));
+            expectEquals (view.getPage(), juce::String ("Mixer"), "F4 is Mix");
 
             view.goTo ("Bass");
             auto* bassScreen = findChild<BassScreen> (view);

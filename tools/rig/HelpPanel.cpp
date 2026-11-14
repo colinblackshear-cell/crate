@@ -8,37 +8,37 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
 {
     static const std::vector<Guide> list {
         { "Getting started",
-          { "Pick your audio interface and keyboard: More > Audio and MIDI set-up.",
+          { "Pick your audio interface and keyboard: Settings > Audio + MIDI.",
             "Starting from nothing? New song (top bar) saves the song you're on and clears everything. New pattern then starts "
             "the first thing: a beat, a bass line, keys, the vocoder, a loop or a sample, on an empty pattern.",
             "Back and Forward (left of the screen buttons, or Cmd+[ and Cmd+]) step through the screens you've been on.",
             "Set the tempo at the top (or tap it), and switch the click on if you want one.",
-            "Make a beat and a bass line on the Groove screen (F1), or record loops on the Looper (F3).",
+            "Make a beat and a bass line on Play (F1), or record loops: pick Loops on the left, then Edit (F2).",
             "Press Play (or the space bar). Everything plays in time with Kaleidobox's clock.",
             "Off the beat? Quantize (top bar, under Tap) pulls what's on screen onto a grid: 1/4 to 1/32, triplets, a strength "
             "and swing. It works on the MPC, the drum machine, Bass, Synth arp and loops. Cmd+U does it straight away; Undo puts it back.",
-            "Build the song on the Song screen (F7): sections in order, and what each track plays in each.",
+            "Build the song on Song (F3): sections in order, and what each track plays in each.",
             "Save show (Cmd+S) keeps everything. Export for Logic gives you the WAV files." },
           "Use headphones when the mic is on, so the speakers don't feed back into it." },
 
-        { "Groove (F1): patterns",
+        { "Play (F1): patterns",
           { "Pick a track on the left: Drums, Bass, Synth, Vocoder, Sampler or Loops.",
             "Click the 16 steps to program its pattern. The bar button shows the other bars of the beat.",
             "Your keyboard's keys and its 8 knobs follow the picked track.",
             "Mute or solo tracks on the left; a muted track keeps going silently, so it comes back in time.",
             "The song's sections along the bottom (A-H): the next empty one saves what's playing as a section; a full one plays it from the next bar." },
-          "Patterns play by themselves. To play over them, use the keys, or record a loop on top in the Looper." },
+          "Patterns play by themselves. To play over them, use the keys, or record a loop on top (Loops, Edit)." },
 
-        { "Vocoder (F2): sing live",
+        { "Vocoder (pick it, then Edit): sing live",
           { "Switch the mic on (top bar) and wear headphones.",
             "Start from your raw voice, then switch pedals on one at a time: Auto-Tune, Robot, Rhythm, Effects.",
             "The Robot needs a chord: play keys, or pick a chord on the Vocoder screen.",
             "Mix (right of the pedals): the Voice fader is how much of your own voice you hear, Robot is the effect. Turn them on the fly.",
             "Full window shows every setting on one page, each part with its switch, plus the keys.",
-            "To keep a vocal part, record it on a loop: Looper > Record from > Vocoder." },
+            "To keep a vocal part, record it on a loop: Loops > Edit > Record from > Vocoder." },
           "" },
 
-        { "Looper (F3): record loops",
+        { "Loops (pick it, then Edit): record loops",
           { "Pick what to record under Record from: Mic, Line in (a guitar or keytar), Vocoder, or Master (everything).",
             "Pick a length (1, 2, 4 or 8 bars), or Free to record until you press again.",
             "Press Rec next layer. It starts at the next bar (with the clock stopped, the clock starts with it).",
@@ -49,7 +49,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Back and Next (or click the bank's name) bring a batch back, at the next bar while playing." },
           "Loops can be up to 10 minutes long. A short loop and a long one play together in time." },
 
-        { "Sampler and MPC (F4): play the pads like an MPC",
+        { "Sampler and MPC (pick one, then Edit): play the pads like an MPC",
           { "Your keyboard's drum pads (Launchkey in Drum mode, or a Launchpad in Drum mode) play the 16 pads of the bank on screen. "
             "A Launchpad plays all four banks at once.",
             "Sounds (under the pads) opens your sound bank: click a sound to hear it, double-click to put it on the picked pad.",
@@ -61,9 +61,9 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Loop pads records the MPC into the next empty looper layer from the next bar (Free, or 1 to 16 bars). Switch Beat off to loop just what you play." },
           "Hits you record with 16 Levels keep their level when the sequence plays them back." },
 
-        { "Build a song (Song, F7)",
-          { "Make your sounds first: a beat and a bass line on the Groove screen, loops on the Looper, pads on the Sampler.",
-            "Open Song (F7). Your song is a row of sections (Intro, Verse, Chorus...), each as wide as its bars. "
+        { "Build a song (Song, F3)",
+          { "Make your sounds first: a beat and a bass line on Play, loops on Loops, pads on the Sampler.",
+            "Open Song (F3). Your song is a row of sections (Intro, Verse, Chorus...), each as wide as its bars. "
             "Down the side are the tracks you're using.",
             "+ Section adds one at the end: empty, or one that plays what's on now. (From any screen: New pattern > Keep what's playing.)",
             "Each box is what one track plays in that section, by name: Beat 1, Pattern 2, Guitar. An empty box is quiet.",
@@ -79,7 +79,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
           "The ... menu puts Next and Back on your keyboard's buttons." },
 
         { "Compose on the timeline",
-          { "Record your loops and make your patterns first. Then open Song (F7) > Bars view: the same song, bar by bar.",
+          { "Record your loops and make your patterns first. Then open Song (F3) > Bars view: the same song, bar by bar.",
             "Each loop (1-8) and each tool (MPC, Bass, Synth, Vocoder, Sampler, Input) has a lane. Click a lane to put a block on it: "
             "that's where it plays.",
             "Drag a block to move it. Drag its right edge to make it longer (a loop repeats; thin lines show where), its left edge to start it later.",
@@ -94,7 +94,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
 
         { "Save and export",
           { "Save show (top bar, or Cmd+S): the show and its loops, together. The first time it asks for a name.",
-            "More > Save show as... saves a copy under a new name; More > Open show... opens one.",
+            "The show menu (your show's name, top left) has Save show as... for a copy under a new name, and Open show...",
             "Export for Logic (Song screen, or More): every loop as a WAV (with its effects and dry), each loop laid out over "
             "your song, and a MIDI file with the tempo and a marker per part. Every file starts on bar 1.",
             "Rec (top bar) records the whole set as you play it: a WAV per tool, the mix, and the notes as MIDI, in Music > Crate > Rig > Recordings.",
@@ -106,23 +106,23 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Switch the Song screen to Song and press Play, or jump between sections yourself with the A-H buttons.",
             "Sing: your voice goes through the vocoder live. Record a part of it onto a loop if you want it to repeat.",
             "Press Rec (top bar) first to keep the whole performance as stems for Logic.",
-            "The Mixer (F5) has every level, pan, mute and solo; its FX pad button swaps the strips for the FX pad on the whole mix (filter sweeps, repeat, tape stop)." },
+            "Mix (F4) has every level, pan, mute and solo; its FX pad button swaps the strips for the FX pad on the whole mix (filter sweeps, repeat, tape stop)." },
           "" },
 
         { "Guitar, bass, keytar and other instruments",
           { "Plug it into an input of your audio interface (the instrument or Hi-Z input, for a guitar or bass).",
-            "Open Effects (F6) and pick Line in. Press Plug in, and pick input 1, 2 or both.",
+            "Pick Line in on the left, then Edit (F2). Press Plug in, and pick input 1, 2 or both.",
             "Too quiet? Turn up Gain in. The tuner beside it shows the note you play.",
             "Stomp the pedals you want (Amp, Wah, Chorus, Delay...), or pick a board from Presets: Clean guitar, Crunch, Bass DI...",
             "Rec to looper puts it on the next loop layer from the next bar; Rec to sampler or Rec to MPC pad samples it. "
             "What you record has the pedals on it.",
-            "The Mixer (F5) has the Input strip too: its level, mute and sends.",
+            "Mix (F4) has the Line in strip too: its level, mute and sends.",
             "Every other sound has its own board too: pick the Bass, a loop or the Master on the left of the Effects screen.",
             "A keytar with MIDI can also play Kaleidobox's instruments, like any keyboard." },
           "" },
 
-        { "Effects (F6): pedals on any sound",
-          { "Pick a sound on the left: the Line in, the Vocoder, Bass, Synth, MPC, Drum machine, Sampler, any loop, all the loops, or the Master.",
+        { "Effects: pedals on any sound",
+          { "Open it from FX on any Mix strip. Pick a sound in its list: the Line in, the Vocoder, Bass, Synth, MPC, Drums, Sampler, any loop, all the loops, or the Master.",
             "Stomp a pedal's footswitch to switch it on; turn its knob. Click the pedal to open all its settings below.",
             "Presets has ready-made boards for guitar, bass, keys, drums and anything; Save keeps yours for any sound.",
             "Copy and Paste put one sound's board on another, to change from there.",

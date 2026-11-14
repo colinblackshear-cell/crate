@@ -28,6 +28,7 @@ target_sources(CrateTests PRIVATE
     RigEffectsTests.cpp
     RigMixerTests.cpp
     RigNavigationTests.cpp
+    RigFrameTests.cpp
     RigLoopBankTests.cpp
     RigQuantizeTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp

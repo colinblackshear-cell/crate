@@ -225,7 +225,7 @@ juce::String MixerView::Channel::title() const
 {
     switch (kind)
     {
-        case Kind::tool:   return index == RigEngine::drumsStrip ? juce::String ("Machine") : RigEngine::stripName (index);
+        case Kind::tool:   return RigEngine::stripLabel (index);
         case Kind::layer:  return "Loop " + juce::String (index + 1);
         case Kind::reverb: return "A " + RigEngine::returnName (RigEngine::reverbReturn);
         case Kind::echo:   return "B " + RigEngine::returnName (RigEngine::echoReturn);
@@ -724,12 +724,22 @@ void MixerView::paint (juce::Graphics& g)
     }
 }
 
+void MixerView::showHub (bool show)
+{
+    hubShown = show;
+    for (auto* b : hub)
+        b->setVisible (show);
+    resized();
+    repaint();
+}
+
 void MixerView::resized()
 {
     auto area = getLocalBounds().reduced (14, 8);
 
     // The hub: every tool.
-    hubArea = area.removeFromTop (44);
+    hubArea = hubShown ? area.removeFromTop (44) : juce::Rectangle<int>();
+    if (hubShown)
     {
         auto row = hubArea;
         const int gap = 6;
@@ -739,8 +749,8 @@ void MixerView::resized()
             b->setBounds (row.removeFromLeft (w));
             row.removeFromLeft (gap);
         }
+        area.removeFromTop (8);
     }
-    area.removeFromTop (8);
 
     auto bankRow = area.removeFromTop (30);
     toolsBank.setBounds (bankRow.removeFromLeft (96));

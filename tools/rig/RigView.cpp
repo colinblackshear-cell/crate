@@ -119,9 +119,57 @@ private:
     RigView& view;
 };
 
+// The Sounds drawer: the sound library slid over the right of the view, with a close button.
+class RigView::Drawer : public juce::Component
+{
+public:
+    explicit Drawer (RigView& v) : view (v)
+    {
+        close.fontSize = 14.0f;
+        close.setTooltip ("Closes the drawer (F5 or Esc).");
+        close.onClick = [this] { view.showSounds (false); };
+        addAndMakeVisible (close);
+    }
+    void setContent (juce::Component* c)
+    {
+        content = c;
+        if (c != nullptr)
+            addAndMakeVisible (c);
+        resized();
+    }
+    juce::Component* getContent() const { return content.getComponent(); }
+    void paint (juce::Graphics& g) override
+    {
+        const auto& p = vintage::pal();
+        auto r = getLocalBounds().toFloat();
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.fillRect (r.removeFromLeft (8.0f));
+        g.setColour (p.face);
+        g.fillRect (r);
+        g.setColour (vintage::colours::selected);
+        g.fillRect (r.removeFromLeft (4.0f));
+        vintage::engraved (g, "Sounds", getLocalBounds().withTrimmedLeft (28).removeFromTop (44), juce::Justification::centredLeft, 18.0f);
+        vintage::engraved (g, "Hear a sound, then send it to a pad, the Sampler or a loop",
+                           getLocalBounds().withTrimmedLeft (110).withTrimmedRight (110).removeFromTop (44), juce::Justification::centredLeft, 12.0f);
+    }
+    void resized() override
+    {
+        auto r = getLocalBounds().withTrimmedLeft (12);
+        auto top = r.removeFromTop (44);
+        close.setBounds (top.removeFromRight (90).reduced (6, 6));
+        if (content != nullptr)
+            content->setBounds (r.reduced (8, 4));
+    }
+
+private:
+    RigView& view;
+    juce::Component::SafePointer<juce::Component> content;
+    rigpanels::PanelButton close { "Close" };
+};
+
 //==============================================================================
 RigView::FxPanel::FxPanel (RigEngine& engine, int s)
-    : StripFxPanel (engine.getFx (s), RigEngine::stripName (s) + " effects", stripColour (s)), strip (s)
+    : StripFxPanel (engine.getFx (s), RigEngine::stripLabel (s) + " effects", stripColour (s)), strip (s)
 {
 }
 
@@ -185,12 +233,15 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     setOpaque (true);
     vintage::setStage ((bool) engine.screens.getProperty ("dark", false));
 
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &rail })
     {
         c->setLookAndFeel (&vintageLook);
         addAndMakeVisible (c);
     }
     addAndMakeVisible (tabs);
+    soundsDrawer = std::make_unique<Drawer> (*this);
+    soundsDrawer->setLookAndFeel (&vintageLook);
+    addChildComponent (*soundsDrawer);
 
     auto& transport = engine.getTransport();
 
@@ -228,40 +279,34 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         }
     };
 
-    // The screens, and More.
-    screenBar.onScreen = [this] (const juce::String& page) { showTab (page); };
-    // More opens the More page (right-click: the quick menu).
-    screenBar.more.onClick = [this]
+    // The views, the Sounds drawer and Settings.
+    screenBar.onView = [this] (const juce::String& view) { showView (view); };
+    screenBar.sounds.onClick = [this] { showSounds (! soundsOpen); };
+    // Settings (right-click: the quick menu of every tool, as More had).
+    screenBar.settings.onClick = [this]
     {
         if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
             showMoreMenu();
         else
-            showTab ("More");
+            showTab ("Setup");
     };
     screenBar.help.onClick = [this] { showHelp (helpPanel == nullptr); };
     screenBar.back.onClick = [this] { goBack(); };
     screenBar.forward.onClick = [this] { goForward(); };
 
-    // Starting a song from nothing.
-    header.newSong.onClick = [this] { askNewSong(); };
-    header.newPattern.onClick = [this] { showPatternMenu(); };
+    // Your show, and starting a song from nothing.
+    header.show.onClick = [this] { showShowMenu(); };
+    rail.newPattern.onClick = [this] { showPatternMenu(); };
     header.quantize.onClick = [this] { showQuantize (quantizeTarget(), &header.quantize); };
 
-    // The song parts and Live now.
-    footer.onTrack = [this] (int strip)
-    {
-        showTab ("Groove");
-        if (groove != nullptr)
-            for (int t = 0; t < GrooveView::numTracks; ++t)
-                if (GrooveView::stripFor (t) == strip)
-                    groove->selectTrack (t);
-    };
+    // The song's sections.
     footer.onEditParts = [this] { showTab ("Song"); };
 
     // The Setup page's parts.
     setupPage = new SetupPage (*this);
     for (auto* c : std::initializer_list<juce::Component*> { &clickButton, &micButton, &learnPlay, &learnStop, &learnPlayLabel, &learnStopLabel,
                                                              &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
+                                                             &darkButton, &popOutButton,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
                                                              &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
         setupPage->addAndMakeVisible (c);
@@ -300,8 +345,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     audioButton.onClick = [this] { showAudioSettings(); };
     saveButton.onClick = [this] { saveShow(); };
     saveButton.setTooltip ("Saves everything: the show (sounds, patterns, mixer, song parts) and your loops, together. "
-                           "The first time it asks for a name; after that it saves straight away (Cmd+S). More > Save show as... for a copy.");
+                           "The first time it asks for a name; after that it saves straight away (Cmd+S). The show menu (top left) has Save show as... for a copy.");
     openButton.onClick = [this] { openShow(); };
+    darkButton.setClickingTogglesState (true);
+    darkButton.setTooltip ("The dark panel, for dark rooms and stages.");
+    darkButton.onClick = [this] { setDarkPanel (darkButton.getToggleState()); };
+    popOutButton.setTooltip ("Puts a screen in its own window, to move onto a second screen.");
+    popOutButton.onClick = [this] { showPopOutMenu(); };
 
     // The seven screens first (F1-F7), then what More shows. The tab bar is hidden: the screen
     // buttons and More pick the page.
@@ -323,6 +373,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     grooveView->showMic = devices != nullptr;
     grooveView->onQuantize = [this] (int target, juce::Component* from) { showQuantize (target, from); };
     grooveView->refresh();
+    grooveView->onTrackPicked = [this] (int t) { pickTrack (t); };
+    rail.setCards (grooveView->takeTrackCards());
     groove = grooveView;
     addPage ("Groove", RigColours::song, grooveView);
     {
@@ -394,6 +446,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         view->onLearn = [this] (int control, juce::Button& b) { startLearning (control, b); };
         view->meterOf = [this] (int strip) { return meters[(size_t) strip]; };
         view->onSay = [this] (const juce::String& text) { say (text); };
+        // The track rail goes into every tool, so the Mixer doesn't need its own row of buttons.
+        view->showHub (false);
         mixer = view;
         addPage ("Mixer", Theme::text, view);
     }
@@ -489,7 +543,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
     // The Rig opens on the Guide (unless it was switched off there), else on the Groove.
     showTab (engine.screens.getProperty ("skipGuide", false) ? "Groove" : "Guide");
-    screenBar.setCurrent (currentPage());
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More");
 
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).addListener (this);
@@ -579,6 +633,7 @@ void RigView::refresh()
         setDarkPanel ((bool) engine.screens.getProperty ("dark", false));
     auto& transport = engine.getTransport();
     clickButton.setToggleState (transport.metronome.load(), juce::dontSendNotification);
+    darkButton.setToggleState ((bool) engine.screens.getProperty ("dark", false), juce::dontSendNotification);
     micButton.setToggleState (engine.micOn.load(), juce::dontSendNotification);
     micButton.setButtonText (engine.micOn.load() ? "Mic on" : "Mic off");
     micButton.setVisible (devices != nullptr);
@@ -617,6 +672,13 @@ void RigView::openTool (const juce::String& name)
 
 void RigView::showTab (const juce::String& name)
 {
+    // The sound library opens as a drawer over whichever view is showing.
+    if (name == "Sounds" && pageIndex ("Sounds") >= 0 && pages[(size_t) pageIndex ("Sounds")].window == nullptr)
+    {
+        if (currentPage() == "Guide")
+            showTab ("Groove");
+        return showSounds (true);
+    }
     // The full sample editor is the Sampler screen's Edit side.
     if (name == "Sampler editor" && samplerScreen != nullptr)
     {
@@ -661,22 +723,209 @@ void RigView::showTab (const juce::String& name)
 // screen buttons go dark too. Leaving it puts the panel back as it was.
 void RigView::pageChanged()
 {
-    screenBar.setCurrent (currentPage());
+    // A tool's own screen picks its track on the rail, so the keys, the knobs and Edit follow it.
+    if (groove != nullptr)
+        if (const int t = trackOfPlace (currentPlace()); t >= 0 && t != groove->getTrack())
+            groove->selectTrack (t);
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More");
     navigation.visit (currentPlace());
     updateNavButtons();
     const bool onStage = currentPage() == "Guide";
+    if (rail.isVisible() != railShown())
+    {
+        rail.setVisible (railShown());
+        resized();
+    }
     if (onStage == stageShown)
         return;
     stageShown = onStage;
     vintage::setStage (onStage || (bool) engine.screens.getProperty ("dark", false));
     header.setVisible (! onStage);
     footer.setVisible (! onStage);
+    rail.setVisible (railShown());
+    if (onStage)
+        showSounds (false);
     resized();
     repaint();
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &rail })
         c->repaint();
     if (groove != nullptr)
         groove->repaint();
+}
+
+//==============================================================================
+bool RigView::railShown() const
+{
+    return currentPage() != "Guide";
+}
+
+juce::String RigView::editPageFor (int track)
+{
+    switch (track)
+    {
+        case GrooveView::drums:   return "MPC";
+        case GrooveView::machine: return "Drum machine";
+        case GrooveView::sampler: return "Sampler";
+        case GrooveView::loops:   return "Looper";
+        case GrooveView::lineIn:  return "Effects";
+        default:                  return GrooveView::trackName (track);
+    }
+}
+
+int RigView::trackOfPlace (const juce::String& place) const
+{
+    if (place == "MPC")
+        return GrooveView::drums;
+    if (place == "Drum machine")
+        return GrooveView::machine;
+    if (place == "Bass")
+        return GrooveView::bass;
+    if (place == "Synth")
+        return GrooveView::synth;
+    if (place == "Vocoder")
+        return GrooveView::vocoder;
+    if (place == "Sampler" || place == "Sampler editor")
+        return GrooveView::sampler;
+    if (place.startsWith ("Looper"))
+        return GrooveView::loops;
+    if (place == "Effects" && effects != nullptr && effects->getSource() == EffectsView::lineIn)
+        return GrooveView::lineIn;
+    return -1;
+}
+
+juce::String RigView::viewOfPlace (const juce::String& place) const
+{
+    if (place == "Groove")
+        return "Play";
+    if (place.startsWith ("Song"))
+        return "Song";
+    if (place == "Mixer")
+        return "Mix";
+    if (place == "Effects")
+        return trackOfPlace (place) == GrooveView::lineIn ? "Edit" : "Mix";
+    if (place == "Guide" || place == "Setup" || place == "More" || place == "Sounds" || place.isEmpty())
+        return {};
+    return "Edit";
+}
+
+juce::String RigView::getView() const
+{
+    return viewOfPlace (currentPlace());
+}
+
+int RigView::getTrack() const
+{
+    return groove != nullptr ? groove->getTrack() : -1;
+}
+
+void RigView::pickTrack (int t)
+{
+    if (groove == nullptr || ! juce::isPositiveAndBelow (t, (int) GrooveView::numTracks))
+        return;
+    if (groove->getTrack() != t)
+        groove->selectTrack (t);
+    // On Edit, the instrument you picked shows in full; the other views stay where they are.
+    if (getView() == "Edit")
+        showView ("Edit");
+}
+
+void RigView::showView (const juce::String& view)
+{
+    if (view == "Play")
+        return showTab ("Groove");
+    if (view == "Song")
+        return showTab ("Song");
+    if (view == "Mix")
+    {
+        // The Effects board (for a track's or a layer's effects) counts as Mix too: from there,
+        // Mix goes back to the faders.
+        return showTab ("Mixer");
+    }
+    if (view != "Edit")
+        return;
+    const int t = getTrack();
+    if (t == GrooveView::lineIn && effects != nullptr)
+        effects->showSource (EffectsView::lineIn);
+    if (t == GrooveView::sampler && samplerScreen != nullptr && samplerScreen->getSide() == SamplerScreen::mpcSide)
+        samplerScreen->setSide (SamplerScreen::chopSide);
+    if (t == GrooveView::loops && looper != nullptr)
+    {
+        looper->showTimeline (false);
+        looper->showSongGrid (false);
+    }
+    showTab (editPageFor (t));
+}
+
+void RigView::showSounds (bool show)
+{
+    const int i = pageIndex ("Sounds");
+    if (i < 0 || show == soundsOpen)
+        return;
+    auto& page = pages[(size_t) i];
+    if (show)
+    {
+        if (page.window != nullptr)
+        {
+            page.window->toFront (true);
+            return;
+        }
+        // The tab keeps a note of where the library went (as when it's in its own window).
+        const int current = tabs.getCurrentTabIndex();
+        page.placeholder = std::make_unique<Placeholder> (*this, i);
+        tabs.removeTab (i);
+        tabs.addTab (page.name, Theme::panel, page.placeholder.get(), false, i);
+        tabs.setCurrentTabIndex (current == i ? pageIndex ("Groove") : current);
+        soundsOpen = true;
+        soundsDrawer->setContent (page.content.get());
+        page.content->setVisible (true);
+        soundsDrawer->setVisible (true);
+        soundsDrawer->toFront (false);
+    }
+    else
+    {
+        soundsDrawer->setContent (nullptr);
+        soundsDrawer->removeChildComponent (page.content.get());
+        soundsDrawer->setVisible (false);
+        soundsOpen = false;
+        const int current = tabs.getCurrentTabIndex();
+        tabs.removeTab (i);
+        tabs.addTab (page.name, Theme::panel, page.content.get(), false, i);
+        tabs.setCurrentTabIndex (current);
+        page.placeholder.reset();
+    }
+    resized();
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More");
+}
+
+void RigView::showShowMenu()
+{
+    juce::PopupMenu menu;
+    const auto name = currentShow.getFileNameWithoutExtension();
+    menu.addSectionHeader (name.isNotEmpty() ? "Show: " + name : juce::String ("This show isn't saved yet"));
+    menu.addItem (1, "New song...");
+    menu.addItem (2, "Open show...");
+    menu.addItem (3, "Save show   (Cmd+S)");
+    menu.addItem (4, "Save show as...");
+    menu.addSeparator();
+    menu.addItem (5, "Export for Logic (WAVs + MIDI)...");
+    menu.addSeparator();
+    menu.addItem (6, "The Guide: every tool, and where to start");
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.show),
+                        [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+                        {
+                            if (safe == nullptr)
+                                return;
+                            switch (result)
+                            {
+                                case 1: safe->askNewSong(); break;
+                                case 2: safe->openShow(); break;
+                                case 3: safe->saveShow(); break;
+                                case 4: safe->saveShowAs(); break;
+                                case 5: safe->exportForLogic(); break;
+                                case 6: safe->showTab ("Guide"); break;
+                                default: break;
+                            }
+                        });
 }
 
 void RigView::popOutTab (const juce::String& tab)
@@ -719,6 +968,8 @@ int RigView::pageIndex (const juce::String& name) const
 
 void RigView::popOut (int index, juce::Rectangle<int> bounds)
 {
+    if (soundsOpen && pages[(size_t) index].name == "Sounds")
+        showSounds (false);
     auto& page = pages[(size_t) index];
     if (page.window != nullptr)
         return;
@@ -872,7 +1123,7 @@ void RigView::timerCallback()
         header.play.text = playing ? "Playing" : "Play";
         header.play.repaint();
     }
-    screenBar.setCurrent (currentPage());
+    screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More");
     pageChanged();
     if (auto& q = engine.getQuantizer(); q.lastAutoMessage.isNotEmpty())
     {
@@ -979,7 +1230,21 @@ void RigView::timerCallback()
         shown.micOn = devices != nullptr ? engine.micOn.load() : true;
         header.update (shown);
     }
-    footer.tick ([this] (int strip) { return meters[(size_t) strip]; });
+    footer.tick();
+    {
+        // Your show's name, and whether it has been saved yet.
+        const auto name = currentShow.getFileNameWithoutExtension();
+        const auto text = name.isNotEmpty() ? name : juce::String ("Unsaved show");
+        const auto sub = juce::String::fromUTF8 (name.isNotEmpty() ? "Show \xc2\xb7 menu" : "Not saved yet \xc2\xb7 menu");
+        const auto lit = vintage::Lit::none;
+        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit)
+        {
+            header.show.text = text;
+            header.show.sub = sub;
+            header.show.lit = lit;
+            header.show.repaint();
+        }
+    }
 
     if (++ticks % 60 == 0)
         openMidiInputs();
@@ -1357,19 +1622,34 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         goForward();
         return true;
     }
-    // Esc leaves the Guide, back to the Groove.
+    // Esc closes the Sounds drawer, or leaves the Guide for Play.
+    if (key == juce::KeyPress::escapeKey && soundsOpen)
+    {
+        showSounds (false);
+        return true;
+    }
     if (key == juce::KeyPress::escapeKey && stageShown)
     {
         showTab ("Groove");
         return true;
     }
-    // F1-F7: the screens.
-    for (int i = 0; i < rigpanels::ScreenBar::screens().size(); ++i)
+    // F1-F4: the views; F5 the Sounds drawer; F6 Settings.
+    for (int i = 0; i < rigpanels::ScreenBar::views().size(); ++i)
         if (key.getKeyCode() == juce::KeyPress::F1Key + i)
         {
-            showTab (rigpanels::ScreenBar::screens()[i]);
+            showView (rigpanels::ScreenBar::views()[i]);
             return true;
         }
+    if (key.getKeyCode() == juce::KeyPress::F5Key)
+    {
+        showSounds (! soundsOpen);
+        return true;
+    }
+    if (key.getKeyCode() == juce::KeyPress::F6Key)
+    {
+        showTab ("Setup");
+        return true;
+    }
     // 1-8: the song parts; on the Looper screen, its layers (record, stop, overdub).
     const auto c = key.getTextCharacter();
     if (c >= '1' && c <= '8' && ! key.getModifiers().isAnyModifierKeyDown())
@@ -1532,7 +1812,7 @@ void RigView::showPatternMenu()
     const int parts = (int) rigsong::sections (engine.getTimeline()).size();
     menu.addItem (100, "Keep what's playing as the song's next section (" + rigsong::letterFor (parts) + ")", parts < rigsong::kMaxSections);
     menu.addItem (101, "Open the Song screen");
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.newPattern),
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (rail.newPattern),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                         {
                             if (safe == nullptr || result <= 0)
@@ -1594,10 +1874,11 @@ void RigView::setDarkPanel (bool dark)
     vintage::setStage (dark || stageShown);
     engine.screens.setProperty ("dark", dark, nullptr);
     repaint();
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &rail, soundsDrawer.get() })
         c->repaint();
     if (groove != nullptr)
         groove->repaint();
+    darkButton.setToggleState (dark, juce::dontSendNotification);
 }
 
 void RigView::showPopOutMenu()
@@ -1609,7 +1890,10 @@ void RigView::showPopOutMenu()
         if (pages[(size_t) i].name != "More")
             menu.addItem (i + 1, pages[(size_t) i].name
                                      + (pages[(size_t) i].window != nullptr ? " (out: bring to front)" : ""));
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (moreView),
+    auto* anchor = currentPage() == "More" ? static_cast<juce::Component*> (moreView)
+                 : popOutButton.isShowing()  ? static_cast<juce::Component*> (&popOutButton)
+                                             : static_cast<juce::Component*> (&screenBar.settings);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                         {
                             if (safe == nullptr || result <= 0 || result > (int) safe->pages.size())
@@ -1647,7 +1931,7 @@ void RigView::showMoreMenu()
     if (devices != nullptr)
         menu.addItem (7, "Audio and MIDI set-up...");
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.more),
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.settings),
                         [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer", "Setup" }] (int result)
                         {
                             if (safe == nullptr || result == 0)
@@ -1708,8 +1992,20 @@ void RigView::resized()
         header.setBounds (area.removeFromTop (compact ? 88 : 100));
     screenBar.setBounds (area.removeFromTop (compact ? 56 : 62));
     if (! stageShown)
-        footer.setBounds (area.removeFromBottom (compact ? 108 : 118));
+        footer.setBounds (area.removeFromBottom (compact ? 92 : 104));
+    if (railShown())
+    {
+        auto railArea = area.removeFromLeft (rigpanels::TrackRail::kWidth + 22).withTrimmedLeft (22).reduced (0, 8);
+        rail.setBounds (railArea);
+        area.removeFromLeft (6);
+    }
     tabs.setBounds (area.reduced (0, 4));
+    if (soundsOpen)
+    {
+        auto drawerArea = tabs.getBounds();
+        soundsDrawer->setBounds (drawerArea.removeFromRight (juce::jlimit (480, 760, drawerArea.getWidth() * 60 / 100)));
+        soundsDrawer->toFront (false);
+    }
     if (helpPanel != nullptr)
     {
         helpPanel->setBounds (area.reduced (juce::jmax (12, area.getWidth() / 10), 12));
@@ -1733,6 +2029,8 @@ void RigView::layoutSetup (juce::Rectangle<int> page)
     place (learnPlay, 64);
     place (learnStopLabel, 60);
     place (learnStop, 64);
+    place (darkButton, 96);
+    place (popOutButton, 136);
     openButton.setBounds (tools.removeFromRight (100));
     tools.removeFromRight (8);
     saveButton.setBounds (tools.removeFromRight (100));

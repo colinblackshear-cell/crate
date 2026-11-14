@@ -149,6 +149,9 @@ public:
     // Each looper layer's own effects, which the loop plays through (the Loops strip comes after).
     StripFx& getLoopFx (int layer) { return loopFx[(size_t) layer]; }
     static juce::String stripName (int id);
+    // The strip's name on screen (the drum machine is "Drums", the input "Line in"); stripName
+    // stays as saved shows and exported files have it.
+    static juce::String stripLabel (int);
     // True while any strip is soloed (the master can't be).
     bool anySolo() const;
     // What a strip plays at now: its mute, or a solo elsewhere, silences it.
