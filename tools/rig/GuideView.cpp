@@ -383,7 +383,7 @@ public:
             g.setColour (kInk.withAlpha (0.12f));
             g.fillRect (r.withSizeKeepingCentre (r.getWidth(), 1));
         };
-        section (mainLabel, "THE VIEWS", "Along the top: Play, Edit, Song and Mix (F1 to F4), and the Sounds drawer (F5).");
+        section (mainLabel, "THE VIEWS", "Along the top: Play, Edit, Song and Mix (F1 to F4), the Sounds drawer (F5) and the Chords drawer (F7).");
         section (moreLabel, "EDIT: EACH TRACK IN FULL", "Each track in full: pick it on the left, then Edit (F2).");
 
         g.setFont (vintage::barlow (13.0f));
