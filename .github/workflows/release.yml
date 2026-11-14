@@ -59,7 +59,8 @@ jobs:
         run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 
       - name: Build
-        run: cmake --build build --config Release --target Kaleidobox KaleidoboxPlugin_AU KaleidoboxPlugin_VST3 KaleidoboxInputPlugin_AU \
+        run: |
+          cmake --build build --config Release --target Kaleidobox KaleidoboxPlugin_AU KaleidoboxPlugin_VST3 KaleidoboxInputPlugin_AU \
           KaleidoboxMpcPlugin_AU KaleidoboxMpcPlugin_VST3 KaleidoboxBassPlugin_AU KaleidoboxBassPlugin_VST3 \
           KaleidoboxSynthPlugin_AU KaleidoboxSynthPlugin_VST3 KaleidoboxDrumsPlugin_AU KaleidoboxDrumsPlugin_VST3 \
           KaleidoboxVocoderPlugin_AU -- -quiet
