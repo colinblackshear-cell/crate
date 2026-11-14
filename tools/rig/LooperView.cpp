@@ -610,7 +610,7 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     }
     setLit (songButton, Lit::current);
     songButton.getProperties().set ("fontSize", 17.0f);
-    songButton.setTooltip ("Build the song (the Song screen, F7): sections in order, and which loops and patterns play in each.");
+    songButton.setTooltip ("Build the song (the Song screen, F3): sections in order, and which loops and patterns play in each.");
     songButton.onClick = [this]
     {
         // In the Rig, the song is built on the Song builder page (the same parts, in full).

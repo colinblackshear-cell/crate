@@ -428,6 +428,116 @@ LookAndFeel::LookAndFeel()
     setColour (juce::PopupMenu::highlightedBackgroundColourId, colours::selected);
     setColour (juce::PopupMenu::highlightedTextColourId, juce::Colour (0xff2a1a05));
     setColour (juce::PopupMenu::headerTextColourId, juce::Colour (0xffbdaf97));
+    setColour (juce::ComboBox::textColourId, juce::Colour (0xfff1e7d1));
+    setColour (juce::ComboBox::arrowColourId, colours::lcdAmber);
+    setColour (juce::TextEditor::textColourId, juce::Colour (0xfff1e7d1));
+    setColour (juce::TextEditor::highlightColourId, colours::selected.withAlpha (0.35f));
+    setColour (juce::TextEditor::highlightedTextColourId, juce::Colour (0xfff1e7d1));
+    setColour (juce::CaretComponent::caretColourId, colours::lcdAmber);
+    setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff15110e));
+    setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+    setColour (juce::TextEditor::focusedOutlineColourId, colours::selected);
+    setColour (juce::ListBox::backgroundColourId, juce::Colour (0xff1e1a16));
+    setColour (juce::Slider::textBoxTextColourId, colours::lcdAmber);
+    setColour (juce::Slider::textBoxBackgroundColourId, colours::lcdBack);
+    setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    setColour (juce::ScrollBar::thumbColourId, juce::Colour (0xffbdaf97));
+}
+
+namespace
+{
+// A recessed dark slot: the shape a choice, a text field or a value box sits in.
+void drawSlot (juce::Graphics& g, juce::Rectangle<float> r, bool focused, bool enabled)
+{
+    g.setColour (juce::Colour (0xff15110e).withMultipliedAlpha (enabled ? 1.0f : 0.6f));
+    g.fillRoundedRectangle (r, 5.0f);
+    // The inner shade along the top: it sits below the panel.
+    g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.45f), 0, r.getY(), juce::Colours::transparentBlack, 0,
+                                             r.getY() + 6.0f, false));
+    g.fillRoundedRectangle (r, 5.0f);
+    g.setColour (focused ? colours::selected : juce::Colour (0xfff1e7d1).withAlpha (0.14f));
+    g.drawRoundedRectangle (r.reduced (0.5f), 5.0f, focused ? 1.5f : 1.0f);
+}
+}
+
+void LookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool down, int, int, int, int, juce::ComboBox& box)
+{
+    const auto r = juce::Rectangle<int> (width, height).toFloat();
+    drawSlot (g, r, box.hasKeyboardFocus (true) || down, box.isEnabled());
+    // The arrow: an amber chevron at the right.
+    const float size = juce::jlimit (6.0f, 10.0f, (float) height * 0.28f);
+    const auto c = juce::Point<float> (r.getRight() - 8.0f - size * 0.5f, r.getCentreY());
+    juce::Path arrow;
+    arrow.startNewSubPath (c.x - size * 0.5f, c.y - size * 0.25f);
+    arrow.lineTo (c.x, c.y + size * 0.3f);
+    arrow.lineTo (c.x + size * 0.5f, c.y - size * 0.25f);
+    g.setColour (box.findColour (juce::ComboBox::arrowColourId).withMultipliedAlpha (box.isEnabled() ? 1.0f : 0.4f));
+    g.strokePath (arrow, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
+juce::Font LookAndFeel::getComboBoxFont (juce::ComboBox& box)
+{
+    return cond (juce::jlimit (13.0f, 18.0f, (float) box.getHeight() * 0.55f), Weight::bold, 0.02f);
+}
+
+void LookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
+{
+    label.setBounds (6, 1, juce::jmax (0, box.getWidth() - 24), box.getHeight() - 2);
+    label.setFont (getComboBoxFont (box));
+}
+
+void LookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool over, bool)
+{
+    // A lamp (amber when on), then its name, engraved.
+    auto r = b.getLocalBounds();
+    const float d = juce::jlimit (10.0f, 16.0f, (float) r.getHeight() * 0.55f);
+    auto lampArea = r.removeFromLeft (juce::roundToInt (d) + 6);
+    drawLamp (g, lampArea.toFloat().withSizeKeepingCentre (d, d).getCentre(), b.getToggleState() ? Lit::next : Lit::none, d);
+    r.removeFromLeft (4);
+    auto ink = b.findColour (juce::ToggleButton::textColourId);
+    if (ink == juce::Colours::white || ink == juce::Colour (0xffeeeeee))
+        ink = juce::Colour (0xfff1e7d1);
+    g.setColour (ink.withMultipliedAlpha (b.isEnabled() ? (over ? 1.0f : 0.92f) : 0.45f));
+    g.setFont (cond (juce::jlimit (12.0f, 16.0f, (float) b.getHeight() * 0.62f), Weight::bold, 0.03f));
+    g.drawFittedText (b.getButtonText(), r, juce::Justification::centredLeft, 2, 0.8f);
+}
+
+void LookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width, int height, juce::TextEditor& editor)
+{
+    if (dynamic_cast<juce::AlertWindow*> (editor.getParentComponent()) != nullptr)
+        return juce::LookAndFeel_V4::fillTextEditorBackground (g, width, height, editor);
+    drawSlot (g, juce::Rectangle<int> (width, height).toFloat(), editor.hasKeyboardFocus (true) && ! editor.isReadOnly(), editor.isEnabled());
+}
+
+void LookAndFeel::drawTextEditorOutline (juce::Graphics&, int, int, juce::TextEditor&) {}
+
+void LookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar&, int x, int y, int width, int height, bool vertical, int thumbStart,
+                                 int thumbSize, bool over, bool down)
+{
+    auto thumb = vertical ? juce::Rectangle<int> (x, thumbStart, width, thumbSize) : juce::Rectangle<int> (thumbStart, y, thumbSize, height);
+    thumb = thumb.reduced (vertical ? 2 : 1, vertical ? 1 : 2);
+    if (thumb.isEmpty())
+        return;
+    g.setColour (juce::Colour (0xffbdaf97).withAlpha (down ? 0.85f : over ? 0.7f : 0.45f));
+    g.fillRoundedRectangle (thumb.toFloat(), (float) juce::jmin (thumb.getWidth(), thumb.getHeight()) * 0.5f);
+}
+
+juce::Slider::SliderLayout LookAndFeel::getSliderLayout (juce::Slider& s)
+{
+    return juce::LookAndFeel_V4::getSliderLayout (s);
+}
+
+juce::Label* LookAndFeel::createSliderTextBox (juce::Slider& s)
+{
+    // The value: amber LCD digits.
+    auto* l = juce::LookAndFeel_V4::createSliderTextBox (s);
+    l->setFont (lcd (juce::jlimit (16.0f, 22.0f, (float) s.getTextBoxHeight() * 0.9f)));
+    l->setColour (juce::Label::textColourId, s.findColour (juce::Slider::textBoxTextColourId));
+    l->setColour (juce::Label::backgroundColourId, s.findColour (juce::Slider::textBoxBackgroundColourId));
+    l->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
+    l->setColour (juce::TextEditor::textColourId, juce::Colour (0xfff1e7d1));
+    l->setColour (juce::TextEditor::backgroundColourId, colours::lcdBack);
+    return l;
 }
 
 void setLit (juce::Button& b, Lit lit) { b.getProperties().set ("lit", (int) lit); }
@@ -470,6 +580,29 @@ juce::Font LookAndFeel::getTextButtonFont (juce::TextButton& b, int height)
 void LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float minPos, float maxPos,
                                     juce::Slider::SliderStyle style, juce::Slider& s)
 {
+    if (style == juce::Slider::LinearHorizontal || style == juce::Slider::LinearBar)
+    {
+        // Sideways: a dark groove, filled in the setting's colour up to a small cream cap.
+        const auto area = juce::Rectangle<int> (x, y, w, h).toFloat();
+        const auto groove = juce::Rectangle<float> (area.getX(), area.getCentreY() - 3.0f, area.getWidth(), 6.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRoundedRectangle (groove.translated (0, 1.0f), 3.0f);
+        g.setColour (juce::Colour (0xff3a332c));
+        g.fillRoundedRectangle (groove, 3.0f);
+        // The setting's own colour when it has one, amber when not.
+        auto fill = s.isColourSpecified (juce::Slider::trackColourId) ? s.findColour (juce::Slider::trackColourId).withAlpha (1.0f)
+                                                                     : colours::selected;
+        g.setColour (fill.withAlpha (s.isEnabled() ? 0.8f : 0.35f));
+        g.fillRoundedRectangle (groove.withRight (juce::jmax (groove.getX(), pos)), 3.0f);
+        const auto cap = juce::Rectangle<float> (10.0f, juce::jmin (area.getHeight() - 2.0f, 20.0f)).withCentre ({ pos, area.getCentreY() });
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.fillRoundedRectangle (cap.translated (0, 1.5f), 3.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff4ead6), 0, cap.getY(), juce::Colour (0xffc9bda6), 0, cap.getBottom(), false));
+        g.fillRoundedRectangle (cap, 3.0f);
+        g.setColour (fill);
+        g.fillRect (cap.getCentreX() - 1.0f, cap.getY() + 3.0f, 2.0f, cap.getHeight() - 6.0f);
+        return;
+    }
     if (style != juce::Slider::LinearVertical)
         return juce::LookAndFeel_V4::drawLinearSlider (g, x, y, w, h, pos, minPos, maxPos, style, s);
     const auto& p = pal();

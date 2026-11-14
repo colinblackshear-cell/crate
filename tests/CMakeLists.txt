@@ -21,6 +21,7 @@ target_sources(CrateTests PRIVATE
     RigPluginTests.cpp
     RigPluginScreensTests.cpp
     RigSwitchTests.cpp
+    RigVocoderWakeTests.cpp
     RigPluginSlotTests.cpp
     RigPerformFxTests.cpp
     RigSynthScreenTests.cpp
@@ -31,6 +32,7 @@ target_sources(CrateTests PRIVATE
     RigFrameTests.cpp
     RigLoopBankTests.cpp
     RigQuantizeTests.cpp
+    RigChordsTests.cpp
     RigToolPluginTests.cpp
     RigLogicImportTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp

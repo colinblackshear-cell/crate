@@ -166,6 +166,7 @@ RigEngine::RigEngine()
         p->setValueNotifyingHost (0.0f);
     blankShow = saveShow();
     blankShow.removeChild (blankShow.getChildWithName ("Quantize"), nullptr);   // kept by New song
+    blankShow.removeChild (blankShow.getChildWithName (RigChords::kTreeType), nullptr);   // so are your chords
     allEngines().add (this);
 }
 
@@ -173,9 +174,11 @@ void RigEngine::newShow()
 {
     const auto keep = screens.createCopy();
     const auto quantizeSettings = quantizer.settings;
+    const auto keepChords = chords.toTree();
     loadShow (blankShow);
     screens = keep;
     quantizer.settings = quantizeSettings;
+    chords.fromTree (keepChords);
 }
 
 bool RigEngine::isBlank() const
@@ -186,6 +189,7 @@ bool RigEngine::isBlank() const
     auto now = saveShow();
     now.removeChild (now.getChildWithName ("Screens"), nullptr);
     now.removeChild (now.getChildWithName ("Quantize"), nullptr);
+    now.removeChild (now.getChildWithName (RigChords::kTreeType), nullptr);
     return now.isEquivalentTo (blankShow);
 }
 
@@ -316,6 +320,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
 {
     sampleRate = rate > 0 ? rate : 44100.0;
     maxBlock = juce::jmax (16, maximumBlockSize);
+    chords.prepare (sampleRate);
 
     for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder, &bass, &synthTool, &drums })
     {
@@ -577,8 +582,12 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     drumsMidi.clear();
     RigRouting::Result controls;
     std::array<juce::MidiBuffer*, RigRouting::kNumDests> destinations { nullptr, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi };
+    // The chord builder's pads and keys come out first (they play chords, not their own notes).
+    chords.takeTriggers (midiIn, routing.padChannel.load(), routing.splitNote.load());
     routing.route (midiIn, destinations, controls);
     applyControls (controls);
+    if (notesOffRequested.load())
+        chords.stopAll();
     // A one-tool plugin: whatever the routing made of it, every note plays its tool.
     if (const int only = onlyTool.load(); only >= 0)
     {
@@ -612,6 +621,18 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         }
     }
     arrange (n);
+
+    // The chord builder's chords, into the instruments they're sent to (before the recorder,
+    // so Record set has them).
+    {
+        RigChords::Clock chordClock;
+        chordClock.beat = transport.getBlockPosition();
+        chordClock.bpm = transport.getBpm();
+        chordClock.sampleRate = sampleRate;
+        chordClock.beatsPerBar = transport.getBeatsPerBar();
+        chordClock.playing = transport.isPlayingThisBlock();
+        chords.process (chordClock, n, routing.keysTo.load(), destinations);
+    }
 
     // Recording the set: what's played, by tool, before the tools see it.
     RigRecorder::Clock recClock;
@@ -909,6 +930,11 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         master.peak = peak;
 }
 
+juce::File RigEngine::logicFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Crate").getChildFile ("Rig").getChildFile ("To Logic");
+}
+
 juce::String RigEngine::serviceCapture()
 {
     if (capture.getState() != RigCapture::State::done)
@@ -922,6 +948,28 @@ juce::String RigEngine::serviceCapture()
 
     const auto name = RigCapture::sourceName (source).upToFirstOccurrenceOf (" /", false, false)
                       + (bars > 0 ? " " + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String());
+    if (captureDest == RigCapture::toLogic)
+    {
+        // A WAV, exactly the bars recorded from the bar it started on, to drag onto a Logic track
+        // at that bar.
+        auto folder = logicFolder();
+        folder.createDirectory();
+        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M.%S");
+        const auto file = folder.getChildFile (name.removeCharacters ("/\\:*?\"<>|").trim() + " " + stamp + ".wav");
+        bool written = false;
+        if (std::unique_ptr<juce::OutputStream> stream (file.createOutputStream()); stream != nullptr)
+        {
+            juce::WavAudioFormat wav;
+            auto options = juce::AudioFormatWriterOptions().withSampleRate (crate::kSampleRate)
+                               .withNumChannels (audio.getNumChannels()).withBitsPerSample (24);
+            if (auto writer = wav.createWriterFor (stream, options))
+                written = writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+        }
+        if (! written)
+            return "Couldn't save the recording for Logic in " + folder.getFullPathName() + ".";
+        lastLogicFile = file;
+        return "Recorded " + RigCapture::sourceName (source) + " for Logic: drag it from Drag to Logic (Effects screen) onto a track, at the bar you started it.";
+    }
     if (captureDest == RigCapture::toMpcPad)
     {
         const auto padName = putOnMpcPad (std::move (audio), name, bars > 0 ? beats : 0);
@@ -1174,6 +1222,7 @@ juce::ValueTree RigEngine::saveShow() const
     if (screens.getNumChildren() > 0 || screens.getNumProperties() > 0)
         show.appendChild (screens.createCopy(), nullptr);
     show.appendChild (quantizer.toTree(), nullptr);
+    show.appendChild (chords.toTree(), nullptr);
 
     for (int s = 0; s < numStrips; ++s)
     {
@@ -1356,6 +1405,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     captureDest = juce::jlimit (0, RigCapture::numDests - 1, (int) show.getProperty ("captureDest", (int) RigCapture::toSampler));
     captureBars = juce::jlimit (0, 16, (int) show.getProperty ("captureBars", 0));
     quantizer.fromTree (show.getChildWithName ("Quantize"));
+    chords.fromTree (show.getChildWithName (RigChords::kTreeType));
     screens = show.getChildWithName ("Screens").isValid() ? show.getChildWithName ("Screens").createCopy() : juce::ValueTree ("Screens");
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {

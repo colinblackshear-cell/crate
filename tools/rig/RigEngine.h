@@ -19,6 +19,7 @@
 #include "RigRecorder.h"
 #include "RigCapture.h"
 #include "RigQuantize.h"
+#include "RigChords.h"
 
 #include <array>
 
@@ -61,6 +62,8 @@ public:
     // Quantize, for every tool and loop (its settings are saved with the show and kept by New song).
     RigQuantizer& getQuantizer() { return quantizer; }
     RigScenes& getScenes() { return scenes; }
+    // The chord builder: your own chords, onto any instrument (saved with the show; kept by New song).
+    RigChords& getChords() { return chords; }
     // The song on a timeline (lanes of blocks over the bar ruler). While it's on and the clock
     // plays, it brings loops and tools in and out, with their fades.
     RigTimeline& getTimeline() { return timeline; }
@@ -104,6 +107,10 @@ public:
     void preview (std::shared_ptr<const juce::AudioBuffer<float>>);
     bool isPreviewing() const { return previewPlaying.load(); }
     int captureDest = RigCapture::toSampler;
+    // The last recording made "for Logic" (a WAV to drag onto a Logic track), and where they go:
+    // ~/Music/Crate/Rig/To Logic. Message thread.
+    juce::File lastLogicFile;
+    static juce::File logicFolder();
 
     // Scenes (message thread): what's playing now, as a scene; and the regular check that
     // moves song mode on and gets the MPC and bass ready for a scene about to start. The
@@ -391,6 +398,7 @@ private:
         RigEngine& engine;
     } loopRoom { *this };
     RigQuantizer quantizer { *this };
+    RigChords chords;
     std::vector<LoopBank> loopBanks;
     int currentLoopBank = -1;
     // A switch waiting for its bar: each layer's effects, put on when its loop comes in.

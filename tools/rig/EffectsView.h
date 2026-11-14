@@ -107,7 +107,9 @@ private:
     juce::TextButton prevSource { "<" }, nextSource { ">" }, presetsButton { "Presets" }, saveButton { "Save" }, copyButton { "Copy" },
         pasteButton { "Paste" }, bypassButton { "Bypass" }, resetButton { "Reset all" }, pluginButton, pluginOpen { "Open" },
         rackPower { "On" }, rackReset { "Reset" }, plugInButton { "Plug in" }, toLooperButton { "To looper" },
-        toSamplerButton { "To sampler" }, toPadButton { "To MPC pad" }, openTool;
+        toSamplerButton { "To sampler" }, toPadButton { "To MPC pad" }, toLogicButton { "To Logic" }, openTool;
+    // The last recording for Logic, to drag out onto a Logic track.
+    std::unique_ptr<juce::Component> dragToLogic;
     juce::ComboBox jack;
 
     // The tuner.

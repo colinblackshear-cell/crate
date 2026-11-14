@@ -85,6 +85,23 @@ public:
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getPopupMenuFont() override;
     void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
+
+    // The rest of the controls, so no plain grey ones are left: a choice is a recessed dark slot
+    // with cream text and an amber arrow; an on/off box is a lamp beside its engraved name; a text
+    // field is a dark slot with an amber caret; a sideways slider is a dark groove with a small
+    // cream cap; scroll bars are thin and warm.
+    void drawComboBox (juce::Graphics&, int width, int height, bool down, int buttonX, int buttonY, int buttonW, int buttonH,
+                       juce::ComboBox&) override;
+    juce::Font getComboBoxFont (juce::ComboBox&) override;
+    void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
+    void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool over, bool down) override;
+    void fillTextEditorBackground (juce::Graphics&, int width, int height, juce::TextEditor&) override;
+    void drawTextEditorOutline (juce::Graphics&, int width, int height, juce::TextEditor&) override;
+    void drawScrollbar (juce::Graphics&, juce::ScrollBar&, int x, int y, int width, int height, bool vertical, int thumbStart,
+                        int thumbSize, bool over, bool down) override;
+    int getDefaultScrollbarWidth() override { return 10; }
+    juce::Slider::SliderLayout getSliderLayout (juce::Slider&) override;
+    juce::Label* createSliderTextBox (juce::Slider&) override;
 };
 
 void setLit (juce::Button&, Lit);

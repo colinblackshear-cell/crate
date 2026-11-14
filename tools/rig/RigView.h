@@ -8,6 +8,7 @@
 #include "core/ui/ParamControls.h"
 #include "RigPanels.h"
 #include "RigNavigation.h"
+#include "ChordsView.h"
 
 // The Rig's window, built like a piece of 70s/80s studio gear: the top bar (your show, transport,
 // tempo, where the song is, VU meters), the view buttons (Play, Edit, Song, Mix; F1-F4) with
@@ -74,6 +75,10 @@ public:
     // The Sounds drawer, over the right of whichever view is showing (F5).
     void showSounds (bool show);
     bool isSoundsOpen() const { return soundsOpen; }
+    // The chord builder, over the bottom of whichever view is showing (F7).
+    void showChords (bool show);
+    bool isChordsOpen() const { return chordsOpen; }
+    ChordsView& getChordsView() { return *chordsDrawer; }
     const rigpanels::TrackRail& getRail() const { return rail; }
     // The show menu (the show's name in the top bar): New song, Open, Save, Save as, Export, Guide.
     void showShowMenu();
@@ -176,6 +181,8 @@ private:
     RigEngine& engine;
     juce::AudioDeviceManager* devices;
     float micMeter = 0.0f;
+    // First, before any tool is made: the tools inside take the panel's warm wells.
+    struct WarmWells { WarmWells() { crate::Theme::useWarmWells(); } } warmWells;
     crate::Theme::LookAndFeel lookAndFeel;
 
     // The frame.
@@ -187,6 +194,8 @@ private:
     class Drawer;
     std::unique_ptr<Drawer> soundsDrawer;
     bool soundsOpen = false;
+    std::unique_ptr<ChordsView> chordsDrawer;
+    bool chordsOpen = false;
     juce::String viewOfPlace (const juce::String& place) const;
     int trackOfPlace (const juce::String& place) const;
     bool railShown() const;
@@ -210,7 +219,7 @@ private:
     void layoutSetup (juce::Rectangle<int>);
     juce::TextButton clickButton { "Click" }, micButton { "Mic off" };
     juce::TextButton learnPlay { "Learn" }, learnStop { "Learn" };
-    juce::Label learnPlayLabel { {}, "Play key" }, learnStopLabel { {}, "Stop key" };
+    juce::Label learnPlayLabel { {}, "Play key" }, learnStopLabel { {}, "Stop key" };   // on Settings
     juce::TextButton sampleButton { "Sample" }, knobButton { "Knobs" };
     void toggleRecordSet();
     void updateRecordButton();
@@ -224,8 +233,8 @@ private:
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
     // Routing.
-    juce::Label padsLabel { {}, "Pads play MPC bank" }, keysLabel { {}, "Keys play" }, sourceLabel { {}, "Sample" },
-                splitLabel { {}, "Split, below" };
+    juce::Label padsLabel { {}, "Pads play" }, keysLabel { {}, "Keys play" }, sourceLabel { {}, "From" },
+                splitLabel { {}, "Split below" };
     juce::ComboBox padBank, keysTo, sampleSource, splitNote, lowerKeysTo, sampleDest, sampleBars;
     void updateSampleButton();
 

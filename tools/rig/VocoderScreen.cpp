@@ -286,6 +286,14 @@ VocoderScreen::VocoderScreen (RigEngine& e, bool isStandalone)
     bypassButton.onClick = [this] { pressBypassAll(); };
     addAndMakeVisible (bypassButton);
 
+    // Red across the sound's name when something's keeping the vocoder quiet (whyQuiet).
+    wakeButton.getProperties().set ("fontSize", 16.0f);
+    setLit (wakeButton, Lit::arm);
+    wakeButton.setToggleState (true, juce::dontSendNotification);
+    wakeButton.setTooltip ("The vocoder can't be heard right now, so the pedals and sounds change nothing. Click to bring it back.");
+    wakeButton.onClick = [this] { wake(); };
+    addChildComponent (wakeButton);
+
     notesButton.getProperties().set ("fontSize", 17.0f);
     notesButton.setTooltip ("Which keys play the robot's notes. Click to send the keys to the vocoder.");
     notesButton.onClick = [this] { pressNotesFrom(); };
@@ -351,6 +359,11 @@ VocoderScreen::VocoderScreen (RigEngine& e, bool isStandalone)
         b.onClick = [this, i] { pressChord (i); };
         addChildComponent (b);
     }
+    buildChordsButton.getProperties().set ("fontSize", 15.0f);
+    buildChordsButton.setTooltip ("The chord builder (F7): your own chords on 16 pads, a keyboard to build them on, your Launchkey's "
+                                  "pads or keys to play them, and a progression for loops and Logic. Its chords play the vocoder too.");
+    buildChordsButton.onClick = [this] { if (onOpenChords) onOpenChords(); };
+    addChildComponent (buildChordsButton);
 
     // Raw voice and Out.
     micGain = std::make_unique<Knob> (params, ParamIDs::inputGain, "Mic gain", colours::vocoder);
@@ -456,7 +469,9 @@ void VocoderScreen::watchRobot()
     const bool picked = vocoder.getSoundChanges() != soundsSeen;
     soundsSeen = vocoder.getSoundChanges();
     // Sing to play and Drone give it notes already.
-    if (robotNow && (! robotWasOn || picked) && param (singToPlay) < 0.5f && param (drone) < 0.5f && activeChord < 0)
+    // (Nor does it when the chord builder is already giving it chords.)
+    if (robotNow && (! robotWasOn || picked) && param (singToPlay) < 0.5f && param (drone) < 0.5f && activeChord < 0
+        && ! engine.getChords().anySounding())
     {
         bool held = false;
         for (int note = 0; note < 128 && ! held; ++note)
@@ -486,10 +501,50 @@ void VocoderScreen::pressEffects()
             any = any || param (id) > 0.001f;
         if (! any)
             setParam (reverbMix, keptSpace > 0.005f ? keptSpace : 0.3f);
+        wakeToPlay();
     }
     bypassed = false;
     updateButtons();
     repaint();
+}
+
+juce::String VocoderScreen::whyQuiet() const
+{
+    const auto& strip = engine.getStrip (RigEngine::vocoderStrip);
+    if (! engine.vocoderOn.load())
+        return "Vocoder is off";
+    if (strip.mute.load())
+        return "Vocoder is muted";
+    if (engine.isSilenced (RigEngine::vocoderStrip))
+        return "Another track is soloed";
+    if (RigEngine::faderGain (strip.level.load()) <= 0.0f)
+        return "Its fader is down";
+    return {};
+}
+
+void VocoderScreen::wake()
+{
+    auto& strip = engine.getStrip (RigEngine::vocoderStrip);
+    engine.vocoderOn = true;
+    strip.mute = false;
+    if (engine.isSilenced (RigEngine::vocoderStrip))
+        strip.solo = true;   // joins the solo, so what you soloed stays as it is
+    if (RigEngine::faderGain (strip.level.load()) <= 0.0f)
+        strip.level = 0.8f;  // 0 dB
+    if (onSay)
+        onSay ("The vocoder is on again.");
+    refresh();
+}
+
+void VocoderScreen::wakeToPlay()
+{
+    auto& strip = engine.getStrip (RigEngine::vocoderStrip);
+    if (engine.vocoderOn.load() && ! strip.mute.load())
+        return;
+    engine.vocoderOn = true;
+    strip.mute = false;
+    if (onSay)
+        onSay ("The vocoder was switched off, so it's back on to play that.");
 }
 
 juce::String VocoderScreen::pedalName (int i)
@@ -639,8 +694,8 @@ void VocoderScreen::stomp (int pedal)
         default: break;
     }
     bypassed = false;
-    if (! engine.vocoderOn.load() && ! wasOn && onSay)
-        onSay ("The vocoder is switched off in the Mixer, so you won't hear the pedals until it's on.");
+    if (! wasOn)
+        wakeToPlay();
     updateButtons();
     repaint();
 }
@@ -662,6 +717,7 @@ void VocoderScreen::selectPedal (int pedal)
     }
     for (auto& b : chordButtons)
         b.setVisible (! studioShown && selected == chords);
+    buildChordsButton.setVisible (! studioShown && selected == chords);
     layoutRack();
     updateButtons();
     repaint (rackWell);
@@ -707,6 +763,7 @@ void VocoderScreen::pressChord (int degree)
         if (param (ParamIDs::robotOn) < 0.5f)
             setParam (ParamIDs::robotOn, 1.0f);
         vocoder.requestChord (chordNotes (activeChord));
+        wakeToPlay();
     }
     updateButtons();
     repaint();
@@ -723,6 +780,7 @@ void VocoderScreen::pickSound (int index)
     if (onSay)
         onSay (juce::String (Presets::all()[(size_t) index].category) + ": " + shownSound
                + (index == 0 ? ". Every pedal off, just your voice." : ". Click a lit pedal to see how it's made."));
+    wakeToPlay();
     refresh();
 }
 
@@ -943,7 +1001,7 @@ void VocoderScreen::setStudio (bool show)
 {
     studioShown = show;
     // The sound row stays along the top; the page takes the place of the pedalboard.
-    const juce::Component* topRow[] = { &boardButton, &studioButton, &prevSound, &nextSound, &soundsButton, &surpriseButton, &notesButton, &bypassButton };
+    const juce::Component* topRow[] = { &boardButton, &studioButton, &prevSound, &nextSound, &soundsButton, &surpriseButton, &notesButton, &bypassButton, &wakeButton };
     for (auto* c : getChildren())
         if (c != settings.get() && std::find (std::begin (topRow), std::end (topRow), c) == std::end (topRow))
             c->setVisible (! studioShown);
@@ -1016,6 +1074,18 @@ void VocoderScreen::updateButtons()
         if (chordButtons[i].getButtonText() != name)
             chordButtons[i].setButtonText (name);
         chordButtons[i].setToggleState (i == activeChord, juce::dontSendNotification);
+    }
+
+    {
+        const auto why = whyQuiet();
+        const auto wakeText = why.isEmpty() ? juce::String() : why + juce::String::fromUTF8 (" \xc2\xb7 click to turn it on");
+        if (wakeButton.getButtonText() != wakeText)
+            wakeButton.setButtonText (wakeText);
+        if (wakeButton.isVisible() != why.isNotEmpty())
+        {
+            wakeButton.setVisible (why.isNotEmpty());
+            repaint (soundLcd);
+        }
     }
 
     const int keys = engine.getRouting().keysTo.load();
@@ -1221,6 +1291,7 @@ void VocoderScreen::resized()
         m.removeFromLeft (6);
         m.removeFromRight (6);
         soundLcd = m;
+        wakeButton.setBounds (m.reduced (3, 4));   // over the sound's name while it can't be heard
     }
     r.removeFromTop (12);
 
@@ -1312,6 +1383,11 @@ void VocoderScreen::layoutRack()
     head.removeFromRight (8);
     rackPower.setBounds (head.removeFromRight (110).reduced (0, 2));
     head.removeFromRight (12);
+    if (selected == chords)
+    {
+        buildChordsButton.setBounds (head.removeFromRight (150).reduced (0, 2));
+        head.removeFromRight (8);
+    }
     rackTitle = head;
     rackText = w.removeFromTop (36);
     w.removeFromTop (6);

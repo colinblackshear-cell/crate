@@ -165,6 +165,34 @@ struct RigCaptureTests : juce::UnitTest
             expect (engine.getSampler().getDocument().getName().startsWith ("Synth"));
         }
 
+        beginTest ("the bass, one bar, into a WAV for Logic");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            engine.vocoderOn = false;
+            engine.getTransport().setBpm (120.0);
+            engine.captureDest = RigCapture::toLogic;
+            engine.getTransport().play();
+            expect (engine.startCapture (RigCapture::bass, 1));
+            runBeats (engine, 9.0);
+            const auto said = engine.serviceCapture();
+            expect (said.contains ("for Logic"), said);
+            const auto file = engine.lastLogicFile;
+            expect (file.existsAsFile());
+            expect (file.isAChildOf (RigEngine::logicFolder()));
+            juce::WavAudioFormat wav;
+            if (std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (file.createInputStream().release(), true)); reader != nullptr)
+            {
+                expectWithinAbsoluteError ((double) reader->lengthInSamples / reader->sampleRate, 2.0, 0.01, "one bar at 120 BPM");
+                juce::AudioBuffer<float> read ((int) reader->numChannels, (int) reader->lengthInSamples);
+                reader->read (&read, 0, read.getNumSamples(), 0, true, true);
+                expectGreaterThan (read.getMagnitude (0, read.getNumSamples()), 0.01f, "the bass is in it");
+            }
+            else
+                expect (false, "a WAV file");
+            file.deleteFile();
+        }
+
         beginTest ("nothing playing: nothing is recorded");
         {
             RigEngine engine;
