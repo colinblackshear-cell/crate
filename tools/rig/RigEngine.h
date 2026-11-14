@@ -357,6 +357,10 @@ public:
     // The loops' sound is too big for the show file, so it goes in WAV files in a folder next
     // to it ("My show loops"). Call after writing the show file, and after loading it.
     static juce::File loopsFolder (const juce::File& showFile);
+    // A loop's name ("Drums", a stem from Logic), shown on the Song screen. It goes with the sound:
+    // once the layer records or gets another loop, it has none. Saved with the show. Message thread.
+    void setLoopName (int layer, const juce::String&);
+    juce::String getLoopName (int layer) const;
     bool writeLoopAudio (const juce::File& showFile) const;
     void readLoopAudio (const juce::File& showFile);
 
@@ -446,6 +450,8 @@ private:
 
     const juce::MidiBuffer* hostMidi = nullptr;
     std::atomic<int> onlyTool { -1 };
+    std::array<juce::String, RigLooper::kLayers> loopNames, loadedLoopNames;
+    std::array<int, RigLooper::kLayers> loopNameVersions {};
     std::atomic<bool> notesOffRequested { false };
     std::array<float* const*, numStems> stemOut {};
     std::array<std::atomic<bool>, numStems> stemOn {};

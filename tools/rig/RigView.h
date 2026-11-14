@@ -124,6 +124,11 @@ public:
     // The tool the show menu's "Keep ... as a tool sound" keeps: this plugin's, or the picked track's (-1: none).
     int toolSoundStrip() const;
 
+    // Song > Import a song from Logic: asks about saving this song, picks the folder of stems
+    // (and MIDI file), and puts it on as a new song (rigimport). importFromLogic does the folder.
+    void askImportFromLogic();
+    juce::String importFromLogic (const juce::File& folder);
+
 private:
     // One strip's effects, along the bottom of the Mixer.
     class FxPanel : public StripFxPanel

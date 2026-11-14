@@ -1,5 +1,6 @@
 #include "RigView.h"
 #include "RigExport.h"
+#include "RigLogicImport.h"
 #include "HelpPanel.h"
 #include "RigSong.h"
 #include "LooperView.h"
@@ -503,6 +504,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     songView->setLookAndFeel (&vintageLook);
     songView->onSay = [this] (const juce::String& text) { say (text); };
     songView->onExport = [this] { exportForLogic(); };
+    songView->onImportFromLogic = [this] { askImportFromLogic(); };
     songView->onGoTo = [this] (const juce::String& page) { showTab (page); };
     songView->onOpenBox = [this] (int lane, int clip, bool edit) { openSongBox (lane, clip, edit); };
     song = songView;
@@ -976,6 +978,7 @@ void RigView::showShowMenu()
     menu.addItem (4, "Save show as...");
     menu.addSeparator();
     menu.addItem (5, "Export for Logic (WAVs + MIDI)...");
+    menu.addItem (9, "Import a song from Logic (stems + markers)...");
     menu.addSeparator();
     {
         // One tool's sound, for Kaleidobox Vocoder, MPC... on their own Logic tracks.
@@ -1001,6 +1004,7 @@ void RigView::showShowMenu()
                                 case 6: safe->showTab ("Guide"); break;
                                 case 7: safe->keepToolSound (safe->toolSoundStrip()); break;
                                 case 8: safe->openToolSound(); break;
+                                case 9: safe->askImportFromLogic(); break;
                                 default: break;
                             }
                         });
@@ -2057,6 +2061,57 @@ void RigView::newSong (bool saveFirst, bool askWhatNext)
          "(New pattern), set the tempo, and press Play.");
     if (askWhatNext)
         showPatternMenu();
+}
+
+//==============================================================================
+void RigView::askImportFromLogic()
+{
+    auto pick = [safe = juce::Component::SafePointer<RigView> (this)]
+    {
+        if (safe == nullptr)
+            return;
+        safe->toolChooser = std::make_unique<juce::FileChooser> (
+            "Pick the folder with the song's stems (File > Export > All Tracks as Audio Files) and its MIDI file",
+            juce::File::getSpecialLocation (juce::File::userMusicDirectory));
+        safe->toolChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                        [safe] (const juce::FileChooser& fc)
+                                        {
+                                            if (safe != nullptr && fc.getResult().isDirectory())
+                                                safe->say (safe->importFromLogic (fc.getResult()));
+                                        });
+    };
+    // It's a new song: the loops and sections go. Nothing made yet, no need to ask.
+    if (engine.isBlank())
+        return pick();
+    const auto name = currentShow != juce::File() ? currentShow.getFileNameWithoutExtension() : juce::String ("this song");
+    auto options = juce::MessageBoxOptions()
+                       .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                       .withTitle ("Import a song from Logic")
+                       .withMessage ("The Logic song comes in as a new song (its stems as loops, its markers as sections). Save " + name + " first?")
+                       .withButton ("Save, then import")
+                       .withButton ("Import, don't save")
+                       .withButton ("Cancel")
+                       .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this), pick] (int result)
+                                  {
+                                      if (safe == nullptr || (result != 1 && result != 2))
+                                          return;
+                                      safe->newSong (result == 1, false);
+                                      if (result == 2 || safe->engine.isBlank())
+                                          pick();
+                                  });
+}
+
+juce::String RigView::importFromLogic (const juce::File& folder)
+{
+    auto song = rigimport::read (folder, engine.getTransport().getBpm());
+    if (song.layers.empty())
+        return song.notes.joinIntoString (". ") + ".";
+    engine.getTransport().stop();
+    const auto said = rigimport::apply (engine, std::move (song));
+    refresh();
+    showView ("Song");
+    return said;
 }
 
 void RigView::showPatternMenu()

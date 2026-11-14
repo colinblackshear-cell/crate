@@ -367,6 +367,23 @@ The tool's name at the top (where the whole box shows your show) is its menu:
 
 Songs made with the first Kaleidobox Bass, Synth and Drums plugins open on these with their sound.
 
+#### Bringing the finished Logic song back, to play live
+
+1. In Logic, **File > Export > All Tracks as Audio Files** (WAV or AIFF, from the start of the
+   song) into a new folder. Stems you'll want to bring in and out live (drums, bass, keys,
+   backing vocals) work best; Track Stacks export as one stem each.
+2. Select everything and **File > Export > Selection as MIDI File** into the same folder: it
+   carries the tempo, time signature and markers.
+3. In Kaleidobox, **Song > ... > Import a song from Logic** (or the show menu) and pick the folder.
+   It asks whether to save the song you're on first, as the import is a new song.
+
+Each stem becomes a loop (named after the track, eight at most: the rest are mixed together on
+loop 8, "Other"), playing from bar 1 to the end at the song's tempo. Logic's markers become the
+Song screen's sections, so live you can jump to a section, loop it, mute stems or bring them back,
+and play the vocoder, MPC or anything else over the top. Without a MIDI file it's one section at
+Kaleidobox's tempo; a song that changes tempo plays at its first one. Save the show and the stems
+are saved with it as its loops.
+
 ### Kaleidobox on your phone
 
 A web app for recording on the go: open

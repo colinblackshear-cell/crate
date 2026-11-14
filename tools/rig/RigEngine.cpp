@@ -1222,6 +1222,8 @@ juce::ValueTree RigEngine::saveShow() const
         loop.setProperty ("bars", layer.bars.load(), nullptr);
         loop.setProperty ("level", layer.level.load(), nullptr);
         loop.setProperty ("mute", layer.mute.load(), nullptr);
+        if (const auto name = getLoopName (i); name.isNotEmpty())
+            loop.setProperty ("name", name, nullptr);
         const auto state = looper.getState (i);
         if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
             loop.setProperty ("beats", layer.lengthBeats.load(), nullptr);
@@ -1360,6 +1362,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         looper.cancelSwap (i);
         looper.reset (i);
         loadedLoopBeats[(size_t) i] = 0;
+        loopNames[(size_t) i] = loadedLoopNames[(size_t) i] = {};
         bankFxPending[(size_t) i] = false;
     }
     loopBanks.clear();
@@ -1460,6 +1463,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
                 layer.level = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("level", 0.8f));
                 layer.mute = (bool) child.getProperty ("mute", false);
                 loadedLoopBeats[(size_t) i] = (double) child.getProperty ("beats", 0.0);
+                loadedLoopNames[(size_t) i] = child.getProperty ("name").toString();
                 juce::MemoryBlock fxState;
                 if (child.hasProperty ("fx") && fxState.fromBase64Encoding (child.getProperty ("fx").toString()) && ! fxState.isEmpty())
                     loopFx[(size_t) i].setStateInformation (fxState.getData(), (int) fxState.getSize());
@@ -1661,6 +1665,22 @@ bool RigEngine::loadToolSound (const juce::ValueTree& sound)
         vocoderOn = true;
     controlsMoved = true;
     return true;
+}
+
+void RigEngine::setLoopName (int layer, const juce::String& name)
+{
+    if (! juce::isPositiveAndBelow (layer, RigLooper::kLayers))
+        return;
+    loopNames[(size_t) layer] = name;
+    loopNameVersions[(size_t) layer] = looper.getLayer (layer).version.load();
+}
+
+juce::String RigEngine::getLoopName (int layer) const
+{
+    if (! juce::isPositiveAndBelow (layer, RigLooper::kLayers))
+        return {};
+    const auto& l = looper.getLayer (layer);
+    return l.version.load() == loopNameVersions[(size_t) layer] && l.lengthBeats.load() > 0 ? loopNames[(size_t) layer] : juce::String();
 }
 
 juce::File RigEngine::toolSoundsFolder()
@@ -2067,6 +2087,7 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
             juce::AudioBuffer<float> audio (2, (int) reader->lengthInSamples);
             reader->read (&audio, 0, audio.getNumSamples(), 0, true, true);
             looper.setLayerAudio (i, std::move (audio), beats);
+            setLoopName (i, loadedLoopNames[(size_t) i]);
         }
     }
 
