@@ -183,6 +183,70 @@ if(APPLE)
     target_compile_definitions(KaleidoboxInputPlugin PRIVATE RIG_PLUGIN_INPUT=1)
 endif()
 
+# One tool each, on its own Logic track: Kaleidobox Vocoder, MPC, Drums, Bass and Synth. Each is
+# the box with only that tool in it (RigEngine::setOnlyTool): the same screens, sounds and
+# effects, its own MIDI, automation, Freeze and Bounce in Logic, and its menu gets its sound from
+# a Kaleidobox in the song (or a show, or a tool sound) and sends it back. Drums, Bass and Synth
+# keep the codes of the first Kaleidobox Drums, Bass and Synth plugins (now just apps), so songs
+# made with those open on these. The tool is a RigEngine::StripId.
+function(kaleidobox_tool_plugin target name code tool bundle)
+    set(formats AU VST3)
+    if(NOT APPLE)
+        set(formats VST3)
+    endif()
+    juce_add_plugin(${target}
+        COMPANY_NAME "Colin Blackshear"
+        BUNDLE_ID "com.colinblackshear.crate.rigplugin.${bundle}"
+        PLUGIN_MANUFACTURER_CODE Cblk
+        PLUGIN_CODE ${code}
+        FORMATS ${formats}
+        PRODUCT_NAME "Kaleidobox ${name}"
+        ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/icon/kaleidobox-icon.png"
+        IS_SYNTH TRUE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+        MICROPHONE_PERMISSION_ENABLED TRUE
+        MICROPHONE_PERMISSION_TEXT "Kaleidobox hears your microphone through Logic."
+        VST3_CATEGORIES Instrument
+        AU_MAIN_TYPE kAudioUnitType_MusicDevice
+        COPY_PLUGIN_AFTER_BUILD FALSE)
+    kaleidobox_plugin_parts(${target})
+    target_compile_definitions(${target} PRIVATE RIG_PLUGIN_TOOL=${tool})
+endfunction()
+
+option(KALEIDOBOX_TOOL_PLUGINS "Build Kaleidobox MPC, Drums, Bass, Synth and Vocoder" ON)
+if(KALEIDOBOX_TOOL_PLUGINS)
+    kaleidobox_tool_plugin(KaleidoboxMpcPlugin   "MPC"   CRgM 0 mpc)
+    kaleidobox_tool_plugin(KaleidoboxBassPlugin  "Bass"  CBas 4 bass)
+    kaleidobox_tool_plugin(KaleidoboxSynthPlugin "Synth" CSyn 5 synth)
+    kaleidobox_tool_plugin(KaleidoboxDrumsPlugin "Drums" CDrm 8 drums)
+    # The vocoder needs your voice, so it's the kind of plugin Logic gives side chain audio to (an
+    # AU MIDI-controlled effect, like Kaleidobox Input and the Vocoder itself).
+    if(APPLE)
+        juce_add_plugin(KaleidoboxVocoderPlugin
+            COMPANY_NAME "Colin Blackshear"
+            BUNDLE_ID "com.colinblackshear.crate.rigplugin.vocoder"
+            PLUGIN_MANUFACTURER_CODE Cblk
+            PLUGIN_CODE CRgV
+            FORMATS AU
+            PRODUCT_NAME "Kaleidobox Vocoder"
+            ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/icon/kaleidobox-icon.png"
+            IS_SYNTH FALSE
+            NEEDS_MIDI_INPUT TRUE
+            NEEDS_MIDI_OUTPUT FALSE
+            IS_MIDI_EFFECT FALSE
+            EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+            MICROPHONE_PERMISSION_ENABLED TRUE
+            MICROPHONE_PERMISSION_TEXT "Kaleidobox Vocoder hears your voice through Logic's Side Chain."
+            AU_MAIN_TYPE kAudioUnitType_MusicEffect
+            COPY_PLUGIN_AFTER_BUILD FALSE)
+        kaleidobox_plugin_parts(KaleidoboxVocoderPlugin)
+        target_compile_definitions(KaleidoboxVocoderPlugin PRIVATE RIG_PLUGIN_INPUT=1 RIG_PLUGIN_TOOL=3)
+    endif()
+endif()
+
 # The Sample Editor's plugin entry is built in too; the plugin's own is RigPlugin's.
 set_source_files_properties(${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     PROPERTIES COMPILE_DEFINITIONS createPluginFilter=createSampleEditorPluginFilter)

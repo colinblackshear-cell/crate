@@ -31,6 +31,8 @@ env:
   PLUGIN_DIR: build/tools/rig/KaleidoboxPlugin_artefacts/Release
   INPUT_DIR: build/tools/rig/KaleidoboxInputPlugin_artefacts/Release
   INPUT_NAME: Kaleidobox Input
+  # Each tool on its own Logic track: target prefix:name (build/tools/rig/Kaleidobox<prefix>Plugin_artefacts).
+  TOOLS: "Mpc:MPC Bass:Bass Synth:Synth Drums:Drums"
 
 jobs:
   mac:
@@ -57,7 +59,10 @@ jobs:
         run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 
       - name: Build
-        run: cmake --build build --config Release --target Kaleidobox KaleidoboxPlugin_AU KaleidoboxPlugin_VST3 KaleidoboxInputPlugin_AU -- -quiet
+        run: cmake --build build --config Release --target Kaleidobox KaleidoboxPlugin_AU KaleidoboxPlugin_VST3 KaleidoboxInputPlugin_AU \
+          KaleidoboxMpcPlugin_AU KaleidoboxMpcPlugin_VST3 KaleidoboxBassPlugin_AU KaleidoboxBassPlugin_VST3 \
+          KaleidoboxSynthPlugin_AU KaleidoboxSynthPlugin_VST3 KaleidoboxDrumsPlugin_AU KaleidoboxDrumsPlugin_VST3 \
+          KaleidoboxVocoderPlugin_AU -- -quiet
 
       # Ad hoc signing: enough for Apple silicon Macs to run it. Not an Apple Developer ID, so
       # files downloaded in a browser need "Open Anyway" once (the install line avoids that).
@@ -67,6 +72,12 @@ jobs:
           codesign --force --deep -s - "$PLUGIN_DIR/AU/$NAME.component"
           codesign --force --deep -s - "$PLUGIN_DIR/VST3/$NAME.vst3"
           codesign --force --deep -s - "$INPUT_DIR/AU/$INPUT_NAME.component"
+          for t in $TOOLS; do
+            d="build/tools/rig/Kaleidobox${t%%:*}Plugin_artefacts/Release"
+            codesign --force --deep -s - "$d/AU/$NAME ${t##*:}.component"
+            codesign --force --deep -s - "$d/VST3/$NAME ${t##*:}.vst3"
+          done
+          codesign --force --deep -s - "build/tools/rig/KaleidoboxVocoderPlugin_artefacts/Release/AU/$NAME Vocoder.component"
 
       - name: Check the Audio Unit loads (what Logic checks)
         run: |
@@ -88,6 +99,12 @@ jobs:
           ditto "$PLUGIN_DIR/AU/$NAME.component" "$STAGE/$NAME.component"
           ditto "$PLUGIN_DIR/VST3/$NAME.vst3" "$STAGE/$NAME.vst3"
           ditto "$INPUT_DIR/AU/$INPUT_NAME.component" "$STAGE/$INPUT_NAME.component"
+          for t in $TOOLS; do
+            d="build/tools/rig/Kaleidobox${t%%:*}Plugin_artefacts/Release"
+            ditto "$d/AU/$NAME ${t##*:}.component" "$STAGE/$NAME ${t##*:}.component"
+            ditto "$d/VST3/$NAME ${t##*:}.vst3" "$STAGE/$NAME ${t##*:}.vst3"
+          done
+          ditto "build/tools/rig/KaleidoboxVocoderPlugin_artefacts/Release/AU/$NAME Vocoder.component" "$STAGE/$NAME Vocoder.component"
           cp tools/release/install.sh "$STAGE/install.sh"
           # The zip is what the Terminal install line downloads.
           (cd dist && ditto -c -k --keepParent "$NAME" "$NAME-mac.zip")
@@ -100,6 +117,10 @@ jobs:
           ditto "$STAGE/$NAME.component" "$ROOT/Library/Audio/Plug-Ins/Components/$NAME.component"
           ditto "$STAGE/$NAME.vst3" "$ROOT/Library/Audio/Plug-Ins/VST3/$NAME.vst3"
           ditto "$STAGE/$INPUT_NAME.component" "$ROOT/Library/Audio/Plug-Ins/Components/$INPUT_NAME.component"
+          for t in MPC Bass Synth Drums Vocoder; do
+            ditto "$STAGE/$NAME $t.component" "$ROOT/Library/Audio/Plug-Ins/Components/$NAME $t.component"
+            [ -d "$STAGE/$NAME $t.vst3" ] && ditto "$STAGE/$NAME $t.vst3" "$ROOT/Library/Audio/Plug-Ins/VST3/$NAME $t.vst3"
+          done
           pkgbuild --analyze --root "$ROOT" components.plist
           plutil -p components.plist
           i=0
@@ -123,9 +144,11 @@ jobs:
           sudo installer -pkg "dist/Install-$NAME.pkg" -target /
           ls -d "/Applications/$NAME.app" "/Library/Audio/Plug-Ins/Components/$NAME.component" "/Library/Audio/Plug-Ins/VST3/$NAME.vst3" \
             "/Library/Audio/Plug-Ins/Components/$INPUT_NAME.component"
+          for t in MPC Bass Synth Drums Vocoder; do ls -d "/Library/Audio/Plug-Ins/Components/$NAME $t.component"; done
           sleep 5
           auval -v aumu CRig Cblk
           auval -v aumf CRgI Cblk
+          for c in "aumu CRgM" "aumu CBas" "aumu CSyn" "aumu CDrm" "aumf CRgV"; do auval -v $c Cblk; done
 
       - uses: actions/upload-artifact@v4
         with:

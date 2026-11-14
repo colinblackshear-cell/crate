@@ -296,7 +296,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     screenBar.forward.onClick = [this] { goForward(); };
 
     // Your show, and starting a song from nothing.
-    header.show.onClick = [this] { showShowMenu(); };
+    header.show.onClick = [this] { if (toolMode()) showToolMenu(); else showShowMenu(); };
     rail.newPattern.onClick = [this] { showPatternMenu(); };
     header.quantize.onClick = [this] { showQuantize (quantizeTarget(), &header.quantize); };
 
@@ -382,7 +382,21 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     grooveView->onQuantize = [this] (int target, juce::Component* from) { showQuantize (target, from); };
     grooveView->refresh();
     grooveView->onTrackPicked = [this] (int t) { pickTrack (t); };
-    rail.setCards (grooveView->takeTrackCards());
+    {
+        // A one-tool plugin's rail has just its own track (the MPC with its Sampler).
+        auto cards = grooveView->takeTrackCards();
+        if (toolMode())
+        {
+            juce::Array<juce::Component*> mine;
+            for (int t = 0; t < cards.size(); ++t)
+                if (engine.runsStrip (GrooveView::stripFor (t)) && GrooveView::stripFor (t) != RigEngine::masterStrip)
+                    mine.add (cards[t]);
+                else
+                    cards[t]->setVisible (false);
+            cards = mine;
+        }
+        rail.setCards (cards);
+    }
     groove = grooveView;
     addPage ("Groove", RigColours::song, grooveView);
     {
@@ -611,6 +625,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
     openMidiInputs();
     refresh();
+    if (toolMode())
+        startToolMode();
     startTimerHz (30);
     // Put popped-out tools back on their screens, once this window is up.
     juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
@@ -880,6 +896,9 @@ void RigView::openSongBox (int lane, int clip, bool edit)
 
 void RigView::showView (const juce::String& view)
 {
+    // A one-tool plugin is all Edit (its tool in full) and Mix (its effects): Logic is the song.
+    if (toolMode() && (view == "Play" || view == "Song"))
+        return showView ("Edit");
     if (view == "Play")
         return showTab ("Groove");
     if (view == "Song")
@@ -958,6 +977,14 @@ void RigView::showShowMenu()
     menu.addSeparator();
     menu.addItem (5, "Export for Logic (WAVs + MIDI)...");
     menu.addSeparator();
+    {
+        // One tool's sound, for Kaleidobox Vocoder, MPC... on their own Logic tracks.
+        const int strip = toolSoundStrip();
+        const auto tool = RigEngine::onlyToolName (strip);
+        menu.addItem (7, "Keep the " + (tool.isNotEmpty() ? tool : juce::String ("picked track")) + "'s sound as a tool sound...", tool.isNotEmpty());
+        menu.addItem (8, "Open a tool sound...");
+    }
+    menu.addSeparator();
     menu.addItem (6, "The Guide: every tool, and where to start");
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.show),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
@@ -972,9 +999,185 @@ void RigView::showShowMenu()
                                 case 4: safe->saveShowAs(); break;
                                 case 5: safe->exportForLogic(); break;
                                 case 6: safe->showTab ("Guide"); break;
+                                case 7: safe->keepToolSound (safe->toolSoundStrip()); break;
+                                case 8: safe->openToolSound(); break;
                                 default: break;
                             }
                         });
+}
+
+//==============================================================================
+bool RigView::toolMode() const
+{
+    return engine.getOnlyTool() >= 0;
+}
+
+int RigView::toolSoundStrip() const
+{
+    if (toolMode())
+        return engine.getOnlyTool();
+    // In the whole box, the picked track's tool (the Sampler goes with the MPC).
+    int strip = GrooveView::stripFor (getTrack());
+    if (strip == RigEngine::samplerStrip)
+        strip = RigEngine::mpcStrip;
+    return RigEngine::onlyToolName (strip).isNotEmpty() ? strip : -1;
+}
+
+void RigView::startToolMode()
+{
+    const int strip = engine.getOnlyTool();
+    // Play (the groovebox) and Song are the whole box's; here Logic is the song.
+    for (auto* b : screenBar.tabs)
+        if (b->text == "Play" || b->text == "Song")
+            b->setVisible (false);
+    screenBar.resized();
+    rail.newPattern.setVisible (false);
+    footer.partsShown = false;
+    footer.resized();
+    for (int t = 0; t < GrooveView::numTracks; ++t)
+        if (GrooveView::stripFor (t) == strip)
+            pickTrack (t);
+    showView ("Edit");
+    header.show.text = RigEngine::onlyToolName (strip);
+    header.show.sub = juce::String::fromUTF8 ("Get from box \xc2\xb7 Send to box");
+    header.show.repaint();
+    say ("Kaleidobox " + RigEngine::onlyToolName (strip) + ": the box's " + RigEngine::onlyToolName (strip)
+         + " on its own Logic track. Click " + RigEngine::onlyToolName (strip) + " at the top to get its sound from a Kaleidobox, or send it back.");
+}
+
+void RigView::showToolMenu()
+{
+    const int strip = engine.getOnlyTool();
+    const auto tool = RigEngine::onlyToolName (strip);
+    auto boxes = RigEngine::openBoxes();
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Kaleidobox " + tool);
+    // The boxes open in this Logic song, by their place (Logic doesn't tell us track names).
+    for (int i = 0; i < boxes.size(); ++i)
+        menu.addItem (100 + i, "Get the " + tool + " from Kaleidobox" + (boxes.size() > 1 ? " " + juce::String (i + 1) : juce::String())
+                                   + " in this song");
+    for (int i = 0; i < boxes.size(); ++i)
+        menu.addItem (200 + i, "Send this " + tool + " to Kaleidobox" + (boxes.size() > 1 ? " " + juce::String (i + 1) : juce::String())
+                                   + " in this song");
+    if (boxes.isEmpty())
+        menu.addItem (99, "(No Kaleidobox in this song: add one on any track to get from it or send to it)", false);
+    menu.addSeparator();
+    menu.addItem (1, "Get the " + tool + " from a saved show...");
+    menu.addItem (2, "Open a tool sound...");
+    menu.addItem (3, "Keep as a tool sound...");
+    menu.addSeparator();
+    menu.addItem (4, "The Guide");
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.show),
+                        [safe = juce::Component::SafePointer<RigView> (this), strip, tool] (int result)
+                        {
+                            if (safe == nullptr || result == 0)
+                                return;
+                            auto& engine = safe->engine;
+                            const auto now = RigEngine::openBoxes();
+                            if (result >= 100 && result < 100 + now.size())
+                            {
+                                const auto sound = now[result - 100]->saveToolSound (strip);
+                                safe->say (engine.loadToolSound (sound) ? "Got the " + tool + " from the Kaleidobox in this song."
+                                                                        : "That Kaleidobox has no " + tool + " sound to give.");
+                                safe->refresh();
+                            }
+                            else if (result >= 200 && result < 200 + now.size())
+                            {
+                                auto* box = now[result - 200];
+                                if (box->loadToolSound (engine.saveToolSound (strip)))
+                                {
+                                    safe->say ("Sent this " + tool + " to the Kaleidobox in this song: its " + tool + " sounds like this now.");
+                                    box->controlsMoved = true;
+                                }
+                            }
+                            else if (result == 1) safe->getToolFromShowFile();
+                            else if (result == 2) safe->openToolSound();
+                            else if (result == 3) safe->keepToolSound (strip);
+                            else if (result == 4) safe->showTab ("Guide");
+                        });
+}
+
+void RigView::keepToolSound (int strip)
+{
+    const auto tool = RigEngine::onlyToolName (strip);
+    if (tool.isEmpty())
+        return say ("Pick the MPC, Drums, Bass, Synth or Vocoder on the left first.");
+    auto folder = RigEngine::toolSoundsFolder();
+    folder.createDirectory();
+    toolChooser = std::make_unique<juce::FileChooser> ("Keep the " + tool + "'s sound", folder.getChildFile (tool + RigEngine::kToolSoundExtension),
+                                                       juce::String ("*") + RigEngine::kToolSoundExtension);
+    toolChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [safe = juce::Component::SafePointer<RigView> (this), strip, tool] (const juce::FileChooser& fc)
+                              {
+                                  if (safe == nullptr || fc.getResult() == juce::File())
+                                      return;
+                                  const auto file = fc.getResult().withFileExtension (RigEngine::kToolSoundExtension);
+                                  const auto sound = safe->engine.saveToolSound (strip);
+                                  auto xml = sound.createXml();
+                                  safe->say (xml != nullptr && xml->writeTo (file)
+                                                 ? "Kept the " + tool + " as " + file.getFileName() + ". Open it in any Kaleidobox or Kaleidobox " + tool + "."
+                                                 : "Couldn't save " + file.getFileName() + ".");
+                              });
+}
+
+void RigView::openToolSound()
+{
+    auto folder = RigEngine::toolSoundsFolder();
+    folder.createDirectory();
+    toolChooser = std::make_unique<juce::FileChooser> ("Open a tool sound", folder, juce::String ("*") + RigEngine::kToolSoundExtension);
+    toolChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [safe = juce::Component::SafePointer<RigView> (this)] (const juce::FileChooser& fc)
+                              {
+                                  if (safe == nullptr || ! fc.getResult().existsAsFile())
+                                      return;
+                                  safe->say (safe->loadToolSoundFile (fc.getResult()));
+                              });
+}
+
+juce::String RigView::loadToolSoundFile (const juce::File& file)
+{
+    auto xml = juce::XmlDocument::parse (file);
+    const auto sound = xml != nullptr ? juce::ValueTree::fromXml (*xml) : juce::ValueTree();
+    const int strip = sound.getProperty ("strip", -1);
+    const auto tool = RigEngine::onlyToolName (strip);
+    if (! sound.hasType (RigEngine::kToolSoundType) || tool.isEmpty())
+        return file.getFileName() + " isn't a tool sound.";
+    if (toolMode() && strip != engine.getOnlyTool())
+        return file.getFileName() + " is a " + tool + " sound: open it in Kaleidobox " + tool + " or the whole Kaleidobox.";
+    engine.loadToolSound (sound);
+    refresh();
+    for (int t = 0; t < GrooveView::numTracks; ++t)
+        if (GrooveView::stripFor (t) == strip)
+            pickTrack (t);
+    return "The " + tool + " now has " + file.getFileNameWithoutExtension() + ".";
+}
+
+void RigView::getToolFromShowFile()
+{
+    const int strip = engine.getOnlyTool();
+    toolChooser = std::make_unique<juce::FileChooser> ("Get the " + RigEngine::onlyToolName (strip) + " from a show",
+                                                       showsFolder(), "*.crateshow");
+    toolChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [safe = juce::Component::SafePointer<RigView> (this), strip] (const juce::FileChooser& fc)
+                              {
+                                  if (safe == nullptr || ! fc.getResult().existsAsFile())
+                                      return;
+                                  safe->say (safe->getToolFromShow (fc.getResult(), strip));
+                              });
+}
+
+juce::String RigView::getToolFromShow (const juce::File& showFile, int strip)
+{
+    auto xml = juce::XmlDocument::parse (showFile);
+    const auto show = xml != nullptr ? juce::ValueTree::fromXml (*xml) : juce::ValueTree();
+    const auto tool = RigEngine::onlyToolName (strip);
+    if (! show.hasType (RigEngine::kShowType))
+        return showFile.getFileName() + " isn't a Kaleidobox show.";
+    if (! engine.loadToolSound (RigEngine::toolSoundFromShow (show, strip)))
+        return showFile.getFileNameWithoutExtension() + " has no " + tool + " sound.";
+    refresh();
+    return "Got the " + tool + " from " + showFile.getFileNameWithoutExtension() + ".";
 }
 
 void RigView::popOutTab (const juce::String& tab)
@@ -1281,10 +1484,16 @@ void RigView::timerCallback()
     }
     footer.tick();
     {
-        // Your show's name, and whether it has been saved yet.
+        // Your show's name, and whether it has been saved yet. A one-tool plugin's is its tool, and
+        // its menu gets the sound from a box or sends it back.
         const auto name = currentShow.getFileNameWithoutExtension();
-        const auto text = name.isNotEmpty() ? name : juce::String ("Unsaved show");
-        const auto sub = juce::String::fromUTF8 (name.isNotEmpty() ? "Show \xc2\xb7 menu" : "Not saved yet \xc2\xb7 menu");
+        auto text = name.isNotEmpty() ? name : juce::String ("Unsaved show");
+        auto sub = juce::String::fromUTF8 (name.isNotEmpty() ? "Show \xc2\xb7 menu" : "Not saved yet \xc2\xb7 menu");
+        if (toolMode())
+        {
+            text = RigEngine::onlyToolName (engine.getOnlyTool());
+            sub = juce::String::fromUTF8 ("Get from box \xc2\xb7 Send to box");
+        }
         const auto lit = vintage::Lit::none;
         if (header.show.text != text || header.show.sub != sub || header.show.lit != lit)
         {

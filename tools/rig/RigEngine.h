@@ -261,6 +261,38 @@ public:
     std::atomic<juce::uint32> lastMidiTime { 0 };
 
     //==========================================================================
+    //==========================================================================
+    // One tool only: Kaleidobox Vocoder, MPC, Drums, Bass and Synth are this box with just one
+    // tool in it, each its own plugin on its own Logic track (its own MIDI, automation, Freeze
+    // and Bounce). Only that tool runs (the MPC with its Sampler, which make one unit), and every
+    // note from Logic plays it. A StripId (mpcStrip, vocoderStrip, bassStrip, synthStrip,
+    // drumsStrip), or -1 (the default): the whole box. Message thread; call it again after
+    // loadShow (a show sets the keys and pads).
+    void setOnlyTool (int strip);
+    int getOnlyTool() const { return onlyTool.load(); }
+    // Whether the strip's tool runs (always, in the whole box; the master always).
+    bool runsStrip (int strip) const;
+    // The tool's name as a plugin ("Vocoder", "MPC", "Drums", "Bass", "Synth").
+    static juce::String onlyToolName (int strip);
+
+    // One tool's sound, to carry between boxes (Get from box / Send to box, and tool sound
+    // files): the tool's own settings (the MPC with its Sampler and kits), its strip's effects,
+    // fader, pan and sends, and the plugin in its slot (an Arturia synth on the Bass or Synth).
+    static constexpr const char* kToolSoundType = "KaleidoboxToolSound";
+    juce::ValueTree saveToolSound (int strip) const;
+    // From a saved show (or a whole box's show tree). Invalid if the show doesn't have that tool.
+    static juce::ValueTree toolSoundFromShow (const juce::ValueTree& show, int strip);
+    // Puts a tool sound on its tool here, leaving every other tool as it is. False if it isn't one.
+    bool loadToolSound (const juce::ValueTree&);
+    // Where tool sound files go (~/Music/Crate/Rig/Tool sounds), and their extension.
+    static juce::File toolSoundsFolder();
+    static constexpr const char* kToolSoundExtension = ".kbtool";
+
+    // The whole boxes open in this program (the Kaleidobox plugins in this Logic song, or the
+    // app), newest last, so a one-tool plugin can get its sound from one or send it back.
+    // Message thread.
+    static juce::Array<RigEngine*> openBoxes();
+
     // A show: both tools' sounds and settings, the mixer, tempo, routing and learned controls.
     juce::ValueTree saveShow() const;
     void loadShow (const juce::ValueTree&);
@@ -413,6 +445,7 @@ private:
     juce::MidiBuffer vocoderMissed, midiScratch;
 
     const juce::MidiBuffer* hostMidi = nullptr;
+    std::atomic<int> onlyTool { -1 };
     std::atomic<bool> notesOffRequested { false };
     std::array<float* const*, numStems> stemOut {};
     std::array<std::atomic<bool>, numStems> stemOn {};

@@ -8,6 +8,16 @@
 #include "core/AudioFiles.h"
 #include "core/Edits.h"
 
+namespace
+{
+    // Every RigEngine in this program (message thread): the boxes a one-tool plugin can reach.
+    juce::Array<RigEngine*>& allEngines()
+    {
+        static juce::Array<RigEngine*> engines;
+        return engines;
+    }
+}
+
 juce::String RigEngine::stripLabel (int id)
 {
     switch (id)
@@ -156,6 +166,7 @@ RigEngine::RigEngine()
         p->setValueNotifyingHost (0.0f);
     blankShow = saveShow();
     blankShow.removeChild (blankShow.getChildWithName ("Quantize"), nullptr);   // kept by New song
+    allEngines().add (this);
 }
 
 void RigEngine::newShow()
@@ -274,6 +285,7 @@ juce::String RigEngine::loopMpcPads (int bars)
 
 RigEngine::~RigEngine()
 {
+    allEngines().removeAllInstancesOf (this);
     loopRoom.stopTimer();
     mpc.setPlayHead (nullptr);
     sampler.setPlayHead (nullptr);
@@ -567,6 +579,18 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     std::array<juce::MidiBuffer*, RigRouting::kNumDests> destinations { nullptr, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi };
     routing.route (midiIn, destinations, controls);
     applyControls (controls);
+    // A one-tool plugin: whatever the routing made of it, every note plays its tool.
+    if (const int only = onlyTool.load(); only >= 0)
+    {
+        auto* to = only == mpcStrip ? &mpcMidi : only == drumsStrip ? &drumsMidi : only == vocoderStrip ? &vocoderMidi
+                 : only == bassStrip ? &bassMidi : &synthMidi;
+        for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
+            if (m != to && ! m->isEmpty())
+            {
+                to->addEvents (*m, 0, -1, 0);
+                m->clear();
+            }
+    }
     if (notesOffRequested.exchange (false))
         for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
         {
@@ -629,10 +653,13 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
                 dest.copyFrom (ch, 0, in + offset, n);
     };
 
+    // (In a one-tool plugin only its tool runs; the others stay quiet and cost nothing.)
     mpcBlock.clear();
-    mpc.processBlock (mpcBlock, mpcMidi);
+    if (runsStrip (mpcStrip))
+        mpc.processBlock (mpcBlock, mpcMidi);
     drumsBlock.clear();
-    drums.processBlock (drumsBlock, drumsMidi);
+    if (runsStrip (drumsStrip))
+        drums.processBlock (drumsBlock, drumsMidi);
     // A plugin in the Bass's or Synth's slot plays the notes the tool plays (its steps, arp and
     // keys) instead of the tool's own sound.
     auto playTool = [] (juce::AudioProcessor& tool, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi, PluginSlot& slot,
@@ -646,14 +673,18 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         if (external && ! slot.process (block, tap))
             block.clear();
     };
-    playTool (bass, bassBlock, bassMidi, bassPlugin, bassTap, [this] (juce::MidiBuffer* t) { bass.setNoteTap (t); });
-    playTool (synthTool, synthBlock, synthMidi, synthPlugin, synthTap, [this] (juce::MidiBuffer* t) { synthTool.setNoteTap (t); });
+    bassBlock.clear();
+    if (runsStrip (bassStrip))
+        playTool (bass, bassBlock, bassMidi, bassPlugin, bassTap, [this] (juce::MidiBuffer* t) { bass.setNoteTap (t); });
+    synthBlock.clear();
+    if (runsStrip (synthStrip))
+        playTool (synthTool, synthBlock, synthMidi, synthPlugin, synthTap, [this] (juce::MidiBuffer* t) { synthTool.setNoteTap (t); });
 
     // The vocoder shapes its synth with your voice from the input.
     const bool hearMic = micOn.load();
     // Switched off, it fades out and then stops (it uses the most processor time); the keys
     // you let go meanwhile are kept for it, so a note can't hang when it comes back on.
-    vocoderFade.setTargetValue (vocoderOn.load() ? 1.0f : 0.0f);
+    vocoderFade.setTargetValue (vocoderOn.load() && runsStrip (vocoderStrip) ? 1.0f : 0.0f);
     if (vocoderFade.getCurrentValue() > 0.0f || vocoderFade.isSmoothing())
     {
         if (! vocoderMissed.isEmpty())
@@ -717,7 +748,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     // The Input strip: a guitar or another mic, through its effects.
     juce::AudioBuffer<float> inputBlock (inputBuffer.getArrayOfWritePointers(), 2, n);
-    inputFade.setTargetValue (inputOn.load() && hearMic && numInputs > 0 ? 1.0f : 0.0f);
+    inputFade.setTargetValue (inputOn.load() && hearMic && numInputs > 0 && runsStrip (inputStrip) ? 1.0f : 0.0f);
     if (numInputs > 0 && (inputFade.getCurrentValue() > 0.0f || inputFade.isSmoothing()))
     {
         const auto jack = (InputJack) inputJack.load();
@@ -753,7 +784,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
                 samplerBlock.addFrom (ch, 0, *b, ch, 0, n);
     }
 
-    sampler.processBlock (samplerBlock, samplerMidi);
+    if (runsStrip (samplerStrip))
+        sampler.processBlock (samplerBlock, samplerMidi);
+    else
+        samplerBlock.clear();
     applyStrip (samplerStrip, samplerBlock);
 
     // Each tool's strip (in Stem order), for its own output in Logic.
@@ -1461,7 +1495,187 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     }
     // Shows from before the Song screen: their song parts become its sections.
     rigsong::sectionsFromParts (*this);
+    // A one-tool plugin's keys and pads always play its tool, whatever the show says.
+    if (onlyTool.load() >= 0)
+        setOnlyTool (onlyTool.load());
     controlsMoved = true;
+}
+
+//==============================================================================
+void RigEngine::setOnlyTool (int strip)
+{
+    if (strip != mpcStrip && strip != vocoderStrip && strip != bassStrip && strip != synthStrip && strip != drumsStrip)
+        strip = -1;
+    onlyTool = strip;
+    if (strip < 0)
+        return;
+    using Dest = RigRouting::Dest;
+    const auto dest = strip == mpcStrip ? Dest::mpc : strip == drumsStrip ? Dest::drums : strip == vocoderStrip ? Dest::vocoder
+                    : strip == bassStrip ? Dest::bass : Dest::synth;
+    routing.keysTo = (int) dest;
+    routing.splitNote = 0;
+    // The drum pads play the MPC's or the drum machine's pads; on the others they're just keys.
+    const bool pads = strip == mpcStrip || strip == drumsStrip;
+    routing.padChannel = pads ? 10 : 0;
+    routing.padsTo = (int) (strip == drumsStrip ? Dest::drums : Dest::mpc);
+    vocoderOn = strip == vocoderStrip;
+    inputOn = false;
+}
+
+bool RigEngine::runsStrip (int strip) const
+{
+    const int only = onlyTool.load();
+    return only < 0 || strip == only || strip == masterStrip || (only == mpcStrip && strip == samplerStrip);
+}
+
+juce::String RigEngine::onlyToolName (int strip)
+{
+    switch (strip)
+    {
+        case mpcStrip:     return "MPC";
+        case vocoderStrip: return "Vocoder";
+        case bassStrip:    return "Bass";
+        case synthStrip:   return "Synth";
+        case drumsStrip:   return "Drums";
+        default:           return {};
+    }
+}
+
+namespace
+{
+    // The show's Tool names and strips that make up one tool's sound.
+    juce::StringArray toolSoundTools (int strip)
+    {
+        switch (strip)
+        {
+            case RigEngine::mpcStrip:     return { "MPC", "Sampler" };
+            case RigEngine::vocoderStrip: return { "Vocoder" };
+            case RigEngine::bassStrip:    return { "Bass" };
+            case RigEngine::synthStrip:   return { "Synth" };
+            case RigEngine::drumsStrip:   return { "Drum machine" };
+            default:                      return {};
+        }
+    }
+
+    juce::Array<int> toolSoundStrips (int strip)
+    {
+        if (strip == RigEngine::mpcStrip)
+            return { RigEngine::mpcStrip, RigEngine::samplerStrip };
+        return { strip };
+    }
+}
+
+juce::ValueTree RigEngine::toolSoundFromShow (const juce::ValueTree& show, int strip)
+{
+    const auto names = toolSoundTools (strip);
+    if (! show.hasType (kShowType) || names.isEmpty())
+        return {};
+    juce::ValueTree sound (kToolSoundType);
+    sound.setProperty ("tool", onlyToolName (strip), nullptr);
+    sound.setProperty ("strip", strip, nullptr);
+    bool found = false;
+    for (const auto& child : show)
+    {
+        if (child.hasType ("Tool"))
+        {
+            const auto name = child.getProperty ("name").toString();
+            bool mine = names.contains (name);
+            for (int st : toolSoundStrips (strip))
+                mine = mine || name == toolName (fxTool + st);
+            if (mine)
+            {
+                sound.appendChild (child.createCopy(), nullptr);
+                found = found || names.contains (name);
+            }
+        }
+        else if (child.hasType ("Strip"))
+        {
+            for (int st : toolSoundStrips (strip))
+                if (child.getProperty ("name").toString() == stripName (st))
+                    sound.appendChild (child.createCopy(), nullptr);
+        }
+        else if (child.hasType ("Instrument") && names.contains (child.getProperty ("tool").toString()))
+        {
+            sound.appendChild (child.createCopy(), nullptr);
+        }
+    }
+    return found ? sound : juce::ValueTree();
+}
+
+juce::ValueTree RigEngine::saveToolSound (int strip) const
+{
+    return toolSoundFromShow (saveShow(), strip);
+}
+
+bool RigEngine::loadToolSound (const juce::ValueTree& sound)
+{
+    if (! sound.hasType (kToolSoundType))
+        return false;
+    const int strip = sound.getProperty ("strip", -1);
+    const auto names = toolSoundTools (strip);
+    if (names.isEmpty())
+        return false;
+    for (const auto& child : sound)
+    {
+        if (child.hasType ("Tool"))
+        {
+            juce::MemoryBlock state;
+            if (! state.fromBase64Encoding (child.getProperty ("state").toString()) || state.isEmpty())
+                continue;
+            const auto name = child.getProperty ("name").toString();
+            juce::AudioProcessor* tool = nullptr;
+            if (name == "MPC") tool = &mpc;
+            else if (name == "Sampler") tool = &sampler;
+            else if (name == "Vocoder") tool = &vocoder;
+            else if (name == "Bass") tool = &bass;
+            else if (name == "Synth") tool = &synthTool;
+            else if (name == "Drum machine") tool = &drums;
+            else
+                for (int st : toolSoundStrips (strip))
+                    if (name == toolName (fxTool + st))
+                        tool = &fx[(size_t) st];
+            if (tool != nullptr)
+                tool->setStateInformation (state.getData(), (int) state.getSize());
+        }
+        else if (child.hasType ("Strip"))
+        {
+            for (int st : toolSoundStrips (strip))
+                if (child.getProperty ("name").toString() == stripName (st))
+                {
+                    auto& s = strips[(size_t) st];
+                    s.level = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("level", s.level.load()));
+                    s.pan = juce::jlimit (-1.0f, 1.0f, (float) child.getProperty ("pan", s.pan.load()));
+                    s.sendA = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("sendA", s.sendA.load()));
+                    s.sendB = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("sendB", s.sendB.load()));
+                    s.mute = false;   // you got it to hear it
+                }
+        }
+    }
+    // The plugin in its slot comes along (or goes, when the sound has none).
+    if (strip == bassStrip || strip == synthStrip)
+    {
+        auto& slot = strip == bassStrip ? bassPlugin : synthPlugin;
+        slot.fromTree (sound.getChildWithProperty ("tool", strip == bassStrip ? "Bass" : "Synth").getChildWithName ("Plugin"));
+    }
+    if (strip == vocoderStrip)
+        vocoderOn = true;
+    controlsMoved = true;
+    return true;
+}
+
+juce::File RigEngine::toolSoundsFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+        .getChildFile ("Crate").getChildFile ("Rig").getChildFile ("Tool sounds");
+}
+
+juce::Array<RigEngine*> RigEngine::openBoxes()
+{
+    juce::Array<RigEngine*> boxes;
+    for (auto* e : allEngines())
+        if (e->getOnlyTool() < 0)
+            boxes.add (e);
+    return boxes;
 }
 
 //==============================================================================

@@ -126,6 +126,8 @@ public:
 
     juce::OwnedArray<PanelButton> parts;
     juce::Label message;
+    // Off in a one-tool plugin (Kaleidobox Vocoder, MPC...): no sections, just the messages.
+    bool partsShown = true;
     std::function<void()> onEditParts;
 
 private:

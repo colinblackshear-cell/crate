@@ -49,10 +49,16 @@ jobs:
           codesign --force --deep -s - "Standalone/MPC Bank Builder.app"
           for t in Bass Synth Drums; do
             cd "$GITHUB_WORKSPACE/build/tools/$(echo $t | tr A-Z a-z)/Kaleidobox${t}_artefacts/Release"
-            codesign --force --deep -s - "AU/Kaleidobox $t.component"
-            codesign --force --deep -s - "VST3/Kaleidobox $t.vst3"
             codesign --force --deep -s - "Standalone/Kaleidobox $t.app"
           done
+          # The box's tools on their own tracks: Kaleidobox MPC, Bass, Synth, Drums (AU + VST3), Vocoder (AU).
+          for t in Mpc:MPC Bass:Bass Synth:Synth Drums:Drums; do
+            cd "$GITHUB_WORKSPACE/build/tools/rig/Kaleidobox${t%%:*}Plugin_artefacts/Release"
+            codesign --force --deep -s - "AU/Kaleidobox ${t##*:}.component"
+            codesign --force --deep -s - "VST3/Kaleidobox ${t##*:}.vst3"
+          done
+          cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxVocoderPlugin_artefacts/Release"
+          codesign --force --deep -s - "AU/Kaleidobox Vocoder.component"
           cd "$GITHUB_WORKSPACE/build/tools/rig/Kaleidobox_artefacts/Release"
           codesign --force --deep -s - "Kaleidobox.app"
           cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxPlugin_artefacts/Release"
@@ -74,16 +80,6 @@ jobs:
           auval -v aumf CSed Cblk
           auval -v aumu CSei Cblk
           auval -v aumu CMbb Cblk
-          cp -R "build/tools/bass/KaleidoboxBass_artefacts/Release/AU/Kaleidobox Bass.component" ~/Library/Audio/Plug-Ins/Components/
-          cp -R "build/tools/synth/KaleidoboxSynth_artefacts/Release/AU/Kaleidobox Synth.component" ~/Library/Audio/Plug-Ins/Components/
-          killall -9 AudioComponentRegistrar || true
-          sleep 5
-          auval -v aumu CBas Cblk
-          auval -v aumu CSyn Cblk
-          cp -R "build/tools/drums/KaleidoboxDrums_artefacts/Release/AU/Kaleidobox Drums.component" ~/Library/Audio/Plug-Ins/Components/
-          killall -9 AudioComponentRegistrar || true
-          sleep 5
-          auval -v aumu CDrm Cblk
           cp -R "build/tools/rig/KaleidoboxPlugin_artefacts/Release/AU/Kaleidobox.component" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           sleep 5
@@ -92,6 +88,16 @@ jobs:
           killall -9 AudioComponentRegistrar || true
           sleep 5
           auval -v aumf CRgI Cblk
+          for t in Mpc:MPC Bass:Bass Synth:Synth Drums:Drums Vocoder:Vocoder; do
+            cp -R "build/tools/rig/Kaleidobox${t%%:*}Plugin_artefacts/Release/AU/Kaleidobox ${t##*:}.component" ~/Library/Audio/Plug-Ins/Components/
+          done
+          killall -9 AudioComponentRegistrar || true
+          sleep 5
+          auval -v aumu CRgM Cblk
+          auval -v aumu CBas Cblk
+          auval -v aumu CSyn Cblk
+          auval -v aumu CDrm Cblk
+          auval -v aumf CRgV Cblk
 
       - name: Package
         run: |
@@ -119,9 +125,14 @@ jobs:
           for t in Bass Synth Drums; do
             cd "$GITHUB_WORKSPACE/build/tools/$(echo $t | tr A-Z a-z)/Kaleidobox${t}_artefacts/Release"
             ditto -c -k --keepParent "Standalone/Kaleidobox $t.app" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-$t-App.zip"
-            ditto -c -k --keepParent "AU/Kaleidobox $t.component" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-$t-AU.zip"
-            ditto -c -k --keepParent "VST3/Kaleidobox $t.vst3" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-$t-VST3.zip"
           done
+          for t in Mpc:MPC Bass:Bass Synth:Synth Drums:Drums; do
+            cd "$GITHUB_WORKSPACE/build/tools/rig/Kaleidobox${t%%:*}Plugin_artefacts/Release"
+            ditto -c -k --keepParent "AU/Kaleidobox ${t##*:}.component" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-${t##*:}-AU.zip"
+            ditto -c -k --keepParent "VST3/Kaleidobox ${t##*:}.vst3" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-${t##*:}-VST3.zip"
+          done
+          cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxVocoderPlugin_artefacts/Release"
+          ditto -c -k --keepParent "AU/Kaleidobox Vocoder.component" "$GITHUB_WORKSPACE/dist-rig/Kaleidobox-Vocoder-AU.zip"
 
       - uses: actions/upload-artifact@v4
         with:

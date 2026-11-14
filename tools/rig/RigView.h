@@ -109,6 +109,21 @@ public:
     juce::String quantizeNow();
     class QuantizePanel* getQuantizePanel() const;
 
+    // A one-tool plugin (Kaleidobox Vocoder, MPC, Drums, Bass, Synth on their own Logic tracks):
+    // only its track on the rail, Edit and Mix, and the menu at the top gets its sound from a
+    // Kaleidobox in the song, a saved show or a tool sound file, or sends it back.
+    bool toolMode() const;
+    void showToolMenu();
+    // Tool sounds (RigEngine::saveToolSound) as files, in the whole box too (the show menu).
+    // `strip` is the tool's StripId. The ones returning a String say what happened.
+    void keepToolSound (int strip);
+    void openToolSound();
+    juce::String loadToolSoundFile (const juce::File&);
+    void getToolFromShowFile();
+    juce::String getToolFromShow (const juce::File& showFile, int strip);
+    // The tool the show menu's "Keep ... as a tool sound" keeps: this plugin's, or the picked track's (-1: none).
+    int toolSoundStrip() const;
+
 private:
     // One strip's effects, along the bottom of the Mixer.
     class FxPanel : public StripFxPanel
@@ -132,6 +147,8 @@ private:
     void finishKnobLearn();
     void say (const juce::String&);
     juce::File currentShow;
+    std::unique_ptr<juce::FileChooser> toolChooser;
+    void startToolMode();
     juce::Component::SafePointer<juce::Component> quantizePanel;
     std::unique_ptr<class HelpPanel> helpPanel;
     // Hover over a button for a moment and it says what it does.
