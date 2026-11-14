@@ -75,6 +75,13 @@ public:
     // playing (as the vocoder's own window did). Runs on the screen's timer.
     void watchRobot();
     void pressToLooper();
+    // Why you can't hear the vocoder right now ("" when nothing's in the way): switched off,
+    // its Mixer strip muted, another track soloed, or its fader all the way down. Any of those
+    // leaves every pedal and sound silent, so the screen says so in red, with a button to fix it.
+    juce::String whyQuiet() const;
+    // Brings it back: on, unmuted, in the solo if one is on, its fader up if it was at the bottom.
+    void wake();
+    bool isWakeShown() const { return wakeButton.isVisible(); }
     void pressNotesFrom();
     void setDryWet (double wet01);
     double getDryWet() const;
@@ -90,6 +97,9 @@ public:
 private:
     void timerCallback() override;
     void updateButtons();
+    // Playing it (a pedal on, a sound, a chord) means you want to hear it: switched off or
+    // muted, it comes back on, and the message line says so.
+    void wakeToPlay();
     void layoutRack();
     void showSoundMenu();
     void askToSave();
@@ -118,7 +128,7 @@ private:
 
     juce::TextButton boardButton { "Pedalboard" }, studioButton { "Full window" }, bypassButton { "Bypass all" }, monitorButton { "Monitor" },
         recVoiceButton { "Rec voice" }, toLooperButton { "To looper" }, notesButton, prevSound { "<" }, nextSound { ">" },
-        soundsButton { "Sounds" }, surpriseButton { "Surprise me" }, rackPower { "On" }, rackReset { "Reset" };
+        soundsButton { "Sounds" }, surpriseButton { "Surprise me" }, rackPower { "On" }, rackReset { "Reset" }, wakeButton;
     juce::TextButton chordButtons[7];
     std::unique_ptr<vintage::Knob> micGain;
     juce::Slider dryWet;
