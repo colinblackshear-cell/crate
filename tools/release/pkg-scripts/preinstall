@@ -19,5 +19,11 @@ if [ -n "$USER_HOME" ]; then
     rm -rf "$USER_HOME/Library/Audio/Plug-Ins/Components/Kaleidobox.component"
     rm -rf "$USER_HOME/Library/Audio/Plug-Ins/VST3/Kaleidobox.vst3"
     rm -rf "$USER_HOME/Library/Audio/Plug-Ins/Components/Kaleidobox Input.component"
+    # The tools on their own tracks (Kaleidobox Bass, Synth and Drums were once plugins of their own,
+    # with the same codes: an old copy in your Library would show up twice in Logic).
+    for t in MPC Bass Synth Drums Vocoder; do
+        rm -rf "$USER_HOME/Library/Audio/Plug-Ins/Components/Kaleidobox $t.component"
+        rm -rf "$USER_HOME/Library/Audio/Plug-Ins/VST3/Kaleidobox $t.vst3"
+    done
 fi
 exit 0

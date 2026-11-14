@@ -137,7 +137,7 @@ the Logic project.
 
 An analog-style rhythm box in the spirit of the early-80s classics: every sound is made from
 oscillators, noise and filters, not samples. It's a Mac app, an Audio Unit instrument for Logic
-(**Kaleidobox Drums**), a VST3, and a track of its own in Kaleidobox (beside the MPC, so the drums
+(**Kaleidobox Drums**, the box's drum machine on its own track), and a track of its own in Kaleidobox (beside the MPC, so the drums
 don't have to come from the MPC).
 
 - **Twelve sounds, modelled on the classic box's voices:** a booming kick, snare, clap, rim shot,
@@ -353,6 +353,46 @@ To record: arm the Kaleidobox track (and its tool tracks) and record in Logic as
 the MIDI you played, and Bounce in Place or the tool tracks give you audio. **Record set** in the
 Rig works too.
 
+#### Each tool on its own Logic track
+
+To build a song in layers the Logic way, each tool is also a plugin of its own: **Kaleidobox MPC**
+(with its Sampler), **Kaleidobox Drums** (the drum machine), **Kaleidobox Bass**, **Kaleidobox
+Synth** (AU Instruments > Colin Blackshear) and **Kaleidobox Vocoder** (AU MIDI-controlled Effects
+> Colin Blackshear, so it can hear your voice: set **Side Chain** to your mic). Each one is the box
+with just that tool in it: the same screens, sounds and effects (**Edit** and **Mix**), on its own
+track with its own MIDI regions, automation, Freeze and Bounce. Every note on its track plays it,
+pads included. Logic is the clock and the song, so there's no Play view or Song screen.
+
+The tool's name at the top (where the whole box shows your show) is its menu:
+
+- **Get the MPC from Kaleidobox in this song** (with a whole Kaleidobox on any track) copies that
+  box's MPC (kits, pads, sequences, Sampler), its effects, fader and pan into this one. **Send this
+  MPC to Kaleidobox** puts it back, so the box you play live has what you made in Logic. Nothing
+  else on either side changes.
+- **Get the MPC from a saved show...** does the same from a `.crateshow`.
+- **Keep as a tool sound...** / **Open a tool sound...** save and open one tool's sound as a
+  `.kbtool` file (in `~/Music/Crate/Rig/Tool sounds`). The whole Kaleidobox's show menu has them
+  too, for the track picked on the rail.
+
+Songs made with the first Kaleidobox Bass, Synth and Drums plugins open on these with their sound.
+
+#### Bringing the finished Logic song back, to play live
+
+1. In Logic, **File > Export > All Tracks as Audio Files** (WAV or AIFF, from the start of the
+   song) into a new folder. Stems you'll want to bring in and out live (drums, bass, keys,
+   backing vocals) work best; Track Stacks export as one stem each.
+2. Select everything and **File > Export > Selection as MIDI File** into the same folder: it
+   carries the tempo, time signature and markers.
+3. In Kaleidobox, **Song > ... > Import a song from Logic** (or the show menu) and pick the folder.
+   It asks whether to save the song you're on first, as the import is a new song.
+
+Each stem becomes a loop (named after the track, eight at most: the rest are mixed together on
+loop 8, "Other"), playing from bar 1 to the end at the song's tempo. Logic's markers become the
+Song screen's sections, so live you can jump to a section, loop it, mute stems or bring them back,
+and play the vocoder, MPC or anything else over the top. Without a MIDI file it's one section at
+Kaleidobox's tempo; a song that changes tempo plays at its first one. Save the show and the stems
+are saved with it as its loops.
+
 ### Kaleidobox on your phone
 
 A web app for recording on the go: open
@@ -389,7 +429,7 @@ without resampling.
 ## Installing a build
 
 Each GitHub build has a download per tool, **Sample-Editor-mac** and **MPC-Bank-Builder-mac**, each
-with the app, the AU and the VST3, and **Kaleidobox-mac** with the Rig app and its Logic plugin (`Kaleidobox-AU.zip`), plus Kaleidobox Bass, Synth and Drums. Sample-Editor-mac also has the instrument version
+with the app, the AU and the VST3, and **Kaleidobox-mac** with the Rig app and its Logic plugin (`Kaleidobox-AU.zip`), plus the one-tool plugins (Kaleidobox MPC, Bass, Synth, Drums and Vocoder) and the Bass, Synth and Drums apps. Sample-Editor-mac also has the instrument version
 (**Sample-Editor-Instrument-AU** and **-VST3**).
 
 1. Unzip them. Put the `.app` in Applications, the `.component` in

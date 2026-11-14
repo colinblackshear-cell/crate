@@ -11,10 +11,15 @@
 // main output is the Rig's mix; each tool can also have its own output, so it gets its own
 // track in Logic's mixer (click + on the instrument's channel strip in Logic).
 // The show is saved with the Logic song.
+//
+// Built with RIG_PLUGIN_TOOL (a RigEngine::StripId) it's one tool on its own: Kaleidobox Vocoder,
+// MPC, Drums, Bass or Synth, so each tool gets its own Logic track (RigEngine::setOnlyTool).
 class RigPlugin : public juce::AudioProcessor
 {
 public:
-    RigPlugin();
+    // `onlyTool`: a RigEngine::StripId for a one-tool plugin, or -1 for the whole box.
+    explicit RigPlugin (int onlyTool = -1);
+    int getOnlyTool() const { return onlyTool; }
     ~RigPlugin() override;
 
     RigEngine& getEngine() { return *engine; }
@@ -28,7 +33,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "Kaleidobox"; }
+    const juce::String getName() const override;
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -44,9 +49,11 @@ public:
     void setStateInformation (const void*, int) override;
 
 private:
-    static BusesProperties buses();
+    static BusesProperties buses (int onlyTool);
+    const int onlyTool;
 
     juce::File loopsFile() const;
+    void setOldToolState (const void*, int);
 
     std::unique_ptr<RigEngine> engine;
     juce::String songId;   // names this song's loops folder

@@ -506,7 +506,8 @@ juce::String laneHint (RigEngine& engine, int lane)
         const double beats = layer.lengthBeats.load();
         if (beats <= 0)
             return "empty";
-        return RigLooper::sourceName (layer.source.load()).toLowerCase() + juce::String::fromUTF8 (" \xc2\xb7 ")
+        const auto name = engine.getLoopName (stripOf (lane));
+        return (name.isNotEmpty() ? name : RigLooper::sourceName (layer.source.load()).toLowerCase()) + juce::String::fromUTF8 (" \xc2\xb7 ")
              + barsText (beats / juce::jmax (1, engine.getTransport().getBeatsPerBar()));
     }
     switch (stripOf (lane))

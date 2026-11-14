@@ -44,6 +44,8 @@ public:
     std::function<void (const juce::String&)> onSay;
     // Export for Logic (RigView's, so it's the same everywhere).
     std::function<void()> onExport;
+    // More > Import a song from Logic... (the window asks about saving, then picks the folder).
+    std::function<void()> onImportFromLogic;
     // "Edit" on a box: the screen where that track's patterns are made.
     std::function<void (const juce::String& page)> onGoTo;
     // Double-click on a box (or its Edit / Open in Play): its track, opened on the pattern the box

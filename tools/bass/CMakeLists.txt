@@ -1,7 +1,6 @@
-set(BASS_FORMATS VST3 Standalone)
-if(APPLE)
-    list(APPEND BASS_FORMATS AU)
-endif()
+# Just the app now: in Logic, Kaleidobox Bass is the box's own (tools/rig, a one-tool
+# Kaleidobox), which took over this plugin's name and code so songs made with it still open.
+set(BASS_FORMATS Standalone)
 
 juce_add_plugin(KaleidoboxBass
     COMPANY_NAME "Colin Blackshear"

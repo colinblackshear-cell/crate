@@ -1,7 +1,6 @@
-set(SYNTH_FORMATS VST3 Standalone)
-if(APPLE)
-    list(APPEND SYNTH_FORMATS AU)
-endif()
+# Just the app now: in Logic, Kaleidobox Synth is the box's own (tools/rig, a one-tool
+# Kaleidobox), which took over this plugin's name and code so songs made with it still open.
+set(SYNTH_FORMATS Standalone)
 
 juce_add_plugin(KaleidoboxSynth
     COMPANY_NAME "Colin Blackshear"
