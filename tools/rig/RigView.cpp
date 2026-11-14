@@ -559,6 +559,13 @@ RigView::~RigView()
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).removeListener (this);
     closeMixerPanel();
+    // The tools' own windows (the MPC, the sample editor, the drum machine...) go with this one.
+    // Let each tool know first: otherwise it still thinks its window is open, and the next time
+    // this window opens (closing and reopening Kaleidobox in Logic) it can't make another, so
+    // those screens stay blank or frozen.
+    for (auto* tool : std::initializer_list<juce::AudioProcessor*> { &engine.getMpc(), &engine.getSampler(), &engine.getDrums() })
+        if (auto* editor = tool->getActiveEditor())
+            tool->editorBeingDeleted (editor);
     for (auto& p : pages)
         p.window.reset();   // they only show the pages
     tabs.clearTabs();
