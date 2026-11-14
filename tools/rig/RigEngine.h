@@ -142,6 +142,10 @@ public:
         std::atomic<float> pan { 0.0f };
         std::atomic<bool> solo { false };
         std::atomic<float> sendA { 0.0f }, sendB { 0.0f };
+        // In Logic's Multi Output: plays out of the tool's own output (its own Logic track)
+        // instead of the main mix. Off: it stays in the main mix even though Logic has turned
+        // every output on (it does that whether or not you've made tracks for them).
+        std::atomic<bool> ownOutput { false };
     };
     Strip& getStrip (int id) { return strips[(size_t) id]; }
     // The strip's effects (filter, drive, crush, delay, reverb, repeat), before its fader.
@@ -231,6 +235,12 @@ public:
     enum Stem { mpcStem, vocoderStem, bassStem, synthStem, inputStem, samplerStem, loopsStem, drumsStem, numStems };
     static juce::String stemName (int);
     void setStemOutput (int stem, float* const* stereo) { stemOut[(size_t) stem] = stereo; }
+    // The mixer strip a stem comes from, and whether Logic gave this stem an output.
+    static int stripOfStem (int stem);
+    static int stemOfStrip (int strip);   // -1: none (the master)
+    // (The plugin says, each block, which outputs Logic has on; the window reads it.)
+    bool hasStemOutput (int stem) const { return stemOn[(size_t) stem].load(); }
+    void setStemOn (int stem, bool on) { stemOn[(size_t) stem] = on; }
     // Plays queued MIDI at the start of the next block, without timestamps (tests).
     void addMidiNow (const juce::MidiMessage&);
 
@@ -400,6 +410,7 @@ private:
     const juce::MidiBuffer* hostMidi = nullptr;
     std::atomic<bool> notesOffRequested { false };
     std::array<float* const*, numStems> stemOut {};
+    std::array<std::atomic<bool>, numStems> stemOn {};
 
     juce::MidiMessageCollector incoming;
     juce::SpinLock nowLock;

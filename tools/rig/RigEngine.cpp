@@ -374,6 +374,20 @@ juce::String RigEngine::stemName (int s)
     return juce::isPositiveAndBelow (s, (int) numStems) ? names[s] : "";
 }
 
+int RigEngine::stripOfStem (int stem)
+{
+    static constexpr int strips[numStems] { mpcStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, samplerStrip, loopsStrip, drumsStrip };
+    return juce::isPositiveAndBelow (stem, (int) numStems) ? strips[stem] : -1;
+}
+
+int RigEngine::stemOfStrip (int strip)
+{
+    for (int st = 0; st < numStems; ++st)
+        if (stripOfStem (st) == strip)
+            return st;
+    return -1;
+}
+
 void RigEngine::process (const float* const* inputs, int numInputs, float* const* outputs, int numOutputs, int numSamples)
 {
     for (int ch = 0; ch < numOutputs; ++ch)
@@ -735,9 +749,16 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     // Each tool's strip (in Stem order), for its own output in Logic.
     const std::array<juce::AudioBuffer<float>*, numStems> stems { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, nullptr, &drumsBlock };
 
+    // A tool plays out of its own Logic output only when its strip says so (Own out on the
+    // Mixer); otherwise it stays in the main mix.
+    std::array<float* const*, numStems> outs {};
+    for (int st = 0; st < numStems; ++st)
+        if (stemOut[(size_t) st] != nullptr && strips[(size_t) stripOfStem (st)].ownOutput.load())
+            outs[(size_t) st] = stemOut[(size_t) st];
+
     mix.clear();
     for (int st = 0; st < numStems; ++st)
-        if (st != loopsStem && stemOut[(size_t) st] == nullptr)
+        if (st != loopsStem && outs[(size_t) st] == nullptr)
             for (int ch = 0; ch < 2; ++ch)
                 mix.addFrom (ch, 0, *stems[(size_t) st], ch, 0, n);
 
@@ -767,11 +788,11 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         controlsMoved = true;
     }
     applyStrip (loopsStrip, loopsBlock);
-    if (stemOut[loopsStem] == nullptr)
+    if (outs[loopsStem] == nullptr)
         for (int ch = 0; ch < 2; ++ch)
             mix.addFrom (ch, 0, loopsBlock, ch, 0, n);
     for (int st = 0; st < numStems; ++st)
-        if (auto* const* out = stemOut[(size_t) st])
+        if (auto* const* out = outs[(size_t) st])
         {
             const auto& from = st == loopsStem ? loopsBlock : *stems[(size_t) st];
             for (int ch = 0; ch < 2; ++ch)
@@ -1120,6 +1141,7 @@ juce::ValueTree RigEngine::saveShow() const
         strip.setProperty ("solo", strips[(size_t) s].solo.load(), nullptr);
         strip.setProperty ("sendA", strips[(size_t) s].sendA.load(), nullptr);
         strip.setProperty ("sendB", strips[(size_t) s].sendB.load(), nullptr);
+        strip.setProperty ("ownOutput", strips[(size_t) s].ownOutput.load(), nullptr);
         show.appendChild (strip, nullptr);
     }
     for (int r = 0; r < numReturns; ++r)
@@ -1363,6 +1385,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
             strips[(size_t) strip].solo = strip != masterStrip && (bool) child.getProperty ("solo", false);
             strips[(size_t) strip].sendA = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("sendA", 0.0f));
             strips[(size_t) strip].sendB = juce::jlimit (0.0f, 1.0f, (float) child.getProperty ("sendB", 0.0f));
+            strips[(size_t) strip].ownOutput = (bool) child.getProperty ("ownOutput", false);
             ++strip;
         }
         else if (child.hasType ("Knob"))

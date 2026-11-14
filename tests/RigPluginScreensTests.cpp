@@ -63,6 +63,9 @@ struct RigPluginScreensTests : juce::UnitTest
         {
             RigPlugin plugin;
             plugin.prepareToPlay (48000.0, 512);
+            // As in Logic, where every tool's own output is on: the Mixer shows Own out.
+            for (int st = 0; st < RigEngine::numStems; ++st)
+                plugin.getEngine().setStemOn (st, true);
             // Twice: closing the window in Logic and opening it again gives the same screens.
             for (int opening = 0; opening < 2; ++opening)
                 checkScreens (plugin, opening);

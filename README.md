@@ -333,8 +333,10 @@ The whole Rig also runs inside Logic, as an instrument called **Kaleidobox**:
    **Play** still works, to jam.
 5. **A track for each tool:** with the Multi Output version, click **+** at the bottom of the
    instrument's channel strip in Logic's mixer to add tracks for the MPC, Vocoder, Bass, Synth,
-   Input, Sampler and Loops. A tool with its own track plays there (after its strip in the Rig)
-   and leaves the Rig's main output, so you can record and mix each one in Logic.
+   Input, Sampler and Loops, then press **Direct** on that tool's strip on Kaleidobox's Mixer. A
+   tool on Direct plays on its own track (after its strip in the Rig) and leaves the Rig's main
+   output, so you can record and mix each one in Logic. Without Direct, every tool stays in the
+   main output (Logic turns all the outputs on even in Stereo, tracks or not).
 6. Logic saves the show with the song. The loops are kept as WAVs in
    `~/Music/Crate/Rig/In Logic`.
 

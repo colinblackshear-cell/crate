@@ -191,6 +191,26 @@ MixerView::Channel::Channel (MixerView& d, Kind k, int i) : kind (k), index (i),
         addAndMakeVisible (learn);
     }
 
+    if (kind == Kind::tool && RigEngine::stemOfStrip (index) >= 0)
+    {
+        // Shown only in Logic's Multi Output (when Logic has given this tool an output).
+        setUpButton (ownOut, Lit::current, "Direct out (Logic Multi Output): lit, this tool plays on its own Logic track (click + on Kaleidobox's "
+                                           "channel strip in Logic's mixer to make one) instead of through the Master here.");
+        ownOut.getProperties().set ("fontSize", 11.0f);
+        ownOut.onClick = [this]
+        {
+            auto& strip = engine().getStrip (index);
+            strip.ownOutput = ! strip.ownOutput.load();
+            if (desk.onSay)
+                desk.onSay (strip.ownOutput.load() ? title() + " now plays on its own Logic track (make it with + on Kaleidobox's channel strip in Logic)."
+                                                   : title() + " plays through the Master again.");
+            refresh();
+        };
+        addChildComponent (ownOut);
+        ownOut.setVisible (engine().hasStemOutput (RigEngine::stemOfStrip (index)));
+        ownOut.setToggleState (engine().getStrip (index).ownOutput.load(), juce::dontSendNotification);
+    }
+
     std::atomic<bool>* onFlag = kind != Kind::tool ? nullptr
                                 : index == RigEngine::vocoderStrip ? &e.vocoderOn
                                 : index == RigEngine::inputStrip   ? &e.inputOn
@@ -322,6 +342,15 @@ void MixerView::Channel::refresh()
             set (sendB, strip.sendB.load());
             set (pan, strip.pan.load());
             light (solo, strip.solo.load());
+            if (const int stem = RigEngine::stemOfStrip (index); stem >= 0)
+            {
+                light (ownOut, strip.ownOutput.load());
+                if (const bool show = e.hasStemOutput (stem); show != ownOut.isVisible())
+                {
+                    ownOut.setVisible (show);
+                    resized();
+                }
+            }
         }
         if (on.isVisible())
         {
@@ -515,6 +544,11 @@ void MixerView::Channel::resized()
         else if (kind == Kind::echo)
             amount.setBounds (knobIn (knobRowA));
         mute.setBounds (row3);
+    }
+    if (ownOut.isVisible())
+    {
+        ownOut.setBounds (learnRow.removeFromRight (learnRow.getWidth() / 2 - 1));
+        learnRow.removeFromRight (2);
     }
     if (learn.isVisible())
         learn.setBounds (learnRow);

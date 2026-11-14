@@ -103,13 +103,28 @@ struct RigPluginTests : juce::UnitTest
                 engine.process (in.getArrayOfReadPointers(), 2, out.getArrayOfWritePointers(), 2, kBlock);
             expectGreaterThan (peakOf (out), 0.1f);
 
+            // Logic's Multi Output turns every output on, tracks or not: the tool stays in the
+            // main mix until its strip's Own out sends it to its own output.
             stem.clear();
             engine.setStemOutput (RigEngine::inputStem, stem.getArrayOfWritePointers());
+            for (int b = 0; b < 4; ++b)
+                engine.process (in.getArrayOfReadPointers(), 2, out.getArrayOfWritePointers(), 2, kBlock);
+            expectGreaterThan (peakOf (out), 0.1f, "still in the main mix");
+            expectLessThan (peakOf (stem), 1.0e-4f);
+
+            engine.getStrip (RigEngine::inputStrip).ownOutput = true;
             for (int b = 0; b < 4; ++b)
                 engine.process (in.getArrayOfReadPointers(), 2, out.getArrayOfWritePointers(), 2, kBlock);
             engine.setStemOutput (RigEngine::inputStem, nullptr);
             expectGreaterThan (peakOf (stem), 0.1f);
             expectLessThan (peakOf (out), 1.0e-4f);
+
+            // Saved with the show.
+            RigEngine other;
+            other.prepare (kRate, kBlock);
+            other.loadShow (engine.saveShow());
+            expect (other.getStrip (RigEngine::inputStrip).ownOutput.load());
+            expect (! other.getStrip (RigEngine::bassStrip).ownOutput.load());
         }
 
         beginTest ("Logic's MIDI comes in");
@@ -144,6 +159,7 @@ struct RigPluginTests : juce::UnitTest
             plugin.setPlayHead (&host);
             plugin.prepareToPlay (kRate, kBlock);
             plugin.getEngine().inputOn = true;
+            plugin.getEngine().getStrip (RigEngine::inputStrip).ownOutput = true;   // Own out on the Mixer
             plugin.getEngine().vocoderOn = false;
             plugin.getEngine().sampleSource = (int) RigEngine::SampleSource::vocoder;
 
@@ -165,6 +181,31 @@ struct RigPluginTests : juce::UnitTest
             expectGreaterThan (stemPeak, 0.1f);
             expectLessThan (mainPeak, 1.0e-4f);
             expectWithinAbsoluteError (plugin.getEngine().getTransport().getBpm(), 120.0, 1.0e-9);
+
+            // As an Audio Unit every output is always on (Logic's Stereo mode too): with no
+            // strip on Own out, everything still plays through the main output.
+            {
+                RigPlugin au;
+                au.enableAllBuses();
+                au.prepareToPlay (kRate, kBlock);
+                au.getEngine().inputOn = true;
+                au.getEngine().vocoderOn = false;
+                au.getEngine().sampleSource = (int) RigEngine::SampleSource::vocoder;
+                juce::AudioBuffer<float> all (au.getTotalNumOutputChannels(), kBlock);
+                float main = 0;
+                for (int b = 0; b < 8; ++b)
+                {
+                    all.clear();
+                    for (int i = 0; i < kBlock; ++i)
+                        for (int ch = 0; ch < 4; ++ch)
+                            all.setSample (ch, i, 0.3f * std::sin (i * 0.05f));   // the mic, on both inputs
+                    au.processBlock (all, midi);
+                    if (b >= 2)
+                        main = juce::jmax (main, all.getMagnitude (0, 0, kBlock));
+                }
+                expectGreaterThan (main, 0.1f, "heard through the main output");
+                expect (au.getEngine().hasStemOutput (RigEngine::inputStem));
+            }
 
             plugin.getEngine().getStrip (RigEngine::bassStrip).level = 0.33f;
             juce::MemoryBlock state;

@@ -121,6 +121,8 @@ public:
     // Tools: send A (reverb), send B (echo), pan. Returns: amount (size / feedback), tone.
     juce::Slider sendA, sendB, pan, amount, tone;
     juce::TextButton mute { "M" }, solo { "S" }, fx { "FX" }, learn { "Learn" }, on { "On" }, rec { "Rec" };
+    // Direct out: plays on the tool's own Logic track instead of the main mix.
+    juce::TextButton ownOut { "Direct" };
     juce::ComboBox jack, time;
 
 private:
