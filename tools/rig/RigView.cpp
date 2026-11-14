@@ -102,17 +102,55 @@ private:
     juce::TextButton show { "Show it" }, back { "Bring it back here" };
 };
 
-// The Setup page: lays its parts out through the view, which owns them.
+// The Settings page (F6): boxed sections on the panel, each a dark well with its controls,
+// like a back panel of the gear: Keys & pads, Sample one tool into another, Knobs & Learn, Click &
+// mic, Audio & MIDI, Display, Your show, Plugins. The view owns the controls and lays them out.
 class RigView::SetupPage : public juce::Component
 {
 public:
-    explicit SetupPage (RigView& v) : view (v) {}
+    struct Card
+    {
+        juce::String title, hint;
+        juce::Colour colour;
+        juce::Rectangle<int> box, hintArea;
+    };
+    std::vector<Card> cards;
+    juce::Label intoLabel { {}, "Into" }, lengthLabel { {}, "Length" };
+    juce::Rectangle<int> titleArea;
+
+    explicit SetupPage (RigView& v) : view (v)
+    {
+        for (auto* l : { &intoLabel, &lengthLabel })
+            addAndMakeVisible (l);
+    }
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (Theme::panel);
-        g.setColour (Theme::textDim);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.drawText ("TOOLS", getLocalBounds().reduced (14, 0).removeFromTop (22), juce::Justification::bottomLeft);
+        vintage::drawFace (g, getLocalBounds());
+        const auto& p = vintage::pal();
+        g.setColour (p.ink);
+        g.setFont (vintage::cond (30.0f, vintage::Weight::extra, 0.12f));
+        g.drawText ("SETTINGS", titleArea, juce::Justification::centredLeft);
+        g.setColour (p.ink2);
+        g.setFont (vintage::barlow (15.0f));
+        g.drawText ("For the whole show. Saved with it, except Audio + MIDI and the panel.", titleArea.withTrimmedLeft (170),
+                    juce::Justification::centredLeft);
+        for (const auto& c : cards)
+        {
+            vintage::drawWell (g, c.box.toFloat(), 10.0f);
+            auto head = c.box.reduced (16, 0).withTrimmedTop (12).withHeight (24);
+            g.setColour (c.colour);
+            g.fillRoundedRectangle (head.removeFromLeft (12).withSizeKeepingCentre (12, 12).toFloat(), 2.0f);
+            head.removeFromLeft (10);
+            g.setColour (p.wellInk);
+            g.setFont (vintage::cond (19.0f, vintage::Weight::extra, 0.1f));
+            g.drawFittedText (c.title.toUpperCase(), head, juce::Justification::centredLeft, 1, 0.8f);
+            if (c.hint.isNotEmpty() && ! c.hintArea.isEmpty())
+            {
+                g.setColour (p.wellInk2);
+                g.setFont (vintage::barlow (13.5f));
+                g.drawFittedText (c.hint, c.hintArea, juce::Justification::topLeft, 4, 0.9f);
+            }
+        }
     }
     void resized() override { view.layoutSetup (getLocalBounds()); }
 
@@ -229,7 +267,9 @@ void RigView::showLayerFx (int layer)
 RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     : engine (e), devices (d), header (d != nullptr), footer (e)
 {
-    setLookAndFeel (&lookAndFeel);
+    // Every part of the window in the vintage look, panels and pop-ups included (the tools that
+    // bring their own look still use the panel's warm wells, see WarmWells).
+    setLookAndFeel (&vintageLook);
     setWantsKeyboardFocus (true);
     setOpaque (true);
     vintage::setStage ((bool) engine.screens.getProperty ("dark", false));
@@ -330,7 +370,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     learnPlay.onClick = [this] { startLearning (RigRouting::play, learnPlay); };
     learnStop.onClick = [this] { startLearning (RigRouting::stop, learnStop); };
     for (auto* l : { &learnPlayLabel, &learnStopLabel })
-        l->setColour (juce::Label::textColourId, Theme::textDim);
+        l->setColour (juce::Label::textColourId, vintage::pal().wellInk2);
 
     sampleButton.setColour (juce::TextButton::buttonOnColourId, Theme::record);
     sampleButton.setTooltip ("Records one tool into another, as picked beside it: the mic, a tool or the "
@@ -558,8 +598,23 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         engine.getTool (t).addListener (this);
 
     // Routing.
-    for (auto* l : { &padsLabel, &keysLabel, &sourceLabel, &splitLabel })
-        l->setColour (juce::Label::textColourId, Theme::textDim);
+    for (auto* l : { &padsLabel, &keysLabel, &sourceLabel, &splitLabel, &setupPage->intoLabel, &setupPage->lengthLabel })
+    {
+        l->setColour (juce::Label::textColourId, vintage::colours::master.withAlpha (0.75f));
+        l->setFont (vintage::cond (15.0f, vintage::Weight::bold, 0.06f));
+    }
+    for (auto* l : { &learnPlayLabel, &learnStopLabel })
+        l->setFont (vintage::cond (15.0f, vintage::Weight::bold, 0.06f));
+    for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
+                     &darkButton, &popOutButton, &pluginsButton })
+        vintage::setInWell (*b, true);
+    for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
+                     &darkButton, &popOutButton, &pluginsButton })
+        b->getProperties().set ("fontSize", 15.0f);
+    vintage::setLit (sampleButton, vintage::Lit::arm);
+    vintage::setLit (clickButton, vintage::Lit::play);
+    vintage::setLit (micButton, vintage::Lit::play);
+    setupPage->setLookAndFeel (&vintageLook);
     padBank.addItemList ({ "A", "B", "C", "D" }, 1);
     padBank.onChange = [this] { engine.getRouting().padBank = padBank.getSelectedItemIndex(); };
     padBank.setTooltip ("Your keyboard's 16 drum pads (MIDI channel 10) play these MPC pads.");
@@ -2064,61 +2119,107 @@ void RigView::resized()
 
 void RigView::layoutSetup (juce::Rectangle<int> page)
 {
-    auto area = page.reduced (14, 10);
+    auto& sp = *setupPage;
+    auto area = page.reduced (22, 14);
+    sp.titleArea = area.removeFromTop (40);
+    area.removeFromTop (10);
 
-    // Tools across the top.
-    area.removeFromTop (14);
-    auto tools = area.removeFromTop (30);
-    auto place = [&tools] (juce::Component& c, int w) { c.setBounds (tools.removeFromLeft (w)); tools.removeFromLeft (8); };
-    place (clickButton, 64);
-    if (devices != nullptr)
-        place (micButton, 76);
-    place (knobButton, 72);
-    place (learnPlayLabel, 60);
-    place (learnPlay, 64);
-    place (learnStopLabel, 60);
-    place (learnStop, 64);
-    place (darkButton, 96);
-    place (popOutButton, 136);
-    openButton.setBounds (tools.removeFromRight (100));
-    tools.removeFromRight (8);
-    saveButton.setBounds (tools.removeFromRight (100));
-    tools.removeFromRight (8);
-    audioButton.setVisible (devices != nullptr);
-    if (devices != nullptr)
-        audioButton.setBounds (tools.removeFromRight (116));
-    area.removeFromTop (14);
-
-    // The keyboard routing and Sample.
-    auto routing = area.removeFromLeft (560);
-    const std::pair<juce::Label*, juce::ComboBox*> rows[] = { { &padsLabel, &padBank }, { &keysLabel, &keysTo },
-                                                              { &splitLabel, &splitNote }, { &sourceLabel, &sampleSource } };
-    for (auto [label, box] : rows)
+    // Three columns of boxed sections, in three rows.
+    const int gap = 14, cols = 3;
+    const int colW = (area.getWidth() - gap * (cols - 1)) / cols;
+    // The first row holds the most (three settings each), so it's the tallest.
+    const int usable = area.getHeight() - gap * 2;
+    const int rowHs[] = { juce::jmax (200, usable * 38 / 100), juce::jmax (140, usable * 31 / 100), 0 };
+    const int rowH = juce::jmax (120, usable - rowHs[0] - rowHs[1]);
+    auto cell = [&] (int col, int row)
     {
-        auto row = routing.removeFromTop (30);
-        if (box == &sampleSource)
+        const int y = area.getY() + (row > 0 ? rowHs[0] + gap : 0) + (row > 1 ? rowHs[1] + gap : 0);
+        return juce::Rectangle<int> (area.getX() + col * (colW + gap), y, colW, row < 2 ? rowHs[row] : rowH);
+    };
+    sp.cards.clear();
+    auto card = [&] (juce::Rectangle<int> box, const juce::String& title, juce::Colour colour, const juce::String& hint = {})
+    {
+        sp.cards.push_back ({ title, hint, colour, box, {} });
+        return box.reduced (16, 0).withTrimmedTop (44).withTrimmedBottom (12);
+    };
+    const int rowGap = 8, labelW = 96;
+    auto line = [&] (juce::Rectangle<int>& inside, juce::Label* label, std::initializer_list<std::pair<juce::Component*, int>> items)
+    {
+        auto row = inside.removeFromTop (32);
+        inside.removeFromTop (rowGap);
+        if (label != nullptr)
+            label->setBounds (row.removeFromLeft (labelW));
+        for (auto [c, w] : items)
         {
-            sampleButton.setBounds (row.removeFromLeft (110).reduced (0, 1));
+            c->setBounds ((w <= 0 ? row : row.removeFromLeft (juce::jmin (w, row.getWidth()))).reduced (0, 1));
             row.removeFromLeft (8);
         }
-        label->setBounds (row.removeFromLeft (box == &sampleSource ? 54 : 124));
-        box->setBounds (row.removeFromLeft (box == &padBank ? 70 : box == &splitNote ? 82 : box == &sampleSource ? 120 : 140).reduced (0, 2));
-        if (box == &splitNote)
-            lowerKeysTo.setBounds (row.removeFromLeft (120).reduced (4, 2));
-        if (box == &sampleSource)
-        {
-            sampleDest.setBounds (row.removeFromLeft (130).reduced (4, 2));
-            sampleBars.setBounds (row.removeFromLeft (80).reduced (0, 2));
-        }
-        routing.removeFromTop (4);
-    }
+    };
+    auto hintBelow = [&] (juce::Rectangle<int> inside) { sp.cards.back().hintArea = inside.withTrimmedTop (2); };
 
-    // Your plugins.
-    routing.removeFromTop (10);
-    auto row = routing.removeFromTop (30);
-    pluginsLabel.setBounds (row.removeFromLeft (124));
-    pluginsButton.setBounds (row.removeFromLeft (160).reduced (0, 1));
-    pluginsHint.setBounds (routing.removeFromTop (40).withTrimmedLeft (124));
+    // Keys & pads.
+    auto in = card (cell (0, 0), "Keys & pads", vintage::colours::synth);
+    line (in, &keysLabel, { { &keysTo, 0 } });
+    line (in, &splitLabel, { { &splitNote, 84 }, { &lowerKeysTo, 0 } });
+    line (in, &padsLabel, { { &padBank, 80 } });
+    sp.cards.back().hint = "The keys follow the picked track unless set here. Split: the keys below the note play another track.";
+    hintBelow (in);
+
+    // Sample one tool into another.
+    in = card (cell (1, 0), "Sample one tool into another", vintage::colours::sampler);
+    line (in, &sourceLabel, { { &sampleSource, 0 } });
+    line (in, &sp.intoLabel, { { &sampleDest, 0 } });
+    line (in, &sp.lengthLabel, { { &sampleBars, 110 }, { &sampleButton, 0 } });
+    sp.cards.back().hint = "Any track, the mic or the whole mix, into the Sampler or the next empty MPC pad. Starts at the next bar.";
+    hintBelow (in);
+
+    // Knobs & Learn.
+    in = card (cell (2, 0), "Knobs & Learn", vintage::colours::vocoder);
+    line (in, nullptr, { { &knobButton, 150 } });
+    line (in, &learnPlayLabel, { { &learnPlay, 110 } });
+    line (in, &learnStopLabel, { { &learnStop, 110 } });
+    sp.cards.back().hint = "Knobs: put a knob of your keyboard on any setting (touch it on screen, then turn the knob).";
+    hintBelow (in);
+
+    // Click & mic.
+    in = card (cell (0, 1), "Click & mic", vintage::colours::play);
+    line (in, nullptr, { { &clickButton, 120 } });
+    if (devices != nullptr)
+        line (in, nullptr, { { &micButton, 120 } });
+    sp.cards.back().hint = devices != nullptr ? "Click: a metronome on every beat while playing. Mic: hear your mic (use headphones)."
+                                              : "Click: a metronome on every beat while playing.";
+    hintBelow (in);
+
+    // Audio & MIDI.
+    in = card (cell (1, 1), "Audio & MIDI", vintage::colours::arm);
+    audioButton.setVisible (devices != nullptr);
+    if (devices != nullptr)
+        line (in, nullptr, { { &audioButton, 170 } });
+    sp.cards.back().hint = devices != nullptr ? "Your audio interface, its inputs and outputs, and the MIDI keyboards Kaleidobox listens to."
+                                              : "In Logic, Logic sets the audio and MIDI. Kaleidobox Input (on an audio track) brings in a mic or guitar.";
+    hintBelow (in);
+
+    // Display.
+    in = card (cell (2, 1), "Display", vintage::colours::input);
+    line (in, nullptr, { { &darkButton, 140 }, { &popOutButton, 170 } });
+    sp.cards.back().hint = "Dark panel for dark rooms and stages. Second screen puts any screen in its own window.";
+    hintBelow (in);
+
+    // Your show.
+    in = card (cell (0, 2), "Your show", vintage::colours::bass);
+    line (in, nullptr, { { &saveButton, 140 }, { &openButton, 140 } });
+    sp.cards.back().hint = "Everything together: sounds, patterns, mixer, the song and your loops. Cmd+S saves.";
+    hintBelow (in);
+
+    // Plugins.
+    in = card (juce::Rectangle<int> (cell (1, 2).getX(), cell (1, 2).getY(), colW * 2 + gap, rowH), "Plugins (Arturia, Quake...)",
+               vintage::colours::mute);
+    line (in, nullptr, { { &pluginsButton, 180 } });
+    pluginsLabel.setVisible (false);
+    pluginsHint.setVisible (false);
+    sp.cards.back().hint = "Instruments play the Bass or Synth, with their own screen in Edit (F2). "
+                           "Effects go on any track: Mix (F4) > Effects > + Plugin.";
+    hintBelow (in);
 }
 
 void RigView::showPluginsMenu()

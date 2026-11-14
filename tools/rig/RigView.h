@@ -154,6 +154,8 @@ private:
     RigEngine& engine;
     juce::AudioDeviceManager* devices;
     float micMeter = 0.0f;
+    // First, before any tool is made: the tools inside take the panel's warm wells.
+    struct WarmWells { WarmWells() { crate::Theme::useWarmWells(); } } warmWells;
     crate::Theme::LookAndFeel lookAndFeel;
 
     // The frame.
@@ -188,7 +190,7 @@ private:
     void layoutSetup (juce::Rectangle<int>);
     juce::TextButton clickButton { "Click" }, micButton { "Mic off" };
     juce::TextButton learnPlay { "Learn" }, learnStop { "Learn" };
-    juce::Label learnPlayLabel { {}, "Play key" }, learnStopLabel { {}, "Stop key" };
+    juce::Label learnPlayLabel { {}, "Play key" }, learnStopLabel { {}, "Stop key" };   // on Settings
     juce::TextButton sampleButton { "Sample" }, knobButton { "Knobs" };
     void toggleRecordSet();
     void updateRecordButton();
@@ -202,8 +204,8 @@ private:
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 
     // Routing.
-    juce::Label padsLabel { {}, "Pads play MPC bank" }, keysLabel { {}, "Keys play" }, sourceLabel { {}, "Sample" },
-                splitLabel { {}, "Split, below" };
+    juce::Label padsLabel { {}, "Pads play" }, keysLabel { {}, "Keys play" }, sourceLabel { {}, "From" },
+                splitLabel { {}, "Split below" };
     juce::ComboBox padBank, keysTo, sampleSource, splitNote, lowerKeysTo, sampleDest, sampleBars;
     void updateSampleButton();
 
