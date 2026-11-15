@@ -2450,6 +2450,8 @@ bool RigView::wheelFrame() const
 void RigView::setLook (bool wheel)
 {
     vintage::setWheel (wheel);
+    // (Panels that took their colours when made keep them until the next launch.)
+    wheel ? crate::Theme::useWheelWells() : crate::Theme::useWarmWells();
     engine.screens.setProperty ("look", wheel ? "wheel" : "cream", nullptr);
     lookButton.setButtonText (wheel ? "Dharma wheel" : "Cream panel");
     vintage::setLit (lookButton, vintage::Lit::current);
@@ -2619,7 +2621,7 @@ void RigView::resized()
         auto left = area.removeFromLeft (rigpanels::Header::kWheelWidth);
         header.setBounds (left.removeFromTop (rigpanels::Header::kWheelHeight));
         rail.setBounds (left.withTrimmedLeft (30).withTrimmedRight (10).withTrimmedBottom (24).withTrimmedTop (12));
-        area.removeFromRight (24);
+        area.removeFromRight (16);
         screenBar.setBounds (area.removeFromTop (70).withTrimmedTop (18).withTrimmedBottom (8));
         footer.setBounds (area.removeFromBottom (122).withTrimmedTop (14).withTrimmedBottom (22));
         tabs.setBounds (area.withTrimmedTop (4));

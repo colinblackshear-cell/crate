@@ -1012,7 +1012,7 @@ void SamplerScreen::paint (juce::Graphics& g)
 
         // The wave.
         const auto wave = waveArea.toFloat();
-        g.setColour (juce::Colour (0xff0e0c0a));
+        g.setColour (vintage::screenBlack());
         g.fillRoundedRectangle (wave, 8.0f);
         {
             juce::Graphics::ScopedSaveState clip (g);
@@ -1074,7 +1074,7 @@ void SamplerScreen::paint (juce::Graphics& g)
                     }
                     const auto tag = juce::Rectangle<float> (x + (s == 0 ? 0.0f : 1.0f), (float) rulerArea.getY() + 3,
                                                              s + 1 >= 10 ? 26.0f : 18.0f, (float) rulerArea.getHeight() - 5);
-                    g.setColour (isSelected ? colours::selected : juce::Colour (0xff2e2925));
+                    g.setColour (isSelected ? colours::selected : vintage::offLed());
                     g.fillRoundedRectangle (tag, 3.0f);
                     g.setColour (isSelected ? juce::Colour (0xff2a1a05) : p.wellInk);
                     g.drawText (juce::String (s + 1), tag, juce::Justification::centred);
@@ -1096,7 +1096,7 @@ void SamplerScreen::paint (juce::Graphics& g)
         // The scroll bar.
         {
             const auto track = scrollArea.toFloat();
-            g.setColour (juce::Colour (0xff2e2925));
+            g.setColour (vintage::offLed());
             g.fillRoundedRectangle (track, 5.0f);
             const auto inner = track.reduced (2.0f);
             const auto thumb = juce::Rectangle<float> (inner.getX() + (float) view.getStart() * inner.getWidth(), inner.getY(),

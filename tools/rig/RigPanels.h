@@ -73,7 +73,7 @@ public:
     // The dharma wheel's frame: the header is the top of the left column (wordmark and show, the
     // wheel with Play at its hub, then the clock and tempo). Off: the cream panel's top bar.
     bool wheelFrame = false;
-    static constexpr int kWheelWidth = 400, kWheelHeight = 446;
+    static constexpr int kWheelWidth = 376, kWheelHeight = 446;
 
 private:
     const bool standalone;

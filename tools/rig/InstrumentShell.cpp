@@ -358,7 +358,7 @@ void InstrumentShell::paint (juce::Graphics& g)
     if (isShowingScreen())
     {
         // Its own interface, in a dark well, and what's loaded on the button row.
-        g.setColour (juce::Colour (0xff0e0c0a));
+        g.setColour (vintage::screenBlack());
         g.fillRoundedRectangle (screenView.getBounds().toFloat().expanded (3.0f), 5.0f);
         auto label = topRow.withTrimmedLeft (juce::jmax (0, screenButton.getRight() - topRow.getX() + 14));
         g.setColour (colours::legend);

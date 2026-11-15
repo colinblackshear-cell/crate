@@ -76,6 +76,10 @@ enum class Lit { none, play, arm, next, mute, current };
 juce::Colour litColour (Lit);
 // The text colour on a button lit this way (in the look that's on).
 juce::Colour buttonInk (Lit, bool inWell);
+// Dark parts in the look that's on: a recessed key or slot, an unlit LED, a black screen.
+juce::Colour darkKey();
+juce::Colour offLed();
+juce::Colour screenBlack();
 // The wheel's "next" pulse, 0..1 (1.4 s a beat; steady when Still).
 float pulse();
 

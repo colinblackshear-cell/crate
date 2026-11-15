@@ -412,7 +412,7 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     screenKeys.setColour (juce::MidiKeyboardComponent::blackNoteColourId, juce::Colour (0xff1e1a16));
     screenKeys.setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId, juce::Colour (0xff8a7f6c));
     screenKeys.setColour (juce::MidiKeyboardComponent::shadowColourId, juce::Colours::black.withAlpha (0.3f));
-    screenKeys.setColour (juce::MidiKeyboardComponent::upDownButtonBackgroundColourId, juce::Colour (0xff2a2622));
+    screenKeys.setColour (juce::MidiKeyboardComponent::upDownButtonBackgroundColourId, vintage::darkKey());
     screenKeys.setColour (juce::MidiKeyboardComponent::upDownButtonArrowColourId, juce::Colour (0xfff1e7d1));
     screenKeys.setAvailableRange (24, 96);
     screenKeys.setOctaveForMiddleC (4);

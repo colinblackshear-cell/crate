@@ -321,7 +321,7 @@ void PerformPad::paint (juce::Graphics& g)
     // The pad.
     const auto pad = padArea.toFloat();
     const bool on = fx.engaged.load();
-    g.setColour (juce::Colour (0xff0e0c0a));
+    g.setColour (vintage::screenBlack());
     g.fillRoundedRectangle (pad, 10.0f);
     g.setColour (juce::Colours::white.withAlpha (0.06f));
     for (int i = 1; i < 4; ++i)

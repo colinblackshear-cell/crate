@@ -55,7 +55,7 @@ public:
     {
         using namespace vintage;
         auto area = getLocalBounds().toFloat();
-        g.setColour (juce::Colour (0xff0e0c0a));
+        g.setColour (vintage::screenBlack());
         g.fillRoundedRectangle (area, 6.0f);
 
         const auto& looper = engine.getLooper();
@@ -76,7 +76,7 @@ public:
                                                   + (bars > 0 ? juce::String::fromUTF8 (" \xe2\x80\x94 ") + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String())
                                             : juce::String::fromUTF8 ("Empty \xe2\x80\x94 press Rec next layer");
             const auto box = area.withSizeKeepingCentre (juce::jmin (area.getWidth() - 20, 330.0f), 22.0f);
-            g.setColour (juce::Colour (0xff0e0c0a));
+            g.setColour (vintage::screenBlack());
             g.fillRect (box);
             g.setColour (armed ? colours::arm.brighter (0.3f) : pal().wellInk2);
             g.setFont (barlow (14.0f));
@@ -262,7 +262,7 @@ public:
 
         // The number: click it to record.
         const auto tile = numberArea.toFloat();
-        const auto tileColour = hot ? colours::arm : hasLoop ? (layer.mute.load() ? colours::mute : colours::loops) : juce::Colour (0xff2e2925);
+        const auto tileColour = hot ? colours::arm : hasLoop ? (layer.mute.load() ? colours::mute : colours::loops) : vintage::offLed();
         g.setColour (tileColour);
         g.fillRoundedRectangle (tile, 6.0f);
         g.setColour (hot || hasLoop ? juce::Colour (0xff1e1a16) : pal().wellInk2);

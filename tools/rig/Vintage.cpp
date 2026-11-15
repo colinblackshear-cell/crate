@@ -130,6 +130,10 @@ void setWheel (bool w) { wheelLook = w; }
 bool isMoving() { return moving; }
 void setMoving (bool m) { moving = m; }
 
+juce::Colour darkKey() { return wheelLook ? juce::Colour (0xff2e1a40) : juce::Colour (0xff2a2622); }
+juce::Colour offLed() { return wheelLook ? juce::Colour (0xff2c1840) : juce::Colour (0xff2e2925); }
+juce::Colour screenBlack() { return wheelLook ? juce::Colour (0xff12071c) : juce::Colour (0xff0e0c0a); }
+
 float pulse()
 {
     if (! moving || ! wheelLook)
@@ -152,7 +156,7 @@ juce::Font cond (float size, Weight w, float tracking)
     if (wheelLook)
         // Josefin is wider and sits smaller on its line than Barlow Condensed: a touch narrower
         // and a little more tracking, as in the design.
-        return make (w == Weight::semi ? f.josefinSemi : f.josefinBold, size * 0.86f, tracking + 0.04f).withHorizontalScale (0.9f);
+        return make (w == Weight::semi ? f.josefinSemi : f.josefinBold, size * 0.86f, tracking + 0.03f).withHorizontalScale (0.84f);
     return make (w == Weight::semi ? f.semi : w == Weight::bold ? f.bold : f.extra, size, tracking);
 }
 

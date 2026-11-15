@@ -323,8 +323,8 @@ void MpcView::setHosted (juce::LookAndFeel* look, std::function<void (juce::Grap
     padsTab.setTooltip ("The picked pad's settings: name, level, tune, how it plays, and its sound and effects");
     sequenceTab.setButtonText ("Steps");
     for (auto* c : std::initializer_list<juce::Component*> { &kitList, &libraryList })
-        c->setColour (juce::ListBox::backgroundColourId, juce::Colour (0xff1b1814));
-    status.setColour (juce::Label::textColourId, juce::Colour (0xffc9bfa8));
+        c->setColour (juce::ListBox::backgroundColourId, Theme::panel);
+    status.setColour (juce::Label::textColourId, Theme::textDim);
     memory.setTooltip ("How much of the MPC's memory the kit uses");
     refresh();
     showSequencer (sequencer.isVisible());
@@ -603,7 +603,7 @@ void MpcView::paintListBoxItem (int row, juce::Graphics& g, int width, int heigh
 
     if (selected)
     {
-        g.setColour (juce::Colour (0xff55575e));
+        g.setColour (Theme::raised.brighter (0.15f));
         g.fillRect (0, 0, width, height);
     }
 

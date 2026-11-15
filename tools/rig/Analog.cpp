@@ -416,7 +416,7 @@ Keys::Keys (juce::MidiKeyboardState& state, juce::Colour a) : juce::MidiKeyboard
 {
     setColour (keySeparatorLineColourId, juce::Colour (0xff6b6253));
     setColour (shadowColourId, juce::Colours::black.withAlpha (0.35f));
-    setColour (upDownButtonBackgroundColourId, juce::Colour (0xff2a2622));
+    setColour (upDownButtonBackgroundColourId, vintage::darkKey());
     setColour (upDownButtonArrowColourId, colours::legend);
     setColour (textLabelColourId, juce::Colour (0xff6b6253));
 }
