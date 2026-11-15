@@ -1,7 +1,17 @@
 Barlow and Barlow Condensed: SIL Open Font License 1.1
 VT323: SIL Open Font License 1.1
 Fraunces (ExtraBold Italic instance, Latin subset): SIL Open Font License 1.1
+Josefin Sans (Regular, SemiBold, Bold): SIL Open Font License 1.1
+Shrikhand: SIL Open Font License 1.1
 Copyright notices and the full licence texts follow.
+
+===== Josefin Sans =====
+Copyright 2010 The Josefin Sans Project Authors (https://github.com/ThomasJockin/JosefinSansFont-master)
+Licensed under the SIL Open Font License, Version 1.1 (full text below).
+
+===== Shrikhand =====
+Copyright 2016 The Shrikhand Project Authors (https://github.com/jonpinhorn/shrikhand)
+Licensed under the SIL Open Font License, Version 1.1 (full text below).
 
 ===== Barlow / Barlow Condensed =====
 Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)
