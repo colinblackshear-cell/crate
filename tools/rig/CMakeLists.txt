@@ -12,7 +12,11 @@ juce_add_binary_data(rig_fonts
         fonts/BarlowCondensed-ExtraBold.ttf
         fonts/Barlow-SemiBold.ttf
         fonts/VT323-Regular.ttf
-        fonts/Fraunces-ExtraBoldItalic.ttf)
+        fonts/Fraunces-ExtraBoldItalic.ttf
+        fonts/JosefinSans-Regular.ttf
+        fonts/JosefinSans-SemiBold.ttf
+        fonts/JosefinSans-Bold.ttf
+        fonts/Shrikhand-Regular.ttf)
 set_target_properties(rig_fonts PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 juce_add_gui_app(Kaleidobox
     COMPANY_NAME "Colin Blackshear"

@@ -6,6 +6,8 @@ namespace vintage
 namespace
 {
 bool stageTheme = false;
+bool wheelLook = true;
+bool moving = true;
 
 juce::Typeface::Ptr load (const char* data, int size)
 {
@@ -20,6 +22,11 @@ struct Typefaces
     juce::Typeface::Ptr text = load (RigFonts::BarlowSemiBold_ttf, RigFonts::BarlowSemiBold_ttfSize);
     juce::Typeface::Ptr screen = load (RigFonts::VT323Regular_ttf, RigFonts::VT323Regular_ttfSize);
     juce::Typeface::Ptr mark = load (RigFonts::FrauncesExtraBoldItalic_ttf, RigFonts::FrauncesExtraBoldItalic_ttfSize);
+    // The wheel's faces.
+    juce::Typeface::Ptr josefin = load (RigFonts::JosefinSansRegular_ttf, RigFonts::JosefinSansRegular_ttfSize);
+    juce::Typeface::Ptr josefinSemi = load (RigFonts::JosefinSansSemiBold_ttf, RigFonts::JosefinSansSemiBold_ttfSize);
+    juce::Typeface::Ptr josefinBold = load (RigFonts::JosefinSansBold_ttf, RigFonts::JosefinSansBold_ttfSize);
+    juce::Typeface::Ptr shrikhand = load (RigFonts::ShrikhandRegular_ttf, RigFonts::ShrikhandRegular_ttfSize);
 };
 
 const Typefaces& faces()
@@ -36,6 +43,18 @@ juce::Font make (const juce::Typeface::Ptr& face, float size, float tracking = 0
 
 juce::Colour ink (Lit lit)
 {
+    if (wheelLook)
+    {
+        switch (lit)
+        {
+            case Lit::play:    return wheelc::playInk;
+            case Lit::current: return wheelc::selectedInk;
+            case Lit::mute:    return wheelc::muteInk;
+            case Lit::next:
+            case Lit::arm:     return wheelc::text;
+            default:           return {};
+        }
+    }
     switch (lit)
     {
         case Lit::play:    return juce::Colour (0xff062611);
@@ -49,6 +68,19 @@ juce::Colour ink (Lit lit)
 
 std::pair<juce::Colour, juce::Colour> litGradient (Lit lit)
 {
+    if (wheelLook)
+    {
+        switch (lit)
+        {
+            case Lit::play:    return { wheelc::play1, wheelc::play2 };
+            case Lit::current: return { wheelc::selected1, wheelc::selected2 };
+            case Lit::mute:    return { juce::Colour (0xff8fe0ff), wheelc::mute };
+            // Next and armed are rings over a dark pill (next pulses).
+            case Lit::next:    return { juce::Colour (0xff4a1236), juce::Colour (0xff2c0a22) };
+            case Lit::arm:     return { juce::Colour (0xff4a1612), juce::Colour (0xff2c0b0a) };
+            default:           return {};
+        }
+    }
     switch (lit)
     {
         case Lit::play:    return { juce::Colour (0xff86f2a9), juce::Colour (0xff37c26a) };
@@ -82,27 +114,59 @@ const Palette& stage()
     return p;
 }
 
-const Palette& pal() { return stageTheme ? stage() : studio(); }
+const Palette& wheel()
+{
+    static const Palette p { wheelc::bgMid, wheelc::bgEdge, wheelc::text, wheelc::label, juce::Colours::transparentBlack, wheelc::well,
+                             wheelc::text, wheelc::label, juce::Colour (0xff35204a), juce::Colour (0xff261436), wheelc::text,
+                             wheelc::bgEdge, wheelc::bgEdge, wheelc::line, wheelc::text.withAlpha (0.12f) };
+    return p;
+}
+
+const Palette& pal() { return wheelLook ? wheel() : stageTheme ? stage() : studio(); }
 bool isStage() { return stageTheme; }
 void setStage (bool s) { stageTheme = s; }
+bool isWheel() { return wheelLook; }
+void setWheel (bool w) { wheelLook = w; }
+bool isMoving() { return moving; }
+void setMoving (bool m) { moving = m; }
+
+float pulse()
+{
+    if (! moving || ! wheelLook)
+        return 1.0f;
+    const auto ms = (double) (juce::Time::getMillisecondCounter() % 1400u);
+    return 0.5f + 0.5f * (float) std::cos (ms / 1400.0 * juce::MathConstants<double>::twoPi);
+}
+
+juce::Colour buttonInk (Lit lit, bool inWell)
+{
+    if (lit != Lit::none)
+        return ink (lit);
+    return inWell ? (wheelLook ? wheelc::text : juce::Colour (0xfff1e7d1)) : pal().btnInk;
+}
 
 //==============================================================================
 juce::Font cond (float size, Weight w, float tracking)
 {
     const auto& f = faces();
+    if (wheelLook)
+        // Josefin is wider and sits smaller on its line than Barlow Condensed: a touch narrower
+        // and a little more tracking, as in the design.
+        return make (w == Weight::semi ? f.josefinSemi : f.josefinBold, size * 0.86f, tracking + 0.04f).withHorizontalScale (0.9f);
     return make (w == Weight::semi ? f.semi : w == Weight::bold ? f.bold : f.extra, size, tracking);
 }
 
-juce::Font barlow (float size) { return make (faces().text, size); }
-juce::Font lcd (float size) { return make (faces().screen, size); }
-juce::Font wordmark (float size) { return make (faces().mark, size, -0.01f); }
+juce::Font barlow (float size) { return wheelLook ? make (faces().josefinSemi, size * 0.92f) : make (faces().text, size); }
+juce::Font lcd (float size) { return wheelLook ? make (faces().josefin, size * 0.66f, 0.02f) : make (faces().screen, size); }
+juce::Font wordmark (float size) { return wheelLook ? make (faces().shrikhand, size * 0.92f) : make (faces().mark, size, -0.01f); }
+juce::Font display (float size) { return wheelLook ? make (faces().shrikhand, size) : make (faces().mark, size, -0.01f); }
 
 void engraved (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> r, juce::Justification j, float size, bool inWell,
                juce::Colour colour)
 {
     g.setFont (cond (size, Weight::bold, 0.14f));
     const auto& p = pal();
-    if (! inWell)
+    if (! inWell && ! wheelLook)
     {
         g.setColour (p.engrave);
         g.drawText (text.toUpperCase(), r.translated (0, 1), j, true);
@@ -113,6 +177,18 @@ void engraved (juce::Graphics& g, const juce::String& text, juce::Rectangle<int>
 
 juce::Colour litColour (Lit lit)
 {
+    if (wheelLook)
+    {
+        switch (lit)
+        {
+            case Lit::play:    return wheelc::play2;
+            case Lit::arm:     return wheelc::arm;
+            case Lit::next:    return wheelc::next;
+            case Lit::current: return wheelc::selected2;
+            case Lit::mute:    return wheelc::mute;
+            default:           return {};
+        }
+    }
     switch (lit)
     {
         case Lit::play:    return colours::play;
@@ -138,6 +214,18 @@ void glow (juce::Graphics& g, juce::Rectangle<float> r, float radius, juce::Colo
 //==============================================================================
 void drawFace (juce::Graphics& g, juce::Rectangle<int> r)
 {
+    if (wheelLook)
+    {
+        // The night sky: violet near the wheel (top left), black at the far edges.
+        const auto f = r.toFloat();
+        const auto centre = f.getRelativePoint (0.14f, 0.30f);
+        const float reach = std::hypot (f.getWidth() * 0.86f, f.getHeight() * 0.7f);
+        juce::ColourGradient sky (wheelc::bgCentre, centre.x, centre.y, wheelc::bgEdge, centre.x + reach, centre.y, true);
+        sky.addColour (0.42, wheelc::bgMid);
+        g.setGradientFill (sky);
+        g.fillRect (r);
+        return;
+    }
     g.setColour (pal().face);
     g.fillRect (r);
     g.setColour (juce::Colours::white.withAlpha (0.035f));
@@ -147,6 +235,12 @@ void drawFace (juce::Graphics& g, juce::Rectangle<int> r)
 
 void drawCheek (juce::Graphics& g, juce::Rectangle<int> r)
 {
+    if (wheelLook)
+    {
+        g.setColour (wheelc::bgEdge);
+        g.fillRect (r);
+        return;
+    }
     const auto& p = pal();
     const auto f = r.toFloat();
     juce::ColourGradient wood (p.wood1, f.getX(), 0, p.wood1, f.getRight(), 0, false);
@@ -171,6 +265,16 @@ void drawCheek (juce::Graphics& g, juce::Rectangle<int> r)
 
 void drawWell (juce::Graphics& g, juce::Rectangle<float> r, float radius)
 {
+    if (wheelLook)
+    {
+        // A soft violet panel with a faint cream edge (rounder than the cream look's wells).
+        radius = juce::jmin (radius * 1.6f, 22.0f, r.getHeight() * 0.5f, r.getWidth() * 0.5f);
+        g.setColour (wheelc::well);
+        g.fillRoundedRectangle (r, radius);
+        g.setColour (wheelc::line);
+        g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
+        return;
+    }
     const auto& p = pal();
     g.setColour (p.engrave);
     g.fillRoundedRectangle (r.translated (0, 1), radius);
@@ -188,6 +292,43 @@ void drawWell (juce::Graphics& g, juce::Rectangle<float> r, float radius)
 
 void drawButton (juce::Graphics& g, juce::Rectangle<float> r, Lit lit, bool down, bool over, bool inWell, float radius)
 {
+    if (wheelLook)
+    {
+        // A pill: round ends on anything up to 44 high, soft corners on big pads.
+        const auto face = r.reduced (1.0f).translated (0, down ? 1.0f : 0.0f);
+        const float rad = juce::jmin (face.getHeight() * 0.5f, face.getWidth() * 0.5f, juce::jmax (radius, 22.0f));
+        if (lit == Lit::current || lit == Lit::play)
+            glow (g, face, rad, litColour (lit), 9.0f, 0.5f);
+        else if (lit == Lit::next)
+            glow (g, face, rad, wheelc::next, 9.0f, 0.25f + 0.45f * pulse());
+        juce::Colour top, bottom;
+        if (lit != Lit::none)
+            std::tie (top, bottom) = litGradient (lit);
+        else if (inWell)
+            top = juce::Colour (0xff2c1840), bottom = juce::Colour (0xff1e0f2c);
+        else
+            top = juce::Colour (0xff3a2350), bottom = juce::Colour (0xff27153a);
+        if (over && ! down)
+            top = top.brighter (0.12f), bottom = bottom.brighter (0.12f);
+        g.setGradientFill (juce::ColourGradient (top, 0, face.getY(), bottom, 0, face.getBottom(), false));
+        g.fillRoundedRectangle (face, rad);
+        if (lit == Lit::next)
+        {
+            g.setColour (wheelc::next.withAlpha (0.55f + 0.45f * pulse()));
+            g.drawRoundedRectangle (face.reduced (1.0f), rad, 2.0f);
+        }
+        else if (lit == Lit::arm)
+        {
+            g.setColour (wheelc::arm);
+            g.drawRoundedRectangle (face.reduced (1.0f), rad, 2.0f);
+        }
+        else if (lit == Lit::none)
+        {
+            g.setColour (wheelc::text.withAlpha (over ? 0.26f : 0.14f));
+            g.drawRoundedRectangle (face.reduced (0.5f), rad, 1.0f);
+        }
+        return;
+    }
     const auto& p = pal();
     const float drop = down ? 1.0f : 3.0f;
     const auto face = r.withTrimmedBottom (3.0f).translated (0, down ? 2.0f : 0.0f);
@@ -226,6 +367,26 @@ void drawButton (juce::Graphics& g, juce::Rectangle<float> r, Lit lit, bool down
 void drawLamp (juce::Graphics& g, juce::Point<float> c, Lit lit, float d)
 {
     const auto r = juce::Rectangle<float> (d, d).withCentre (c);
+    if (wheelLook)
+    {
+        if (lit == Lit::none)
+        {
+            g.setColour (wheelc::text.withAlpha (0.16f));
+            g.fillEllipse (r);
+            return;
+        }
+        const auto colour = litColour (lit);
+        for (int i = 3; i >= 1; --i)
+        {
+            g.setColour (colour.withAlpha (0.14f));
+            g.fillEllipse (r.expanded (d * 0.18f * i));
+        }
+        g.setColour (colour);
+        g.fillEllipse (r);
+        g.setColour (juce::Colours::white.withAlpha (0.45f));
+        g.fillEllipse (r.reduced (d * 0.3f).translated (-d * 0.08f, -d * 0.1f));
+        return;
+    }
     if (lit == Lit::none)
     {
         g.setColour (juce::Colour (0xff4a4038));
@@ -257,6 +418,16 @@ void drawLamp (juce::Graphics& g, juce::Point<float> c, Lit lit, float d)
 
 void drawLcd (juce::Graphics& g, juce::Rectangle<float> r, float radius)
 {
+    if (wheelLook)
+    {
+        // A readout is an inner panel, darker than its well.
+        radius = juce::jmin (juce::jmax (radius, 8.0f), r.getHeight() * 0.5f);
+        g.setColour (wheelc::inner);
+        g.fillRoundedRectangle (r, radius);
+        g.setColour (wheelc::line);
+        g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
+        return;
+    }
     g.setColour (pal().engrave);
     g.fillRoundedRectangle (r.translated (0, 1), radius);
     g.setColour (colours::lcdBack);
@@ -273,6 +444,13 @@ void drawLcd (juce::Graphics& g, juce::Rectangle<float> r, float radius)
 void lcdText (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> r, float size, juce::Justification j, juce::Colour c)
 {
     g.setFont (lcd (size));
+    if (wheelLook)
+    {
+        // Values in cream (green ones stay green: they say "playing").
+        g.setColour (c == colours::lcdAmber ? wheelc::text : c == colours::lcdGreen ? wheelc::play1 : c);
+        g.drawText (text, r, j, false);
+        return;
+    }
     g.setColour (c.withAlpha (0.22f));
     for (auto off : { juce::Point<float> (-1.0f, 0.0f), { 1.0f, 0.0f }, { 0.0f, -1.0f }, { 0.0f, 1.0f } })
         g.drawText (text, r.translated (off.x, off.y), j, false);
@@ -288,6 +466,36 @@ void drawKnob (juce::Graphics& g, juce::Rectangle<float> area, float v, juce::Co
     const auto c = r.getCentre();
     const float outer = size * 0.5f, inner = size * 0.305f;
     const float start = juce::MathConstants<float>::pi * 1.25f, sweep = juce::MathConstants<float>::pi * 1.5f;
+
+    if (wheelLook)
+    {
+        // A ring knob: the setting's arc in its colour over a faint cream track, a dark disc inside.
+        const float thick = juce::jmax (3.0f, size * 0.09f), rr = outer - thick * 0.5f - 1.0f;
+        auto arc = [&] (float from, float to, juce::Colour colour)
+        {
+            if (to <= from)
+                return;
+            juce::Path p;
+            p.addCentredArc (c.x, c.y, rr, rr, 0.0f, from, to, true);
+            g.setColour (colour);
+            g.strokePath (p, juce::PathStrokeType (thick, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        };
+        arc (start, start + sweep, wheelc::text.withAlpha (0.12f));
+        arc (start, start + sweep * v, ringColour);
+        const auto disc = r.reduced (size * 0.15f + thick * 0.5f);
+        const auto lightAt = disc.getRelativePoint (0.4f, 0.3f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a1a4e), lightAt.x, lightAt.y, juce::Colour (0xff160920), lightAt.x,
+                                                 lightAt.y + disc.getHeight() * 0.8f, true));
+        g.fillEllipse (disc);
+        g.setColour (wheelc::line);
+        g.drawEllipse (disc, 1.0f);
+        // The pointer: a small dot on the disc's edge.
+        const float a = start + sweep * v, pr = disc.getWidth() * 0.5f - juce::jmax (4.0f, size * 0.07f);
+        const float dot = juce::jmax (3.0f, size * 0.06f);
+        g.setColour (wheelc::text);
+        g.fillEllipse (juce::Rectangle<float> (dot, dot).withCentre ({ c.x + std::sin (a) * pr, c.y - std::cos (a) * pr }));
+        return;
+    }
 
     auto ring = [&] (float from, float to, juce::Colour colour)
     {
@@ -345,6 +553,23 @@ void drawKnob (juce::Graphics& g, juce::Rectangle<float> area, float v, juce::Co
 void drawVu (juce::Graphics& g, juce::Rectangle<float> r, float level, const juce::String& label)
 {
     // Drawn on the design's 132 x 78 face, scaled to fit.
+    if (wheelLook)
+    {
+        // A level bar: green, then saffron, then red at the top.
+        drawLcd (g, r, 10.0f);
+        auto inner = r.reduced (8.0f, r.getHeight() * 0.36f);
+        g.setFont (cond (11.0f, Weight::bold, 0.18f));
+        g.setColour (wheelc::label);
+        g.drawText (label, inner.removeFromLeft (juce::jmin (52.0f, inner.getWidth() * 0.4f)), juce::Justification::centredLeft);
+        g.setColour (wheelc::text.withAlpha (0.1f));
+        g.fillRoundedRectangle (inner, inner.getHeight() * 0.5f);
+        const float l = juce::jlimit (0.0f, 1.0f, level);
+        juce::ColourGradient bar (wheelc::play2, inner.getX(), 0, wheelc::arm, inner.getRight(), 0, false);
+        bar.addColour (0.75, wheelc::selected2);
+        g.setGradientFill (bar);
+        g.fillRoundedRectangle (inner.withWidth (inner.getWidth() * l), inner.getHeight() * 0.5f);
+        return;
+    }
     const float sx = r.getWidth() / 132.0f, sy = r.getHeight() / 78.0f;
     auto at = [&] (float x, float y) { return juce::Point<float> (r.getX() + x * sx, r.getY() + y * sy); };
     const juce::Colour ink (0xff2a221b), red (0xffc8321f);
@@ -385,6 +610,31 @@ void drawVu (juce::Graphics& g, juce::Rectangle<float> r, float level, const juc
 
 void drawStep (juce::Graphics& g, juce::Rectangle<float> r, bool on, bool playhead, bool alt, juce::Colour colour, float alpha)
 {
+    if (wheelLook)
+    {
+        const auto face = r.reduced (1.0f);
+        const float rad = juce::jmin (10.0f, face.getHeight() * 0.3f, face.getWidth() * 0.3f);
+        if (on)
+        {
+            if (alpha > 0.5f)
+                glow (g, face, rad, colour, 7.0f, 0.4f * alpha);
+            g.setColour (colour.withMultipliedAlpha (alpha).overlaidWith (juce::Colour (0xff2c1840).withAlpha (1.0f - alpha)));
+            g.fillRoundedRectangle (face, rad);
+        }
+        else
+        {
+            g.setColour (playhead ? juce::Colour (0xff4a3060) : alt ? juce::Colour (0xff22112f) : juce::Colour (0xff2e1a40));
+            g.fillRoundedRectangle (face, rad);
+            g.setColour (wheelc::line);
+            g.drawRoundedRectangle (face.reduced (0.5f), rad, 1.0f);
+        }
+        if (playhead)
+        {
+            g.setColour (wheelc::selected1);
+            g.drawRoundedRectangle (face.expanded (2.5f), rad + 2.0f, 2.0f);
+        }
+        return;
+    }
     const float radius = 8.0f;
     const auto face = r.withTrimmedBottom (3.0f);
     if (on && alpha > 0.5f)
@@ -419,8 +669,57 @@ void drawStep (juce::Graphics& g, juce::Rectangle<float> r, bool on, bool playhe
 }
 
 //==============================================================================
+namespace
+{
+juce::Array<LookAndFeel*>& allLooks()
+{
+    static juce::Array<LookAndFeel*> list;
+    return list;
+}
+}
+
 LookAndFeel::LookAndFeel()
 {
+    allLooks().add (this);
+    refresh();
+}
+
+LookAndFeel::~LookAndFeel() { allLooks().removeFirstMatchingValue (this); }
+
+void LookAndFeel::refreshAll()
+{
+    for (auto* l : allLooks())
+        l->refresh();
+}
+
+void LookAndFeel::refresh()
+{
+    if (wheelLook)
+    {
+        const auto panel = juce::Colour (0xff1d0b2c), saffron = wheelc::selected2;
+        setColour (juce::TooltipWindow::backgroundColourId, panel);
+        setColour (juce::TooltipWindow::textColourId, wheelc::text);
+        setColour (juce::PopupMenu::backgroundColourId, panel);
+        setColour (juce::PopupMenu::textColourId, wheelc::text);
+        setColour (juce::PopupMenu::highlightedBackgroundColourId, saffron);
+        setColour (juce::PopupMenu::highlightedTextColourId, wheelc::selectedInk);
+        setColour (juce::PopupMenu::headerTextColourId, wheelc::label);
+        setColour (juce::ComboBox::textColourId, wheelc::text);
+        setColour (juce::ComboBox::arrowColourId, saffron);
+        setColour (juce::TextEditor::textColourId, wheelc::text);
+        setColour (juce::TextEditor::highlightColourId, saffron.withAlpha (0.35f));
+        setColour (juce::TextEditor::highlightedTextColourId, wheelc::text);
+        setColour (juce::CaretComponent::caretColourId, saffron);
+        setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff12071c));
+        setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+        setColour (juce::TextEditor::focusedOutlineColourId, saffron);
+        setColour (juce::ListBox::backgroundColourId, panel);
+        setColour (juce::Slider::textBoxTextColourId, wheelc::text);
+        setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0xff12071c));
+        setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        setColour (juce::ScrollBar::thumbColourId, wheelc::label);
+        return;
+    }
     setColour (juce::TooltipWindow::backgroundColourId, juce::Colour (0xff1e1a16));
     setColour (juce::TooltipWindow::textColourId, juce::Colour (0xfff1e7d1));
     setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xff1e1a16));
@@ -449,6 +748,15 @@ namespace
 // A recessed dark slot: the shape a choice, a text field or a value box sits in.
 void drawSlot (juce::Graphics& g, juce::Rectangle<float> r, bool focused, bool enabled)
 {
+    if (wheelLook)
+    {
+        const float rad = juce::jmin (12.0f, r.getHeight() * 0.5f);
+        g.setColour (wheelc::inner.withMultipliedAlpha (enabled ? 1.0f : 0.6f));
+        g.fillRoundedRectangle (r, rad);
+        g.setColour (focused ? wheelc::selected2 : wheelc::text.withAlpha (0.16f));
+        g.drawRoundedRectangle (r.reduced (0.5f), rad, focused ? 1.5f : 1.0f);
+        return;
+    }
     g.setColour (juce::Colour (0xff15110e).withMultipliedAlpha (enabled ? 1.0f : 0.6f));
     g.fillRoundedRectangle (r, 5.0f);
     // The inner shade along the top: it sits below the panel.
@@ -492,11 +800,12 @@ void LookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bo
     auto r = b.getLocalBounds();
     const float d = juce::jlimit (10.0f, 16.0f, (float) r.getHeight() * 0.55f);
     auto lampArea = r.removeFromLeft (juce::roundToInt (d) + 6);
-    drawLamp (g, lampArea.toFloat().withSizeKeepingCentre (d, d).getCentre(), b.getToggleState() ? Lit::next : Lit::none, d);
+    drawLamp (g, lampArea.toFloat().withSizeKeepingCentre (d, d).getCentre(),
+              b.getToggleState() ? (wheelLook ? Lit::current : Lit::next) : Lit::none, d);
     r.removeFromLeft (4);
     auto ink = b.findColour (juce::ToggleButton::textColourId);
     if (ink == juce::Colours::white || ink == juce::Colour (0xffeeeeee))
-        ink = juce::Colour (0xfff1e7d1);
+        ink = wheelLook ? wheelc::text : juce::Colour (0xfff1e7d1);
     g.setColour (ink.withMultipliedAlpha (b.isEnabled() ? (over ? 1.0f : 0.92f) : 0.45f));
     g.setFont (cond (juce::jlimit (12.0f, 16.0f, (float) b.getHeight() * 0.62f), Weight::bold, 0.03f));
     g.drawFittedText (b.getButtonText(), r, juce::Justification::centredLeft, 2, 0.8f);
@@ -518,7 +827,7 @@ void LookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar&, int x, int
     thumb = thumb.reduced (vertical ? 2 : 1, vertical ? 1 : 2);
     if (thumb.isEmpty())
         return;
-    g.setColour (juce::Colour (0xffbdaf97).withAlpha (down ? 0.85f : over ? 0.7f : 0.45f));
+    g.setColour ((wheelLook ? wheelc::text : juce::Colour (0xffbdaf97)).withAlpha (down ? 0.85f : over ? 0.7f : 0.45f));
     g.fillRoundedRectangle (thumb.toFloat(), (float) juce::jmin (thumb.getWidth(), thumb.getHeight()) * 0.5f);
 }
 
@@ -535,8 +844,8 @@ juce::Label* LookAndFeel::createSliderTextBox (juce::Slider& s)
     l->setColour (juce::Label::textColourId, s.findColour (juce::Slider::textBoxTextColourId));
     l->setColour (juce::Label::backgroundColourId, s.findColour (juce::Slider::textBoxBackgroundColourId));
     l->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
-    l->setColour (juce::TextEditor::textColourId, juce::Colour (0xfff1e7d1));
-    l->setColour (juce::TextEditor::backgroundColourId, colours::lcdBack);
+    l->setColour (juce::TextEditor::textColourId, wheelLook ? wheelc::text : juce::Colour (0xfff1e7d1));
+    l->setColour (juce::TextEditor::backgroundColourId, wheelLook ? juce::Colour (0xff12071c) : colours::lcdBack);
     return l;
 }
 
@@ -560,8 +869,8 @@ void LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, 
 {
     const auto lit = buttonLit (b);
     const bool inWell = (bool) b.getProperties()["well"];
-    auto r = b.getLocalBounds().withTrimmedBottom (3).translated (0, down ? 2 : 0);
-    juce::Colour c = lit != Lit::none ? ink (lit) : inWell ? juce::Colour (0xfff1e7d1) : pal().btnInk;
+    auto r = wheelLook ? b.getLocalBounds().translated (0, down ? 1 : 0) : b.getLocalBounds().withTrimmedBottom (3).translated (0, down ? 2 : 0);
+    juce::Colour c = buttonInk (lit, inWell);
     if (! b.isEnabled())
         c = c.withMultipliedAlpha (0.45f);
     g.setColour (c);
@@ -572,6 +881,9 @@ void LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, 
 juce::Font LookAndFeel::getTextButtonFont (juce::TextButton& b, int height)
 {
     const auto size = b.getProperties()["fontSize"];
+    if (wheelLook)
+        // The design's buttons: Josefin Bold, uppercase, spaced out (13 px on a 44 px pill).
+        return cond (size.isVoid() ? juce::jlimit (12.0f, 19.0f, height * 0.36f) : (float) size, Weight::bold, 0.1f);
     return cond (size.isVoid() ? juce::jlimit (12.0f, 21.0f, height * 0.4f) : (float) size, Weight::extra, 0.08f);
 }
 
@@ -587,7 +899,7 @@ void LookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int 
         const auto groove = juce::Rectangle<float> (area.getX(), area.getCentreY() - 3.0f, area.getWidth(), 6.0f);
         g.setColour (juce::Colours::black.withAlpha (0.55f));
         g.fillRoundedRectangle (groove.translated (0, 1.0f), 3.0f);
-        g.setColour (juce::Colour (0xff3a332c));
+        g.setColour (wheelLook ? juce::Colour (0xff3a2650) : juce::Colour (0xff3a332c));
         g.fillRoundedRectangle (groove, 3.0f);
         // The setting's own colour when it has one, amber when not.
         auto fill = s.isColourSpecified (juce::Slider::trackColourId) ? s.findColour (juce::Slider::trackColourId).withAlpha (1.0f)
@@ -651,8 +963,8 @@ juce::Font LookAndFeel::getPopupMenuFont() { return cond (17.0f, Weight::bold, 0
 
 void LookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)
 {
-    g.fillAll (juce::Colour (0xff1e1a16));
-    g.setColour (juce::Colour (0xfff1e7d1).withAlpha (0.16f));
+    g.fillAll (wheelLook ? juce::Colour (0xff1d0b2c) : juce::Colour (0xff1e1a16));
+    g.setColour ((wheelLook ? wheelc::text : juce::Colour (0xfff1e7d1)).withAlpha (0.16f));
     g.drawRect (0, 0, width, height);
 }
 
@@ -688,7 +1000,8 @@ void Knob::paint (juce::Graphics& g)
     engraved (g, name, nameArea, sideways ? juce::Justification::bottomLeft : juce::Justification::centred, nameSize, inWell,
               inWell ? pal().wellInk : pal().ink);
     auto box = valueArea.toFloat();
-    drawLcd (g, box);
+    if (! wheelLook)
+        drawLcd (g, box);
     auto text = slider.getTextFromValue (slider.getValue());
     lcdText (g, text, box, juce::jmin (24.0f, box.getHeight() * 0.9f));
 }

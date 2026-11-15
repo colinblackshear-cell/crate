@@ -3,6 +3,7 @@
 #include <juce_graphics/juce_graphics.h>
 
 #include "RigEngine.h"
+#include "Vintage.h"
 
 // Each tool's colour, the same on its tab, its mixer strip and its Stage tile.
 namespace RigColours
@@ -14,6 +15,22 @@ inline const juce::Colour mpc { 0xffe85a3a }, sampler { 0xffc58fd6 }, vocoder { 
 
 inline juce::Colour forStrip (int strip)
 {
+    if (vintage::isWheel())
+    {
+        // The wheel's brighter set.
+        switch (strip)
+        {
+            case RigEngine::mpcStrip:     return vintage::wheelc::mpc;
+            case RigEngine::samplerStrip: return vintage::wheelc::sampler;
+            case RigEngine::vocoderStrip: return vintage::wheelc::vocoder;
+            case RigEngine::bassStrip:    return vintage::wheelc::bass;
+            case RigEngine::synthStrip:   return vintage::wheelc::synth;
+            case RigEngine::inputStrip:   return vintage::wheelc::lineIn;
+            case RigEngine::loopsStrip:   return vintage::wheelc::loops;
+            case RigEngine::drumsStrip:   return vintage::wheelc::drums;
+            default:                      return vintage::wheelc::text;
+        }
+    }
     switch (strip)
     {
         case RigEngine::mpcStrip:     return mpc;
