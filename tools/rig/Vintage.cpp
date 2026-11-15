@@ -6,7 +6,7 @@ namespace vintage
 namespace
 {
 bool stageTheme = false;
-bool wheelLook = true;
+bool wheelLook = false;   // the cream panel, unless Settings > Look picks the wheel
 bool moving = true;
 
 juce::Typeface::Ptr load (const char* data, int size)

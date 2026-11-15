@@ -778,8 +778,8 @@ RigView::~RigView()
 
 void RigView::refresh()
 {
-    if ((engine.screens.getProperty ("look", "wheel").toString() != "cream") != vintage::isWheel())
-        setLook (engine.screens.getProperty ("look", "wheel").toString() != "cream");
+    if ((engine.screens.getProperty ("look").toString() == "wheel") != vintage::isWheel())
+        setLook (engine.screens.getProperty ("look").toString() == "wheel");
     if (! (bool) engine.screens.getProperty ("still", false) != vintage::isMoving())
         setMotion (! (bool) engine.screens.getProperty ("still", false));
     if ((bool) engine.screens.getProperty ("dark", false) != vintage::isStage())
