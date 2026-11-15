@@ -248,4 +248,94 @@ struct RigToolPluginTests : juce::UnitTest
     }
 };
 
+struct RigToolPrintTests : juce::UnitTest
+{
+    RigToolPrintTests() : juce::UnitTest ("A tool plugin's Rec, to drag onto its Logic track", "Rig") {}
+
+    struct Host : juce::AudioPlayHead
+    {
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+        PositionInfo info;
+    };
+
+    void runTest() override
+    {
+        beginTest ("Rec records the tool from the next bar into a MIDI file and a WAV named for that bar");
+        {
+            RigPlugin bass (RigEngine::bassStrip);
+            bass.prepareToPlay (kRate, kBlock);
+            Host host;
+            bass.setPlayHead (&host);
+            std::unique_ptr<juce::AudioProcessorEditor> editor (bass.createEditor());
+            std::vector<RigView*> views;
+            collect (*editor, views);
+            auto& view = *views.front();
+
+            std::vector<rigpanels::PanelButton*> buttons;
+            collect (*editor, buttons);
+            rigpanels::PanelButton* rec = nullptr;
+            for (auto* b : buttons)
+                if (b->text == "Rec")
+                    rec = b;
+            expect (rec != nullptr);
+            rec->onClick();
+            expect (bass.getEngine().getRecorder().getState() == RigRecorder::State::armed);
+
+            // Logic plays from just before bar 2 (120 BPM, 4/4); a note at bar 2.
+            double ppq = 3.9;
+            auto block = [&] (bool playing, juce::MidiBuffer midi)
+            {
+                host.info.setIsPlaying (playing);
+                host.info.setPpqPosition (ppq);
+                host.info.setBpm (120.0);
+                host.info.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });
+                juce::AudioBuffer<float> buffer (bass.getTotalNumOutputChannels(), kBlock);
+                buffer.clear();
+                bass.processBlock (buffer, midi);
+                if (playing)
+                    ppq += kBlock * 2.0 / kRate;
+            };
+            while (ppq < 4.05)
+                block (true, {});
+            juce::MidiBuffer note;
+            note.addEvent (juce::MidiMessage::noteOn (1, 40, 1.0f), 0);
+            block (true, note);
+            for (int i = 0; i < 80; ++i)
+                block (true, {});
+            juce::MidiBuffer off;
+            off.addEvent (juce::MidiMessage::noteOff (1, 40), 0);
+            block (true, off);
+            block (false, {});   // Logic stops: the take ends
+            block (false, {});
+            bool saved = false;
+            for (int i = 0; i < 400 && ! saved; ++i)
+            {
+                saved = bass.getEngine().serviceRecorder();
+                if (! saved)
+                    juce::Thread::sleep (10);
+            }
+            expect (saved, "the take was saved");
+            view.printTake();
+            expect (view.getPrintedAudio().existsAsFile());
+            expectEquals (view.getPrintedAudio().getFileName(), juce::String ("Bass from bar 2.wav"));
+            expect (view.getPrintedMidi().existsAsFile());
+            expectEquals (view.getPrintedMidi().getFileName(), juce::String ("Bass from bar 2.mid"));
+            // Just the two: no stems for the other tools, no note for the whole set.
+            expectEquals (view.getPrintedAudio().getParentDirectory().getNumberOfChildFiles (juce::File::findFiles), 2);
+
+            juce::FileInputStream in (view.getPrintedMidi());
+            juce::MidiFile midi;
+            expect (midi.readFrom (in));
+            int notes = 0;
+            for (int t = 0; t < midi.getNumTracks(); ++t)
+                for (const auto* e : *midi.getTrack (t))
+                    notes += e->message.isNoteOn() ? 1 : 0;
+            expectEquals (notes, 1);
+            view.getPrintedAudio().getParentDirectory().deleteRecursively();
+            bass.setPlayHead (nullptr);
+        }
+    }
+};
+
 static RigToolPluginTests rigToolPluginTests;
+static RigToolPrintTests rigToolPrintTests;

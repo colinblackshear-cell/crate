@@ -374,6 +374,14 @@ The tool's name at the top (where the whole box shows your show) is its menu:
   `.kbtool` file (in `~/Music/Crate/Rig/Tool sounds`). The whole Kaleidobox's show menu has them
   too, for the track picked on the rail.
 
+**Rec, onto its own track:** Logic lets no plugin write onto its track (an instrument track records
+only the MIDI from your keyboard), so each tool plugin's **Rec** does it for you. Press it, play
+Logic: from the next bar it records the tool (its own pattern, the pads you click, the keys, the
+vocoder's voice, its effects) until you press Rec again or stop Logic. Then drag from the bottom of
+its window: **Drag MIDI** onto the same track at the bar in its name (a MIDI region that plays back
+through the plugin), or **Drag audio** under your tracks at that bar (Logic makes an audio track).
+The files are kept in `~/Music/Crate/Rig/To Logic`.
+
 Songs made with the first Kaleidobox Bass, Synth and Drums plugins open on these with their sound.
 
 #### Bringing the finished Logic song back, to play live

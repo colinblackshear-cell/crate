@@ -132,6 +132,15 @@ public:
     // Song > Import a song from Logic: asks about saving this song, picks the folder of stems
     // (and MIDI file), and puts it on as a new song (rigimport). importFromLogic does the folder.
     void askImportFromLogic();
+
+    // A one-tool plugin's Rec (the top bar): records the tool, as you hear it and the notes it
+    // plays, from the next bar until you press again or Logic stops, into To Logic. Then the
+    // footer's two chips drag it into Logic: the MIDI onto the tool's own track (a region that
+    // plays through it), the audio anywhere (an audio track). Both are named for the bar they
+    // start on. printTake tidies a finished take into those two files (tests call it).
+    void printTake();
+    juce::File getPrintedMidi() const { return printedMidi; }
+    juce::File getPrintedAudio() const { return printedAudio; }
     juce::String importFromLogic (const juce::File& folder);
 
 private:
@@ -158,6 +167,8 @@ private:
     void say (const juce::String&);
     juce::File currentShow;
     std::unique_ptr<juce::FileChooser> toolChooser;
+    juce::File printedMidi, printedAudio;
+    std::unique_ptr<juce::Component> dragMidi, dragAudio;
     void startToolMode();
     juce::Component::SafePointer<juce::Component> quantizePanel;
     std::unique_ptr<class HelpPanel> helpPanel;
