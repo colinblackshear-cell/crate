@@ -548,6 +548,8 @@ void Footer::resized()
     {
         // A one-tool plugin has no song sections: the footer is just for messages.
         partsLabel = partsArea = {};
+        if (onLayout)
+            content = onLayout (content);
         message.setBounds (content.withTrimmedBottom (4));
         message.setJustificationType (juce::Justification::centred);
         message.setFont (barlow (15.0f));

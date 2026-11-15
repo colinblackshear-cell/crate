@@ -129,6 +129,9 @@ public:
     juce::Label message;
     // Off in a one-tool plugin (Kaleidobox Vocoder, MPC...): no sections, just the messages.
     bool partsShown = true;
+    // Without parts: takes the footer's area and returns what's left for the messages (a
+    // one-tool plugin's drag chips go on the right).
+    std::function<juce::Rectangle<int> (juce::Rectangle<int>)> onLayout;
     std::function<void()> onEditParts;
 
 private:

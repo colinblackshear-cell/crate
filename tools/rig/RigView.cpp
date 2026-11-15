@@ -37,6 +37,59 @@ juce::File showsFolder()
 }
 
 //==============================================================================
+namespace
+{
+// A file you drag out of Kaleidobox into Logic (a one-tool plugin's take: its MIDI or its audio).
+// Double-click shows it in Finder.
+class DragFileChip : public juce::Component,
+                     public juce::SettableTooltipClient
+{
+public:
+    DragFileChip (juce::String what, std::function<juce::File()> fileToDrag) : label (std::move (what)), file (std::move (fileToDrag)) {}
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto& p = vintage::pal();
+        const auto f = file();
+        const bool has = f.existsAsFile();
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (p.ink.withAlpha (has ? 0.12f : 0.04f));
+        g.fillRoundedRectangle (r, 6.0f);
+        g.setColour (p.ink.withAlpha (has ? 0.6f : 0.2f));
+        g.drawRoundedRectangle (r, 6.0f, has ? 1.5f : 1.0f);
+        g.setColour (p.ink.withAlpha (has ? 0.95f : 0.4f));
+        g.setFont (vintage::barlow (14.0f));
+        g.drawFittedText (juce::String::fromUTF8 ("\xe2\x87\xa2 ") + label + (has ? ": " + f.getFileNameWithoutExtension() : juce::String (": press Rec first")),
+                          getLocalBounds().reduced (10, 2), juce::Justification::centredLeft, 2, 0.8f);
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const auto f = file();
+        if (dragging || ! f.existsAsFile() || e.getDistanceFromDragStart() < 4)
+            return;
+        dragging = true;
+        juce::DragAndDropContainer::performExternalDragDropOfFiles ({ f.getFullPathName() }, false, this,
+                                                                    [safe = juce::Component::SafePointer<DragFileChip> (this)]
+                                                                    { if (safe != nullptr) safe->dragging = false; });
+    }
+    void mouseUp (const juce::MouseEvent&) override { dragging = false; }
+    void mouseDoubleClick (const juce::MouseEvent&) override
+    {
+        if (const auto f = file(); f.existsAsFile())
+            f.revealToUser();
+        else
+            RigEngine::logicFolder().revealToUser();
+    }
+
+private:
+    juce::String label;
+    std::function<juce::File()> file;
+    bool dragging = false;
+};
+}
+
+//==============================================================================
 // A tool in its own window. Closing it puts the tool back in its tab.
 class RigView::ToolWindow : public juce::DocumentWindow
 {
@@ -1116,6 +1169,24 @@ void RigView::startToolMode()
     screenBar.resized();
     rail.newPattern.setVisible (false);
     footer.partsShown = false;
+    // The take's two files, to drag into Logic (Rec at the top records them).
+    dragMidi = std::make_unique<DragFileChip> ("Drag MIDI onto this track", [this] { return printedMidi; });
+    dragAudio = std::make_unique<DragFileChip> ("Drag audio into Logic", [this] { return printedAudio; });
+    static_cast<DragFileChip*> (dragMidi.get())->setTooltip ("Drag onto this " + RigEngine::onlyToolName (strip) + " track at the bar in its name: "
+                                                             "a MIDI region of what you played, which plays back through this plugin.");
+    static_cast<DragFileChip*> (dragAudio.get())->setTooltip ("Drag under your tracks at the bar in its name: Logic makes an audio track "
+                                                              "of exactly what this plugin played (its own pattern, pads, effects).");
+    footer.addAndMakeVisible (*dragMidi);
+    footer.addAndMakeVisible (*dragAudio);
+    footer.onLayout = [this] (juce::Rectangle<int> r)
+    {
+        if (dragMidi == nullptr)
+            return r;
+        auto chips = r.removeFromRight (juce::jmin (640, r.getWidth() / 2)).reduced (0, 18);
+        dragMidi->setBounds (chips.removeFromLeft (chips.getWidth() / 2).withTrimmedRight (6));
+        dragAudio->setBounds (chips.withTrimmedLeft (6));
+        return r.withTrimmedRight (12);
+    };
     footer.resized();
     for (int t = 0; t < GrooveView::numTracks; ++t)
         if (GrooveView::stripFor (t) == strip)
@@ -1125,7 +1196,57 @@ void RigView::startToolMode()
     header.show.sub = juce::String::fromUTF8 ("Get from box \xc2\xb7 Send to box");
     header.show.repaint();
     say ("Kaleidobox " + RigEngine::onlyToolName (strip) + ": the box's " + RigEngine::onlyToolName (strip)
-         + " on its own Logic track. Click " + RigEngine::onlyToolName (strip) + " at the top to get its sound from a Kaleidobox, or send it back.");
+         + " on its own Logic track. Rec records it to drag onto the track (below). Click " + RigEngine::onlyToolName (strip)
+         + " at the top to get its sound from a Kaleidobox, or send it back.");
+}
+
+void RigView::printTake()
+{
+    const auto& files = engine.getRecorder().getSavedFiles();
+    const int strip = engine.getOnlyTool();
+    const auto tool = RigEngine::onlyToolName (strip);
+    auto& recorder = engine.getRecorder();
+    const int bpb = juce::jmax (1, recorder.getStartBeatsPerBar());
+    const int bar = (int) std::floor (recorder.getStartBeat() / bpb + 1.0e-6) + 1;
+    const auto name = tool + " from bar " + juce::String (bar);
+    // The mix is exactly what this plugin plays (only its tool runs: the MPC with its Sampler,
+    // through the shared reverb and echo too), and the notes; the per-strip WAVs and the note
+    // for the whole set aren't needed.
+    const juce::String stemName ("Mix");
+    juce::File audio, midi;
+    for (const auto& f : files)
+    {
+        if (f.hasFileExtension ("wav") && f.getFileNameWithoutExtension().fromFirstOccurrenceOf (" ", false, false) == stemName)
+            audio = f;
+        else if (f.hasFileExtension ("mid"))
+            midi = f;
+        else
+            f.deleteFile();
+    }
+    for (const auto& f : files)
+        if (f.hasFileExtension ("wav") && f != audio)
+            f.deleteFile();
+    printedAudio = printedMidi = juce::File();
+    if (audio.existsAsFile())
+    {
+        const auto to = audio.getSiblingFile (name + ".wav");
+        printedAudio = audio.moveFileTo (to) ? to : audio;
+    }
+    if (midi.existsAsFile())
+    {
+        const auto to = midi.getSiblingFile (name + ".mid");
+        printedMidi = midi.moveFileTo (to) ? to : midi;
+    }
+    if (dragMidi != nullptr)
+    {
+        dragMidi->repaint();
+        dragAudio->repaint();
+    }
+    if (! printedAudio.existsAsFile() && ! printedMidi.existsAsFile())
+        return say ("Nothing came out of the " + tool + " while recording, so there's nothing to drag.");
+    say ("Recorded the " + tool + " from bar " + juce::String (bar) + ". Drag "
+         + (printedMidi.existsAsFile() ? juce::String ("the MIDI onto this track at bar ") + juce::String (bar) + (printedAudio.existsAsFile() ? ", or " : ".") : juce::String())
+         + (printedAudio.existsAsFile() ? "the audio under your tracks at bar " + juce::String (bar) + " (Logic makes an audio track)." : juce::String()));
 }
 
 void RigView::showToolMenu()
@@ -1485,9 +1606,16 @@ void RigView::timerCallback()
     engine.tickScenes();
     if (engine.serviceRecorder())
     {
-        const auto& files = engine.getRecorder().getSavedFiles();
-        say ("Saved the set: " + juce::String (juce::jmax (0, files.size() - 1)) + " files in Recordings/"
-             + engine.getRecorder().getFolder().getFileName() + ". Open in Logic.txt there says how.");
+        if (toolMode())
+        {
+            printTake();
+        }
+        else
+        {
+            const auto& files = engine.getRecorder().getSavedFiles();
+            say ("Saved the set: " + juce::String (juce::jmax (0, files.size() - 1)) + " files in Recordings/"
+                 + engine.getRecorder().getFolder().getFileName() + ". Open in Logic.txt there says how.");
+        }
     }
     updateRecordButton();
 
@@ -1628,6 +1756,19 @@ void RigView::updateSampleButton()
 void RigView::toggleRecordSet()
 {
     auto& recorder = engine.getRecorder();
+    if (toolMode() && recorder.getState() == RigRecorder::State::idle)
+    {
+        // A one-tool plugin records for its own Logic track.
+        const auto tool = RigEngine::onlyToolName (engine.getOnlyTool());
+        const auto folder = RigEngine::logicFolder().getChildFile (tool + " " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M.%S"));
+        if (! engine.startRecording (folder))
+            say ("Couldn't start recording in " + folder.getFullPathName() + ".");
+        else
+            say ((engine.getTransport().isPlaying() ? "Recording the " + tool + " from the next bar" : "Recording the " + tool + " when Logic plays")
+                 + ". Press Rec again (or stop Logic) to finish, then drag it onto the track from the bottom of this window.");
+        updateRecordButton();
+        return;
+    }
     if (recorder.getState() == RigRecorder::State::idle)
     {
         const auto folder = RigEngine::recordingsFolder().getChildFile (juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M.%S"));

@@ -41,6 +41,9 @@ public:
 
     juce::File getFolder() const { return folder; }
     double getRecordedSeconds() const;
+    // Where the take started on the clock (beats; in Logic, Logic's position), and its bars.
+    double getStartBeat() const { return startBeat.load(); }
+    int getStartBeatsPerBar() const { return startBeatsPerBar.load(); }
     // The files the last take saved.
     const juce::Array<juce::File>& getSavedFiles() const { return saved; }
 
