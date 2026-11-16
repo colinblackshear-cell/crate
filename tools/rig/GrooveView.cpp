@@ -120,7 +120,7 @@ class GrooveView::TrackCard : public juce::Component,
                               public juce::SettableTooltipClient
 {
 public:
-    TrackCard (GrooveView& o, int t) : owner (o), index (t)
+    TrackCard (GrooveView& o, int t) : owner (o), index (t), colour (trackColour (t))
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
         for (auto* b : { &go, &mute, &solo })
@@ -194,70 +194,10 @@ public:
         }
     }
 
-    // The wheel's rail row (52 high): colour dot, name, status; Play, M, S at the right.
-    // Picked, the row is saffron.
-    bool wheelRow() const { return vintage::isWheel() && getHeight() <= 64; }
-
-    void paintWheelRow (juce::Graphics& g)
-    {
-        namespace w = vintage::wheelc;
-        const bool selected = owner.track == index;
-        const auto colour = trackColour (index);
-        auto r = getLocalBounds().toFloat().reduced (0.0f, 2.0f);
-        const float rad = r.getHeight() * 0.5f;
-        if (selected)
-        {
-            vintage::glow (g, r, rad, w::selected2, 8.0f, 0.45f);
-            g.setGradientFill (juce::ColourGradient (w::selected1, 0, r.getY(), w::selected2, 0, r.getBottom(), false));
-        }
-        else
-            g.setColour (w::well);
-        g.fillRoundedRectangle (r, rad);
-        if (! selected)
-        {
-            g.setColour (w::line);
-            g.drawRoundedRectangle (r.reduced (0.5f), rad, 1.0f);
-        }
-        auto area = r.toNearestInt().withTrimmedLeft (14);
-        area.removeFromRight (go.getWidth() + mute.getWidth() + solo.getWidth() + 30);
-        // The dot: lit and glowing while it plays.
-        auto dot = juce::Rectangle<float> (14.0f, 14.0f).withCentre ({ (float) area.getX() + 7.0f, (float) area.getCentreY() });
-        if (shownStatus.second == Lit::play)
-            vintage::glow (g, dot, 7.0f, colour, 5.0f, 0.6f);
-        g.setColour (shownStatus.second == Lit::mute ? w::mute : colour);
-        g.fillEllipse (dot);
-        if (selected)
-        {
-            g.setColour (w::selectedInk.withAlpha (0.5f));
-            g.drawEllipse (dot, 1.5f);
-        }
-        area.removeFromLeft (24);
-        auto top = area.removeFromTop (area.getHeight() * 11 / 20);
-        g.setColour (selected ? w::selectedInk : w::text);
-        g.setFont (vintage::cond (19.0f, Weight::bold, 0.06f));
-        g.drawFittedText (trackName (index).toUpperCase(), top, juce::Justification::bottomLeft, 1, 0.8f);
-        // Its status, with a word (never colour alone).
-        auto line = area.withTrimmedTop (1);
-        if (shownStatus.second != Lit::none)
-        {
-            const auto lit = vintage::litColour (shownStatus.second);
-            g.setColour (selected ? w::selectedInk : lit);
-            g.fillEllipse ((float) line.getX(), (float) line.getY() + 4.0f, 6.0f, 6.0f);
-            line.removeFromLeft (10);
-        }
-        g.setColour (selected ? w::selectedInk.withAlpha (0.75f) : w::label);
-        g.setFont (vintage::cond (12.0f, Weight::bold, 0.12f));
-        g.drawFittedText ((shownStatus.first + (shownDetail.isNotEmpty() ? juce::String::fromUTF8 (" \xc2\xb7 ") + shownDetail : juce::String())).toUpperCase(),
-                          line, juce::Justification::topLeft, 1, 0.8f);
-    }
-
     void paint (juce::Graphics& g) override
     {
-        if (wheelRow())
-            return paintWheelRow (g);
         const auto& p = vintage::pal();
         const bool selected = owner.track == index;
-        const auto colour = trackColour (index);
         auto r = getLocalBounds().toFloat().reduced (4.0f);
         if (selected)
         {
@@ -298,19 +238,6 @@ public:
 
     void resized() override
     {
-        if (wheelRow())
-        {
-            // 44-high buttons (the design's minimum for anything played live).
-            auto row = getLocalBounds().reduced (0, 4).withTrimmedRight (6);
-            const int size = juce::jmin (44, row.getHeight());
-            row = row.withSizeKeepingCentre (row.getWidth(), size);
-            solo.setBounds (row.removeFromRight (size));
-            row.removeFromRight (6);
-            mute.setBounds (row.removeFromRight (size));
-            row.removeFromRight (6);
-            go.setBounds (row.removeFromRight (62));
-            return;
-        }
         auto r = getLocalBounds().reduced (4).withTrimmedRight (12).withTrimmedBottom (8);
         const int size = juce::jlimit (30, 44, r.getHeight() / 2);
         auto row = r.removeFromBottom (size);
@@ -336,6 +263,7 @@ public:
 private:
     GrooveView& owner;
     const int index;
+    const juce::Colour colour;
     float heard = 0;
     std::pair<juce::String, Lit> shownStatus;
     juce::String shownDetail;
@@ -395,11 +323,41 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     for (int t = 0; t < numTracks; ++t)
         addAndMakeVisible (cards.add (new TrackCard (*this, t)));
 
-    for (auto* b : { &openButton, &micButton, &extraButton, &barButton, &clearButton, &quantizeButton, &soundButton, &soundPrev, &soundNext })
+    for (auto* b : { &openButton, &micButton, &extraButton, &barButton, &clearButton, &quantizeButton, &soundButton, &soundPrev, &soundNext,
+                     &overdubButton, &undoButton, &redoButton })
     {
         wellButton (*b);
         addChildComponent (b);
     }
+    // The picked loop layer's buttons.
+    overdubButton.onClick = [this]
+    {
+        auto& looper = engine.getLooper();
+        const auto st = looper.getState (pickedLayer);
+        if (st == RigLooper::State::playing || st == RigLooper::State::overdubbing)
+            looper.pressRecord (pickedLayer);
+        say (st == RigLooper::State::overdubbing ? "Stopped recording on top of layer " + juce::String (pickedLayer + 1) + ". Undo takes it back."
+                                                 : "Recording on top of layer " + juce::String (pickedLayer + 1) + " as it goes round. Press Overdub again to stop.");
+        updateButtons();
+    };
+    undoButton.onClick = [this]
+    {
+        engine.getLooper().undo (pickedLayer);
+        say ("Took back the last recording on top of layer " + juce::String (pickedLayer + 1) + ".");
+        updateButtons();
+    };
+    redoButton.onClick = [this]
+    {
+        // Clear it, then record it again from the next bar (the clear goes first).
+        auto& looper = engine.getLooper();
+        looper.clear (pickedLayer);
+        looper.pressRecord (pickedLayer);
+        say ("Layer " + juce::String (pickedLayer + 1) + " records again from the next bar. Press the layer (or Redo's layer) to close the loop.");
+        updateButtons();
+    };
+    overdubButton.setTooltip ("Records on top of the picked layer as it goes round, until you press it again. Undo takes it back.");
+    undoButton.setTooltip ("Takes back the last recording on top of the picked layer.");
+    redoButton.setTooltip ("Throws the picked layer away and records it again from the next bar: for trying until it's right.");
     soundButton.setTooltip ("The sound: click for every sound, by kind.");
     soundPrev.setTooltip ("The sound before.");
     soundNext.setTooltip ("The next sound.");
@@ -1140,14 +1098,18 @@ void GrooveView::buildTrack()
     screenKeys.setVisible (hasKeys());
     keysState.allNotesOff (1);
     barButton.setVisible (track == drums || (track == machine && machineLength() > 16));
-    clearButton.setVisible (track == drums || track == bass || track == synth || track == machine);
+    clearButton.setVisible (track == drums || track == bass || track == synth || track == machine || track == loops);
+    for (auto* b : { &overdubButton, &undoButton, &redoButton })
+        b->setVisible (track == loops);
     quantizeButton.setVisible (track == drums || track == bass || track == synth || track == machine || track == loops);
     quantizeButton.setTooltip (track == drums ? "Quantize the MPC's beat: pull its notes onto a grid (Cmd+U does it straight away)."
                                : track == loops ? "Quantize the loops: slide each hit onto the beat (Cmd+U does it straight away)."
                                : "Quantize the pattern onto a coarser or triplet grid (Cmd+U does it straight away).");
     clearButton.setTooltip (track == drums ? "Clears the shown bar of the beat, for the four sounds here."
                             : track == machine ? "Clears the drum machine's pattern (every sound, not just these rows)."
-                                           : track == bass ? "Clears the bass pattern's steps." : "Lights every arp step again, no accents.");
+                                           : track == bass ? "Clears the bass pattern's steps."
+                                           : track == loops ? "Clears the picked loop layer (it goes quiet and empty, ready to record again)."
+                                                            : "Lights every arp step again, no accents.");
     drumBar = 0;
     updateButtons();
     resized();
@@ -1256,9 +1218,29 @@ void GrooveView::updateButtons()
             break;
         }
         case loops:
+        {
+            auto& looper = engine.getLooper();
             for (int i = 0; i < patternButtons.size(); ++i)
-                setLit (patternButtons[i], engine.getLooper().getLayer (i).mute.load(), Lit::mute);
+                setLit (patternButtons[i], looper.getLayer (i).mute.load(), Lit::mute);
+            const auto st = looper.getState (pickedLayer);
+            const bool hasSound = st == RigLooper::State::playing || st == RigLooper::State::overdubbing;
+            const auto n = juce::String (pickedLayer + 1);
+            auto label = [] (juce::TextButton& b, const juce::String& text)
+            {
+                if (b.getButtonText() != text)
+                    b.setButtonText (text);
+            };
+            label (overdubButton, (st == RigLooper::State::overdubbing ? "Stop " : "Overdub ") + n);
+            setLit (&overdubButton, st == RigLooper::State::overdubbing, Lit::arm);
+            overdubButton.setEnabled (hasSound);
+            label (undoButton, "Undo " + n);
+            undoButton.setEnabled (looper.canUndo (pickedLayer) && st == RigLooper::State::playing);
+            label (clearButton, "Clear " + n);
+            clearButton.setEnabled (st != RigLooper::State::empty);
+            label (redoButton, "Redo " + n);
+            redoButton.setEnabled (hasSound);
             break;
+        }
         case lineIn:
         {
             const bool on = lineInLive();
@@ -1533,6 +1515,10 @@ void GrooveView::clearPattern()
 {
     switch (track)
     {
+        case loops:
+            engine.getLooper().clear (pickedLayer);
+            say ("Cleared loop layer " + juce::String (pickedLayer + 1) + ". Press it to record it again from the next bar.");
+            break;
         case drums:
             for (int row = 0; row < kDrumRows; ++row)
                 for (int step = 0; step < numSteps(); ++step)
@@ -1823,8 +1809,18 @@ void GrooveView::pressCell (int row, int i)
             break;
         }
         case loops:
-            engine.getLooper().pressRecord (i);
+        {
+            // An empty layer records from the next bar; a recording one closes its loop. One
+            // with sound is just picked: recording on top is the Overdub button, never a tap.
+            auto& looper = engine.getLooper();
+            const auto st = looper.getState (i);
+            pickedLayer = i;
+            if (st == RigLooper::State::empty || st == RigLooper::State::armed || st == RigLooper::State::recording)
+                looper.pressRecord (i);
+            else if (st == RigLooper::State::overdubbing)
+                looper.pressRecord (i);   // stops the overdub
             break;
+        }
         case lineIn:
             // Picking the jack means you want to hear it.
             engine.inputJack = i;
@@ -2066,8 +2062,8 @@ void GrooveView::timerCallback()
     }
 
     juce::String sig;
-    sig << track << "/" << playheadStep() << "/" << stateOf (track) << "/" << heldCell << "/" << drumBar << "/" << patternText()
-        << (vintage::isStage() ? "d" : "l") << (vintage::isWheel() ? "w" : "c");
+    sig << track << "/" << playheadStep() << "/" << stateOf (track) << "/" << heldCell << "/" << pickedLayer << "/" << drumBar << "/" << patternText()
+        << (vintage::isStage() ? "d" : "l");
     for (int row = 0; row < numRows(); ++row)
     {
         sig << rowName (row) << ":";
@@ -2237,7 +2233,7 @@ void GrooveView::paint (juce::Graphics& g)
                 case synth:   return juce::String ("Hold a chord; it plays on the lit steps");
                 case vocoder: return juce::String ("Switch a part on, then set how much of it underneath");
                 case sampler: return juce::String ("Press a pad to play it; the keys play it too");
-                case loops:   return juce::String ("Press a layer: records from the next bar");
+                case loops:   return juce::String ("Empty layer: press to record. With sound: press to pick it, then use the buttons");
                 case lineIn:  return juce::String ("Pick the input your instrument is plugged into");
                 default:      return juce::String();
             }
@@ -2283,7 +2279,8 @@ void GrooveView::paint (juce::Graphics& g)
             float alpha = c.dim ? 0.35f : 1.0f;
             if (track == bass && row == 1)
                 alpha *= 0.45f;
-            vintage::drawStep (g, r, c.lit, i == now && ! bigCells(), (i / 4) % 2 == 1 && n == 16, fill, alpha);
+            // (On Loops, the ring marks the layer you've picked.)
+            vintage::drawStep (g, r, c.lit, track == loops ? i == pickedLayer : i == now && ! bigCells(), (i / 4) % 2 == 1 && n == 16, fill, alpha);
             if (c.dim && ! c.lit)
             {
                 g.setColour (p.well.withAlpha (0.45f));
@@ -2417,7 +2414,10 @@ void GrooveView::resized()
             right.removeFromRight (8);
         };
         place (openButton, 132);
-        place (clearButton, 76);
+        place (redoButton, 92);
+        place (clearButton, track == loops ? 92 : 76);
+        place (undoButton, 92);
+        place (overdubButton, 112);
         place (quantizeButton, 100);
         place (extraButton, 110);
         if (soundButton.isVisible())

@@ -85,6 +85,19 @@ public:
     void restartAt (int layer, double beat) { layers[(size_t) layer].restartBeat = beat; }
     void undo (int layer) { ++layers[(size_t) layer].undos; }
     void clear (int layer) { ++layers[(size_t) layer].clears; }
+    // Message thread: record an empty layer from the next bar, or close one that's recording;
+    // a layer that has its loop is left alone (recording on top is overdub only, on purpose).
+    // Returns false when it did nothing for that reason.
+    bool recordOrClose (int layer)
+    {
+        const auto st = getState (layer);
+        if (st == State::playing || st == State::overdubbing)
+            return false;
+        pressRecord (layer);
+        return true;
+    }
+    // Whether undo would take back an overdub on this layer (the last one only).
+    bool canUndo (int layer) const { return undoLayer.load() == layer; }
 
     // Message thread: puts a sound on a layer, `beats` long, playing from beat 0.
     void setLayerAudio (int layer, juce::AudioBuffer<float> audio, double beats);
@@ -161,7 +174,8 @@ private:
     std::array<Layer, kLayers> layers;
     juce::SpinLock undoLock;              // the undo room, while maintain() makes it bigger
     juce::AudioBuffer<float> undoAudio;
-    int undoLayer = -1, undoLength = 0;
+    std::atomic<int> undoLayer { -1 };
+    int undoLength = 0;
     std::array<StripFx*, kLayers> effects {};
     std::array<float, kLayers> arrangeFrom { 1, 1, 1, 1, 1, 1, 1, 1 }, arrangeTo { 1, 1, 1, 1, 1, 1, 1, 1 };
     std::array<juce::AudioBuffer<float>, kLayers> layerOut;   // a layer's sound, before its effects

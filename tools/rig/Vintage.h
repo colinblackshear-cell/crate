@@ -20,32 +20,10 @@ struct Palette
 
 const Palette& studio();
 const Palette& stage();
-// The dharma wheel: deep violet, saffron for what's picked, green for what plays, magenta for
-// what's next, pill buttons and ring knobs. Every screen draws through the parts below, so the
-// whole Rig changes look in one switch (Settings > Look). The cream panel stays as the other look.
-const Palette& wheel();
-// The theme the Rig shows: the wheel unless switched to the cream panel (Studio, or Stage for
-// dark rooms).
+// The theme the Rig shows (Studio unless switched to Stage).
 const Palette& pal();
 bool isStage();
 void setStage (bool);
-bool isWheel();
-void setWheel (bool);
-// Whether the wheel look moves (the hub turns, "next" pulses). Off = Still.
-bool isMoving();
-void setMoving (bool);
-
-// The wheel's own colours (tokens.json in the design pack).
-namespace wheelc
-{
-    inline const juce::Colour bgCentre { 0xff3b1552 }, bgMid { 0xff1d0b2c }, bgEdge { 0xff0d0616 }, well { 0xd124112f }, inner { 0x990d0616 },
-                              line { 0x1af6ebdd }, text { 0xfff6ebdd }, label { 0xb8f6ebdd },
-                              selected1 { 0xffffe27a }, selected2 { 0xffffb21f }, selectedInk { 0xff2a1404 },
-                              play1 { 0xffc2f7a4 }, play2 { 0xff62d257 }, playInk { 0xff0e2a08 },
-                              next { 0xffff3ea5 }, arm { 0xffff5a4a }, armInk { 0xffffc2b8 }, mute { 0xff3ec8ff }, muteInk { 0xff06233a };
-    inline const juce::Colour mpc { 0xffff4d4d }, drums { 0xffe8336b }, bass { 0xffff8a1f }, synth { 0xffffd23f }, vocoder { 0xff3ec8ff },
-                              sampler { 0xffa66bff }, loops { 0xff7be36a }, lineIn { 0xffe9c58a };
-}
 
 // The track colours (the same on every screen).
 namespace colours
@@ -64,9 +42,6 @@ juce::Font cond (float size, Weight = Weight::bold, float tracking = 0.0f);
 juce::Font barlow (float size);
 juce::Font lcd (float size);
 juce::Font wordmark (float size);
-// The wheel's display face (Shrikhand) for big titles and section letters; the cream look's
-// wordmark face when the wheel is off.
-juce::Font display (float size);
 
 // An engraved label: Barlow Condensed bold, upper case, tracked out.
 void engraved (juce::Graphics&, const juce::String&, juce::Rectangle<int>, juce::Justification = juce::Justification::centredLeft,
@@ -74,10 +49,6 @@ void engraved (juce::Graphics&, const juce::String&, juce::Rectangle<int>, juce:
 
 enum class Lit { none, play, arm, next, mute, current };
 juce::Colour litColour (Lit);
-// The text colour on a button lit this way (in the look that's on).
-juce::Colour buttonInk (Lit, bool inWell);
-// The wheel's "next" pulse, 0..1 (1.4 s a beat; steady when Still).
-float pulse();
 
 // A soft glow around a rounded rectangle (cheap: a few rings).
 void glow (juce::Graphics&, juce::Rectangle<float>, float radius, juce::Colour, float size = 12.0f, float strength = 0.5f);
@@ -104,10 +75,6 @@ class LookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     LookAndFeel();
-    ~LookAndFeel() override;
-    // Sets the menu, field and value colours for the look that's on (call after setWheel).
-    void refresh();
-    static void refreshAll();   // every one there is (the Rig's, the Mixer's...)
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool over, bool down) override;
     void drawButtonText (juce::Graphics&, juce::TextButton&, bool over, bool down) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;

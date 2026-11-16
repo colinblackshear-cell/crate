@@ -178,6 +178,11 @@ private:
     juce::OwnedArray<TrackCard> cards;
     juce::TextButton openButton, micButton { "Mic off" }, extraButton, barButton, clearButton { "Clear" }, quantizeButton { "Quantize" }, soundButton,
         soundPrev { "<" }, soundNext { ">" };
+    // Loops: the layer you've picked (a tap on a layer with sound picks it; it never starts
+    // recording on top), and what you can do to it: record on top, take that back, clear it,
+    // or clear it and record it again from the next bar.
+    int pickedLayer = 0;
+    juce::TextButton overdubButton { "Overdub" }, undoButton { "Undo" }, redoButton { "Redo" };
     juce::MidiKeyboardState keysState;
     juce::MidiKeyboardComponent screenKeys { keysState, juce::MidiKeyboardComponent::horizontalKeyboard };
     juce::Rectangle<int> keysArea;

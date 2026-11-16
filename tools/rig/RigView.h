@@ -214,15 +214,9 @@ private:
     void showPopOutMenu();
     class MoreView* moreView = nullptr;   // owned by its page
     void setDarkPanel (bool);
-    // The look (Settings > Look): the dharma wheel or the cream panel; and whether the wheel
-    // moves (Motion: Turning or Still). Both are kept with your screens.
-    void setLook (bool wheel);
-    void setMotion (bool turning);
-    void repaintEverything();
-    // The wheel's frame (the wheel and rail on the left, tabs across the top, section keys at the
-    // bottom): in the wheel look, in the whole box (a one-tool plugin keeps its own layout).
-    bool wheelFrame() const;
     juce::String currentPage() const;
+    // What's recording now, and the screen it's on ({} when nothing is).
+    std::pair<juce::String, juce::String> whatsRecording() const;
     void nudgeTempo (double);
     void pageChanged();
     bool stageShown = false;
@@ -243,8 +237,6 @@ private:
     void toggleRecordSet();
     void updateRecordButton();
     juce::TextButton audioButton { "Audio + MIDI" }, saveButton { "Save show" }, openButton { "Open show" };
-    juce::TextButton lookButton { "Dharma wheel" }, motionButton { "Turning" };
-    juce::Label lookLabel { {}, "Look" }, motionLabel { {}, "Motion" };
     juce::TextButton darkButton { "Dark panel" }, popOutButton { "Second screen..." }, pluginsButton { "Your plugins..." };
     juce::Label pluginsLabel { {}, "Plugins" }, pluginsHint;
     juce::String keyboardName;

@@ -1,7 +1,5 @@
 #pragma once
 
-#include <array>
-
 #include "Vintage.h"
 #include "RigEngine.h"
 
@@ -46,6 +44,7 @@ public:
     PanelButton quantize { "Quantize" };
     std::function<void()> onMic;
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
+    std::function<void()> onRecording;  // a click on the red "recording" line: go to what records
 
     // What it shows; RigView sets these on its timer, then calls update().
     struct Shown
@@ -58,28 +57,16 @@ public:
         bool keyboardFound = false, keyboardActive = false;
         bool macKeys = true;
         bool micOn = false;
-        // For the wheel: the clock, each track's orb (its colour, 1 = playing, 2 = muted) and
-        // the song's sections (how many, the one playing, the one queued).
-        bool playing = false;
-        double beats = 0;
-        std::array<juce::Colour, 8> orbColour {};
-        std::array<int, 8> orbState {};
-        std::array<juce::String, 8> orbName {};
-        int sections = 0, sectionNow = -1, sectionNext = -1;
+        // What's recording right now ("Overdub loop 3", "Rec MPC beat"...), empty when nothing:
+        // shown in red where the song's place is, so nothing records without you seeing it.
+        juce::String recording;
         bool operator== (const Shown&) const;
     } shown;
     void update (const Shown&);
 
-    // The dharma wheel's frame: the header is the top of the left column (wordmark and show, the
-    // wheel with Play at its hub, then the clock and tempo). Off: the cream panel's top bar.
-    bool wheelFrame = false;
-    static constexpr int kWheelWidth = 400, kWheelHeight = 446;
-
 private:
     const bool standalone;
-    void resizedWheel();
-    void paintWheel (juce::Graphics&);
-    juce::Rectangle<int> wordmarkArea, tempoArea, partArea, vuArea, lampsArea, micLampArea, wheelArea;
+    juce::Rectangle<int> wordmarkArea, tempoArea, partArea, vuArea, lampsArea, micLampArea;
     bool showVu = true, showWordmark = true;
 };
 
@@ -104,7 +91,6 @@ public:
     PanelButton settings { "Settings" };   // keys and pads, split, sampling, knobs, click, audio, look (F6)
     PanelButton help { "?" };   // the how-to guide
     std::function<void (const juce::String& view)> onView;
-    bool wheelFrame = false;   // one 44-high row across the top of the main column
 };
 
 //==============================================================================
@@ -123,9 +109,6 @@ public:
     PanelButton newPattern { "+ New pattern" };
 
     static constexpr int kWidth = 232;
-    // The wheel's rail: 360 wide, 52-high rows, + New pattern at the bottom.
-    static constexpr int kWheelWidth = 360;
-    bool wheelFrame = false;
 
 private:
     juce::Array<juce::Component::SafePointer<juce::Component>> cards;
@@ -154,7 +137,6 @@ public:
     // one-tool plugin's drag chips go on the right).
     std::function<juce::Rectangle<int> (juce::Rectangle<int>)> onLayout;
     std::function<void()> onEditParts;
-    bool wheelFrame = false;   // the section keys under the main well, 64 high, the messages above them
 
 private:
     void showPartMenu (int part);

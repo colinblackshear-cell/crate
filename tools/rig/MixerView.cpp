@@ -136,8 +136,8 @@ MixerView::Channel::Channel (MixerView& d, Kind k, int i) : kind (k), index (i),
         auto& layer = e.getLooper().getLayer (index);
         fader.onValueChange = [this, &layer] { layer.level = (float) fader.getValue(); };
         mute.onClick = [this, &layer] { layer.mute = ! layer.mute.load(); refresh(); };
-        setUpButton (rec, Lit::arm, "Records this layer from the next bar; press again to stop and loop it, again to overdub.");
-        rec.onClick = [this] { engine().getLooper().pressRecord (index); };
+        setUpButton (rec, Lit::arm, "Records this layer from the next bar; press again to stop and loop it. (Overdub is on the Looper.)");
+        rec.onClick = [this] { engine().getLooper().recordOrClose (index); };
         addAndMakeVisible (rec);
     }
     else
