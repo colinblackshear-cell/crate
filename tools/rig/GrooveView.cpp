@@ -120,7 +120,7 @@ class GrooveView::TrackCard : public juce::Component,
                               public juce::SettableTooltipClient
 {
 public:
-    TrackCard (GrooveView& o, int t) : owner (o), index (t)
+    TrackCard (GrooveView& o, int t) : owner (o), index (t), colour (trackColour (t))
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
         for (auto* b : { &go, &mute, &solo })
@@ -194,70 +194,10 @@ public:
         }
     }
 
-    // The wheel's rail row (52 high): colour dot, name, status; Play, M, S at the right.
-    // Picked, the row is saffron.
-    bool wheelRow() const { return vintage::isWheel() && getHeight() <= 64; }
-
-    void paintWheelRow (juce::Graphics& g)
-    {
-        namespace w = vintage::wheelc;
-        const bool selected = owner.track == index;
-        const auto colour = trackColour (index);
-        auto r = getLocalBounds().toFloat().reduced (0.0f, 2.0f);
-        const float rad = r.getHeight() * 0.5f;
-        if (selected)
-        {
-            vintage::glow (g, r, rad, w::selected2, 8.0f, 0.45f);
-            g.setGradientFill (juce::ColourGradient (w::selected1, 0, r.getY(), w::selected2, 0, r.getBottom(), false));
-        }
-        else
-            g.setColour (w::well);
-        g.fillRoundedRectangle (r, rad);
-        if (! selected)
-        {
-            g.setColour (w::line);
-            g.drawRoundedRectangle (r.reduced (0.5f), rad, 1.0f);
-        }
-        auto area = r.toNearestInt().withTrimmedLeft (14);
-        area.removeFromRight (go.getWidth() + mute.getWidth() + solo.getWidth() + 30);
-        // The dot: lit and glowing while it plays.
-        auto dot = juce::Rectangle<float> (14.0f, 14.0f).withCentre ({ (float) area.getX() + 7.0f, (float) area.getCentreY() });
-        if (shownStatus.second == Lit::play)
-            vintage::glow (g, dot, 7.0f, colour, 5.0f, 0.6f);
-        g.setColour (shownStatus.second == Lit::mute ? w::mute : colour);
-        g.fillEllipse (dot);
-        if (selected)
-        {
-            g.setColour (w::selectedInk.withAlpha (0.5f));
-            g.drawEllipse (dot, 1.5f);
-        }
-        area.removeFromLeft (24);
-        auto top = area.removeFromTop (area.getHeight() * 11 / 20);
-        g.setColour (selected ? w::selectedInk : w::text);
-        g.setFont (vintage::cond (19.0f, Weight::bold, 0.06f));
-        g.drawFittedText (trackName (index).toUpperCase(), top, juce::Justification::bottomLeft, 1, 0.8f);
-        // Its status, with a word (never colour alone).
-        auto line = area.withTrimmedTop (1);
-        if (shownStatus.second != Lit::none)
-        {
-            const auto lit = vintage::litColour (shownStatus.second);
-            g.setColour (selected ? w::selectedInk : lit);
-            g.fillEllipse ((float) line.getX(), (float) line.getY() + 4.0f, 6.0f, 6.0f);
-            line.removeFromLeft (10);
-        }
-        g.setColour (selected ? w::selectedInk.withAlpha (0.75f) : w::label);
-        g.setFont (vintage::cond (12.0f, Weight::bold, 0.12f));
-        g.drawFittedText ((shownStatus.first + (shownDetail.isNotEmpty() ? juce::String::fromUTF8 (" \xc2\xb7 ") + shownDetail : juce::String())).toUpperCase(),
-                          line, juce::Justification::topLeft, 1, 0.8f);
-    }
-
     void paint (juce::Graphics& g) override
     {
-        if (wheelRow())
-            return paintWheelRow (g);
         const auto& p = vintage::pal();
         const bool selected = owner.track == index;
-        const auto colour = trackColour (index);
         auto r = getLocalBounds().toFloat().reduced (4.0f);
         if (selected)
         {
@@ -298,19 +238,6 @@ public:
 
     void resized() override
     {
-        if (wheelRow())
-        {
-            // 44-high buttons (the design's minimum for anything played live).
-            auto row = getLocalBounds().reduced (0, 4).withTrimmedRight (6);
-            const int size = juce::jmin (44, row.getHeight());
-            row = row.withSizeKeepingCentre (row.getWidth(), size);
-            solo.setBounds (row.removeFromRight (size));
-            row.removeFromRight (6);
-            mute.setBounds (row.removeFromRight (size));
-            row.removeFromRight (6);
-            go.setBounds (row.removeFromRight (62));
-            return;
-        }
         auto r = getLocalBounds().reduced (4).withTrimmedRight (12).withTrimmedBottom (8);
         const int size = juce::jlimit (30, 44, r.getHeight() / 2);
         auto row = r.removeFromBottom (size);
@@ -336,6 +263,7 @@ public:
 private:
     GrooveView& owner;
     const int index;
+    const juce::Colour colour;
     float heard = 0;
     std::pair<juce::String, Lit> shownStatus;
     juce::String shownDetail;
@@ -2067,7 +1995,7 @@ void GrooveView::timerCallback()
 
     juce::String sig;
     sig << track << "/" << playheadStep() << "/" << stateOf (track) << "/" << heldCell << "/" << drumBar << "/" << patternText()
-        << (vintage::isStage() ? "d" : "l") << (vintage::isWheel() ? "w" : "c");
+        << (vintage::isStage() ? "d" : "l");
     for (int row = 0; row < numRows(); ++row)
     {
         sig << rowName (row) << ":";

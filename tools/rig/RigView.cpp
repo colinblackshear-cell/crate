@@ -408,7 +408,6 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     for (auto* c : std::initializer_list<juce::Component*> { &clickButton, &micButton, &learnPlay, &learnStop, &learnPlayLabel, &learnStopLabel,
                                                              &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
                                                              &darkButton, &popOutButton, &pluginsButton, &pluginsLabel, &pluginsHint,
-                                                             &lookButton, &motionButton, &lookLabel, &motionLabel,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
                                                              &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
         setupPage->addAndMakeVisible (c);
@@ -449,11 +448,6 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     saveButton.setTooltip ("Saves everything: the show (sounds, patterns, mixer, song parts) and your loops, together. "
                            "The first time it asks for a name; after that it saves straight away (Cmd+S). The show menu (top left) has Save show as... for a copy.");
     openButton.onClick = [this] { openShow(); };
-    lookButton.setTooltip ("The look: the dharma wheel (deep violet, the wheel and rail on the left) or the cream panel (the classic "
-                           "skin, with its dark panel for stages). Every tool and feature is the same in both.");
-    lookButton.onClick = [this] { setLook (! vintage::isWheel()); };
-    motionButton.setTooltip ("Turning: the wheel's hub turns while you play and a queued section pulses. Still: nothing moves.");
-    motionButton.onClick = [this] { setMotion (! vintage::isMoving()); };
     darkButton.setClickingTogglesState (true);
     darkButton.setTooltip ("The dark panel, for dark rooms and stages.");
     darkButton.onClick = [this] { setDarkPanel (darkButton.getToggleState()); };
@@ -685,13 +679,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         l->setColour (juce::Label::textColourId, vintage::colours::master.withAlpha (0.75f));
         l->setFont (vintage::cond (15.0f, vintage::Weight::bold, 0.06f));
     }
-    for (auto* l : { &learnPlayLabel, &learnStopLabel, &lookLabel, &motionLabel })
+    for (auto* l : { &learnPlayLabel, &learnStopLabel })
         l->setFont (vintage::cond (15.0f, vintage::Weight::bold, 0.06f));
     for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
-                     &darkButton, &popOutButton, &pluginsButton, &lookButton, &motionButton })
+                     &darkButton, &popOutButton, &pluginsButton })
         vintage::setInWell (*b, true);
     for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
-                     &darkButton, &popOutButton, &pluginsButton, &lookButton, &motionButton })
+                     &darkButton, &popOutButton, &pluginsButton })
         b->getProperties().set ("fontSize", 15.0f);
     vintage::setLit (sampleButton, vintage::Lit::arm);
     vintage::setLit (clickButton, vintage::Lit::play);
@@ -778,21 +772,11 @@ RigView::~RigView()
 
 void RigView::refresh()
 {
-    if ((engine.screens.getProperty ("look", "wheel").toString() != "cream") != vintage::isWheel())
-        setLook (engine.screens.getProperty ("look", "wheel").toString() != "cream");
-    if (! (bool) engine.screens.getProperty ("still", false) != vintage::isMoving())
-        setMotion (! (bool) engine.screens.getProperty ("still", false));
     if ((bool) engine.screens.getProperty ("dark", false) != vintage::isStage())
         setDarkPanel ((bool) engine.screens.getProperty ("dark", false));
     auto& transport = engine.getTransport();
     clickButton.setToggleState (transport.metronome.load(), juce::dontSendNotification);
     darkButton.setToggleState ((bool) engine.screens.getProperty ("dark", false), juce::dontSendNotification);
-    lookButton.setButtonText (vintage::isWheel() ? "Dharma wheel" : "Cream panel");
-    lookButton.setToggleState (vintage::isWheel(), juce::dontSendNotification);
-    darkButton.setEnabled (! vintage::isWheel());
-    motionButton.setButtonText (vintage::isMoving() ? "Turning" : "Still");
-    motionButton.setToggleState (vintage::isMoving(), juce::dontSendNotification);
-    motionButton.setEnabled (vintage::isWheel());
     micButton.setToggleState (engine.micOn.load(), juce::dontSendNotification);
     micButton.setButtonText (engine.micOn.load() ? "Mic on" : "Mic off");
     micButton.setVisible (devices != nullptr);
@@ -1707,20 +1691,6 @@ void RigView::timerCallback()
         shown.keyboardActive = keyboardActive;
         shown.macKeys = devices != nullptr || recent;
         shown.micOn = devices != nullptr ? engine.micOn.load() : true;
-        // The wheel: what each track's orb shows, and the section petals.
-        shown.playing = transport.isPlaying();
-        shown.beats = beats;
-        static const char* orbNames[] = { "MPC", "DRM", "BASS", "SYN", "VOC", "SMP", "LOOP", "IN" };
-        for (int t = 0; t < GrooveView::numTracks && t < 8; ++t)
-        {
-            const int strip = GrooveView::stripFor (t);
-            shown.orbColour[(size_t) t] = GrooveView::trackColour (t);
-            shown.orbName[(size_t) t] = orbNames[t];
-            shown.orbState[(size_t) t] = engine.getStrip (strip).mute.load() ? 2 : meters[(size_t) strip] > 0.003f ? 1 : 0;
-        }
-        shown.sections = juce::jmin (8, (int) list.size());
-        shown.sectionNow = current;
-        shown.sectionNext = queued != current ? queued : -1;
         header.update (shown);
     }
     footer.tick();
@@ -2442,49 +2412,6 @@ void RigView::nudgeTempo (double amount)
     transport.setBpm (std::round ((transport.getBpm() + amount) * 10.0) / 10.0);
 }
 
-bool RigView::wheelFrame() const
-{
-    return vintage::isWheel() && ! stageShown && ! toolMode();
-}
-
-void RigView::setLook (bool wheel)
-{
-    vintage::setWheel (wheel);
-    engine.screens.setProperty ("look", wheel ? "wheel" : "cream", nullptr);
-    lookButton.setButtonText (wheel ? "Dharma wheel" : "Cream panel");
-    vintage::setLit (lookButton, vintage::Lit::current);
-    lookButton.setToggleState (wheel, juce::dontSendNotification);
-    darkButton.setEnabled (! wheel);
-    motionButton.setEnabled (wheel);
-    vintage::LookAndFeel::refreshAll();
-    resized();
-    repaintEverything();
-}
-
-void RigView::setMotion (bool turning)
-{
-    vintage::setMoving (turning);
-    engine.screens.setProperty ("still", ! turning, nullptr);
-    motionButton.setButtonText (turning ? "Turning" : "Still");
-    motionButton.setToggleState (turning, juce::dontSendNotification);
-    repaintEverything();
-}
-
-void RigView::repaintEverything()
-{
-    // Every screen draws through the look, so all of them (open or not, in their own windows too).
-    std::function<void (juce::Component&)> walk = [&walk] (juce::Component& c)
-    {
-        c.repaint();
-        for (auto* child : c.getChildren())
-            walk (*child);
-    };
-    walk (*this);
-    for (auto& page : pages)
-        if (page.content != nullptr)
-            walk (*page.content);
-}
-
 void RigView::setDarkPanel (bool dark)
 {
     vintage::setStage (dark || stageShown);
@@ -2591,16 +2518,6 @@ void RigView::showMoreMenu()
 void RigView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds();
-    if (vintage::isWheel())
-    {
-        vintage::drawFace (g, r);
-        if (wheelFrame())
-        {
-            // The rail's panel, behind the track rows.
-            vintage::drawWell (g, rail.getBounds().toFloat().expanded (10.0f, 10.0f), 22.0f);
-        }
-        return;
-    }
     vintage::drawCheek (g, r.removeFromLeft (kCheek));
     vintage::drawCheek (g, r.removeFromRight (kCheek));
     vintage::drawFace (g, r);
@@ -2608,54 +2525,6 @@ void RigView::paint (juce::Graphics& g)
 
 void RigView::resized()
 {
-    const bool wheel = wheelFrame();
-    header.wheelFrame = screenBar.wheelFrame = rail.wheelFrame = footer.wheelFrame = wheel;
-    if (wheel)
-    {
-        // The design's frame at 1440 x 960 (it stretches with the window): the left column holds
-        // the wordmark, the wheel and the clock, then the rail; the views are in the main well,
-        // with the tabs above and the section keys below.
-        auto area = getLocalBounds();
-        auto left = area.removeFromLeft (rigpanels::Header::kWheelWidth);
-        header.setBounds (left.removeFromTop (rigpanels::Header::kWheelHeight));
-        rail.setBounds (left.withTrimmedLeft (30).withTrimmedRight (10).withTrimmedBottom (24).withTrimmedTop (12));
-        area.removeFromRight (24);
-        screenBar.setBounds (area.removeFromTop (70).withTrimmedTop (18).withTrimmedBottom (8));
-        footer.setBounds (area.removeFromBottom (122).withTrimmedTop (14).withTrimmedBottom (22));
-        tabs.setBounds (area.withTrimmedTop (4));
-        header.resized();
-        screenBar.resized();
-        rail.resized();
-        footer.resized();
-    }
-    else
-    {
-        header.resized();
-        screenBar.resized();
-        rail.resized();
-        footer.resized();
-    }
-    if (wheel)
-    {
-        if (soundsOpen)
-        {
-            auto drawerArea = tabs.getBounds();
-            soundsDrawer->setBounds (drawerArea.removeFromRight (juce::jlimit (480, 776, drawerArea.getWidth() * 76 / 100)));
-            soundsDrawer->toFront (false);
-        }
-        if (chordsOpen)
-        {
-            auto drawerArea = tabs.getBounds();
-            chordsDrawer->setBounds (drawerArea.removeFromBottom (juce::jmin (drawerArea.getHeight() - 120, ChordsView::kPreferredHeight)));
-            chordsDrawer->toFront (false);
-        }
-        if (helpPanel != nullptr)
-        {
-            helpPanel->setBounds (tabs.getBounds().reduced (juce::jmax (12, tabs.getWidth() / 12), 12));
-            helpPanel->toFront (true);
-        }
-        return;
-    }
     auto area = getLocalBounds();
     area.removeFromLeft (kCheek);
     area.removeFromRight (kCheek);
@@ -2777,11 +2646,8 @@ void RigView::layoutSetup (juce::Rectangle<int> page)
 
     // Display.
     in = card (cell (2, 1), "Display", vintage::colours::input);
-    line (in, &lookLabel, { { &lookButton, 0 } });
-    line (in, &motionLabel, { { &motionButton, 0 } });
-    line (in, nullptr, { { &darkButton, 130 }, { &popOutButton, 0 } });
-    sp.cards.back().hint = "Look: the dharma wheel or the cream panel (Dark panel is the cream one for stages). "
-                           "Motion: the wheel turns as you play, or stays still.";
+    line (in, nullptr, { { &darkButton, 140 }, { &popOutButton, 170 } });
+    sp.cards.back().hint = "Dark panel for dark rooms and stages. Second screen puts any screen in its own window.";
     hintBelow (in);
 
     // Your show.
