@@ -117,7 +117,7 @@ bool Header::Shown::operator== (const Shown& o) const
     return std::abs (bpm - o.bpm) < 0.01 && partLetter == o.partLetter && partName == o.partName && barBeat == o.barBeat
         && partQueued == o.partQueued && std::abs (vuLeft - o.vuLeft) < 0.004f && std::abs (vuRight - o.vuRight) < 0.004f
         && keyboard == o.keyboard && keyboardFound == o.keyboardFound && keyboardActive == o.keyboardActive && macKeys == o.macKeys
-        && micOn == o.micOn;
+        && micOn == o.micOn && recording == o.recording;
 }
 
 Header::Header (bool isStandalone) : standalone (isStandalone)
@@ -260,8 +260,18 @@ void Header::paint (juce::Graphics& g)
                  shown.partLetter.isNotEmpty() ? colours::lcdGreen : colours::lcdAmber.withAlpha (0.5f));
         inner.removeFromLeft (12.0f);
         lcdText (g, shown.barBeat, inner.removeFromTop (inner.getHeight() * 0.58f).withTrimmedTop (4), 34.0f, juce::Justification::bottomLeft);
-        lcdText (g, shown.partName.toUpperCase(), inner, 15.0f, juce::Justification::topLeft,
-                 shown.partQueued ? colours::next : colours::lcdAmber.withAlpha (0.85f));
+        if (shown.recording.isNotEmpty())
+        {
+            // Recording: a red line instead of the section's name, and a red edge.
+            g.setColour (colours::arm);
+            g.drawRoundedRectangle (r.reduced (1.0f), 8.0f, 2.0f);
+            const bool on = (juce::Time::getMillisecondCounter() / 500) % 2 == 0;
+            lcdText (g, juce::String::fromUTF8 (on ? "\xe2\x97\x8f " : "  ") + shown.recording.toUpperCase(), inner, 15.0f,
+                     juce::Justification::topLeft, colours::arm.brighter (0.3f));
+        }
+        else
+            lcdText (g, shown.partName.toUpperCase(), inner, 15.0f, juce::Justification::topLeft,
+                     shown.partQueued ? colours::next : colours::lcdAmber.withAlpha (0.85f));
     }
 
     if (! vuArea.isEmpty())
@@ -293,6 +303,8 @@ void Header::mouseUp (const juce::MouseEvent& e)
 {
     if (e.mouseWasClicked() && wordmarkArea.contains (e.getPosition()) && onWordmark)
         return onWordmark();
+    if (e.mouseWasClicked() && partArea.contains (e.getPosition()) && shown.recording.isNotEmpty() && onRecording)
+        return onRecording();
     if (standalone && e.mouseWasClicked() && micLampArea.contains (e.getPosition()) && onMic)
         onMic();
 }

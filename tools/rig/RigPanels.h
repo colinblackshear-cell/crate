@@ -44,6 +44,7 @@ public:
     PanelButton quantize { "Quantize" };
     std::function<void()> onMic;
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
+    std::function<void()> onRecording;  // a click on the red "recording" line: go to what records
 
     // What it shows; RigView sets these on its timer, then calls update().
     struct Shown
@@ -56,6 +57,9 @@ public:
         bool keyboardFound = false, keyboardActive = false;
         bool macKeys = true;
         bool micOn = false;
+        // What's recording right now ("Overdub loop 3", "Rec MPC beat"...), empty when nothing:
+        // shown in red where the song's place is, so nothing records without you seeing it.
+        juce::String recording;
         bool operator== (const Shown&) const;
     } shown;
     void update (const Shown&);

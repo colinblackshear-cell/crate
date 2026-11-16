@@ -215,6 +215,8 @@ private:
     class MoreView* moreView = nullptr;   // owned by its page
     void setDarkPanel (bool);
     juce::String currentPage() const;
+    // What's recording now, and the screen it's on ({} when nothing is).
+    std::pair<juce::String, juce::String> whatsRecording() const;
     void nudgeTempo (double);
     void pageChanged();
     bool stageShown = false;

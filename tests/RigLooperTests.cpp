@@ -144,6 +144,20 @@ struct RigLooperTests : juce::UnitTest
             rig.heard.clear();
             rig.run (2.0);
             expectWithinAbsoluteError (rig.heard[rig.heard.size() / 2], 0.2f, 0.02f);
+            expect (! rig.looper.canUndo (1), "one undo: it's used up");
+
+            beginTest ("a tap on a playing loop never records on top (that's Overdub, on purpose)");
+            expect (! rig.looper.recordOrClose (1));
+            rig.run (0.5);
+            expect (rig.looper.getState (1) == RigLooper::State::playing);
+
+            beginTest ("redo: clear, then record again from the next bar");
+            rig.looper.clear (1);
+            rig.looper.pressRecord (1);
+            rig.run (0.1);
+            expect (rig.looper.getState (1) == RigLooper::State::armed);
+            rig.run (4.5);
+            expect (rig.looper.getState (1) == RigLooper::State::recording || rig.looper.getState (1) == RigLooper::State::playing);
 
             beginTest ("mute silences a layer, and clear empties it");
             layer.mute = true;
@@ -316,11 +330,17 @@ struct RigLooperTests : juce::UnitTest
             engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
             expect (looper.getState (1) != RigLooper::State::armed, "pressed again: it's called off");
 
-            // Overdub works on the layer picked last; a click on a number records that layer.
+            // A click on a playing loop's number picks it; it never records on top by accident.
+            // Overdub (on the layer picked last) does that, on purpose.
             view.pressLayer (2);
             engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
             expectEquals (view.getSelected(), 2);
-            expect (looper.getState (2) == RigLooper::State::overdubbing || ! engine.getTransport().isPlaying(), "a playing loop overdubs");
+            expect (looper.getState (2) == RigLooper::State::playing, "a click picks a playing loop, no overdub");
+            view.pressOverdub();
+            engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
+            expect (looper.getState (2) == RigLooper::State::overdubbing || ! engine.getTransport().isPlaying(), "Overdub records on top");
+            view.pressOverdub();
+            engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
 
             // Solo: only that loop, then everything back as it was.
             looper.getLayer (2).mute = true;

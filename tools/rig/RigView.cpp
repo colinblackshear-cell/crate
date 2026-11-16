@@ -665,6 +665,11 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     guide = guideView;
     addPage ("Guide", RigColours::master, guideView);
     header.onWordmark = [this] { showTab ("Guide"); };
+    header.onRecording = [this]
+    {
+        if (const auto place = whatsRecording().second; place.isNotEmpty())
+            goTo (place);
+    };
 
     // The Rig opens on the Guide (unless it was switched off there), else on the Groove.
     showTab (engine.screens.getProperty ("skipGuide", false) ? "Groove" : "Guide");
@@ -1691,6 +1696,7 @@ void RigView::timerCallback()
         shown.keyboardActive = keyboardActive;
         shown.macKeys = devices != nullptr || recent;
         shown.micOn = devices != nullptr ? engine.micOn.load() : true;
+        shown.recording = whatsRecording().first;
         header.update (shown);
     }
     footer.tick();
@@ -2147,7 +2153,7 @@ bool RigView::keyPressed (const juce::KeyPress& key)
     if (c >= '1' && c <= '8' && ! key.getModifiers().isAnyModifierKeyDown())
     {
         if (currentPage() == "Looper")
-            engine.getLooper().pressRecord ((int) (c - '1'));
+            engine.getLooper().recordOrClose ((int) (c - '1'));   // (never an overdub by accident)
         else
             rigpanels::Footer::pressPart (engine, (int) (c - '1'));
         return true;
@@ -2156,6 +2162,31 @@ bool RigView::keyPressed (const juce::KeyPress& key)
 }
 
 //==============================================================================
+std::pair<juce::String, juce::String> RigView::whatsRecording() const
+{
+    auto& looper = engine.getLooper();
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto n = juce::String (i + 1);
+        switch (looper.getState (i))
+        {
+            case RigLooper::State::armed:       return { "Loop " + n + " records next bar", "Looper" };
+            case RigLooper::State::recording:   return { "Recording loop " + n, "Looper" };
+            case RigLooper::State::overdubbing: return { "Overdub on loop " + n, "Looper" };
+            default: break;
+        }
+    }
+    if (engine.getMpc().getSequencer().isRecording())
+        return { "Recording the MPC beat", "MPC" };
+    const auto capture = engine.getCapture().getState();
+    if (capture == RigCapture::State::armed || capture == RigCapture::State::recording)
+        return { "Sampling", "Sampler" };
+    const auto set = engine.getRecorder().getState();
+    if (set == RigRecorder::State::armed || set == RigRecorder::State::recording)
+        return { "Recording the set", {} };
+    return {};
+}
+
 juce::String RigView::currentPlace() const
 {
     const auto page = currentPage();

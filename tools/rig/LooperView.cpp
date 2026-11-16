@@ -179,7 +179,7 @@ public:
         setLit (fx, Lit::current);
 
         setTooltip ("Click the number to record this layer: it starts at the next bar, and stops at the end of the bar where you "
-                    "click again (or by itself after its bars). On a playing loop, it overdubs. Keys 1-8 do the same. "
+                    "click again (or by itself after its bars). On a loop that's playing, it picks it (Overdub records on top). Keys 1-8 do the same. "
                     "Click the name to pick what it records and how long.");
 
         mute.setClickingTogglesState (true);
@@ -215,7 +215,12 @@ public:
     }
 
     // As clicks do (the tests use these).
-    void pressNumber() { engine.getLooper().pressRecord (index); owner.selected = index; }
+    void pressNumber()
+    {
+        owner.selected = index;
+        if (! engine.getLooper().recordOrClose (index) && owner.onSay)
+            owner.onSay ("Layer " + juce::String (index + 1) + " is picked. Overdub records on top of it; Clear empties it.");
+    }
 
     void tick()
     {
@@ -563,7 +568,7 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     for (int i = 0; i < RigLooper::kLayers; ++i)
         addAndMakeVisible (rows.add (new Row (*this, engine, i)));
     help.setText ("Loops stay in time with Kaleidobox. Rec starts at the next bar; press again to finish the bar. "
-                  "Rec on a playing loop overdubs. Keys 1-8 record too.",
+                  "Overdub records on top of the picked loop. Keys 1-8 record too.",
                   juce::dontSendNotification);
     addChildComponent (help);   // the headings and tooltips say this now
 
@@ -586,10 +591,23 @@ LooperView::LooperView (RigEngine& e) : engine (e)
                             ? RigQuantizer::loopTarget (selected) : (int) RigQuantizer::allLoops,
                         &quantizeButton);
     };
-    for (auto* b : { &recNext, &overdub, &undoButton, &quantizeButton })
+    clearButton.setTooltip ("Clears the layer you picked last: it goes quiet and empty, ready to record again.");
+    clearButton.onClick = [this]
+    {
+        auto& looper = engine.getLooper();
+        if (! juce::isPositiveAndBelow (selected, RigLooper::kLayers) || looper.getState (selected) == RigLooper::State::empty)
+            return say ("Pick a layer with a loop first (click its row), then Clear empties it.");
+        const int layer = selected;
+        looper.clear (layer);
+        juce::Timer::callAfterDelay (100, [safe = juce::Component::SafePointer<LooperView> (this), layer]
+                                     { if (safe != nullptr) safe->engine.getLooper().makeRoom (layer); });
+        say ("Cleared layer " + juce::String (layer + 1) + ". Click its number to record it again from the next bar.");
+    };
+    for (auto* b : { &recNext, &overdub, &undoButton, &clearButton, &quantizeButton })
         addAndMakeVisible (*b);
     overdub.getProperties().set ("fontSize", 17.0f);
     undoButton.getProperties().set ("fontSize", 17.0f);
+    clearButton.getProperties().set ("fontSize", 17.0f);
     quantizeButton.getProperties().set ("fontSize", 17.0f);
 
     for (int b : lengthChoices)
@@ -944,7 +962,8 @@ void LooperView::updateTop()
         dubbing = dubbing || looper.getState (i) == RigLooper::State::overdubbing;
     overdub.setToggleState (dubbing, juce::dontSendNotification);
     overdub.setButtonText (dubbing ? "Stop dub" : "Overdub");
-    undoButton.setEnabled (selected >= 0 && looper.getState (selected) != RigLooper::State::empty);
+    undoButton.setEnabled (selected >= 0 && looper.canUndo (selected) && looper.getState (selected) == RigLooper::State::playing);
+    clearButton.setEnabled (selected >= 0 && looper.getState (selected) != RigLooper::State::empty);
 
     const auto status = statusText() + "/" + juce::String (engine.getTransport().getBpm()) + "/" + juce::String ((int) engine.getTransport().isPlaying());
     if (status != shownStatus)
@@ -1129,6 +1148,8 @@ void LooperView::resized()
         overdub.setBounds (t.removeFromLeft (narrow ? 96 : 110).reduced (0, 6));
         t.removeFromLeft (8);
         undoButton.setBounds (t.removeFromLeft (narrow ? 70 : 84).reduced (0, 6));
+        t.removeFromLeft (8);
+        clearButton.setBounds (t.removeFromLeft (narrow ? 70 : 84).reduced (0, 6));
         t.removeFromLeft (8);
         quantizeButton.setBounds (t.removeFromLeft (narrow ? 92 : 104).reduced (0, 6));
         t.removeFromLeft (18);
