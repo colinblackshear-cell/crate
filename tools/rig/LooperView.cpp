@@ -651,8 +651,8 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     addAndMakeVisible (timelineButton);
 
     // The loop bank row.
-    bankBack.setButtonText (juce::String::fromUTF8 ("\xe2\x97\x80 Back"));
-    bankNext.setButtonText (juce::String::fromUTF8 ("Next \xe2\x96\xb6"));
+    bankBack.setButtonText (juce::String::fromUTF8 ("\xe2\x97\x80 Bank"));
+    bankNext.setButtonText (juce::String::fromUTF8 ("Bank \xe2\x96\xb6"));
     bankBack.setTooltip ("The bank before this one (your loops here are kept in this bank).");
     bankNext.setTooltip ("The next bank (your loops here are kept in this bank).");
     bankName.setTooltip ("Pick a bank of loops, or rename, copy or delete this one.");

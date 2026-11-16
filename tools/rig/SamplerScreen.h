@@ -145,7 +145,7 @@ private:
     juce::TextButton chopModeButton { juce::String::fromUTF8 ("Chop \xc2\xb7 Pads") },
         mpcModeButton { juce::String::fromUTF8 ("Sequencer \xc2\xb7 Kits") },
         editModeButton { juce::String::fromUTF8 ("Edit \xc2\xb7 Effects \xc2\xb7 Keys") },
-        recordButton { "Rec" }, beatButton { "Beat on" }, loopPadsButton { "Loop pads" }, loopBarsButton { "Free" },
+        recordButton { "Rec sample" }, beatButton { "Beat on" }, loopPadsButton { "Loop pads" }, loopBarsButton { "Free" },
         editPadButton { "Edit" };
     void updateTopButtons();
     juce::Rectangle<int> modeRow;

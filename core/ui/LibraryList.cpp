@@ -57,6 +57,8 @@ void LibraryList::resized()
     refreshButton.setBounds (top.removeFromRight (64).reduced (0, 1));
     top.removeFromRight (4);
     folderButton.setBounds (top.removeFromRight (56).reduced (0, 1));
+    // Narrow: "Sounds" rather than a cut-off "Sound l...".
+    title.setText (top.getWidth() < 100 ? "Sounds" : "Sound library", juce::dontSendNotification);
     title.setBounds (top);
     r.removeFromTop (6);
     search.setBounds (r.removeFromTop (28));

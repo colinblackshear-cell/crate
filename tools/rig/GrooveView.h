@@ -45,6 +45,11 @@ public:
     // first row's step (for the drums, the first sound's).
     void pressStep (int step);
     void pressCell (int row, int step);
+    void clearPatternNow() { clearPattern(); }
+    // Takes back the last Clear of a beat or pattern (Clear turns into "Undo clear" until you
+    // change that pattern again). Cmd+Z does it too. True if there was one to take back.
+    bool undoClear();
+    bool canUndoClear() const { return clearUndo.track >= 0 && clearUndo.track == track; }
     void pressPattern (int index);
     void pressPart (int part);
     void pressSolo (int track);
@@ -114,6 +119,18 @@ private:
     void handleNoteOff (juce::MidiKeyboardState*, int channel, int note, float velocity) override;
     void showSoundMenu();
     void say (const juce::String&);
+    void songHint();
+    // What to do on this track's screen, in a line.
+    juce::String trackHint() const;
+    // What the last Clear took away, to put back.
+    struct ClearUndo
+    {
+        int track = -1, index = 0, variation = 0;
+        std::vector<seq::Track> mpcTracks;
+        crate::drums::Pattern machine;
+        crate::bass::Pattern bass;
+        crate::synthtool::Rhythm synth;
+    } clearUndo;
     class PluginSlot* slotFor (int track) const;
     void buildTrack();
     void layoutPartKnobs();

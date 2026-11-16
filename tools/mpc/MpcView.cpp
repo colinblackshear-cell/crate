@@ -44,6 +44,13 @@ MpcView::MpcView (MpcProcessor& p)
     bpm.setRange (40.0, 240.0, 0.1);
     bpm.setIncDecButtonsMode (juce::Slider::incDecButtonsDraggable_Vertical);
     bpm.onValueChange = [this] { project.currentBank().bpm = bpm.getValue(); project.changed(); };
+    if (processor.wrapperType == juce::AudioProcessor::wrapperType_Undefined)
+    {
+        // In Kaleidobox the top bar has the tempo: this one is the kit's own, for Keep in time.
+        bpmLabel.setText ("Kit BPM", juce::dontSendNotification);
+        bpm.setTooltip ("The kit's own tempo: with Keep in time on, loops on the pads are stretched from it. "
+                        "Kaleidobox plays at the tempo in the top bar.");
+    }
     keepInTime.onClick = [this]
     {
         project.currentBank().keepInTime = keepInTime.getToggleState();
@@ -412,7 +419,7 @@ void MpcView::layoutHosted (juce::Rectangle<int> r)
     kitLabel.setBounds (header.removeFromLeft (34));
     kitName.setBounds (header.removeFromLeft (130));
     header.removeFromLeft (8);
-    bpmLabel.setBounds (header.removeFromLeft (36));
+    bpmLabel.setBounds (header.removeFromLeft (processor.wrapperType == juce::AudioProcessor::wrapperType_Undefined ? 66 : 36));
     bpm.setBounds (header.removeFromLeft (96));
     header.removeFromLeft (6);
     keepInTime.setBounds (header.removeFromLeft (112));
@@ -469,7 +476,7 @@ void MpcView::resized()
     kitLabel.setBounds (header.removeFromLeft (70));
     kitName.setBounds (header.removeFromLeft (200));
     header.removeFromLeft (20);
-    bpmLabel.setBounds (header.removeFromLeft (36));
+    bpmLabel.setBounds (header.removeFromLeft (processor.wrapperType == juce::AudioProcessor::wrapperType_Undefined ? 66 : 36));
     bpm.setBounds (header.removeFromLeft (110));
     header.removeFromLeft (10);
     keepInTime.setBounds (header.removeFromLeft (150));

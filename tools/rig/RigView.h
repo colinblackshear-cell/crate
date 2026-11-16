@@ -180,6 +180,8 @@ public:
     void closeMixerPanel();
     // Opens (or closes) the how-to guide, on the current screen's guide.
     void showHelp (bool show);
+    // Cmd+Z: the last Clear on Play, or the last overdub on a loop. False if nothing to undo.
+    bool undoLast();
     HelpPanel* getHelp() const { return helpPanel.get(); }
 private:
     bool writeShowTo (const juce::File&);

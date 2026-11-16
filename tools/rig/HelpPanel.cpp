@@ -97,7 +97,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "The show menu (your show's name, top left) has Save show as... for a copy under a new name, and Open show...",
             "Export for Logic (Song screen, or More): every loop as a WAV (with its effects and dry), each loop laid out over "
             "your song, and a MIDI file with the tempo and a marker per part. Every file starts on bar 1.",
-            "Rec (top bar) records the whole set as you play it: a WAV per tool, the mix, and the notes as MIDI, in Music > Crate > Rig > Recordings.",
+            "Rec set (top bar) records the whole set as you play it: a WAV per tool, the mix, and the notes as MIDI, in Music > Crate > Rig > Recordings.",
             "In Logic: set the same tempo and drag the files in at bar 1." },
           "" },
 

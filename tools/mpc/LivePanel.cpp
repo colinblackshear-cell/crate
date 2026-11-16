@@ -414,6 +414,7 @@ void LivePanel::timerCallback()
     lastStatus = status;
 
     songStatus.setText (status.upToFirstOccurrenceOf ("|", false, false), juce::dontSendNotification);
+    song.setTooltip ("The MPC's song: " + songStatus.getText() + ".");
     nextLabel.setText (next, juce::dontSendNotification);
     nextLabel.setColour (juce::Label::textColourId, queued >= 0 ? Theme::accent : Theme::textDim);
     playSong.setButtonText (songOn ? "Stop song" : "Play song");
@@ -444,6 +445,8 @@ void LivePanel::resized()
     row1.removeFromRight (6);
     nextLabel.setBounds (row1.removeFromRight (juce::jmin (220, row1.getWidth() / 2)));
     row1.removeFromRight (10);
+    // Too narrow to read (the Rig's MPC screen): the song's status goes on its menu's tooltip.
+    songStatus.setVisible (row1.getWidth() >= 100);
     songStatus.setBounds (row1);
 
     r.removeFromTop (4);

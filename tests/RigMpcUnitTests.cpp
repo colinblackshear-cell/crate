@@ -179,7 +179,7 @@ struct RigMpcUnitTests : juce::UnitTest
             expect (button (*mpc, "Steps") != nullptr && button (*mpc, "Pad") != nullptr);
 
             // Every MPC tool is still there: kits, the transport, songs, the pad's settings.
-            for (auto* text : { "New kit", "Remove", "Export to card...", "Open kit...", "Play", "Stop", "Rec", "Play song", "Steps..." })
+            for (auto* text : { "New kit", "Remove", "Export to card...", "Open kit...", "Play", "Stop", "Rec beat", "Play song", "Steps..." })
                 expect (button (*mpc, text) != nullptr, text);
 
             // Tapping a pad picks it (and plays it): the MPC's pad settings follow.

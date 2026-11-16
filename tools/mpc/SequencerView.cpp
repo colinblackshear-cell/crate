@@ -122,7 +122,14 @@ TransportBar::TransportBar (MpcProcessor& p) : processor (p), project (p.getProj
     followHost.setToggleState (engine.followHost.load(), juce::dontSendNotification);
     // In Logic it's an Audio Unit; inside the Rig (or any other host) it follows that.
     const bool inLogic = processor.wrapperType == juce::AudioProcessor::wrapperType_AudioUnit;
-    const bool inRig = processor.wrapperType == juce::AudioProcessor::wrapperType_Undefined;
+    inRig = processor.wrapperType == juce::AudioProcessor::wrapperType_Undefined;
+    if (inRig)
+    {
+        // Kaleidobox has many Rec buttons: this one says what it records.
+        rec.setButtonText ("Rec beat");
+        rec.setTooltip ("Rec beat: records what you play on the pads into the MPC's beat. From stop it counts in a bar first; "
+                        "while playing it punches in and out. (Rec in the top bar records the whole set for Logic.)");
+    }
     const juce::String hostName = inLogic ? "Logic" : inRig ? "the Rig" : "the host";
     followHost.setButtonText (inLogic ? "Play with Logic" : inRig ? "Beat on" : "Follow host");
     followHost.setTooltip (inRig ? juce::String ("The MPC's beat: on, it plays whenever the Rig plays; off, the Rig's Play leaves it quiet "
@@ -185,6 +192,17 @@ void TransportBar::timerCallback()
     rec.setColour (juce::TextButton::buttonColourId, engine.isRecording() ? Theme::record : Theme::raised);
     play.setColour (juce::TextButton::buttonColourId, engine.isPlaying() && ! engine.isRecording() ? Theme::accent.darker (0.3f) : Theme::raised);
 
+    if (inRig)
+    {
+        // One tempo: with the beat on, the MPC plays at the top bar's tempo, so its own box only
+        // shows with the beat off (then the MPC plays by itself, at its own tempo).
+        const bool own = ! engine.followHost.load();
+        if (tempo.isVisible() != own)
+        {
+            tempo.setVisible (own);
+            tempoLabel.setVisible (own);
+        }
+    }
     const bool following = engine.isFollowingHost();
     tempo.setEnabled (! following);
     tempo.setTooltip (following ? "Following the host's tempo while it plays" : "The sequence's tempo");
