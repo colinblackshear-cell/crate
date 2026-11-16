@@ -93,7 +93,7 @@ public:
     PanelButton sounds { "Sounds" };   // the sound library, as a drawer over any view (F5)
     PanelButton chords { "Chords" };   // the chord builder, as a drawer over any view (F7)
     PanelButton settings { "Settings" };   // keys and pads, split, sampling, knobs, click, audio, look (F6)
-    PanelButton help { "?" };   // the how-to guide
+    PanelButton help { "Guide" };   // the walkthrough and the how-tos, always there
     std::function<void (const juce::String& view)> onView;
 };
 
@@ -111,6 +111,10 @@ public:
 
     // The next thing in the song, on an empty pattern (a beat, a bass line, keys...).
     PanelButton newPattern { "+ New / start over" };
+    // Capture, under the tracks, for the picked one on every view: Rec take records it (as you
+    // play it, over the beat) onto the next empty loop from the next bar, until pressed again;
+    // To Song puts what it plays (or the take) into the song's sections.
+    PanelButton recTake { "Rec take" }, toSong { juce::String::fromUTF8 ("To Song \xe2\x80\xba") };
 
     static constexpr int kWidth = 232;
 

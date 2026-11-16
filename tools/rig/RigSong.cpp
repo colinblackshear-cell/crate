@@ -609,6 +609,40 @@ int addSectionFromWhatsPlaying (RigEngine& engine, const juce::String& name, dou
     return index;
 }
 
+int currentClip (RigEngine& engine, int lane)
+{
+    if (! juce::isPositiveAndBelow (lane, RigTimeline::kLanes) || isLoopLane (lane))
+        return -1;
+    const auto state = engine.captureScene();
+    switch (stripOf (lane))
+    {
+        case RigEngine::mpcStrip:   return juce::jmax (-1, state.mpcSequence);
+        case RigEngine::bassStrip:  return juce::jmax (-1, state.bassPattern);
+        case RigEngine::drumsStrip: return juce::jmax (-1, state.drumPattern);
+        case RigEngine::synthStrip: return state.arp == 1 ? 1 : 0;
+        default:                    return -1;
+    }
+}
+
+int boxFromNow (RigEngine& engine, int section, int lane)
+{
+    return setBox (engine.getTimeline(), section, lane, currentClip (engine, lane));
+}
+
+int sectionFromLane (RigEngine& engine, int lane, const juce::String& name, double bars)
+{
+    auto& tl = engine.getTimeline();
+    if (bars <= 0)
+    {
+        const auto list = sections (tl);
+        bars = list.empty() ? 8.0 : juce::jmax (4.0, list.back().bars);
+    }
+    const int index = addSection (tl, name, bars);
+    if (index >= 0)
+        boxFromNow (engine, index, lane);
+    return index;
+}
+
 bool sectionsFromParts (RigEngine& engine)
 {
     auto& tl = engine.getTimeline();

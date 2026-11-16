@@ -517,11 +517,7 @@ public:
         moveRight.onClick = [this] { move (1); };
         remove.onClick = [this]
         {
-            const auto name = rigsong::sections (owner.timeline())[(size_t) owner.selSection].name;
-            rigsong::removeSection (owner.timeline(), owner.selSection);
-            owner.select (-1, -1);
-            owner.edited();
-            owner.say ("Deleted " + name + ". Cmd+Z in Bars view brings it back.");
+            owner.deleteSection (owner.selSection);
         };
         rename.onClick = [this] { owner.renameSection (owner.selSection); };
     }
@@ -766,7 +762,7 @@ SongView::SongView (RigEngine& e) : engine (e)
                                                              { if (safe != nullptr) safe->showBars (false); }); };
     addChildComponent (*bars);
 
-    addButton.sub = "empty, or what's playing";
+    addButton.sub = "empty or playing";
     addButton.setTooltip ("Adds a section at the end of the song: an empty one to fill in, or one that plays what's on now.");
     addButton.onClick = [this] { showAddMenu(); };
     jamButton.sub = "Play: what's on";
@@ -801,7 +797,14 @@ SongView::SongView (RigEngine& e) : engine (e)
     };
     moreButton.setTooltip ("More: keyboard buttons for Next and Back, clear the song.");
     moreButton.onClick = [this] { showMoreMenu(); };
-    for (auto* b : { &addButton, &jamButton, &songButton, &playButton, &loopButton, &barsButton, &recButton, &exportButton, &moreButton })
+    deleteButton.sub = "picked section";
+    deleteButton.setTooltip ("Deletes the picked section (click its name, or any of its boxes) with its boxes; what comes after moves up. "
+                             "With nothing picked, it asks which. The Delete key does it too, and Undo (Cmd+Z) brings it back.");
+    deleteButton.onClick = [this] { pressDelete(); };
+    undoButton.sub = "Cmd+Z";
+    undoButton.setTooltip ("Takes back the last change to the song: a deleted section, a box, a length, To Song...");
+    undoButton.onClick = [this] { undo(); };
+    for (auto* b : { &addButton, &deleteButton, &undoButton, &jamButton, &songButton, &playButton, &loopButton, &barsButton, &recButton, &exportButton, &moreButton })
     {
         b->fontSize = 16.0f;
         b->subSize = 10.5f;
@@ -823,6 +826,7 @@ SongView::SongView (RigEngine& e) : engine (e)
     bigEmpty.onClick = [this] { addEmptySection(); };
 
     refresh();
+    kept = { timeline().getBlocks(), timeline().getMarkers() };
     startTimerHz (30);
 }
 
@@ -1171,7 +1175,7 @@ void SongView::showSectionMenu (int section)
     menu.addItem ("Move right", section < (int) list.size() - 1, false, [this, section]
                   { rigsong::moveSection (timeline(), section, section + 1); select (section + 1, -1); edited(); });
     menu.addSeparator();
-    menu.addItem ("Delete", [this, section] { rigsong::removeSection (timeline(), section); select (-1, -1); edited(); });
+    menu.addItem ("Delete section", [this, section] { deleteSection (section); });
     menu.showMenuAsync (juce::PopupMenu::Options());
 }
 
@@ -1208,6 +1212,13 @@ void SongView::showBoxMenu (int section, int lane)
                   });
     menu.addItem ("Edit " + rigsong::laneName (lane) + juce::String::fromUTF8 (" \xe2\x80\xba"), [this, section, lane] { openBox (section, lane, true); });
     menu.addItem ("Open in Play" + juce::String::fromUTF8 (" \xe2\x80\xba"), [this, section, lane] { openBox (section, lane, false); });
+    menu.addSeparator();
+    menu.addItem ("Empty this box", rigsong::boxBlock (timeline(), section, lane) >= 0, false, [this, section, lane]
+                  {
+                      rigsong::clearBox (timeline(), section, lane);
+                      edited();
+                  });
+    menu.addItem ("Delete section " + rigsong::letterFor (section) + dot() + list[(size_t) section].name, [this, section] { deleteSection (section); });
     menu.showMenuAsync (juce::PopupMenu::Options());
 }
 
@@ -1229,6 +1240,130 @@ void SongView::renameSection (int section)
                                                                        }
                                                                    }),
                         true);
+}
+
+//==============================================================================
+bool SongView::deleteSection (int section)
+{
+    const auto list = rigsong::sections (timeline());
+    if (! juce::isPositiveAndBelow (section, (int) list.size()))
+        return false;
+    const auto name = list[(size_t) section].name;
+    rigsong::removeSection (timeline(), section);
+    select (-1, -1);
+    edited();
+    say ("Deleted " + rigsong::letterFor (section) + " (" + name + "); what came after moved up. Undo (Cmd+Z) brings it back.");
+    return true;
+}
+
+void SongView::pressDelete()
+{
+    const auto list = rigsong::sections (timeline());
+    if (list.empty())
+    {
+        say ("There's no section to delete yet.");
+        return;
+    }
+    if (juce::isPositiveAndBelow (selSection, (int) list.size()))
+    {
+        deleteSection (selSection);
+        return;
+    }
+    // Nothing picked: which one?
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Delete which section?");
+    for (int i = 0; i < (int) list.size(); ++i)
+        menu.addItem (rigsong::letterFor (i) + dot() + list[(size_t) i].name + "  (" + rigsong::barsText (list[(size_t) i].bars) + ")",
+                      [this, i] { deleteSection (i); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (deleteButton));
+}
+
+bool SongView::sameAsKept() const
+{
+    const auto& blocks = timeline().getBlocks();
+    const auto& markers = timeline().getMarkers();
+    if (blocks.size() != kept.first.size() || markers.size() != kept.second.size())
+        return false;
+    for (size_t i = 0; i < blocks.size(); ++i)
+    {
+        const auto& a = blocks[i];
+        const auto& b = kept.first[i];
+        if (a.lane != b.lane || a.start != b.start || a.length != b.length || a.fadeIn != b.fadeIn || a.fadeOut != b.fadeOut
+            || a.clip != b.clip || a.level != b.level)
+            return false;
+    }
+    for (size_t i = 0; i < markers.size(); ++i)
+    {
+        const auto& a = markers[i];
+        const auto& b = kept.second[i];
+        if (a.bar != b.bar || a.name != b.name || a.bars != b.bars || a.loopBank != b.loopBank)
+            return false;
+    }
+    return true;
+}
+
+bool SongView::undo()
+{
+    if (barsShown && bars != nullptr)
+    {
+        // Bars view keeps its own (finer) undo.
+        bars->undo();
+        return true;
+    }
+    // A change not yet seen by the timer counts too.
+    if (! sameAsKept())
+    {
+        undoStack.push_back (kept);
+        kept = { timeline().getBlocks(), timeline().getMarkers() };
+    }
+    if (undoStack.empty())
+    {
+        say ("Nothing to undo on the song.");
+        return false;
+    }
+    timeline().getBlocks() = undoStack.back().first;
+    timeline().getMarkers() = undoStack.back().second;
+    undoStack.pop_back();
+    timeline().changed();
+    kept = { timeline().getBlocks(), timeline().getMarkers() };
+    select (-1, -1);
+    edited();
+    say ("Undone." + juce::String (undoStack.empty() ? "" : " Again takes back the change before."));
+    return true;
+}
+
+void SongView::forgetUndo()
+{
+    undoStack.clear();
+    kept = { timeline().getBlocks(), timeline().getMarkers() };
+}
+
+void SongView::showLane (int lane)
+{
+    const auto list = rigsong::sections (timeline());
+    const auto name = rigsong::laneName (lane);
+    if (list.empty())
+    {
+        say (name + ": no song yet. To Song (under the tracks) puts what it plays into a first section.");
+        return;
+    }
+    const auto lanes = shownLanes();
+    if (std::find (lanes.begin(), lanes.end(), lane) == lanes.end())
+    {
+        say (name + " isn't in the song yet. To Song (under the tracks) puts what it plays into a section.");
+        select (selSection, -1);
+        return;
+    }
+    int section = selSection;
+    if (! juce::isPositiveAndBelow (section, (int) list.size()))
+        section = engine.getTransport().isPlaying() && timeline().on.load()
+                      ? rigsong::sectionAt (timeline(), engine.getTransport().getPositionInBeats() / juce::jmax (1, engine.getTransport().getBeatsPerBar()))
+                      : 0;
+    select (juce::jmax (0, section), lane);
+    const int bi = rigsong::boxBlock (timeline(), selSection, lane);
+    say (name + " in " + rigsong::letterFor (selSection) + dot() + list[(size_t) selSection].name + ": "
+         + (bi >= 0 ? "plays " + rigsong::clipName (engine, lane, timeline().getBlocks()[(size_t) bi].clip) : juce::String ("quiet"))
+         + ". Double-click the track (or the box) to open it in full.");
 }
 
 //==============================================================================
@@ -1261,6 +1396,14 @@ void SongView::timerCallback()
     if (hash != lastHash)
     {
         lastHash = hash;
+        // The song changed (here, in Bars view, or from another screen): what it was can come back.
+        if (! sameAsKept())
+        {
+            undoStack.push_back (kept);
+            if (undoStack.size() > 100)
+                undoStack.erase (undoStack.begin());
+            kept = { timeline().getBlocks(), timeline().getMarkers() };
+        }
         edited();
     }
     else if (engine.getTransport().isPlaying() || isMouseOverOrDragging (true))
@@ -1280,8 +1423,8 @@ void SongView::paint (juce::Graphics& g)
 
     if (! stepsArea.isEmpty())
     {
-        const char* steps[] = { "Make sounds on Play, Loops, Sampler", "+ Section for each part", "Click a box: pick what plays",
-                                "Song mode: Play runs it over the click", "Rec song: stems for Logic" };
+        const char* steps[] = { "Dial in a sound and pattern", "Rec take: play it over the beat", "To Song: lock it into a section",
+                                "Arrange: copy, move, delete", "Song mode: Play runs it all" };
         auto r = stepsArea;
         const int w = r.getWidth() / 5;
         for (int i = 0; i < 5; ++i)
@@ -1344,7 +1487,7 @@ void SongView::resized()
     const int gap = 7;
     moreButton.setBounds (top.removeFromRight (44));
     top.removeFromRight (gap);
-    const int w = juce::jlimit (96, 132, (top.getWidth() - 330) / 8 - gap);
+    const int w = juce::jlimit (84, 128, (top.getWidth() - 200) / 10 - gap);
     for (auto* b : { &exportButton, &recButton, &barsButton, &loopButton, &playButton })
     {
         b->setBounds (top.removeFromRight (w));
@@ -1354,7 +1497,11 @@ void SongView::resized()
     songButton.setBounds (top.removeFromRight (w - 10));
     jamButton.setBounds (top.removeFromRight (w - 10));
     top.removeFromRight (gap + 6);
-    addButton.setBounds (top.removeFromRight (w + 30));
+    undoButton.setBounds (top.removeFromRight (w - 14));
+    top.removeFromRight (gap);
+    deleteButton.setBounds (top.removeFromRight (w));
+    top.removeFromRight (gap);
+    addButton.setBounds (top.removeFromRight (w + 20));
     top.removeFromRight (10);
     titleArea = top;
 

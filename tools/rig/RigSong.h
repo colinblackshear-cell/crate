@@ -74,6 +74,16 @@ bool laneHasSomething (RigEngine&, int lane);
 // What's playing now, as a new section at the end: a box for every track that's on and has
 // something to play, set to the pattern it plays. Returns its index (-1 when full).
 int addSectionFromWhatsPlaying (RigEngine&, const juce::String& name, double bars);
+// Capture: what a lane plays right now, as a clip (the MPC's sequence, the bass's or drum
+// machine's pattern, the synth's keys (0) or arp (1); -1 for loops and live inputs).
+int currentClip (RigEngine&, int lane);
+// Puts what a lane plays right now into a section's box (replacing what was there). Returns the
+// block, or -1.
+int boxFromNow (RigEngine&, int section, int lane);
+// The same as a new section at the end with just this lane in it, `bars` long (the last
+// section's length, or 8 bars for the first, when 0). Returns the section, -1 when full.
+int sectionFromLane (RigEngine&, int lane, const juce::String& name, double bars = 0);
+
 // The Song builder's old parts (shows from before the Song screen) as sections, in order.
 // Only when the song has no sections yet. Returns true if it made any.
 bool sectionsFromParts (RigEngine&);

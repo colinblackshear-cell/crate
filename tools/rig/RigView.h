@@ -70,6 +70,27 @@ public:
     // Loads an instrument plugin onto the Bass or Synth and opens its own screen in Edit.
     void loadInstrumentPlugin (int track, const juce::PluginDescription&);
     static int trackForLane (int lane);
+    // The Song lane a track plays on (Loops: the layer picked on Play).
+    int laneForTrack (int track) const;
+    // A click on a track on the rail: picks it, and the view shows it (Play its steps, Edit its
+    // tool, Song its row, Mix its effects; Settings and the like go to Play). A double-click
+    // opens its whole tool in Edit, from any view.
+    void railClicked (int track);
+    void railDoubleClicked (int track);
+
+    // Capture (under the tracks). Rec take: the picked track, as you play it, onto the next empty
+    // loop from the next bar; again stops it at the end of that bar. Returns the loop (-1: none).
+    int pressRecTake();
+    int getTakeLayer() const { return takeLayer; }
+    // The last take of a track (-1: none yet).
+    int lastTakeOf (int track) const;
+    // To Song: the menu (into a section, every section, a new one; the take too). toSong does one:
+    // `section` -1 for a new section at the end, -2 for every section; `take` puts the track's
+    // last take (its loop) there instead of what the track plays. Returns the section (-1: none).
+    void showToSongMenu();
+    int toSong (int section, bool take = false);
+    // The walkthrough's steps (the Guide): going to the place a step shows.
+    void showTourPlace (const juce::String& place);
     // The page that shows a track in full ("MPC", "Drum machine", "Bass"...).
     static juce::String editPageFor (int track);
     // The Sounds drawer, over the right of whichever view is showing (F5).
@@ -166,6 +187,11 @@ private:
     void finishKnobLearn();
     void say (const juce::String&);
     juce::File currentShow;
+    int takeLayer = -1, takeTrack = -1;
+    bool takeStarted = false;   // the take's layer has been seen armed or recording
+    int tourStop = 0;   // the walkthrough's stop you were on
+    std::array<int, 8> lastTake { -1, -1, -1, -1, -1, -1, -1, -1 };
+    void updateCaptureButtons();
     std::unique_ptr<juce::FileChooser> toolChooser;
     juce::File printedMidi, printedAudio;
     std::unique_ptr<juce::Component> dragMidi, dragAudio;

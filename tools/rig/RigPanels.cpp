@@ -371,7 +371,7 @@ ScreenBar::ScreenBar()
     settings.setTooltip ("Settings: what the keys and pads play, the split, sampling one tool into another, knob Learn, the click, "
                          "audio and MIDI, the dark panel and a second screen (F6).");
     addAndMakeVisible (settings);
-    help.fontSize = 20.0f;
+    help.fontSize = 17.0f;
     help.setTooltip ("How to: step-by-step guides for this screen, recording loops, building a song, saving and exporting, "
                      "singing live and plugging in a guitar.");
     addAndMakeVisible (help);
@@ -403,7 +403,7 @@ void ScreenBar::resized()
     r.removeFromLeft (6);
     forward.setBounds (r.removeFromLeft (60));
     r.removeFromLeft (16);
-    help.setBounds (r.removeFromRight (56));
+    help.setBounds (r.removeFromRight (84));
     r.removeFromRight (10);
     const int util = juce::jlimit (110, 150, r.getWidth() / 9);
     settings.setBounds (r.removeFromRight (util));
@@ -433,6 +433,13 @@ TrackRail::TrackRail()
     newPattern.setTooltip ("Starts the next thing in the song on an empty pattern: a beat, a bass line, keys, the vocoder, a loop "
                            "or a sample. Also keeps what's playing as the next section, or starts over with a new, empty song.");
     addAndMakeVisible (newPattern);
+    for (auto* b : { &recTake, &toSong })
+    {
+        b->fontSize = 15.0f;
+        b->subSize = 10.5f;
+        addAndMakeVisible (b);
+    }
+    recTake.icon = PanelButton::Icon::rec;
 }
 
 void TrackRail::setCards (const juce::Array<juce::Component*>& list)
@@ -456,6 +463,14 @@ void TrackRail::resized()
     auto top = r.removeFromTop (40);
     newPattern.setBounds (top.withTrimmedRight (4).withHeight (36));
     r.removeFromTop (6);
+    {
+        auto capture = r.removeFromBottom (54).withTrimmedRight (4);
+        r.removeFromBottom (6);
+        const int w = (capture.getWidth() - 6) / 2;
+        recTake.setBounds (capture.removeFromLeft (w));
+        capture.removeFromLeft (6);
+        toSong.setBounds (capture);
+    }
     const int n = cards.size();
     if (n == 0)
         return;
