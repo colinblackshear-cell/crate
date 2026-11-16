@@ -117,7 +117,7 @@ bool Header::Shown::operator== (const Shown& o) const
     return std::abs (bpm - o.bpm) < 0.01 && partLetter == o.partLetter && partName == o.partName && barBeat == o.barBeat
         && partQueued == o.partQueued && std::abs (vuLeft - o.vuLeft) < 0.004f && std::abs (vuRight - o.vuRight) < 0.004f
         && keyboard == o.keyboard && keyboardFound == o.keyboardFound && keyboardActive == o.keyboardActive && macKeys == o.macKeys
-        && micOn == o.micOn && recording == o.recording;
+        && micOn == o.micOn && recording == o.recording && songOn == o.songOn;
 }
 
 Header::Header (bool isStandalone) : standalone (isStandalone)
@@ -139,6 +139,10 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
     addAndMakeVisible (tap);
     quantize.fontSize = 13.0f;
     addAndMakeVisible (quantize);
+    jam.fontSize = 12.0f;
+    jam.setTooltip ("The song is playing and decides which tracks play, so a track you switch on can stay quiet. "
+                    "Jam hands control back to you: everything you switch on plays, and the song waits on the Song screen.");
+    addChildComponent (jam);
     show.fontSize = 15.0f;
     show.subSize = 11.0f;
     show.sub = juce::String::fromUTF8 ("Not saved yet \xc2\xb7 menu");
@@ -146,7 +150,7 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
     addAndMakeVisible (show);
     play.setTooltip ("Starts and stops every tool together (space bar).");
     stop.setTooltip ("Stops, goes back to the start, and silences any notes still sounding.");
-    rec.setTooltip ("Records the set for Logic, from the next bar: every tool as its own WAV, the mix, and what you play as MIDI. "
+    rec.setTooltip ("Rec set: records the whole set for Logic, from the next bar: every tool as its own WAV, the mix, and what you play as MIDI. "
                     "Press again to stop. Saved in Music > Crate > Rig > Recordings.");
     up.setTooltip ("Tempo up (hold Shift for a tenth).");
     down.setTooltip ("Tempo down (hold Shift for a tenth).");
@@ -160,6 +164,7 @@ void Header::update (const Shown& s)
     if (s == shown)
         return;
     shown = s;
+    jam.setVisible (s.songOn && s.recording.isEmpty());
     repaint();
 }
 
@@ -207,6 +212,7 @@ void Header::resized()
     }
     r.removeFromLeft (16);
     partArea = centreY (r.removeFromLeft (176), h);
+    jam.setBounds (partArea.getRight() - 62, partArea.getBottom() - 30, 54, 24);
     r.removeFromLeft (12);
     // Your show, beside the song's place: its name and its menu.
     show.setBounds (centreY (r.removeFromLeft (150), h));
@@ -270,8 +276,17 @@ void Header::paint (juce::Graphics& g)
                      juce::Justification::topLeft, colours::arm.brighter (0.3f));
         }
         else
+        {
+            if (shown.songOn)
+            {
+                // The song is in charge: a green edge, and room for Jam.
+                g.setColour (colours::lcdGreen.withAlpha (0.8f));
+                g.drawRoundedRectangle (r.reduced (1.0f), 8.0f, 2.0f);
+                inner.removeFromRight ((float) jam.getWidth() + 2.0f);
+            }
             lcdText (g, shown.partName.toUpperCase(), inner, 15.0f, juce::Justification::topLeft,
                      shown.partQueued ? colours::next : colours::lcdAmber.withAlpha (0.85f));
+        }
     }
 
     if (! vuArea.isEmpty())
@@ -416,7 +431,7 @@ TrackRail::TrackRail()
 {
     newPattern.fontSize = 14.0f;
     newPattern.setTooltip ("Starts the next thing in the song on an empty pattern: a beat, a bass line, keys, the vocoder, a loop "
-                           "or a sample. Also keeps what's playing as the next section.");
+                           "or a sample. Also keeps what's playing as the next section, or starts over with a new, empty song.");
     addAndMakeVisible (newPattern);
 }
 
@@ -445,7 +460,8 @@ void TrackRail::resized()
     if (n == 0)
         return;
     const int gap = 2;
-    const int h = juce::jmin (96, (r.getHeight() - gap * (n - 1)) / n);
+    // (No taller than this: a taller card squeezes its words, "Rea...".)
+    const int h = juce::jmin (79, (r.getHeight() - gap * (n - 1)) / n);
     for (auto& c : cards)
     {
         if (c != nullptr)
@@ -514,6 +530,15 @@ void Footer::tick()
     const auto& tl = engine.getTimeline();
     const auto list = rigsong::sections (tl);
     const int count = (int) list.size();
+    if ((count == 0) != (sectionCount == 0))
+    {
+        sectionCount = count;
+        resized();
+        repaint();
+        if (onSlimChanged)
+            onSlimChanged();
+    }
+    sectionCount = count;
     auto& clock = engine.getTransport();
     const bool songOn = tl.on.load() && clock.isPlaying();
     const int bpb = juce::jmax (1, clock.getBeatsPerBar());
@@ -535,7 +560,14 @@ void Footer::tick()
         else if (has)
             sub = list[(size_t) i].name;
         else
-            sub = i == count ? "+ Save" : "Empty";
+            sub = i == count ? (count == 0 ? juce::String() : juce::String ("+ Save")) : juce::String ("Empty");
+        // No song yet: A is one plain button that says what it does.
+        const auto text = count == 0 && i == 0 ? juce::String ("+ Keep what's playing as A") : letter;
+        if (b->text != text)
+        {
+            b->text = text;
+            b->repaint();
+        }
         const bool empty = ! has && i != count;
         if (b->sub != sub || b->lit != lit || b->empty != empty)
         {
@@ -568,6 +600,23 @@ void Footer::resized()
         return;
     }
 
+    if (isSlim())
+    {
+        // No song yet: just A (keep what's playing as the first section), then the messages.
+        content = r.withSizeKeepingCentre (r.getWidth(), 22 + 44);
+        partsLabel = content.removeFromTop (22);
+        for (int i = 1; i < parts.size(); ++i)
+            parts[i]->setVisible (false);
+        partsArea = content.withWidth (260);
+        parts[0]->fontSize = 15.0f;
+        parts[0]->setBounds (partsArea.withHeight (44));
+        content.removeFromLeft (partsArea.getWidth() + 16);
+        message.setBounds (content.withTrimmedBottom (2));
+        message.setJustificationType (juce::Justification::centred);
+        message.setFont (barlow (14.0f));
+        return;
+    }
+    parts[0]->fontSize = 30.0f;
     partsLabel = content.removeFromTop (22);
     const int gap = 10;
     // Each key is wide enough for its section's name; messages go beside them when there's room.
@@ -603,6 +652,8 @@ void Footer::paint (juce::Graphics& g)
     g.fillRect (getLocalBounds().removeFromTop (2));
     message.setColour (juce::Label::textColourId, p.ink2);
     if (partsShown)
-        engraved (g, juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1\xe2\x80\x93" "8 \xc2\xb7 right-click to edit"), partsLabel.withWidth (500));
+        engraved (g, isSlim() ? juce::String ("Song sections: none yet (optional)")
+                              : juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1\xe2\x80\x93" "8 \xc2\xb7 right-click to edit"),
+                  partsLabel.withWidth (500));
 }
 }

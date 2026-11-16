@@ -39,6 +39,7 @@ private:
     juce::ToggleButton loop { "Loop" }, countIn { "Count in" }, followHost { "Play with Logic" };
     juce::ComboBox click;
     bool wasFollowing = false;
+    bool inRig = false;   // inside Kaleidobox: the top bar's tempo rules while the beat is on
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TransportBar)
 };

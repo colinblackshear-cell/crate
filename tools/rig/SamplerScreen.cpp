@@ -121,7 +121,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     addAndMakeVisible (editPadButton);
     setLit (recordButton, Lit::arm);
     recordButton.getProperties().set ("fontSize", 18.0f);
-    recordButton.setTooltip ("Record from your audio input into the Sampler. Press again to stop. (To sample a tool of Kaleidobox, use Settings > Sample.)");
+    recordButton.setTooltip ("Rec sample: records from your audio input into the Sampler. Press again to stop. (To sample a tool of Kaleidobox, use Settings > Sample.)");
     recordButton.onClick = [this] { editor.toggleRecord(); };
     addAndMakeVisible (recordButton);
 
@@ -876,7 +876,7 @@ void SamplerScreen::timerCallback()
     {
         const bool recording = engine.getSampler().isRecording();
         recordButton.setToggleState (recording, juce::dontSendNotification);
-        const auto text = recording ? "Stop " + juce::String (engine.getSampler().getRecordedSeconds(), 1) + "s" : juce::String ("Rec");
+        const auto text = recording ? "Stop " + juce::String (engine.getSampler().getRecordedSeconds(), 1) + "s" : juce::String ("Rec sample");
         if (recordButton.getButtonText() != text)
             recordButton.setButtonText (text);
     }
@@ -1123,7 +1123,10 @@ void SamplerScreen::paint (juce::Graphics& g)
             g.setFont (cond (22.0f, Weight::extra, 0.1f));
             auto t = sliceTitle;
             t.setRight ((editPadButton.isVisible() ? editPadButton.getX() : fxButton.getX()) - 8);
-            g.drawText (title.toUpperCase(), t, juce::Justification::centredLeft, true);
+            // Narrow: squeeze it (and drop "empty") rather than cut it off.
+            if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), title.toUpperCase()) > (float) t.getWidth() * 1.4f)
+                title = title.upToFirstOccurrenceOf (juce::String::fromUTF8 (" \xc2\xb7"), false, false);
+            g.drawFittedText (title.toUpperCase(), t, juce::Justification::centredLeft, 1, 0.6f);
 
             if (doc.hasAudio() && selectedSlice < numSlices() && toPadsButton.getRight() + 186 <= sliceTitle.getRight())
             {

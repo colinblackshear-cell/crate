@@ -178,6 +178,8 @@ Knob::Knob (juce::AudioProcessorValueTreeState& state, const juce::String& id, c
 {
     setUp();
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, slider);
+    // Said on every knob: how to put it back (a screen can say more with its own tooltip).
+    slider.setTooltip (n + ": drag up or down. Double-click puts it back to the start.");
     if (auto* p = state.getParameter (id))
     {
         slider.setDoubleClickReturnValue (true, p->convertFrom0to1 (p->getDefaultValue()));

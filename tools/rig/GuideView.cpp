@@ -263,6 +263,11 @@ public:
         howTo.setTooltip ("Step-by-step guides: recording loops, building a song, saving and exporting, singing live, plugging in a guitar.");
         howTo.onClick = [this] { if (guide.onHelp) guide.onHelp(); };
         addAndMakeVisible (howTo);
+        startOver.setButtonText ("Start over");
+        startOver.setTooltip ("A new, empty song: every tool, loop and section cleared (it asks to save first). "
+                              "The same as New song in the menu at the top.");
+        startOver.onClick = [this] { if (guide.onStartOver) guide.onStartOver(); };
+        addAndMakeVisible (startOver);
 
         startHere.setTooltip ("When lit, Kaleidobox opens on this page. F1-F4 still go straight to the views.");
         startHere.onClick = [this]
@@ -294,6 +299,8 @@ public:
         auto heroText = narrow ? hero : hero.withWidth (hero.getWidth() * 3 / 5);
         auto buttons = heroText.removeFromBottom (54).withSizeKeepingCentre (heroText.getWidth(), 36);
         howTo.setBounds (buttons.removeFromLeft (190));
+        buttons.removeFromLeft (14);
+        startOver.setBounds (buttons.removeFromLeft (140));
         buttons.removeFromLeft (14);
         startHere.setBounds (buttons.removeFromLeft (260));
         heroTextArea = heroText;
@@ -556,7 +563,7 @@ private:
     GuideView& guide;
     std::vector<Star> stars;
     juce::Rectangle<int> hero, heroTextArea, planet, mainLabel, moreLabel, footer;
-    GhostButton howTo;
+    GhostButton howTo, startOver;
     LampToggle startHere;
 public:
     juce::OwnedArray<Card> cards;

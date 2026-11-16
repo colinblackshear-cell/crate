@@ -133,6 +133,7 @@ public:
         go.onClick = [this]
         {
             owner.pressTrackButton (index);
+            owner.songHint();
             tick();
         };
         mute.setTooltip ("Mutes " + trackName (t) + ". Muted, it keeps going silently, so it comes back in time.");
@@ -140,6 +141,7 @@ public:
         {
             auto& m = owner.engine.getStrip (stripFor (index)).mute;
             m = ! m.load();
+            owner.songHint();
             tick();
         };
         solo.setTooltip ("Solo: hear only " + trackName (t) + ". Press again to bring the others back.");
@@ -414,7 +416,13 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
         repaint();
     };
 
-    clearButton.onClick = [this] { clearPattern(); };
+    clearButton.onClick = [this]
+    {
+        if (canUndoClear())
+            undoClear();
+        else
+            clearPattern();
+    };
     quantizeButton.onClick = [this]
     {
         if (onQuantize)
@@ -620,6 +628,13 @@ void GrooveView::say (const juce::String& text)
 {
     if (onSay)
         onSay (text);
+}
+
+void GrooveView::songHint()
+{
+    // With the song in charge, what you switch on may not play: say why, and how to take over.
+    if (engine.songInCharge())
+        say ("The song is playing and decides which tracks play. Press Jam (top, in the song's window) to take over.");
 }
 
 void GrooveView::pressPlay()
@@ -866,6 +881,22 @@ juce::Array<juce::Component*> GrooveView::takeTrackCards()
     return list;
 }
 
+juce::String GrooveView::trackHint() const
+{
+    switch (track)
+    {
+        case drums:   return juce::String ("Click a sound's name to change it");
+        case machine: return juce::String ("Top row: accents. Right-click a step for a roll; click a name to hear it");
+        case bass:    return juce::String ("Drag a note up or down");
+        case synth:   return juce::String ("Hold a chord; it plays on the lit steps");
+        case vocoder: return juce::String ("Switch a part on, then set how much of it underneath");
+        case sampler: return juce::String ("Press a pad to play it; the keys play it too");
+        case loops:   return juce::String ("Empty layer: press to record. With sound: press to pick it, then use the buttons");
+        case lineIn:  return juce::String ("Pick the input your instrument is plugged into");
+        default:      return juce::String();
+    }
+}
+
 void GrooveView::selectTrack (int t)
 {
     if (! juce::isPositiveAndBelow (t, (int) numTracks))
@@ -882,6 +913,8 @@ void GrooveView::selectTrack (int t)
     setFollowKnobs();
     for (auto* c : cards)
         c->tick();
+    if (isShowing())   // (on Play; Edit shows the instrument itself)
+        say (trackName (t) + ": " + trackHint() + ".");
     repaint();
 }
 
@@ -1004,7 +1037,7 @@ void GrooveView::buildTrack()
             break;
         case vocoder:
             for (auto* name : vocoderSounds)
-                add (name, "Vocoder sound: " + juce::String (name) + ".");
+                add (name, "Vocoder sound: " + juce::String (name) + ". Changed its knobs and want it back? Press it again: it comes back as it was.");
             break;
         case sampler:
             add ("Sample", "Records the mic, a tool or the mix (as set on the Setup page) into the Sampler, from the next bar.");
@@ -1128,6 +1161,15 @@ void GrooveView::updateButtons()
             b->repaint();
     };
     const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
+    if (track != loops)
+    {
+        const auto text = canUndoClear() ? juce::String ("Undo clear") : juce::String ("Clear");
+        if (clearButton.getButtonText() != text)
+        {
+            clearButton.setButtonText (text);
+            clearButton.setEnabled (true);
+        }
+    }
     if (hasKeys())
     {
         const auto text = soundName() + juce::String::fromUTF8 (" \xe2\x96\xbe");
@@ -1513,6 +1555,33 @@ void GrooveView::setDrumHit (int pad, int step, bool on)
 
 void GrooveView::clearPattern()
 {
+    // Keep what's there first, so the Clear can be taken back.
+    clearUndo = {};
+    switch (track)
+    {
+        case drums:
+            clearUndo.index = engine.getMpc().getProject().getCurrentSequenceIndex();
+            clearUndo.mpcTracks = engine.getMpc().getProject().currentSequence().tracks;
+            break;
+        case machine:
+            clearUndo.index = engine.getDrums().getSelectedPattern();
+            clearUndo.variation = engine.getDrums().editVariation;
+            clearUndo.machine = machinePattern();
+            break;
+        case bass:
+            clearUndo.index = engine.getBass().getSelectedPattern();
+            clearUndo.bass = engine.getBass().getPattern (clearUndo.index);
+            break;
+        case synth:
+            clearUndo.synth = engine.getSynth().getRhythm();
+            break;
+        default: break;
+    }
+    if (track == drums || track == machine || track == bass || track == synth)
+    {
+        clearUndo.track = track;
+        say ("Cleared. Changed your mind? Undo clear (the same button), or Cmd+Z.");
+    }
     switch (track)
     {
         case loops:
@@ -1548,6 +1617,42 @@ void GrooveView::clearPattern()
         default: break;
     }
     repaint();
+}
+
+bool GrooveView::undoClear()
+{
+    if (! canUndoClear())
+        return false;
+    const auto u = std::exchange (clearUndo, {});
+    switch (u.track)
+    {
+        case drums:
+        {
+            auto& mpc = engine.getMpc();
+            auto& seqs = mpc.getProject().getSequences();
+            if (juce::isPositiveAndBelow (u.index, (int) seqs.size()))
+            {
+                mpc.beginEdit();
+                seqs[(size_t) u.index].tracks = u.mpcTracks;
+                mpc.getProject().sequenceChanged();
+            }
+            break;
+        }
+        case machine:
+            engine.getDrums().setPattern (u.index, u.machine, u.variation);
+            break;
+        case bass:
+            engine.getBass().setPattern (u.index, u.bass);
+            break;
+        case synth:
+            engine.getSynth().setRhythm (u.synth);
+            break;
+        default: return false;
+    }
+    say ("Put back what Clear took away.");
+    updateButtons();
+    repaint();
+    return true;
 }
 
 juce::String GrooveView::rowName (int row) const
@@ -1713,6 +1818,8 @@ void GrooveView::pressCell (int row, int i)
 {
     if (! juce::isPositiveAndBelow (i, numSteps()) || ! juce::isPositiveAndBelow (row, numRows()))
         return;
+    if (canUndoClear())
+        clearUndo = {};   // a new step after a Clear: that's the new pattern now
     switch (track)
     {
         case drums:
@@ -2220,25 +2327,19 @@ void GrooveView::paint (juce::Graphics& g)
         if (lcdWidth > 60)
         {
             vintage::drawLcd (g, lcd);
-            vintage::lcdText (g, patternText(), lcd.reduced (8.0f, 0.0f), 22.0f);
+            // Smaller type rather than a cut-off word ("0 of 8 laye").
+            const auto text = patternText();
+            const auto box = lcd.reduced (8.0f, 0.0f);
+            float size = 22.0f;
+            while (size > 14.0f && juce::GlyphArrangement::getStringWidth (vintage::lcd (size), text) > box.getWidth())
+                size -= 1.0f;
+            vintage::lcdText (g, text, box, size);
         }
         h.removeFromRight (12);
-        const juce::String hint = [this]
-        {
-            switch (track)
-            {
-                case drums:   return juce::String ("Click a sound's name to change it");
-                case machine: return juce::String ("Top row: accents. Right-click a step for a roll; click a name to hear it");
-                case bass:    return juce::String ("Drag a note up or down");
-                case synth:   return juce::String ("Hold a chord; it plays on the lit steps");
-                case vocoder: return juce::String ("Switch a part on, then set how much of it underneath");
-                case sampler: return juce::String ("Press a pad to play it; the keys play it too");
-                case loops:   return juce::String ("Empty layer: press to record. With sound: press to pick it, then use the buttons");
-                case lineIn:  return juce::String ("Pick the input your instrument is plugged into");
-                default:      return juce::String();
-            }
-        }();
-        vintage::engraved (g, hint, h, juce::Justification::centredLeft, 13.0f, true);
+        const auto hint = trackHint();
+        // Only when it fits: a cut-off hint ("D...") says nothing. Picking the track says it below too.
+        if (juce::GlyphArrangement::getStringWidth (vintage::cond (13.0f, Weight::bold, 0.14f), hint.toUpperCase()) <= (float) h.getWidth())
+            vintage::engraved (g, hint, h, juce::Justification::centredLeft, 13.0f, true);
     }
 
     // Step numbers, with the play head.

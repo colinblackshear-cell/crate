@@ -399,9 +399,15 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     header.show.onClick = [this] { if (toolMode()) showToolMenu(); else showShowMenu(); };
     rail.newPattern.onClick = [this] { showPatternMenu(); };
     header.quantize.onClick = [this] { showQuantize (quantizeTarget(), &header.quantize); };
+    header.jam.onClick = [this]
+    {
+        engine.jam();
+        say ("Jam: you're in charge. Every track you switch on plays; the song waits on the Song screen (Song mode there plays it again).");
+    };
 
     // The song's sections.
     footer.onEditParts = [this] { showTab ("Song"); };
+    footer.onSlimChanged = [this] { resized(); };
 
     // The Setup page's parts.
     setupPage = new SetupPage (*this);
@@ -654,6 +660,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
                                      { return pageIndex (name) >= 0 || ((name == "Sampler editor" || name == "MPC") && samplerScreen != nullptr); });
     guideView->onOpen = [this] (const juce::String& name) { openTool (name); };
     guideView->onHelp = [this] { showHelp (true); };
+    guideView->onStartOver = [this] { askNewSong(); };
     guideView->startsHere = [this] { return ! (bool) engine.screens.getProperty ("skipGuide", false); };
     guideView->setStartsHere = [this] (bool start)
     {
@@ -750,6 +757,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     refresh();
     if (toolMode())
         startToolMode();
+    updateRecordButton();   // its name ("Rec set") from the start
+    footer.tick();          // the song bar's sections (thin until there's a song)
     startTimerHz (30);
     // Put popped-out tools back on their screens, once this window is up.
     juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
@@ -1680,6 +1689,8 @@ void RigView::timerCallback()
             shown.partQueued = true;
             shown.partName = "Next: " + rigsong::letterFor (queued) + " " + list[(size_t) queued].name;
         }
+        else if (engine.songInCharge())
+            shown.partName = shown.partName.isNotEmpty() ? shown.partName : juce::String ("Song");   // (beside Jam)
         else
             shown.partName = (shown.partName.isNotEmpty() ? shown.partName + juce::String::fromUTF8 (" \xc2\xb7 ") : (songOn ? juce::String::fromUTF8 ("Song \xc2\xb7 ") : juce::String()))
                            + "Bar.Beat";
@@ -1697,6 +1708,7 @@ void RigView::timerCallback()
         shown.macKeys = devices != nullptr || recent;
         shown.micOn = devices != nullptr ? engine.micOn.load() : true;
         shown.recording = whatsRecording().first;
+        shown.songOn = engine.songInCharge();
         header.update (shown);
     }
     footer.tick();
@@ -1794,9 +1806,10 @@ void RigView::updateRecordButton()
 {
     auto& recorder = engine.getRecorder();
     const auto state = recorder.getState();
-    juce::String text = "Rec";
+    // In the Rig it records the whole set (there are other Rec buttons); a tool plugin's, its tool.
+    juce::String text = toolMode() ? "Rec" : "Rec set";
     if (state == RigRecorder::State::armed)
-        text = juce::String::fromUTF8 ("Rec \xc2\xb7 Armed");
+        text = juce::String::fromUTF8 ("Set \xc2\xb7 Armed");
     else if (state == RigRecorder::State::recording)
     {
         const int seconds = (int) recorder.getRecordedSeconds();
@@ -2100,6 +2113,11 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         return true;
     }
     // Cmd+[ and Cmd+]: back and forward, as in a web browser.
+    if (key == juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0))
+    {
+        undoLast();
+        return true;
+    }
     if (key == juce::KeyPress ('[', juce::ModifierKeys::commandModifier, 0))
     {
         goBack();
@@ -2148,20 +2166,48 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         showTab ("Setup");
         return true;
     }
-    // 1-8: the song parts; on the Looper screen, its layers (record, stop, overdub).
+    // 1-8: the song's sections (only ones that exist); on the Looper, or Play with Loops picked, the loop layers.
     const auto c = key.getTextCharacter();
     if (c >= '1' && c <= '8' && ! key.getModifiers().isAnyModifierKeyDown())
     {
+        const int n = (int) (c - '1');
         if (currentPage() == "Looper")
-            engine.getLooper().recordOrClose ((int) (c - '1'));   // (never an overdub by accident)
+            engine.getLooper().recordOrClose (n);   // (never an overdub by accident)
+        else if (getView() == "Play" && groove != nullptr && groove->getTrack() == GrooveView::loops)
+            groove->pressCell (0, n);               // the same as pressing the layer on screen
+        else if (n < (int) rigsong::sections (engine.getTimeline()).size())
+            rigpanels::Footer::pressPart (engine, n);
         else
-            rigpanels::Footer::pressPart (engine, (int) (c - '1'));
+            // A key never makes a section by itself: that's the + Save button, on purpose.
+            say ("No section " + rigsong::letterFor (n) + " yet. To keep what's playing as a section, press + Save at the bottom.");
         return true;
     }
     return false;
 }
 
 //==============================================================================
+bool RigView::undoLast()
+{
+    // Cmd+Z: takes back the last Clear on Play, or the last take on a loop (the Song screen's
+    // own Cmd+Z undoes its boxes).
+    const auto view = getView();
+    if (view == "Play" && groove != nullptr && groove->undoClear())
+        return true;
+    if (view == "Play" || currentPage() == "Looper")
+    {
+        auto& looper = engine.getLooper();
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+            if (looper.canUndo (i) && looper.getState (i) == RigLooper::State::playing)
+            {
+                looper.undo (i);
+                say ("Took back the last recording on top of loop " + juce::String (i + 1) + ".");
+                return true;
+            }
+    }
+    say ("Nothing to undo here. (Cmd+Z takes back a Clear on Play, or the last overdub on a loop.)");
+    return false;
+}
+
 std::pair<juce::String, juce::String> RigView::whatsRecording() const
 {
     auto& looper = engine.getLooper();
@@ -2386,6 +2432,8 @@ void RigView::showPatternMenu()
     const int parts = (int) rigsong::sections (engine.getTimeline()).size();
     menu.addItem (100, "Keep what's playing as the song's next section (" + rigsong::letterFor (parts) + ")", parts < rigsong::kMaxSections);
     menu.addItem (101, "Open the Song screen");
+    menu.addSeparator();
+    menu.addItem (102, "Start over: a new, empty song...");
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (rail.newPattern),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                         {
@@ -2395,6 +2443,8 @@ void RigView::showPatternMenu()
                                 safe->keepAsSongPart();
                             else if (result == 101)
                                 safe->showTab ("Song");
+                            else if (result == 102)
+                                safe->askNewSong();
                             else
                                 safe->startPattern (result - 1);
                         });
@@ -2566,7 +2616,7 @@ void RigView::resized()
         header.setBounds (area.removeFromTop (compact ? 88 : 100));
     screenBar.setBounds (area.removeFromTop (compact ? 56 : 62));
     if (! stageShown)
-        footer.setBounds (area.removeFromBottom (compact ? 92 : 104));
+        footer.setBounds (area.removeFromBottom (footer.isSlim() ? (compact ? 72 : 78) : (compact ? 92 : 104)));
     if (railShown())
     {
         auto railArea = area.removeFromLeft (rigpanels::TrackRail::kWidth + 22).withTrimmedLeft (22).reduced (0, 8);

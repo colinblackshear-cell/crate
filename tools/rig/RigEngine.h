@@ -79,6 +79,11 @@ public:
     void launchSection (int i);
     void playOrStop();
     double songStartBar = 0;
+    // True while the song decides what plays (song mode on, with sections): tracks it uses come
+    // and go with its boxes, so a track you switch on can stay quiet. jam() hands control back:
+    // the song waits, and whatever you switch on plays (message thread).
+    bool songInCharge() const { return timeline.on.load() && ! timeline.isEmpty(); }
+    void jam() { timeline.on = false; timeline.cycle = false; controlsMoved = true; }
 
     // Record the set (message thread): every strip and the mix as WAVs, and what's played on
     // the keys and pads as MIDI, into `folder`; it starts at the next bar. Call stopRecording()

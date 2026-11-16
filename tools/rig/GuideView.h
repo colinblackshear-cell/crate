@@ -41,6 +41,8 @@ public:
     std::function<void (const juce::String& page)> onOpen;
     // The how-to guides (the ? button's).
     std::function<void()> onHelp;
+    // Start over: a new song (asks to save first).
+    std::function<void()> onStartOver;
     // "Open the Rig here": whether the Rig starts on the Guide, and its switch.
     std::function<bool()> startsHere;
     std::function<void (bool)> setStartsHere;

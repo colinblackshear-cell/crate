@@ -42,6 +42,8 @@ public:
     PanelButton show { "Unsaved show" };
     // Quantize what's on screen (under Tap): opens the Quantize panel. Cmd+U does it straight away.
     PanelButton quantize { "Quantize" };
+    // Shown in the song's window only while the song decides what plays: hands control back.
+    PanelButton jam { "Jam" };
     std::function<void()> onMic;
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
     std::function<void()> onRecording;  // a click on the red "recording" line: go to what records
@@ -60,6 +62,8 @@ public:
         // What's recording right now ("Overdub loop 3", "Rec MPC beat"...), empty when nothing:
         // shown in red where the song's place is, so nothing records without you seeing it.
         juce::String recording;
+        // The song is in charge (song mode): the window says so, with Jam to take over.
+        bool songOn = false;
         bool operator== (const Shown&) const;
     } shown;
     void update (const Shown&);
@@ -106,7 +110,7 @@ public:
     void resized() override;
 
     // The next thing in the song, on an empty pattern (a beat, a bass line, keys...).
-    PanelButton newPattern { "+ New pattern" };
+    PanelButton newPattern { "+ New / start over" };
 
     static constexpr int kWidth = 232;
 
@@ -137,9 +141,14 @@ public:
     // one-tool plugin's drag chips go on the right).
     std::function<juce::Rectangle<int> (juce::Rectangle<int>)> onLayout;
     std::function<void()> onEditParts;
+    // No song yet: the bar is one thin row (A, to keep what's playing as the first section, and
+    // the messages), so it doesn't take room on every screen. onSlimChanged: lay out again.
+    bool isSlim() const { return partsShown && sectionCount == 0; }
+    std::function<void()> onSlimChanged;
 
 private:
     void showPartMenu (int part);
+    int sectionCount = 0;
 
     RigEngine& engine;
     juce::Rectangle<int> partsArea, partsLabel;
