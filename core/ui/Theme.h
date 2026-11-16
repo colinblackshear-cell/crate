@@ -32,20 +32,6 @@ namespace crate::Theme
         textDim = juce::Colour (0xffbdaf97);
     }
 
-    // Kaleidobox's dharma wheel: violet wells, cream ink, saffron for what's picked.
-    inline void useWheelWells()
-    {
-        background = juce::Colour (0xff12071c);
-        panel = juce::Colour (0xff1f0d2e);
-        raised = juce::Colour (0xff35204a);
-        outline = juce::Colour (0xff4a3060);
-        waveform = juce::Colour (0xffffb21f);
-        accent = juce::Colour (0xffffb21f);
-        record = juce::Colour (0xffff5a4a);
-        text = juce::Colour (0xfff6ebdd);
-        textDim = juce::Colour (0xffc2b4c4);
-    }
-
     class LookAndFeel : public juce::LookAndFeel_V4
     {
     public:

@@ -264,8 +264,8 @@ void Header::resizedWheel()
 {
     // Positions from the design (the frame is 1440 x 960; this is its left column).
     auto r = getLocalBounds();
-    auto top = r.removeFromTop (68).withTrimmedTop (16).withTrimmedBottom (6).reduced (20, 0);
-    show.setBounds (top.removeFromRight (166));
+    auto top = r.removeFromTop (68).withTrimmedTop (16).withTrimmedBottom (6).reduced (26, 0);
+    show.setBounds (top.removeFromRight (176));
     top.removeFromRight (10);
     wordmarkArea = top;
     // The wheel, with Play at its hub.

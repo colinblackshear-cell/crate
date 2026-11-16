@@ -179,7 +179,7 @@ public:
         const bool lowZone = chords.trigger.load() == (int) RigChords::Trigger::lowKeys;
         const int low = chords.lowKey.load();
 
-        g.setColour (vintage::darkKey());
+        g.setColour (juce::Colour (0xff2a2622));
         g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
 
         auto shade = [&] (int note, juce::Rectangle<float> key, bool black)

@@ -113,7 +113,7 @@ void drawLeds (juce::Graphics& g, juce::Rectangle<float> r, float level, int cou
                                   : juce::Rectangle<float> (r.getX() + i * (size + gap), r.getY(), size, r.getHeight());
         const float share = (float) i / count;
         const auto colour = share > 0.85f ? colours::arm : share > 0.65f ? colours::next : colours::play;
-        g.setColour (i < lit ? colour : vintage::offLed());
+        g.setColour (i < lit ? colour : juce::Colour (0xff2e2925));
         g.fillRoundedRectangle (seg, 2.0f);
     }
 }
@@ -179,13 +179,13 @@ public:
         // The footswitch.
         const auto sw = footswitch.toFloat();
         glow (g, sw, sw.getWidth() / 2, juce::Colours::black, 6.0f, 0.35f);
-        g.setColour (vintage::darkKey());
+        g.setColour (juce::Colour (0xff2a2622));
         g.fillEllipse (sw);
         const auto cap = sw.reduced (sw.getWidth() * 0.09f).translated (0, pressed ? 2.0f : 0.0f);
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff4f1ea), cap.getX(), cap.getY(), juce::Colour (0xff9a958c), cap.getRight(),
                                                  cap.getBottom(), false));
         g.fillEllipse (cap);
-        g.setColour (vintage::darkKey());
+        g.setColour (juce::Colour (0xff2a2622));
         g.setFont (cond (juce::jmin (13.0f, cap.getHeight() * 0.3f), Weight::extra, 0.04f));
         g.drawText (info.switchText != nullptr ? juce::String (info.switchText) : juce::String (lit ? "ON" : "OFF"), cap,
                     juce::Justification::centred);
@@ -1193,7 +1193,7 @@ void VocoderScreen::paint (juce::Graphics& g)
               juce::Justification::centredLeft, 12.0f, true);
     {
         const auto s = scopeArea.toFloat();
-        g.setColour (vintage::screenBlack());
+        g.setColour (juce::Colour (0xff0e0c0a));
         g.fillRoundedRectangle (s, 8.0f);
         const int n = (int) inputHistory.size();
         const float w = (s.getWidth() - 12) / n;
@@ -1207,7 +1207,7 @@ void VocoderScreen::paint (juce::Graphics& g)
         if (! micLive)
         {
             // The wave still shows what's coming in, but none of it is heard yet.
-            g.setColour (vintage::screenBlack().withAlpha (0.72f));
+            g.setColour (juce::Colour (0xff0e0c0a).withAlpha (0.72f));
             g.fillRoundedRectangle (s, 8.0f);
             g.setColour (colours::arm);
             g.setFont (cond (17.0f, Weight::extra, 0.06f));

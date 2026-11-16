@@ -7,9 +7,8 @@ namespace Theme = crate::Theme;
 
 namespace
 {
-    // (Read when drawn: Kaleidobox sets the theme's colours after this file's statics are made.)
-    juce::Colour padEmptyColour() { return Theme::raised; }
-    juce::Colour padFullColour() { return Theme::raised.brighter (0.35f); }
+    const juce::Colour padEmpty = Theme::raised;
+    const juce::Colour padFull { 0xff55575e };
 }
 
 PadGrid::PadGrid (Project& p) : project (p) {}
@@ -95,7 +94,7 @@ void PadGrid::paint (juce::Graphics& g)
         auto r = boundsForSlot (slot).toFloat();
 
         const bool lit = flashUntil[(size_t) pad] > now || held == pad;
-        auto fill = p.isEmpty() ? padEmptyColour() : padFullColour();
+        auto fill = p.isEmpty() ? padEmpty : padFull;
         if (lit)
             fill = Theme::accent;
         else if (dragHover == pad)

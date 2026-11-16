@@ -193,16 +193,7 @@ private:
     juce::AudioDeviceManager* devices;
     float micMeter = 0.0f;
     // First, before any tool is made: the tools inside take the panel's warm wells.
-    // The tools' own panels (MPC, sample editor) take the look's wells before any is made.
-    struct WarmWells
-    {
-        explicit WarmWells (RigEngine& e)
-        {
-            const bool wheel = e.screens.getProperty ("look", "wheel").toString() != "cream";
-            vintage::setWheel (wheel);
-            wheel ? crate::Theme::useWheelWells() : crate::Theme::useWarmWells();
-        }
-    } warmWells { engine };
+    struct WarmWells { WarmWells() { crate::Theme::useWarmWells(); } } warmWells;
     crate::Theme::LookAndFeel lookAndFeel;
 
     // The frame.

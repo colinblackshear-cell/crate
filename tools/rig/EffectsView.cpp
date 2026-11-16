@@ -25,7 +25,7 @@ void drawLeds (juce::Graphics& g, juce::Rectangle<float> r, float level, int cou
                                   : juce::Rectangle<float> (r.getX() + i * (size + gap), r.getY(), size, r.getHeight());
         const float share = (float) i / count;
         const auto colour = share > 0.85f ? colours::arm : share > 0.65f ? colours::next : colours::play;
-        g.setColour (i < lit ? colour : vintage::offLed());
+        g.setColour (i < lit ? colour : juce::Colour (0xff2e2925));
         g.fillRoundedRectangle (seg, 2.0f);
     }
 }
@@ -125,13 +125,13 @@ public:
 
         const auto sw = footswitch.toFloat();
         glow (g, sw, sw.getWidth() / 2, juce::Colours::black, 6.0f, 0.35f);
-        g.setColour (vintage::darkKey());
+        g.setColour (juce::Colour (0xff2a2622));
         g.fillEllipse (sw);
         const auto cap = sw.reduced (sw.getWidth() * 0.09f).translated (0, pressed ? 2.0f : 0.0f);
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff4f1ea), cap.getX(), cap.getY(), juce::Colour (0xff9a958c), cap.getRight(),
                                                  cap.getBottom(), false));
         g.fillEllipse (cap);
-        g.setColour (vintage::darkKey());
+        g.setColour (juce::Colour (0xff2a2622));
         g.setFont (cond (juce::jmin (13.0f, cap.getHeight() * 0.3f), Weight::extra, 0.04f));
         g.drawText (lit ? "ON" : "OFF", cap, juce::Justification::centred);
     }
