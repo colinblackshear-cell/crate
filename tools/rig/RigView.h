@@ -198,7 +198,7 @@ private:
     {
         explicit WarmWells (RigEngine& e)
         {
-            const bool wheel = e.screens.getProperty ("look").toString() == "wheel";
+            const bool wheel = e.screens.getProperty ("look", "wheel").toString() != "cream";
             vintage::setWheel (wheel);
             wheel ? crate::Theme::useWheelWells() : crate::Theme::useWarmWells();
         }
