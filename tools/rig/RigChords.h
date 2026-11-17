@@ -117,7 +117,26 @@ public:
     //     the way chord players lay them out). Black keys follow `mapOffScale`.
     //   Your pads: C to B play pads 1-7, the black keys pads 8-12 (C# 8, D# 9, F# 10, G# 11, A# 12),
     //     in every octave.
-    enum class MapLayout { scaleNotes, whiteKeys, yourPads };
+    //   Full keyboard: a different chord on every key. Each octave is its own kind of chord in the
+    //     key (C1 triads, C2 sevenths, C3 add9s, C4 ninths, C5 sus4s, C6 sixths, by Logic's names),
+    //     and the keys outside the scale play chords borrowed from the parallel major or minor, or
+    //     a dominant chord on that note.
+    //   Your keys: your own chord on any key (setKeyChord). Starts as a copy of the map you had;
+    //     keys without one play their note.
+    enum class MapLayout { scaleNotes, whiteKeys, yourPads, fullKeyboard, yourKeys };
+    static constexpr int kNumMapLayouts = 5;
+    // The chord type each octave plays on the Full keyboard (vox::Chords flavour), by note / 12.
+    static int fullKeyboardFlavour (int octave);
+    // Your keys (message thread): a key's own chord, or empty.
+    void setKeyChord (int note, const juce::Array<int>& notes);
+    const juce::Array<int>& getKeyChord (int note) const { return keyChords[(size_t) juce::jlimit (0, 127, note)]; }
+    bool hasKeyChords() const;
+    // Your keys, from what every key plays now (the layout you're on, voiced), then Your keys on.
+    void copyMapToYourKeys();
+    void clearKeyChords();
+    // Catch onto a key: the next chord you hold becomes `note`'s chord on Your keys.
+    void catchForKey (int note);
+    int getCatchKey() const { const int c = catchPad.load(); return c >= kCatchKey ? c - kCatchKey : -1; }
     // Keys outside the scale (or black keys on White keys): play as single notes, play the chord
     // of the scale note just below, or play nothing.
     enum class OffScale { notes, snap, silent };
@@ -141,7 +160,9 @@ public:
         enum Kind { pass, chord, padChord, silent } kind = pass;
         juce::Array<int> notes;   // chord: its notes, around C3
         int pad = -1;             // padChord: which pad
-        int degree = -1;          // chord: its scale degree (0-6)
+        int degree = -1;          // chord: its scale degree (0-6), of chordKey / chordScale
+        int chordKey = 0, chordScale = 0, flavour = 0;   // what built it (vox::Chords); degree -1: your own
+        bool borrowed = false;    // from outside the key's scale
         int follow = 0;           // semitones that put it in the octave of the key you press
         int root = 0;             // its root's pitch class (for Bass)
     };
@@ -161,7 +182,7 @@ public:
     // Catch: the next chord you hold on your keyboard's keys becomes `pad` (they still play as usual).
     void catchFromKeys (int pad);
     bool isCatching() const { return catchPad.load() >= 0; }
-    int getCatchPad() const { return catchPad.load(); }
+    int getCatchPad() const { const int c = catchPad.load(); return c < kCatchKey ? c : -1; }
     void cancelCatch() { catchPad = -1; }
     // Message thread (the window's timer): finishes a catch once every key is up. True when a pad changed.
     bool serviceCatch();
@@ -213,6 +234,8 @@ public:
 private:
     void syncPad (int pad);
     std::array<MapEntry, 128> map;
+    std::array<juce::Array<int>, 128> keyChords;
+    static constexpr int kCatchKey = 1000;   // catchPad: a key of Your keys (+ the note)
     // The audio thread's copy of the map: kind, pad, follow, root, and the chord's notes.
     struct LiveMapEntry
     {

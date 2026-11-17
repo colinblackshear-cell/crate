@@ -589,17 +589,21 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     if (notesOffRequested.load())
         chords.stopAll();
     // A one-tool plugin: whatever the routing made of it, every note plays its tool.
-    if (const int only = onlyTool.load(); only >= 0)
+    auto allToOnlyTool = [&]
     {
-        auto* to = only == mpcStrip ? &mpcMidi : only == drumsStrip ? &drumsMidi : only == vocoderStrip ? &vocoderMidi
-                 : only == bassStrip ? &bassMidi : &synthMidi;
-        for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
-            if (m != to && ! m->isEmpty())
-            {
-                to->addEvents (*m, 0, -1, 0);
-                m->clear();
-            }
-    }
+        if (const int only = onlyTool.load(); only >= 0)
+        {
+            auto* to = only == mpcStrip ? &mpcMidi : only == drumsStrip ? &drumsMidi : only == vocoderStrip ? &vocoderMidi
+                     : only == bassStrip ? &bassMidi : &synthMidi;
+            for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
+                if (m != to && ! m->isEmpty())
+                {
+                    to->addEvents (*m, 0, -1, 0);
+                    m->clear();
+                }
+        }
+    };
+    allToOnlyTool();
     if (notesOffRequested.exchange (false))
         for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
         {
@@ -632,6 +636,8 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         chordClock.beatsPerBar = transport.getBeatsPerBar();
         chordClock.playing = transport.isPlayingThisBlock();
         chords.process (chordClock, n, routing.keysTo.load(), destinations);
+        // In a one-tool plugin the chords play its tool too, wherever the chord builder sends them.
+        allToOnlyTool();
     }
 
     // Recording the set: what's played, by tool, before the tools see it.
