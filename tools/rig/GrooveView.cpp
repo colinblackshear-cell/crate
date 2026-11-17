@@ -255,7 +255,9 @@ public:
         if (e.mouseWasClicked())
         {
             owner.selectTrack (index);
-            if (owner.onTrackPicked)
+            if (e.getNumberOfClicks() >= 2 && owner.onTrackOpened)
+                owner.onTrackOpened (index);   // the whole tool, in Edit
+            else if (owner.onTrackPicked)
                 owner.onTrackPicked (index);
         }
     }

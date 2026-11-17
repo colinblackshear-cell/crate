@@ -89,8 +89,10 @@ public:
     void refresh();
 
     std::function<void (const juce::String& tab)> onOpen;
-    // A track card was clicked (picked), wherever the cards are.
-    std::function<void (int track)> onTrackPicked;
+    // A track card was clicked (picked), wherever the cards are; double-clicked (open it in full).
+    std::function<void (int track)> onTrackPicked, onTrackOpened;
+    // Loops: the layer picked on Play (0-7).
+    int getPickedLayer() const { return pickedLayer; }
 
     // The track cards, for the window's track rail: they move there (and stay this view's), and
     // the Groove's middle takes the whole width.

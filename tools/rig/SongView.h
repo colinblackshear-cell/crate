@@ -80,6 +80,21 @@ public:
     void setSectionLength (double bars);
     void setSectionBank (int bank);
 
+    // Deleting: a section (its boxes go, what comes after moves up), or with the Delete button
+    // (and the Delete key) the picked section, or the picked box's. With nothing picked the
+    // button offers a menu of the sections.
+    bool deleteSection (int section);
+    void pressDelete();
+    // Undo (the button and Cmd+Z): takes back the last change to the song, made here, in Bars
+    // view, or by To Song from any screen. False when there's nothing to take back.
+    bool undo();
+    bool canUndo() const { return ! undoStack.empty(); }
+    // Starts the undo afresh (a show loaded, a new song): nothing to take back into it.
+    void forgetUndo();
+    // A track picked on the rail: its row lights up on the picked section (or the one playing,
+    // or the first). Says so when the track isn't in the song yet.
+    void showLane (int lane);
+
     // The lanes the board shows, top to bottom.
     std::vector<int> shownLanes() const;
     bool showingAllLanes = false;
@@ -105,7 +120,7 @@ private:
     RigEngine& engine;
     rigpanels::PanelButton addButton { "+ Section" }, jamButton { "Jam" }, songButton { "Song" }, playButton { "From start" },
         loopButton { "Loop section" }, barsButton { "Bars view" }, recButton { "Rec song" }, exportButton { "Export" },
-        moreButton { juce::String::fromUTF8 ("\xe2\x8b\xaf") }, bigAdd { "+ First section: what's playing now" },
+        moreButton { juce::String::fromUTF8 ("\xe2\x8b\xaf") }, deleteButton { "Delete" }, undoButton { "Undo" }, bigAdd { "+ First section: what's playing now" },
         bigEmpty { "+ Empty section" };
     std::unique_ptr<Board> board;
     std::unique_ptr<Names> names;
@@ -116,6 +131,11 @@ private:
     int selSection = -1, selLane = -1;
     bool barsShown = false, recordingSong = false, seenPlaying = false;
     int lastHash = 0;
+    // The song as it was before each change (blocks and sections), newest last.
+    using Snapshot = std::pair<std::vector<RigTimeline::Block>, std::vector<RigTimeline::Marker>>;
+    std::vector<Snapshot> undoStack;
+    Snapshot kept;   // the song as it is (the next change pushes this)
+    bool sameAsKept() const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SongView)
 };
