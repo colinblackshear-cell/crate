@@ -7,6 +7,7 @@
 #include "GrooveView.h"
 #include "VocoderScreen.h"
 #include "Parameters.h"   // the vocoder's
+#include "core/AudioFiles.h"
 
 // The chord builder: your own chords on 16 pads, onto any instrument, from clicks, the Launchkey's
 // pads or keys, a progression on the clock, and out to MIDI files for Logic.
@@ -344,6 +345,119 @@ public:
             expectEquals (other.fillKey, 7);
         }
 
+        beginTest ("the full keyboard: a different chord on every key, your keys, your sound");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            auto& chords = engine.getChords();
+            chords.target = (int) RigRouting::Dest::synth;
+            engine.getRouting().keysTo = (int) RigRouting::Dest::synth;
+            chords.trigger = (int) RigChords::Trigger::keyMap;
+            chords.mapLayout = (int) RigChords::MapLayout::fullKeyboard;
+            chords.setKey (0, 0, 0);
+            auto play = [&] (int note)
+            {
+                engine.addMidiNow (juce::MidiMessage::noteOn (1, note, 0.9f));
+                run (engine);
+                juce::Array<int> on;
+                for (int n = 0; n < 128; ++n)
+                    if (synthHas (engine, n))
+                        on.add (n);
+                engine.addMidiNow (juce::MidiMessage::noteOff (1, note));
+                run (engine);
+                return on;
+            };
+
+            // Every key of a Launchkey 61 (C1-C6) plays a chord, and no two the same.
+            juce::StringArray seen, names;
+            for (int k = 36; k <= 96; ++k)
+            {
+                const auto on = play (k);
+                expect (on.size() >= 3, "key " + juce::String (k) + " plays a chord");
+                expectEquals (synthCount (engine), 0);
+                juce::StringArray text;
+                for (int n : on)
+                    text.add (juce::String (n));
+                expect (! seen.contains (text.joinIntoString (" ")), "key " + juce::String (k) + "'s chord is its own");
+                seen.add (text.joinIntoString (" "));
+                expect (chords.mapChordName (k).isNotEmpty());
+                names.addIfNotAlreadyThere (chords.mapChordName (k) + "@" + juce::String (k / 12));
+            }
+            expectEquals (names.size(), 61);
+            expectEquals (chords.mapChordName (48), juce::String ("Cmaj7"), "C2's octave: sevenths");
+            expectEquals (chords.mapChordName (36), juce::String ("C"), "C1's octave: triads");
+            expectEquals (chords.mapChordName (60), juce::String ("Cadd9"));
+            expectEquals (chords.mapChordName (44), juce::String ("Ab"), "Ab: borrowed from C minor");
+            expectEquals (chords.mapDegreeName (44), juce::String ("bVI"));
+            expectEquals (chords.mapDegreeName (46), juce::String ("bVII"));
+            expect (play (60).getFirst() == 60, "rooted on the key");
+
+            // Your keys: starts as the map, then a key of your own, caught while the map plays.
+            chords.copyMapToYourKeys();
+            expectEquals (chords.mapLayout.load(), (int) RigChords::MapLayout::yourKeys);
+            expect (play (60) == chords.getKeyChord (60) && ! chords.getKeyChord (60).isEmpty(), "kept what it played");
+            chords.setKeyChord (61, notes ({ 57, 61, 64, 67 }));
+            expectEquals (chords.mapChordName (61), juce::String ("A7"));
+            expect (play (61) == notes ({ 57, 61, 64, 67 }), "your chord, where you put it");
+            chords.catchForKey (62);
+            expectEquals (chords.getCatchKey(), 62);
+            for (int n : { 50, 53, 57 })
+                engine.addMidiNow (juce::MidiMessage::noteOn (1, n, 0.8f));
+            run (engine);
+            expect (synthHas (engine, 50) && synthHas (engine, 53) && synthHas (engine, 57), "caught keys play as notes, not their chords");
+            for (int n : { 50, 53, 57 })
+                engine.addMidiNow (juce::MidiMessage::noteOff (1, n));
+            run (engine);
+            expect (chords.serviceCatch());
+            expect (chords.getKeyChord (62) == notes ({ 50, 53, 57 }));
+            expect (play (62) == notes ({ 50, 53, 57 }));
+            chords.setKeyChord (62, {});
+            expect (play (62) == notes ({ 62 }), "an empty key plays its note");
+            RigChords other;
+            other.fromTree (chords.toTree());
+            expect (other.getKeyChord (61) == notes ({ 57, 61, 64, 67 }), "your keys are saved");
+            expectEquals (other.mapChordName (61), juce::String ("A7"));
+
+            // In a one-tool plugin (Kaleidobox Synth in Logic), the chords play that tool whatever they're sent to.
+            RigEngine tool;
+            tool.prepare (48000.0, 480);
+            tool.setOnlyTool (RigEngine::synthStrip);
+            auto& tc = tool.getChords();
+            tc.target = (int) RigRouting::Dest::bass;
+            tc.trigger = (int) RigChords::Trigger::keyMap;
+            tc.mapLayout = (int) RigChords::MapLayout::fullKeyboard;
+            tc.setKey (0, 0, 0);
+            tool.addMidiNow (juce::MidiMessage::noteOn (1, 48, 0.9f));
+            run (tool);
+            expect (synthHas (tool, 48) && synthHas (tool, 52) && synthHas (tool, 55) && synthHas (tool, 59), "Cmaj7 on the Synth plugin");
+            tool.addMidiNow (juce::MidiMessage::noteOff (1, 48));
+            run (tool);
+            expectEquals (synthCount (tool), 0);
+
+            // Your sound: a note in the file's name, or heard.
+            expectEquals (ChordsView::noteInName ("Pad_Cmin_120"), 0);
+            expectEquals (ChordsView::noteInName ("Warm Keys - F#maj"), 6);
+            expectEquals (ChordsView::noteInName ("Bass_Bb_90bpm"), 10);
+            expectEquals (ChordsView::noteInName ("Kick 01"), -1);
+            juce::AudioBuffer<float> tone (1, 44100);
+            for (int i = 0; i < tone.getNumSamples(); ++i)
+                tone.setSample (0, i, 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 220.0 * i / 44100.0));
+            juce::String how;
+            expectEquals (ChordsView::guessRoot (tone, "my tone", how), 57, "220 Hz is A2 (57)");
+            expectEquals (ChordsView::guessRoot (tone, "tone_C", how), 60, "the name's C, near the pitch heard");
+            juce::TemporaryFile wav (".wav");
+            expect (crate::AudioFiles::write (wav.getFile(), tone));
+            const auto named = wav.getFile().getSiblingFile ("Soft pad_A.wav");
+            expect (wav.getFile().copyFileTo (named));
+            ChordsView cv (engine);
+            const auto said = cv.loadSound (named);
+            expect (said.contains ("Soft pad_A"), said);
+            expectEquals (engine.getSampler().getKeys().getRootNote(), 57);
+            expectEquals (chords.target.load(), (int) RigRouting::Dest::sampler, "the chords play it");
+            expect (engine.getSampler().getDocument().hasAudio());
+            named.deleteFile();
+        }
+
         beginTest ("Strum spreads the notes out");
         {
             RigEngine engine;
@@ -620,7 +734,8 @@ public:
                 view.showView ("Edit");
                 view.showChords (true);
                 for (auto [layout, key, scale, type, name] : { std::tuple<int, int, int, int, const char*> { 0, 9, 1, 1, "-keymap" },
-                                                               { 1, 2, 2, 0, "-keymap-white" } })
+                                                               { 1, 2, 2, 0, "-keymap-white" },
+                                                               { 3, 0, 0, 0, "-keymap-full" } })
                 {
                     chords.mapLayout = layout;
                     cv.setKey (key, scale, type);

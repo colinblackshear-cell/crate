@@ -22,6 +22,7 @@
 // On the right, the progression: eight steps on the clock, its length, Play, To loop, Rec MIDI and
 // To Logic, with the file to drag into Logic.
 class ChordsView : public juce::Component,
+                   public juce::FileDragAndDropTarget,
                    private juce::Timer
 {
 public:
@@ -33,6 +34,24 @@ public:
 
     std::function<void()> onClose;
     std::function<void (const juce::String&)> onSay;
+    std::function<void()> onOpenSampler;   // Sound > Edit it in the Sampler
+
+    // Your own sound for the chords: a sample file into the Sampler, tuned (its root note from the
+    // file's name, or heard), and the chords sent to it. Returns what happened.
+    juce::String loadSound (const juce::File&);
+    // The note a sound plays as recorded: a note in the file's name ("Pad_Cmin_120.wav": C), the
+    // pitch heard (its octave), or C3. `how` says which.
+    static int guessRoot (const juce::AudioBuffer<float>&, const juce::String& fileName, juce::String& how);
+    static int noteInName (const juce::String& fileName);   // pitch class 0-11, or -1
+
+    bool isInterestedInFileDrag (const juce::StringArray&) override;
+    void fileDragEnter (const juce::StringArray&, int, int) override;
+    void fileDragExit (const juce::StringArray&) override;
+    void filesDropped (const juce::StringArray&, int, int) override;
+    // The keys' right-click menu (Your keys: put a pad's chord here, catch one, clear).
+    void showKeyMenu (int note);
+    void putPadOnKey (int pad, int note);   // as that menu does
+    void setMapLayout (int layout);
 
     // As clicks do (the tests use these).
     void selectPad (int pad);
@@ -82,7 +101,11 @@ private:
         lowerButton { "Lower" }, higherButton { "Higher" }, octDown { "Oct -" }, octUp { "Oct +" }, spreadButton { "Spread" },
         closeVoicing { "Tight" }, catchButton { "Catch" }, nameButton { "Name" }, clearButton { "Clear" },
         playButton { "Play it" }, loopButton { "To loop" }, recButton { "Rec MIDI" }, logicButton { "To Logic" },
-        mapButton { "Map keys" }, bassButton { "+ Bass" };
+        mapButton { "Map keys" }, bassButton { "+ Bass" }, soundButton { "Sound" };
+    std::unique_ptr<juce::FileChooser> chooser;
+    bool dragOver = false;
+    juce::String shownSamplerName;
+    void showSoundMenu();
     juce::OwnedArray<PadButton> padButtons;
     juce::OwnedArray<juce::TextButton> stepButtons;
     std::unique_ptr<KeyBed> keys;
