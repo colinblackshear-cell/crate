@@ -15,7 +15,9 @@
 // A pad plays its chord on the instrument it's sent to: the track the keys play (the one picked
 // on the rail), or the vocoder, bass, synth, sampler, MPC or drum machine. Click a pad, or play
 // them from your keyboard: the Launchkey's 16 drum pads, the 16 lowest keys, or every key (each
-// key plays the picked chord's shape from that note, one finger chords). Hold keeps a chord
+// key plays the picked chord's shape from that note, one finger chords), or Chords in the key:
+// pick a key and scale and every key on the keyboard plays a chord of it (see the key map below).
+// Hold keeps a chord
 // sounding until the next; Strum spreads its notes out.
 //
 // Then a progression: eight steps, each a chord pad (or a rest), a beat to 2 bars each, that plays
@@ -36,7 +38,7 @@ public:
     static constexpr int kPads = 16, kMaxNotes = 8, kSteps = 8;
     // Where the chords go: the keys' instrument (follow), or one of RigRouting's.
     static constexpr int kFollowKeys = -1;
-    enum class Trigger { screen, pads, lowKeys, everyKey };
+    enum class Trigger { screen, pads, lowKeys, everyKey, keyMap };
     static juce::String triggerName (int);
     // How long each progression step lasts, in beats.
     static const std::array<double, 5>& stepLengths();
@@ -70,7 +72,9 @@ public:
     // Fills pads 1-7 with the chords of a key (vox::Chords: key 0-11, scale, type), and pad 8
     // with the key's chord an octave up, as the vocoder's chord buttons have them.
     void fillFromKey (int key, int scale, int type);
-    int fillKey = 0, fillScale = 0, fillType = 0;   // what Fill uses (saved)
+    int fillKey = 0, fillScale = 0, fillType = 0;   // the builder's key: what Fill and the key map use (saved)
+    // Sets the key (0-11), scale and chord type for Fill and the key map, and remaps the keys.
+    void setKey (int key, int scale, int type);
     // Ready-made sets to start from (each fills the pads and the progression).
     static juce::StringArray starterNames();
     void loadStarter (int index);
@@ -103,6 +107,56 @@ public:
     std::atomic<int> shapePad { 0 };            // Every key plays this pad's shape (the pad being edited)
     // Where a press went: the instrument (a RigRouting::Dest) the chords play now.
     int resolveTarget (int keysTo) const;
+
+    //==========================================================================
+    // The key map (trigger Chords in the key): every key on your keyboard plays a chord, laid out
+    // from the builder's key, scale and chord type (setKey), or your own pads.
+    //   Scale notes: each note of the scale plays its own chord (D plays Dm in C major), so the
+    //     chord's root is the key you press. Keys outside the scale follow `mapOffScale`.
+    //   White keys: C D E F G A B play the key's chords I to vii, whatever the key (all white keys,
+    //     the way chord players lay them out). Black keys follow `mapOffScale`.
+    //   Your pads: C to B play pads 1-7, the black keys pads 8-12 (C# 8, D# 9, F# 10, G# 11, A# 12),
+    //     in every octave.
+    enum class MapLayout { scaleNotes, whiteKeys, yourPads };
+    // Keys outside the scale (or black keys on White keys): play as single notes, play the chord
+    // of the scale note just below, or play nothing.
+    enum class OffScale { notes, snap, silent };
+    // Where the chords sit: the octave you play in (low keys low chords), the same octave
+    // everywhere (around C3), or Smooth: each chord voiced as close as it can be to the last one,
+    // as a keyboard player would, so moving between chords doesn't jump.
+    enum class MapVoicing { followKeys, sameOctave, smooth };
+    static juce::String mapLayoutName (int);
+    static juce::String offScaleName (int);
+    static juce::String mapVoicingName (int);
+    std::atomic<int> mapLayout { (int) MapLayout::scaleNotes };
+    std::atomic<int> mapOffScale { (int) OffScale::snap };
+    std::atomic<int> mapVoicing { (int) MapVoicing::followKeys };
+    std::atomic<bool> mapBass { false };   // adds the chord's root an octave under it
+    std::atomic<int> mapOctave { 0 };      // -2 to +2
+    // Message thread: works the map out again after a change to the key or the map's settings.
+    void rebuildMap();
+    // What key `note` plays on the map, before voicing (message thread, for the keys on screen).
+    struct MapEntry
+    {
+        enum Kind { pass, chord, padChord, silent } kind = pass;
+        juce::Array<int> notes;   // chord: its notes, around C3
+        int pad = -1;             // padChord: which pad
+        int degree = -1;          // chord: its scale degree (0-6)
+        int follow = 0;           // semitones that put it in the octave of the key you press
+        int root = 0;             // its root's pitch class (for Bass)
+    };
+    const MapEntry& getMapEntry (int note) const { return map[(size_t) juce::jlimit (0, 127, note)]; }
+    // The chord's name on a key ("Am7"), or empty for a key that plays a note or nothing.
+    juce::String mapChordName (int note) const;
+    // The roman numeral of the key's chord in the key ("ii", "V7"), or empty.
+    juce::String mapDegreeName (int note) const;
+    // The notes the key plays now, voiced (Smooth voicing: from the default place, not the last chord).
+    juce::Array<int> mapNotesFor (int note) const;
+    // A click on a key of the map (message thread): plays its chord, as the key would.
+    void pressMapKey (int note, float velocity = 0.8f);
+    void releaseMapKey (int note);
+    // The key last played on the map (or -1), for the screen.
+    int getLastMapKey() const { return lastMapKey.load(); }
 
     // Catch: the next chord you hold on your keyboard's keys becomes `pad` (they still play as usual).
     void catchFromKeys (int pad);
@@ -157,7 +211,19 @@ public:
     void reset();
 
 private:
-    void syncPad (int pad);   // the pad's notes, to the audio thread's copy
+    void syncPad (int pad);
+    std::array<MapEntry, 128> map;
+    // The audio thread's copy of the map: kind, pad, follow, root, and the chord's notes.
+    struct LiveMapEntry
+    {
+        std::atomic<int> kind { 0 }, pad { -1 }, follow { 0 }, root { 0 };
+        std::array<std::atomic<int>, kMaxNotes> notes;
+    };
+    std::array<LiveMapEntry, 128> liveMap;
+    std::atomic<int> lastMapKey { -1 };
+    double lastMapCentre = -1;   // audio thread: Smooth voicing's last chord (mean note), or -1
+    // A key's chord, voiced (any thread: reads the live copies). Count of notes into `out`.
+    int voiceMapKey (int note, std::array<int, kMaxNotes>& out, double& centre) const;   // the pad's notes, to the audio thread's copy
     std::array<Pad, kPads> pads;
 
     // The audio thread's copy of each pad: kMaxNotes notes (-1 past the last).
@@ -193,6 +259,8 @@ private:
     int lastSoundingVoice = -1;
 
     void startVoice (int source, int pad, int transpose, float velocity, int dest, int at,
+                     std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples);
+    void startNotes (int source, const int* notes, int count, float velocity, int dest, int at,
                      std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples);
     void stopVoice (int source, int at, std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to);
     void noteOn (int dest, int note, float velocity, int at, std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to);

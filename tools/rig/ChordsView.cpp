@@ -141,8 +141,11 @@ class ChordsView::KeyBed : public juce::Component,
 public:
     explicit KeyBed (ChordsView& v) : view (v)
     {
-        setTooltip ("Click a key to add it to the picked chord, or take it out. You hear the chord as it changes.");
+        setTooltip ("Click a key to add it to the picked chord, or take it out. You hear the chord as it changes. "
+                    "With Map keys on, each key shows its chord: a click plays it (Option-click still edits the pad).");
     }
+
+    bool mapOn() const { return view.chords.trigger.load() == (int) RigChords::Trigger::keyMap; }
 
     int numWhite() const
     {
@@ -177,6 +180,14 @@ public:
         const auto& chords = view.chords;
         const auto& pad = chords.getPad (view.selected);
         const bool lowZone = chords.trigger.load() == (int) RigChords::Trigger::lowKeys;
+        const bool mapped = mapOn();
+        const int split = view.engine.getRouting().splitNote.load();
+        auto onMap = [&] (int k)
+        {
+            const auto kind = chords.getMapEntry (k).kind;
+            return mapped && (split <= 0 || k >= split) && kind != RigChords::MapEntry::pass && kind != RigChords::MapEntry::silent
+                   && chords.mapChordName (k).isNotEmpty();
+        };
         const int low = chords.lowKey.load();
 
         g.setColour (juce::Colour (0xff2a2622));
@@ -184,7 +195,7 @@ public:
 
         auto shade = [&] (int note, juce::Rectangle<float> key, bool black)
         {
-            const bool inChord = pad.notes.contains (note), playing = chords.isNoteSounding (note);
+            const bool inChord = ! mapped && pad.notes.contains (note), playing = chords.isNoteSounding (note);
             if (playing)
                 g.setColour (vintage::colours::play.withAlpha (black ? 0.9f : 0.75f));
             else if (inChord)
@@ -210,6 +221,14 @@ public:
             }
             g.setColour (juce::Colours::black.withAlpha (0.18f));
             g.fillRect (keyBounds (k).removeFromBottom (2.0f));
+            if (mapped && ! onMap (k))
+            {
+                // Plays a note (or nothing) on the map: dimmed.
+                g.setColour (juce::Colour (0xff2a2622).withAlpha (chords.getMapEntry (k).kind == RigChords::MapEntry::silent ? 0.45f : 0.22f));
+                g.fillRoundedRectangle (key, 2.0f);
+            }
+            if (onMap (k))
+                drawMapLabel (g, k, key.withTrimmedTop (key.getHeight() * 0.62f).withTrimmedBottom (k % 12 == 0 ? 16.0f : 4.0f), false);
             if (k % 12 == 0)
             {
                 g.setColour (juce::Colour (0xff6b6253));
@@ -229,6 +248,13 @@ public:
                                                      top.getBottom(), false));
             g.fillRoundedRectangle (top, 1.5f);
             shade (k, top, true);
+            if (mapped && ! onMap (k))
+            {
+                g.setColour (juce::Colours::black.withAlpha (0.5f));
+                g.fillRoundedRectangle (top, 1.5f);
+            }
+            if (onMap (k))
+                drawMapLabel (g, k, top.withTrimmedTop (top.getHeight() * 0.35f), true);
             if (lowZone && k >= low && k < low + RigChords::kPads)
             {
                 g.setColour (vintage::colours::mute);
@@ -250,15 +276,55 @@ public:
             }
     }
 
+    // A key's chord on the map: its name, and its numeral in the key under it when there's room.
+    void drawMapLabel (juce::Graphics& g, int k, juce::Rectangle<float> area, bool black)
+    {
+        const auto& chords = view.chords;
+        const bool playing = chords.getLastMapKey() == k && chords.anySounding();
+        const auto name = chords.mapChordName (k), degree = chords.mapDegreeName (k);
+        // A chord's name standing up the key, so the longest fit ("F#m7b5").
+        g.saveState();
+        const auto c = area.getCentre();
+        g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, c.x, c.y));
+        auto rotated = juce::Rectangle<float> (area.getHeight(), area.getWidth()).withCentre (c);
+        const bool showDegree = degree.isNotEmpty() && rotated.getHeight() >= 30.0f;
+        auto nameArea = showDegree ? rotated.removeFromTop (rotated.getHeight() * 0.55f) : rotated;
+        g.setColour (playing ? vintage::colours::play.darker (0.25f) : black ? juce::Colour (0xffeedfb8) : juce::Colour (0xff2a5c80));
+        g.setFont (vintage::cond (juce::jmin (15.0f, nameArea.getHeight() * 0.8f), vintage::Weight::bold));
+        g.drawFittedText (name, nameArea.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        if (showDegree)
+        {
+            g.setColour (black ? juce::Colour (0xffb7a98d) : juce::Colour (0xff8a7a5c));
+            g.setFont (vintage::cond (juce::jmin (11.0f, rotated.getHeight() * 0.9f), vintage::Weight::semi));
+            g.drawFittedText (degree, rotated.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        }
+        g.restoreState();
+    }
+
     void mouseDown (const juce::MouseEvent& e) override
     {
         const int note = noteAt (e.position);
-        if (note >= 0)
-            view.clickKey (note);
+        if (note < 0)
+            return;
+        if (mapOn() && ! e.mods.isAltDown() && view.chords.mapChordName (note).isNotEmpty())
+        {
+            playingKey = note;
+            view.wakeVocoder();
+            view.chords.pressMapKey (note);
+            return;
+        }
+        view.clickKey (note);
+    }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (playingKey >= 0)
+            view.chords.releaseMapKey (playingKey);
+        playingKey = -1;
     }
 
 private:
     ChordsView& view;
+    int playingKey = -1;
 };
 
 //==============================================================================
@@ -315,10 +381,11 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
     target.setTooltip ("Where the chords play: the track picked on the left (it follows as you pick another), or always one instrument.");
     target.onChange = [this] { setTarget (target.getSelectedId() == 1 ? RigChords::kFollowKeys : target.getSelectedId() - 2); };
 
-    for (int i = 0; i <= (int) RigChords::Trigger::everyKey; ++i)
+    for (int i = 0; i <= (int) RigChords::Trigger::keyMap; ++i)
         trigger.addItem (RigChords::triggerName (i), i + 1);
     trigger.setTooltip ("What plays the pads besides your clicks: the Launchkey's 16 drum pads (instead of the MPC while it's on), "
-                        "its lowest 16 keys (marked blue on the keys below), or every key (each key plays the picked chord from that note).");
+                        "its lowest 16 keys (marked blue on the keys below), every key with one shape (each key plays the picked chord "
+                        "from that note), or every key with the chords of the key (Map, below).");
     trigger.onChange = [this] { setTrigger (trigger.getSelectedId() - 1); };
 
     for (int i = 0; i < (int) RigChords::strumTimes().size(); ++i)
@@ -333,16 +400,42 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
         scale.addItem (ChordNames::scales[i], i + 1);
     for (int i = 0; i < ChordNames::flavours.size(); ++i)
         type.addItem (ChordNames::flavours[i], i + 1);
-    key.setTooltip ("Fill's key");
-    scale.setTooltip ("Fill's scale");
-    type.setTooltip ("Fill's chord type: simple triads, sevenths, ninths, sus, power chords...");
+    key.setTooltip ("The key: what Fill puts on the pads, and what every key plays with Map keys on.");
+    scale.setTooltip ("The scale (or mode) of the key, for Fill and the key map.");
+    type.setTooltip ("The chord type for Fill and the key map: triads, sevenths, ninths, sus, add9, sixths, power chords, big.");
     for (auto* c : { &key, &scale, &type })
-        c->onChange = [this]
-        {
-            chords.fillKey = key.getSelectedId() - 1;
-            chords.fillScale = scale.getSelectedId() - 1;
-            chords.fillType = type.getSelectedId() - 1;
-        };
+        c->onChange = [this] { setKey (key.getSelectedId() - 1, scale.getSelectedId() - 1, type.getSelectedId() - 1); };
+
+    for (int i = 0; i < 3; ++i)
+    {
+        mapLayout.addItem (RigChords::mapLayoutName (i), i + 1);
+        mapOffScale.addItem (RigChords::offScaleName (i), i + 1);
+        mapVoicing.addItem (RigChords::mapVoicingName (i), i + 1);
+    }
+    for (int o = -2; o <= 2; ++o)
+        mapOctave.addItem (o == 0 ? juce::String ("Oct 0") : "Oct " + juce::String (o > 0 ? "+" : "") + juce::String (o), o + 3);
+    mapLayout.setTooltip ("How the chords lie on the keys. Each scale note's chord: D plays Dm in C major, so the chord's root is the key "
+                          "you press. White keys: C to B play the key's chords I to vii in any key. Your pads: C to B play pads 1-7, "
+                          "the black keys pads 8-12, in every octave.");
+    mapOffScale.setTooltip ("Keys outside the scale (or the black keys, with White keys): play the chord of the scale note just below, "
+                            "play as single notes (for a melody line), or play nothing.");
+    mapVoicing.setTooltip ("Where the chords sit. Follows the keys: low keys play low chords. Same octave: every chord around C3, "
+                           "wherever you play. Smooth voicing: each chord takes the inversion nearest the last one, as a "
+                           "keyboard player would, so changes glide instead of jumping.");
+    mapOctave.setTooltip ("Moves every chord on the map up or down by octaves.");
+    mapLayout.onChange = [this] { chords.stopAll(); chords.mapLayout = mapLayout.getSelectedId() - 1; chords.rebuildMap(); say (mapSummary()); refresh(); };
+    mapOffScale.onChange = [this] { chords.stopAll(); chords.mapOffScale = mapOffScale.getSelectedId() - 1; chords.rebuildMap(); refresh(); };
+    mapVoicing.onChange = [this] { chords.stopAll(); chords.mapVoicing = mapVoicing.getSelectedId() - 1; refresh(); };
+    mapOctave.onChange = [this] { chords.stopAll(); chords.mapOctave = mapOctave.getSelectedId() - 3; refresh(); };
+    for (auto* c : { &mapLayout, &mapOffScale, &mapVoicing, &mapOctave })
+        addAndMakeVisible (c);
+    mapButton.setTooltip ("Map keys: every key on your keyboard plays a chord of the key (the keys below show which). "
+                          "Press again to go back to what played the chords before.");
+    mapButton.onClick = [this] { pressMapKeys(); };
+    bassButton.setTooltip ("+ Bass: adds each chord's root an octave under it on the map.");
+    bassButton.onClick = [this] { chords.stopAll(); chords.mapBass = ! chords.mapBass.load(); refresh(); };
+    vintage::setLit (mapButton, Lit::play);
+    vintage::setLit (bassButton, Lit::next);
 
     for (int i = 0; i < (int) RigChords::stepLengths().size(); ++i)
         length.addItem (RigChords::stepLengthName (i), i + 1);
@@ -398,7 +491,8 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
     vintage::setLit (loopButton, Lit::arm);
     vintage::setLit (recButton, Lit::arm);
     for (auto* b : { &holdButton, &fillButton, &setsButton, &closeButton, &lowerButton, &higherButton, &octDown, &octUp, &spreadButton,
-                     &closeVoicing, &catchButton, &nameButton, &clearButton, &playButton, &loopButton, &recButton, &logicButton })
+                     &closeVoicing, &catchButton, &nameButton, &clearButton, &playButton, &loopButton, &recButton, &logicButton,
+                     &mapButton, &bassButton })
     {
         b->getProperties().set ("fontSize", 15.0f);
         addAndMakeVisible (b);
@@ -472,6 +566,15 @@ void ChordsView::updateControls()
     key.setSelectedId (chords.fillKey + 1, juce::dontSendNotification);
     scale.setSelectedId (chords.fillScale + 1, juce::dontSendNotification);
     type.setSelectedId (chords.fillType + 1, juce::dontSendNotification);
+    mapLayout.setSelectedId (chords.mapLayout.load() + 1, juce::dontSendNotification);
+    mapOffScale.setSelectedId (chords.mapOffScale.load() + 1, juce::dontSendNotification);
+    mapVoicing.setSelectedId (chords.mapVoicing.load() + 1, juce::dontSendNotification);
+    mapOctave.setSelectedId (chords.mapOctave.load() + 3, juce::dontSendNotification);
+    const bool mapOn = chords.trigger.load() == (int) RigChords::Trigger::keyMap;
+    mapButton.setToggleState (mapOn, juce::dontSendNotification);
+    bassButton.setToggleState (chords.mapBass.load(), juce::dontSendNotification);
+    // Your pads have no key, and no keys outside it.
+    mapOffScale.setEnabled (chords.mapLayout.load() != (int) RigChords::MapLayout::yourPads);
     length.setSelectedId (chords.stepLength.load() + 1, juce::dontSendNotification);
     holdButton.setToggleState (chords.hold.load(), juce::dontSendNotification);
     catchButton.setToggleState (chords.isCatching(), juce::dontSendNotification);
@@ -508,6 +611,17 @@ void ChordsView::timerCallback()
         refresh();
     }
     chords.serviceTake();
+    if (const int k = chords.getLastMapKey(); k != shownMapKey && k >= 0)
+    {
+        shownMapKey = k;
+        const auto notes = chords.mapNotesFor (k);
+        juce::StringArray text;
+        for (int n : notes)
+            text.add (RigChords::noteName (n));
+        const auto degree = chords.mapDegreeName (k);
+        say ("Key " + RigChords::noteName (k) + ": " + chords.mapChordName (k) + (degree.isNotEmpty() ? " (" + degree + ")" : juce::String())
+             + (chords.mapVoicing.load() == (int) RigChords::MapVoicing::smooth ? juce::String() : "  " + text.joinIntoString (" ")));
+    }
 
     // The lights: what's sounding, the progression's step, a loop recording.
     static_assert (RigChords::kPads <= 16);
@@ -590,7 +704,10 @@ void ChordsView::setTarget (int t)
 
 void ChordsView::setTrigger (int t)
 {
-    chords.trigger = juce::jlimit (0, (int) RigChords::Trigger::everyKey, t);
+    chords.stopAll();
+    if (t != (int) RigChords::Trigger::keyMap)
+        triggerBeforeMap = juce::jlimit (0, (int) RigChords::Trigger::everyKey, t);
+    chords.trigger = juce::jlimit (0, (int) RigChords::Trigger::keyMap, t);
     switch ((RigChords::Trigger) chords.trigger.load())
     {
         case RigChords::Trigger::pads:
@@ -602,6 +719,9 @@ void ChordsView::setTrigger (int t)
         case RigChords::Trigger::everyKey:
             say ("Every key plays pad " + juce::String (selected + 1) + "'s chord (" + chords.padName (selected)
                  + ") from that note. Pick another pad to change the shape.");
+            break;
+        case RigChords::Trigger::keyMap:
+            say (mapSummary());
             break;
         case RigChords::Trigger::screen:
         default:
@@ -616,6 +736,38 @@ void ChordsView::pressHold()
     chords.stopAll();
     chords.hold = ! chords.hold.load();
     refresh();
+}
+
+juce::String ChordsView::mapSummary() const
+{
+    switch ((RigChords::MapLayout) chords.mapLayout.load())
+    {
+        case RigChords::MapLayout::whiteKeys:
+            return key.getText() + " " + scale.getText() + " on the white keys: C to B play I to vii.";
+        case RigChords::MapLayout::yourPads:
+            return "Your pads in every octave: C to B pads 1-7, black keys 8-12.";
+        case RigChords::MapLayout::scaleNotes:
+        default:
+            return key.getText() + " " + scale.getText() + " (" + type.getText().toLowerCase() + ") on every key.";
+    }
+}
+
+void ChordsView::setKey (int k, int s, int t)
+{
+    chords.stopAll();
+    chords.setKey (k, s, t);
+    updateControls();
+    if (chords.trigger.load() == (int) RigChords::Trigger::keyMap)
+        say (mapSummary());
+    refresh();
+}
+
+void ChordsView::pressMapKeys()
+{
+    if (chords.trigger.load() == (int) RigChords::Trigger::keyMap)
+        setTrigger (triggerBeforeMap == (int) RigChords::Trigger::keyMap ? (int) RigChords::Trigger::screen : triggerBeforeMap);
+    else
+        setTrigger ((int) RigChords::Trigger::keyMap);
 }
 
 void ChordsView::pressFill()
@@ -899,7 +1051,7 @@ void ChordsView::paint (juce::Graphics& g)
     g.fillRect (getLocalBounds().removeFromTop (4));
 
     vintage::engraved (g, "Chords", titleArea, juce::Justification::centredLeft, 22.0f);
-    const char* labels[] = { "Plays", "From", "Fill", "", "", "" };
+    const char* labels[] = { "Plays", "From", "Key", "Map", "", "" };
     for (size_t i = 0; i < labelAreas.size(); ++i)
         if (labels[i][0] != 0)
             vintage::engraved (g, labels[i], labelAreas[i], juce::Justification::centredRight, 13.0f);
@@ -1008,6 +1160,24 @@ void ChordsView::resized()
         fillButton.setBounds (row.removeFromLeft (128));
         row.removeFromLeft (12);
         statusArea = row;
+    }
+    r.removeFromTop (8);
+    {
+        auto row = r.removeFromTop (30);
+        labelAreas[3] = row.removeFromLeft (40);
+        row.removeFromLeft (6);
+        mapButton.setBounds (row.removeFromLeft (100));
+        row.removeFromLeft (8);
+        const int spare = juce::jmax (0, row.getWidth() - (80 + 90 + 3 * 6));
+        mapLayout.setBounds (row.removeFromLeft (spare * 36 / 100).reduced (0, 1));
+        row.removeFromLeft (6);
+        mapOffScale.setBounds (row.removeFromLeft (spare * 32 / 100).reduced (0, 1));
+        row.removeFromLeft (6);
+        mapVoicing.setBounds (row.removeFromLeft (spare * 32 / 100).reduced (0, 1));
+        row.removeFromLeft (6);
+        mapOctave.setBounds (row.removeFromLeft (80).reduced (0, 1));
+        row.removeFromLeft (6);
+        bassButton.setBounds (row.removeFromLeft (90));
     }
     r.removeFromTop (8);
     padsWell = r.removeFromTop (106);

@@ -12,6 +12,10 @@
 // Along the top: where the chords go (the picked track, or any instrument), what plays them
 // (clicks, the Launchkey's pads, its lowest 16 keys, every key), Hold and Strum. Then Fill
 // (the chords of a key, as the vocoder's chord buttons have them) and Sets (starters, your own).
+// Under them, the key map: Map keys sets every key of your keyboard playing a chord of the key
+// (each scale note's chord, the white keys as I to vii, or your own pads), with how keys outside
+// the scale play, where the chords sit (follow the keys, one octave, smooth voice leading), Bass
+// and Octave. The keys on screen show each key's chord, and a click plays it.
 // The sixteen pads: click one to hear it (and to edit it below); right-click for more. Under
 // them, the picked pad: its notes, voicing (Lower, Higher, Oct, Spread, Tight), Catch (hold a
 // chord on your keyboard), Name and Clear; and the keys, where a click adds or takes out a note.
@@ -40,6 +44,8 @@ public:
     void setTrigger (int trigger);
     void pressHold();
     void pressFill();
+    void pressMapKeys();           // Map keys: the key map on, or back to what played the pads before
+    void setKey (int key, int scale, int type);
     void pickStep (int step, int pad);   // -1: a rest
     void pressPlayProgression();
     juce::String pressToLoop();
@@ -49,7 +55,7 @@ public:
     void pressCatch();
     void refresh();
 
-    static constexpr int kPreferredHeight = 390;
+    static constexpr int kPreferredHeight = 430;
 
     class PadButton;
     class KeyBed;
@@ -71,11 +77,12 @@ private:
     int selected = 0;
     juce::String status;
 
-    juce::ComboBox target, trigger, strum, key, scale, type, length;
+    juce::ComboBox target, trigger, strum, key, scale, type, length, mapLayout, mapOffScale, mapVoicing, mapOctave;
     juce::TextButton holdButton { "Hold" }, fillButton { "Fill pads 1-8" }, setsButton { "Sets" }, closeButton { "Close" },
         lowerButton { "Lower" }, higherButton { "Higher" }, octDown { "Oct -" }, octUp { "Oct +" }, spreadButton { "Spread" },
         closeVoicing { "Tight" }, catchButton { "Catch" }, nameButton { "Name" }, clearButton { "Clear" },
-        playButton { "Play it" }, loopButton { "To loop" }, recButton { "Rec MIDI" }, logicButton { "To Logic" };
+        playButton { "Play it" }, loopButton { "To loop" }, recButton { "Rec MIDI" }, logicButton { "To Logic" },
+        mapButton { "Map keys" }, bassButton { "+ Bass" };
     juce::OwnedArray<PadButton> padButtons;
     juce::OwnedArray<juce::TextButton> stepButtons;
     std::unique_ptr<KeyBed> keys;
@@ -83,6 +90,9 @@ private:
     juce::File lastFile;
     int loopLayer = -1;
     int shownKeysTo = -2;
+    int shownMapKey = -1;
+    int triggerBeforeMap = (int) RigChords::Trigger::screen;
+    juce::String mapSummary() const;
 
     juce::Rectangle<int> titleArea, padsWell, editLcd, progressionWell, progressionTitle, statusArea;
     std::array<juce::Rectangle<int>, 6> labelAreas;

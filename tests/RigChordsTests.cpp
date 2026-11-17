@@ -216,6 +216,134 @@ public:
             expect (! chords.isCatching());
         }
 
+        beginTest ("the key map: every key plays a chord of the key");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            auto& chords = engine.getChords();
+            chords.target = (int) RigRouting::Dest::synth;
+            engine.getRouting().keysTo = (int) RigRouting::Dest::synth;
+            chords.trigger = (int) RigChords::Trigger::keyMap;
+            chords.setKey (0, 0, 0);   // C major, triads
+            auto play = [&] (int note)
+            {
+                engine.addMidiNow (juce::MidiMessage::noteOn (1, note, 0.9f));
+                run (engine);
+                juce::Array<int> on;
+                for (int n = 0; n < 128; ++n)
+                    if (synthHas (engine, n))
+                        on.add (n);
+                engine.addMidiNow (juce::MidiMessage::noteOff (1, note));
+                run (engine);
+                expectEquals (synthCount (engine), 0, "letting go stops it");
+                return on;
+            };
+
+            // Each scale note plays its own chord, rooted on the key.
+            expectEquals (chords.mapChordName (50), juce::String ("Dm"));
+            expectEquals (chords.mapDegreeName (50), juce::String ("ii"));
+            expectEquals (chords.mapDegreeName (55), juce::String ("V"));
+            expectEquals (chords.mapDegreeName (59), juce::String (juce::CharPointer_UTF8 ("vii\xc2\xb0")));
+            expect (play (50) == notes ({ 50, 53, 57, 62 }), "D3 plays Dm from D3");
+            expect (play (38) == notes ({ 38, 41, 45, 50 }), "an octave down, Dm an octave down");
+            expect (play (81) == notes ({ 81, 84, 88, 93 }), "A5 plays Am up there");
+            // Off the scale: the chord of the note below, as single notes, or nothing.
+            expect (play (51) == notes ({ 50, 53, 57, 62 }), "Eb plays the chord below it (Dm)");
+            chords.mapOffScale = (int) RigChords::OffScale::notes;
+            chords.rebuildMap();
+            expect (play (51) == notes ({ 51 }), "or just itself");
+            chords.mapOffScale = (int) RigChords::OffScale::silent;
+            chords.rebuildMap();
+            expect (play (51).isEmpty(), "or nothing");
+
+            // Another key and type: A minor sevenths. G plays G7 (VII7), A plays Am7.
+            chords.setKey (9, 1, 1);
+            expectEquals (chords.mapChordName (57), juce::String ("Am7"));
+            expectEquals (chords.mapDegreeName (57), juce::String ("i7"));
+            expectEquals (chords.mapChordName (55), juce::String ("G7"));
+            expect (play (57).getFirst() == 57, "Am7 from A3");
+
+            // White keys: C to B play I to vii of the key, whatever it is (here E minor).
+            chords.mapLayout = (int) RigChords::MapLayout::whiteKeys;
+            chords.mapOffScale = (int) RigChords::OffScale::snap;
+            chords.setKey (4, 1, 0);
+            const char* eMinor[] = { "Em", "F#dim", "G", "Am", "Bm", "C", "D" };
+            const int whites[] = { 48, 50, 52, 53, 55, 57, 59 };
+            for (int i = 0; i < 7; ++i)
+                expectEquals (chords.mapChordName (whites[i]), juce::String (eMinor[i]));
+            expectEquals (chords.mapChordName (61), chords.mapChordName (60), "a black key: the white key's chord below");
+            const auto em = play (48);
+            expect (em.contains (52) && em.contains (55) && em.contains (59), "C3 plays Em (E3 G3 B3)");
+            expect (em.getFirst() >= 48 && em.getLast() < 72, "in the octave of the key you press");
+
+            // Your pads: C to B pads 1-7, the black keys 8-12, in every octave.
+            chords.mapLayout = (int) RigChords::MapLayout::yourPads;
+            chords.rebuildMap();
+            chords.setPad (0, notes ({ 48, 52, 55 }));
+            chords.setPad (7, notes ({ 53, 57, 60, 64 }), "Mine");
+            expectEquals (chords.mapChordName (61), juce::String ("Mine"), "C# plays pad 8");
+            expect (play (49) == notes ({ 53, 57, 60, 64 }), "in the pads' own octave, C# plays pad 8 as it is");
+            expect (play (36) == notes ({ 36, 40, 43 }), "C1 plays pad 1 an octave down");
+            chords.mapVoicing = (int) RigChords::MapVoicing::sameOctave;
+            expect (play (36) == notes ({ 48, 52, 55 }), "Same octave: wherever you play it");
+            chords.mapOctave = 1;
+            expect (play (84) == notes ({ 60, 64, 67 }), "Octave moves them all");
+            chords.mapOctave = 0;
+
+            // Bass: the root under each chord.
+            chords.mapLayout = (int) RigChords::MapLayout::scaleNotes;
+            chords.mapVoicing = (int) RigChords::MapVoicing::followKeys;
+            chords.setKey (0, 0, 0);
+            chords.mapBass = true;
+            expect (play (55) == notes ({ 43, 55, 59, 62, 67 }), "G with G2 under it");
+            chords.mapBass = false;
+
+            // Smooth voicing: C then F then G stay close (no chord jumps up a fourth or fifth).
+            chords.mapVoicing = (int) RigChords::MapVoicing::smooth;
+            auto mean = [] (const juce::Array<int>& a) { double m = 0; for (int n : a) m += n; return a.isEmpty() ? 0.0 : m / a.size(); };
+            chords.hold = false;
+            const auto c = play (48), f = play (53), g = play (55);
+            expect (std::abs (mean (f) - mean (c)) <= 3.0 && std::abs (mean (g) - mean (f)) <= 3.0, "the chords glide");
+            expectEquals (RigChords::nameOf (f).substring (0, 1), juce::String ("F"), "still an F chord");
+            expect (c.size() == 4 && f.size() == 4 && g.size() == 4);
+
+            // Hold: a key latches its chord until the next.
+            chords.mapVoicing = (int) RigChords::MapVoicing::followKeys;
+            chords.hold = true;
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 57, 0.9f));
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 57));
+            run (engine);
+            expect (synthHas (engine, 57) && synthHas (engine, 60), "Am held");
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 53, 0.9f));
+            run (engine);
+            expect (synthHas (engine, 53) && ! synthHas (engine, 64), "F takes over");
+            chords.stopAll();
+            chords.hold = false;
+            run (engine);
+            expectEquals (synthCount (engine), 0);
+
+            // Below the keyboard split, keys play as usual.
+            engine.getRouting().splitNote = 48;
+            expect (play (40) == notes ({ 40 }) || play (40).isEmpty(), "under the split it isn't a chord");
+            engine.getRouting().splitNote = 0;
+
+            // Saved, and loaded again.
+            chords.mapLayout = (int) RigChords::MapLayout::whiteKeys;
+            chords.mapVoicing = (int) RigChords::MapVoicing::smooth;
+            chords.mapBass = true;
+            chords.mapOctave = -1;
+            chords.setKey (7, 2, 1);
+            RigChords other;
+            other.fromTree (chords.toTree());
+            expectEquals (other.mapLayout.load(), (int) RigChords::MapLayout::whiteKeys);
+            expectEquals (other.mapVoicing.load(), (int) RigChords::MapVoicing::smooth);
+            expect (other.mapBass.load());
+            expectEquals (other.mapOctave.load(), -1);
+            expectEquals (other.mapChordName (48), chords.mapChordName (48));
+            expectEquals (other.mapChordName (48), juce::String ("Gm7"), "G Dorian sevenths: C is i7");
+            expectEquals (other.fillKey, 7);
+        }
+
         beginTest ("Strum spreads the notes out");
         {
             RigEngine engine;
@@ -480,6 +608,34 @@ public:
                 juce::PNGImageFormat().writeImageToStream (image, stream);
                 chords.stopAll();
                 run (engine);
+
+                // The key map: every key plays a chord of A minor (sevenths), then the white keys as I to vii.
+                chords.hold = false;
+                chords.progressionOn = false;
+                if (engine.getLooper().getState (0) != RigLooper::State::empty)
+                    engine.getLooper().clear (0);
+                chords.stopAll();
+                run (engine, 4);
+                view.pickTrack (GrooveView::synth);
+                view.showView ("Edit");
+                view.showChords (true);
+                for (auto [layout, key, scale, type, name] : { std::tuple<int, int, int, int, const char*> { 0, 9, 1, 1, "-keymap" },
+                                                               { 1, 2, 2, 0, "-keymap-white" } })
+                {
+                    chords.mapLayout = layout;
+                    cv.setKey (key, scale, type);
+                    cv.setTrigger ((int) RigChords::Trigger::keyMap);
+                    engine.addMidiNow (juce::MidiMessage::noteOn (1, layout == 0 ? 60 : 57, 0.9f));
+                    run (engine);
+                    cv.refresh();
+                    const auto mapImage = view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f);
+                    juce::File mapFile (path + name + ".png");
+                    mapFile.deleteFile();
+                    juce::FileOutputStream mapStream (mapFile);
+                    juce::PNGImageFormat().writeImageToStream (mapImage, mapStream);
+                    engine.addMidiNow (juce::MidiMessage::noteOff (1, layout == 0 ? 60 : 57));
+                    run (engine);
+                }
             }
         }
     }
