@@ -1,7 +1,6 @@
 #include "RigEngine.h"
 #include "RigSong.h"
 
-#include "core/control/Launchpad.h"
 
 #include <algorithm>
 
@@ -1185,16 +1184,14 @@ void RigEngine::audioDeviceStopped()
 
 void RigEngine::handleIncomingMidiMessage (juce::MidiInput* source, const juce::MidiMessage& m)
 {
-    // A Launchpad's pads come in on the drum pads' channel, whatever channel it's set to, so it
-    // plays the MPC (or the drum machine) without setting anything up.
-    if (source != nullptr && crate::launchpad::isLaunchpad (source->getName()) && crate::launchpad::isPadMessage (m))
-    {
-        auto pad = m;
-        pad.setChannel (juce::jlimit (1, 16, routing.padChannel.load() > 0 ? routing.padChannel.load() : 10));
-        incoming.addMessageToQueue (pad);
+    // Each controller is read as what it is (Settings > MIDI controllers): a Launchpad's or an
+    // MPD's pads come in as the drum pads, on the pads' channel, whatever channel it's set to; a
+    // plain keyboard's notes are keys even on channel 10; learned knobs turn knobs 1-8.
+    auto msg = m;
+    const int pads = routing.padChannel.load();
+    if (source != nullptr && ! controllers.translate (source->getName(), msg, pads > 0 ? pads : 10))
         return;
-    }
-    incoming.addMessageToQueue (m);
+    incoming.addMessageToQueue (msg);
 }
 
 //==============================================================================

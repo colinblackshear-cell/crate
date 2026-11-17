@@ -20,6 +20,7 @@
 #include "RigCapture.h"
 #include "RigQuantize.h"
 #include "RigChords.h"
+#include "core/control/Controllers.h"
 
 #include <array>
 
@@ -142,6 +143,10 @@ public:
     // The layer recording (or waiting to record) the pads, or -1.
     int getPadLoopLayer() const;
     RigRouting& getRouting() { return routing; }
+    // Your MIDI controllers (Settings > Audio & MIDI > MIDI controllers): what each one is, so a
+    // Launchpad, an MPD or any keyboard plays the Rig the way a Launchkey does. They belong to
+    // this Mac (their own file), not to the show.
+    crate::controllers::Setup& getControllers() { return controllers; }
 
     // (The vocoder came later, so it's last: saved shows keep their strip order.)
     enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, loopsStrip, drumsStrip, numStrips };
@@ -393,6 +398,7 @@ private:
     DrumProcessor drums;
     RigTransport transport;
     RigRouting routing;
+    crate::controllers::Setup controllers { crate::controllers::Setup::defaultFile() };
     RigLooper looper;
     // Gives the looper's recording layers more room as they go, and finishes loop bank switches
     // (message thread).

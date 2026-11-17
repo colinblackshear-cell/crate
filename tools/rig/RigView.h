@@ -37,8 +37,14 @@ public:
     void exportForLogic();
     juce::File getCurrentShow() const { return currentShow; }
     void openShow();
-    // Opens newly plugged-in keyboards. Runs every couple of seconds.
+    // Opens newly plugged-in keyboards (and closes the ones set to Don't listen). Runs every
+    // couple of seconds. A controller seen for the first time (not a Launchkey) opens MIDI
+    // controllers on it, once.
     void openMidiInputs();
+    // MIDI controllers (Settings > Audio & MIDI, or the keyboard lamp at the top right): what each
+    // controller is. `newDevice` puts a just-plugged-in one first and says so.
+    void showControllers (const juce::String& newDevice = {});
+    class ControllersPanel* getControllersPanel() const;
 
     // Re-reads everything from the engine (after loading a show).
     void refresh();
@@ -264,6 +270,8 @@ private:
     juce::TextButton sampleButton { "Sample" }, knobButton { "Knobs" };
     void toggleRecordSet();
     void updateRecordButton();
+    juce::TextButton controllersButton { "MIDI controllers..." };
+    juce::Component::SafePointer<juce::DialogWindow> controllersWindow;
     juce::TextButton audioButton { "Audio + MIDI" }, saveButton { "Save show" }, openButton { "Open show" };
     juce::TextButton darkButton { "Dark panel" }, popOutButton { "Second screen..." }, pluginsButton { "Your plugins..." };
     juce::Label pluginsLabel { {}, "Plugins" }, pluginsHint;
@@ -333,6 +341,7 @@ private:
     std::vector<double> taps;
     juce::uint32 lastTap = 0;
     juce::Array<juce::MidiDeviceInfo> knownInputs;
+    juce::StringArray listenedInputs;
     int ticks = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RigView)

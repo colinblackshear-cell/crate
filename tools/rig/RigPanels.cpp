@@ -227,6 +227,7 @@ void Header::resized()
         vuArea = centreY (r.removeFromRight (width), 68);
     }
     micLampArea = lampsArea.withTrimmedTop (48);
+    keyboardLampArea = lampsArea.withHeight (24);
 }
 
 void Header::paint (juce::Graphics& g)
@@ -321,7 +322,9 @@ void Header::mouseUp (const juce::MouseEvent& e)
     if (e.mouseWasClicked() && partArea.contains (e.getPosition()) && shown.recording.isNotEmpty() && onRecording)
         return onRecording();
     if (standalone && e.mouseWasClicked() && micLampArea.contains (e.getPosition()) && onMic)
-        onMic();
+        return onMic();
+    if (standalone && e.mouseWasClicked() && keyboardLampArea.contains (e.getPosition()) && onKeyboard)
+        onKeyboard();
 }
 
 //==============================================================================

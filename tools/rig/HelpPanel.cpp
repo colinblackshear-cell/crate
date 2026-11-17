@@ -62,7 +62,8 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
 
         { "Sampler and MPC (pick one, then Edit): play the pads like an MPC",
           { "Your keyboard's drum pads (Launchkey in Drum mode, or a Launchpad in Drum mode) play the 16 pads of the bank on screen. "
-            "A Launchpad plays all four banks at once.",
+            "A Launchpad plays all four banks at once. Another controller (MPD, APC, MPK mini...)? "
+            "Settings > Audio & MIDI > MIDI controllers says what it is; Learn pad 1 sets where its pads start.",
             "Sounds (under the pads) opens your sound bank: click a sound to hear it, double-click to put it on the picked pad.",
             "FX (by the knobs) turns the picked pad's filter, decay, delay and reverb, live while it plays.",
             "16 Levels spreads the picked pad over all 16 pads: Tune plays it as a scale, Filter opens up, Velocity soft to loud, Decay short to long.",
