@@ -119,6 +119,11 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
                               "them, so finger drumming never opens it.)");
     editPadButton.onClick = [this] { pressEditPad(); };
     addAndMakeVisible (editPadButton);
+    removePadButton.getProperties().set ("fontSize", 16.0f);
+    removePadButton.setTooltip ("Takes the sound off the picked pad (with its settings and effects), so the pad is empty. "
+                                "Then it says Undo remove, to put it back. Right-click a pad for the same.");
+    removePadButton.onClick = [this] { canUndoRemovePad() ? pressUndoRemovePad() : pressRemovePad(); };
+    addAndMakeVisible (removePadButton);
     setLit (recordButton, Lit::arm);
     recordButton.getProperties().set ("fontSize", 18.0f);
     recordButton.setTooltip ("Rec sample: records from your audio input into the Sampler. Press again to stop. (To sample a tool of Kaleidobox, use Settings > Sample.)");
@@ -463,6 +468,83 @@ void SamplerScreen::pressEditPad()
     mpcView->editPadSound();
 }
 
+void SamplerScreen::pressRemovePad()
+{
+    auto& project = engine.getMpc().getProject();
+    const int pad = getSelectedPad();
+    auto& slot = project.currentBank().pads[(size_t) pad];
+    if (slot.isEmpty())
+    {
+        if (onSay)
+            onSay ("Pad " + padLabel (pad) + " is already empty.");
+        return;
+    }
+    removedPad = slot;
+    removedPadIndex = pad;
+    removedPadKit = project.getCurrentIndex();
+    engine.getMpc().releasePad (pad);
+    slot = {};
+    project.changed();
+    updateKnobs();
+    updateRemoveButton();
+    repaint();
+    if (onSay)
+        onSay ("Took \"" + removedPad.name + "\" off pad " + padLabel (pad) + ". Undo puts it back.");
+}
+
+bool SamplerScreen::canUndoRemovePad() const
+{
+    auto& project = engine.getMpc().getProject();
+    return removedPadIndex >= 0 && removedPadIndex == getSelectedPad() && removedPadKit == project.getCurrentIndex()
+           && project.currentBank().pads[(size_t) removedPadIndex].isEmpty();
+}
+
+void SamplerScreen::pressUndoRemovePad()
+{
+    if (! canUndoRemovePad())
+        return;
+    auto& project = engine.getMpc().getProject();
+    project.currentBank().pads[(size_t) removedPadIndex] = removedPad;
+    project.changed();
+    const auto text = "Put \"" + removedPad.name + "\" back on pad " + padLabel (removedPadIndex) + ".";
+    removedPad = {};
+    removedPadIndex = removedPadKit = -1;
+    updateKnobs();
+    updateRemoveButton();
+    repaint();
+    if (onSay)
+        onSay (text);
+}
+
+void SamplerScreen::updateRemoveButton()
+{
+    const bool undo = canUndoRemovePad();
+    const auto text = undo ? juce::String ("Undo remove") : "Remove " + padLabel (getSelectedPad());
+    if (removePadButton.getButtonText() != text)
+        removePadButton.setButtonText (text);
+    removePadButton.setEnabled (undo || ! engine.getMpc().getProject().currentBank().pads[(size_t) getSelectedPad()].isEmpty());
+}
+
+void SamplerScreen::showPadMenu (int padInBank)
+{
+    padInBank = juce::jlimit (0, kPadsPerBank - 1, padInBank);
+    const int pad = engine.getMpc().padBankOnScreen.load() * kPadsPerBank + padInBank;
+    selectedSlice = pad;
+    if (mpcView != nullptr)
+        mpcView->selectPad (pad);
+    updateKnobs();
+    updateRemoveButton();
+    repaint();
+    const bool full = ! engine.getMpc().getProject().currentBank().pads[(size_t) pad].isEmpty();
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Pad " + padLabel (pad));
+    menu.addItem ("Edit its sound (trim, fades, effects)...", full, false, [this] { pressEditPad(); });
+    menu.addItem ("Remove its sound", full, false, [this] { pressRemovePad(); });
+    if (canUndoRemovePad())
+        menu.addItem ("Undo remove (put \"" + removedPad.name + "\" back)", [this] { pressUndoRemovePad(); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+}
+
 void SamplerScreen::updateTopButtons()
 {
     const bool beat = engine.isMpcBeatOn();
@@ -603,6 +685,7 @@ void SamplerScreen::pressPad (int padInBank)
     if (mpcView != nullptr)
         mpcView->selectPad (pad);
     updateKnobs();
+    updateRemoveButton();
     repaint();
 }
 
@@ -845,6 +928,7 @@ void SamplerScreen::rebuildPeaks()
 
 void SamplerScreen::timerCallback()
 {
+    updateRemoveButton();
     // Pads that played light for a moment.
     const auto played = engine.getMpc().takePlayedPads (1);
     const int bank = engine.getMpc().padBankOnScreen.load();
@@ -952,7 +1036,7 @@ int SamplerScreen::markerAt (juce::Point<float> p) const
 
 juce::Rectangle<float> SamplerScreen::padRect (int padInBank) const
 {
-    auto r = padsWell.reduced (14).toFloat();
+    auto r = padsWell.reduced (14).withTrimmedTop (30).toFloat();   // under the Remove button
     const float gap = 10.0f;
     const float w = (r.getWidth() - 3 * gap) / 4.0f;
     const float h = juce::jlimit (w * 0.6f, w * 1.1f, (r.getHeight() - 3 * gap) / 4.0f);
@@ -1274,6 +1358,8 @@ void SamplerScreen::resized()
     }
     right.removeFromBottom (8);
     padsWell = right;
+    // Over the pads, on the right: Remove the picked pad's sound (or Undo it).
+    removePadButton.setBounds (padsWell.getRight() - 14 - 132, padsWell.getY() + 10, 132, 28);
 
     // The sound.
     const int waveHeight = juce::roundToInt (210 * scale);
@@ -1357,6 +1443,14 @@ void SamplerScreen::mouseDown (const juce::MouseEvent& e)
 
     if (const int pad = padAt (p); pad >= 0)
     {
+        if (e.mods.isPopupMenu())
+            return showPadMenu (pad);
+        // A triple-click opens the pad's sound (a double-click is just two hits, for finger drumming).
+        if (e.getNumberOfClicks() >= 3 && ! engine.getMpc().getProject().currentBank().pads[(size_t) (engine.getMpc().padBankOnScreen.load() * kPadsPerBank + pad)].isEmpty())
+        {
+            pressEditPad();
+            return;
+        }
         heldPad = pad;
         pressPad (pad);
         return;
