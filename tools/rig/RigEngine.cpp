@@ -138,6 +138,16 @@ float RigEngine::faderGain (float level)
 
 RigEngine::RigEngine()
 {
+    automation.numTools = numTools;
+    automation.getParameter = [this] (int tool, int parameter) -> juce::AudioProcessorParameter*
+    {
+        if (! juce::isPositiveAndBelow (tool, (int) numTools))
+            return nullptr;
+        const auto& list = getTool (tool).getParameters();
+        return juce::isPositiveAndBelow (parameter, list.size()) ? list[parameter] : nullptr;
+    };
+    automation.numParameters = [this] (int tool) { return juce::isPositiveAndBelow (tool, (int) numTools) ? getTool (tool).getParameters().size() : 0; };
+    automation.toolName = [] (int tool) { return toolName (tool); };
     arrangeFrom.fill (1.0f);
     arrangeTo.fill (1.0f);
     arrangeRestart.fill (-1.0);
@@ -191,6 +201,17 @@ bool RigEngine::isBlank() const
     now.removeChild (now.getChildWithName ("Quantize"), nullptr);
     now.removeChild (now.getChildWithName (RigChords::kTreeType), nullptr);
     return now.isEquivalentTo (blankShow);
+}
+
+void RigEngine::pressRecMoves()
+{
+    const bool wasOff = automation.getRecState() == RigAutomation::RecState::off;
+    automation.pressRecord (songInCharge());
+    if (wasOff && ! transport.isPlaying())
+    {
+        transport.play();
+        controlsMoved = true;
+    }
 }
 
 void RigEngine::playMpcSequence (int index)
@@ -621,6 +642,19 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         }
     }
     arrange (n);
+
+    // Automation: the knob moves recorded, and what you move now (after the learned knobs
+    // above, so their moves are caught), before the tools play.
+    {
+        RigAutomation::Clock autoClock;
+        autoClock.beat = transport.getBlockPosition();
+        autoClock.bpm = transport.getBpm();
+        autoClock.beatsPerBar = transport.getBeatsPerBar();
+        autoClock.playing = transport.isPlayingThisBlock();
+        autoClock.sampleRate = sampleRate;
+        autoClock.samples = n;
+        automation.process (autoClock);
+    }
 
     // The chord builder's chords, into the instruments they're sent to (before the recorder,
     // so Record set has them).
@@ -1223,6 +1257,7 @@ juce::ValueTree RigEngine::saveShow() const
         show.appendChild (screens.createCopy(), nullptr);
     show.appendChild (quantizer.toTree(), nullptr);
     show.appendChild (chords.toTree(), nullptr);
+    show.appendChild (automation.toTree(), nullptr);
 
     for (int s = 0; s < numStrips; ++s)
     {
@@ -1406,6 +1441,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     captureBars = juce::jlimit (0, 16, (int) show.getProperty ("captureBars", 0));
     quantizer.fromTree (show.getChildWithName ("Quantize"));
     chords.fromTree (show.getChildWithName (RigChords::kTreeType));
+    automation.fromTree (show.getChildWithName (RigAutomation::kTreeType));
     screens = show.getChildWithName ("Screens").isValid() ? show.getChildWithName ("Screens").createCopy() : juce::ValueTree ("Screens");
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {

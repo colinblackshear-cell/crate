@@ -1,4 +1,5 @@
 #include "RigView.h"
+#include "AutomationPanel.h"
 #include "RigExport.h"
 #include "RigLogicImport.h"
 #include "HelpPanel.h"
@@ -401,6 +402,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     rail.newPattern.onClick = [this] { showPatternMenu(); };
     rail.recTake.onClick = [this] { pressRecTake(); };
     rail.toSong.onClick = [this] { showToSongMenu(); };
+    rail.recMoves.onClick = [this] { pressRecMoves(); };
+    rail.moves.onClick = [this] { showAutomation(); };
+    rail.recMoves.setTooltip ("Records the knobs you turn while it plays, from the next bar: the bass's Cutoff sweeping, an effect's Mix, "
+                              "any setting on any tool or its effects (on screen or with a learned knob). Press again to stop at the end of the bar. "
+                              "Each setting gets a lane that plays back on the beat.");
+    rail.moves.setTooltip ("The automation lanes: what each one moves, Loop or Once, its length; draw on a lane to change it, "
+                           "clear one or all (with Undo). Cmd+Shift+A.");
     rail.recTake.setTooltip ("Records the picked track as you play it (the vocoder over the beat, a bass line, a guitar...) onto the next "
                              "empty loop, from the next bar. Press again to stop at the end of that bar. Then To Song puts the take in the song.");
     rail.toSong.setTooltip ("Locks the picked track into the song: what it plays now (its pattern or sequence), or your last take, into a "
@@ -682,7 +690,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     header.onWordmark = [this] { showTab ("Guide"); };
     header.onRecording = [this]
     {
-        if (const auto place = whatsRecording().second; place.isNotEmpty())
+        if (const auto place = whatsRecording().second; place == "Automation")
+            showAutomation();
+        else if (place.isNotEmpty())
             goTo (place);
     };
 
@@ -1131,6 +1141,7 @@ int RigView::pressRecTake()
     takeLayer = layer;
     takeTrack = t;
     takeStarted = false;
+    takeKeptSaid = false;
     juce::String note;
     if (t == GrooveView::vocoder && ! engine.micOn.load())
         note = " Your mic is off: switch it on (Mic, top right) to be heard.";
@@ -1140,6 +1151,43 @@ int RigView::pressRecTake()
          + " from the next bar. Play it over the beat; press Rec take again to stop at the end of the bar." + note);
     updateCaptureButtons();
     return layer;
+}
+
+void RigView::pressRecMoves()
+{
+    auto& a = engine.getAutomation();
+    const auto before = a.getRecState();
+    engine.pressRecMoves();
+    switch (before)
+    {
+        case RigAutomation::RecState::off:
+            say (juce::String ("Rec moves from the next bar: turn any knob while it plays (the bass's Cutoff, an effect's Mix...). ")
+                 + (engine.songInCharge() ? "Over the song, so it plays once along the song. " : "")
+                 + "Press Rec moves again to stop at the end of the bar.");
+            break;
+        case RigAutomation::RecState::armed:
+            say ("Rec moves called off: nothing was recorded.");
+            break;
+        case RigAutomation::RecState::recording:
+            say ("Moves close at the end of this bar, then play back. Automation shows the lanes.");
+            break;
+        case RigAutomation::RecState::closing:
+            break;
+    }
+    updateCaptureButtons();
+}
+
+void RigView::showAutomation()
+{
+    if (automationPanel != nullptr && automationPanel->isShowing())
+        return;
+    auto panel = std::make_unique<AutomationPanel> (engine);
+    panel->setLookAndFeel (&vintageLook);
+    panel->onSay = [this] (const juce::String& text) { say (text); };
+    automationPanel = panel.get();
+    juce::Component* anchor = rail.moves.isShowing() ? static_cast<juce::Component*> (&rail.moves) : this;
+    const auto area = anchor == this ? getLocalBounds().withSizeKeepingCentre (10, 10) : getLocalArea (anchor, anchor->getLocalBounds());
+    juce::CallOutBox::launchAsynchronously (std::move (panel), area, this);
 }
 
 void RigView::updateCaptureButtons()
@@ -1164,7 +1212,13 @@ void RigView::updateCaptureButtons()
         else if (st == RigLooper::State::recording)
         {
             takeText = "Stop take";
-            takeSub = "loop " + juce::String (takeLayer + 1);
+            const int secs = (int) looper.recordedSeconds (takeLayer);
+            takeSub = "loop " + juce::String (takeLayer + 1) + "  " + juce::String (secs / 60) + ":" + juce::String (secs % 60).paddedLeft ('0', 2);
+            if (looper.peekEnding (takeLayer) == RigLooper::Ending::kept && ! takeKeptSaid)
+            {
+                takeKeptSaid = true;
+                say ("The song switched loops, but loop " + juce::String (takeLayer + 1) + " is recording your take, so it was left alone. Keep playing.");
+            }
             takeLit = vintage::Lit::arm;
         }
         else
@@ -1172,6 +1226,23 @@ void RigView::updateCaptureButtons()
             // It closed by itself (or elsewhere): it's the track's last take now.
             if (st == RigLooper::State::playing && juce::isPositiveAndBelow (takeTrack, (int) lastTake.size()))
                 lastTake[(size_t) takeTrack] = takeLayer;
+            const auto mins = [] (double beats, double bpm) { return juce::String (beats * 60.0 / juce::jmax (1.0, bpm) / 60.0, 1) + " min"; };
+            const double beats = looper.getLayer (takeLayer).lengthBeats.load();
+            switch (looper.takeEnding (takeLayer))
+            {
+                case RigLooper::Ending::full:
+                    say ("Take on loop " + juce::String (takeLayer + 1) + " stopped by itself at " + mins (beats, engine.getTransport().getBpm())
+                         + ": that's all the room left (one take can be " + juce::String ((int) (RigLooper::kMaxRecordSeconds / 60)) + " minutes, "
+                         + juce::String ((int) (RigLooper::kTotalRecordSeconds / 60)) + " for all 8 loops together). Clear a loop you don't need for more.");
+                    break;
+                case RigLooper::Ending::clockStopped:
+                    say ("The clock stopped, so the take on loop " + juce::String (takeLayer + 1) + " closed at the end of that bar (" + mins (beats, engine.getTransport().getBpm())
+                         + "). Nothing you played was lost. To Song puts it in a section.");
+                    break;
+                case RigLooper::Ending::kept:
+                case RigLooper::Ending::asked:
+                    break;
+            }
             takeLayer = -1;
         }
     }
@@ -1184,6 +1255,43 @@ void RigView::updateCaptureButtons()
         rec.sub = takeSub;
         rec.lit = takeLit;
         rec.repaint();
+    }
+
+    // Automation.
+    {
+        auto& a = engine.getAutomation();
+        juce::String text = "Rec moves", sub = "any knob, next bar";
+        auto lit = vintage::Lit::none;
+        switch (a.getRecState())
+        {
+            case RigAutomation::RecState::off: break;
+            case RigAutomation::RecState::armed: sub = "next bar"; lit = vintage::Lit::arm; break;
+            case RigAutomation::RecState::recording:
+                text = "Stop moves";
+                sub = a.getNumRecording() == 0 ? juce::String ("turn a knob") : juce::String (a.getNumRecording()) + (a.getNumRecording() == 1 ? " knob" : " knobs");
+                lit = vintage::Lit::arm;
+                break;
+            case RigAutomation::RecState::closing: sub = "end of bar"; lit = vintage::Lit::arm; break;
+        }
+        if (const int made = automationPanel == nullptr ? a.takeFinishedLanes() : -1; made >= 0)
+            say (made == 0 ? juce::String ("Rec moves: nothing moved, so no lanes were made. Turn a knob while it records.")
+                           : "Recorded " + juce::String (made) + (made == 1 ? " lane" : " lanes") + " of moves: they play back now. Automation shows them (draw, clear, Loop or Once).");
+        const int lanes = a.getNumLanes();
+        const juce::String movesSub = lanes == 0 ? juce::String ("no lanes yet")
+                                                 : juce::String (lanes) + (lanes == 1 ? " lane" : " lanes") + (a.reading.load() ? "" : ", read off");
+        auto& b = rail.recMoves;
+        if (b.text != text || b.sub != sub || b.lit != lit)
+        {
+            b.text = text;
+            b.sub = sub;
+            b.lit = lit;
+            b.repaint();
+        }
+        if (rail.moves.sub != movesSub)
+        {
+            rail.moves.sub = movesSub;
+            rail.moves.repaint();
+        }
     }
 
     const auto list = rigsong::sections (engine.getTimeline());
@@ -2464,6 +2572,12 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         song->pressDelete();
         return true;
     }
+    // Cmd+Shift+A: the automation lanes.
+    if (juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) key.getKeyCode()) == 'a' && key.getModifiers().isCommandDown() && key.getModifiers().isShiftDown())
+    {
+        showAutomation();
+        return true;
+    }
     if (key == juce::KeyPress ('[', juce::ModifierKeys::commandModifier, 0))
     {
         goBack();
@@ -2572,6 +2686,13 @@ std::pair<juce::String, juce::String> RigView::whatsRecording() const
     }
     if (engine.getMpc().getSequencer().isRecording())
         return { "Recording the MPC beat", "MPC" };
+    switch (engine.getAutomation().getRecState())
+    {
+        case RigAutomation::RecState::armed:     return { "Moves record next bar", "Automation" };
+        case RigAutomation::RecState::recording:
+        case RigAutomation::RecState::closing:   return { "Recording knob moves", "Automation" };
+        case RigAutomation::RecState::off:       break;
+    }
     const auto capture = engine.getCapture().getState();
     if (capture == RigCapture::State::armed || capture == RigCapture::State::recording)
         return { "Sampling", "Sampler" };

@@ -32,6 +32,8 @@ endif()
 
 set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/RigEngine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RigAutomation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/AutomationPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigRouting.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigTransport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigView.cpp

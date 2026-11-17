@@ -118,6 +118,14 @@ void RigLooper::cancelSwap (int index)
 void RigLooper::applySwap (Layer& layer, int index)
 {
     // Only moves buffers, so it's fine on the audio thread.
+    // A take that's recording (or about to) is never thrown away by a loop bank or song part
+    // coming in: the switch skips this layer, and the window says so.
+    if (const auto st = (State) layer.state.load(); st == State::recording || st == State::armed)
+    {
+        layer.swapPending = false;   // the sound it would have put here is freed by maintain()
+        layer.ending = (int) Ending::kept;
+        return;
+    }
     if (layer.swapBeats > 0 && layer.swapAudio.getNumSamples() > 0)
     {
         std::swap (layer.audio, layer.swapAudio);
@@ -293,6 +301,16 @@ void RigLooper::setTrim (int index, double startBeat, double endBeat, double pla
     trimVersions[(size_t) index] = layers[(size_t) index].version.load();
 }
 
+double RigLooper::roomLeftSeconds (int index) const
+{
+    juce::int64 others = 0;
+    for (size_t i = 0; i < layers.size(); ++i)
+        if ((int) i != index)
+            others += layers[i].audio.getNumSamples();
+    const double total = kTotalRecordSeconds - (double) others / sampleRate;
+    return juce::jmax (0.0, juce::jmin (kMaxRecordSeconds, total));
+}
+
 void RigLooper::maintain()
 {
     // The sounds that swaps replaced.
@@ -309,6 +327,12 @@ void RigLooper::maintain()
 
     const int maxCapacity = (int) (sampleRate * kMaxRecordSeconds);
     const int ahead = (int) (sampleRate * kGrowAheadSeconds);
+    const int step = (int) (sampleRate * kGrowStepSeconds);
+    // All the layers' room together (the undo room aside) stays under kTotalRecordSeconds.
+    const juce::int64 budget = (juce::int64) (sampleRate * kTotalRecordSeconds);
+    juce::int64 total = 0;
+    for (auto& layer : layers)
+        total += layer.audio.getNumSamples();
     int longest = 0;
     for (auto& layer : layers)
     {
@@ -322,7 +346,12 @@ void RigLooper::maintain()
 
         // Copy what's recorded so far into a bigger buffer, outside the lock (the audio thread
         // only writes past it), then the last bit and the swap under the lock, which is quick.
-        const int bigger = juce::jmin (maxCapacity, juce::jmax (capacity * 2, capacity + 4 * ahead));
+        int bigger = juce::jmin (maxCapacity, juce::jmax (capacity * 2, capacity + 4 * ahead));
+        bigger = juce::jmin (bigger, capacity + juce::jmax (4 * ahead, step));
+        bigger = (int) juce::jmin ((juce::int64) bigger, capacity + juce::jmax ((juce::int64) 0, budget - total));
+        if (bigger <= capacity)
+            continue;   // out of room: it closes at its last whole bar (Ending::full)
+        total += bigger - capacity;
         juce::AudioBuffer<float> room (2, bigger);
         const int done = juce::jmin (capacity, layer.recorded.load());
         for (int ch = 0; ch < 2; ++ch)
@@ -341,7 +370,8 @@ void RigLooper::maintain()
         // The old buffer goes here, outside the lock.
     }
 
-    // Undo needs room for the longest loop.
+    // Undo needs room for the longest loop (up to kMaxUndoSeconds: longer ones have no undo).
+    longest = juce::jmin (longest, (int) (sampleRate * kMaxUndoSeconds));
     if (longest > undoAudio.getNumSamples())
     {
         juce::AudioBuffer<float> room (2, longest);
@@ -418,6 +448,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 layer.lengthBeats = 0;
                 layer.position = 0;
                 layer.state = (int) State::armed;
+                layer.ending = (int) Ending::asked;
                 if (! clock.playing)
                     wantsPlay = true;
                 break;
@@ -534,7 +565,31 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             {
                 if (! clock.playing)
                 {
-                    layer.state = (int) State::empty;   // the clock stopped before the loop was done
+                    // The clock stopped before the loop was done. A free take (until pressed
+                    // again) keeps what was played, filled out to the end of that bar; a loop of
+                    // set bars that didn't get there is called off.
+                    const double spb = sampleRate * 60.0 / juce::jmax (1.0, clock.bpm);
+                    const double barsDone = std::ceil (layer.writeIndex / spb / bpb - 1.0e-6);
+                    const int fill = (int) std::round (barsDone * bpb * spb);
+                    if (layer.stopBeat < 0 && barsDone >= 1 && layer.writeIndex >= (int) (spb * 0.5))
+                    {
+                        double keep = barsDone;
+                        if (fill > capacity)
+                            keep = std::floor (capacity / spb / bpb);
+                        if (keep >= 1)
+                        {
+                            const int to = juce::jmin (capacity, (int) std::round (keep * bpb * spb));
+                            for (int ch = 0; ch < 2; ++ch)
+                                if (to > layer.writeIndex)
+                                    layer.audio.clear (ch, layer.writeIndex, to - layer.writeIndex);
+                            layer.writeIndex = to;
+                            layer.stopBeat = layer.startBeat + keep * bpb;
+                            finishRecording (layer);
+                            layer.ending = (int) Ending::clockStopped;
+                            break;
+                        }
+                    }
+                    layer.state = (int) State::empty;
                     break;
                 }
                 if (layer.stopBeat >= 0 && beat >= layer.stopBeat - 1.0e-9)
@@ -563,6 +618,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                     layer.stopBeat = layer.startBeat + bars * bpb;
                     layer.writeIndex = juce::jmin (capacity, (int) std::round (bars * bpb * spb));
                     finishRecording (layer);
+                    layer.ending = (int) Ending::full;
                     state = State::playing;
                 }
             }

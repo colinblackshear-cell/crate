@@ -222,6 +222,64 @@ juce::AudioBuffer<float> RigExport::renderTimelineStem (RigEngine& engine, int l
     return out;
 }
 
+int RigExport::ccForLane (int lane)
+{
+    static const std::vector<int> free = []
+    {
+        std::vector<int> list;
+        for (int cc = 102; cc <= 119; ++cc) list.push_back (cc);
+        for (int cc = 20; cc <= 31; ++cc) list.push_back (cc);
+        for (int cc = 85; cc <= 90; ++cc) list.push_back (cc);
+        for (int cc : { 3, 9, 14, 15 }) list.push_back (cc);
+        return list;
+    }();
+    return juce::isPositiveAndBelow (lane, (int) free.size()) ? free[(size_t) lane] : -1;
+}
+
+juce::MidiFile RigExport::automationMidi (RigEngine& engine, int bars, double bpm)
+{
+    const int ppq = 960;
+    const int bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
+    juce::MidiFile midi;
+    midi.setTicksPerQuarterNote (ppq);
+    const double endBeat = juce::jmax (1, bars) * (double) bpb;
+    {
+        juce::MidiMessageSequence tempo;
+        tempo.addEvent (juce::MidiMessage::tempoMetaEvent ((int) std::round (60000000.0 / bpm)), 0);
+        tempo.addEvent (juce::MidiMessage::timeSignatureMetaEvent (bpb, 4), 0);
+        tempo.addEvent (juce::MidiMessage::endOfTrack(), endBeat * ppq);
+        midi.addTrack (tempo);
+    }
+    auto& automation = engine.getAutomation();
+    const auto lanes = automation.getLanes();
+    for (int i = 0; i < (int) lanes.size(); ++i)
+    {
+        const int cc = ccForLane (i);
+        if (cc < 0)
+            break;
+        const auto& lane = lanes[(size_t) i];
+        juce::MidiMessageSequence track;
+        track.addEvent (juce::MidiMessage::textMetaEvent (3, automation.laneName (lane) + " (CC " + juce::String (cc) + ")"), 0);
+        int last = -1;
+        // A value every 1/32 beat where it changes.
+        for (double beat = 0; beat < endBeat; beat += 1.0 / 32.0)
+        {
+            const double at = lane.positionAt (beat);
+            if (at < 0 || ! lane.on)
+                continue;
+            const int value = juce::jlimit (0, 127, juce::roundToInt (lane.valueAt (at) * 127.0f));
+            if (value == last)
+                continue;
+            track.addEvent (juce::MidiMessage::controllerEvent (1, cc, value), beat * ppq);
+            last = value;
+        }
+        track.addEvent (juce::MidiMessage::endOfTrack(), endBeat * ppq);
+        track.updateMatchedPairs();
+        midi.addTrack (track);
+    }
+    return midi;
+}
+
 RigExport::Result RigExport::exportForLogic (RigEngine& engine, const juce::File& parent)
 {
     Result result;
@@ -231,9 +289,10 @@ RigExport::Result RigExport::exportForLogic (RigEngine& engine, const juce::File
     bool anyLoop = false;
     for (int i = 0; i < RigLooper::kLayers; ++i)
         anyLoop = anyLoop || hasLoop (engine, i);
-    if (! anyLoop)
+    const int lanes = engine.getAutomation().getNumLanes();
+    if (! anyLoop && lanes == 0)
     {
-        result.error = "There are no loops to export yet.";
+        result.error = "There are no loops (or knob moves) to export yet.";
         return result;
     }
 
@@ -353,6 +412,26 @@ RigExport::Result RigExport::exportForLogic (RigEngine& engine, const juce::File
             bar += part.bars > 0 ? part.bars : kHoldBars;
         }
         notes << "(A part set to hold is exported 4 bars long.)\n";
+    }
+    if (lanes > 0)
+    {
+        // The song's length, or the lanes' own if there's no song.
+        int bars = useTimeline ? timelineBars (engine) : (! parts.empty() ? songBars (engine) : 0);
+        if (bars <= 0)
+            for (const auto& lane : engine.getAutomation().getLanes())
+                bars = juce::jmax (bars, (int) std::ceil ((lane.loop ? lane.lengthBeats : lane.startBeat + lane.lengthBeats) / bpb - 1.0e-6));
+        bars = juce::jmax (1, bars);
+        const auto midi = automationMidi (engine, bars, bpm);
+        if (juce::FileOutputStream stream (result.folder.getChildFile ("Automation.mid")); stream.openedOk())
+            ok = midi.writeTo (stream) && ok;
+        ++result.files;
+        notes << "\nAutomation.mid: your knob moves (Rec moves), a track per setting, as MIDI CCs from bar 1, " << bars << " bars:\n";
+        const auto list = engine.getAutomation().getLanes();
+        for (int i = 0; i < (int) list.size(); ++i)
+            if (const int cc = ccForLane (i); cc >= 0)
+                notes << "  CC " << cc << ": " << engine.getAutomation().laneName (list[(size_t) i]) << (list[(size_t) i].on ? "" : " (off)") << "\n";
+        notes << "In Logic, drag it onto the tracks you want and point each CC at a plugin's setting (or use it as a guide for Logic's own "
+                 "automation). Anything recorded live from Kaleidobox (Record set, To Logic, a plugin's Rec) already has the moves in it.\n";
     }
     notes << "\nYour own plugins on a loop aren't in these files; use Record set for those.\n";
     ok = result.folder.getChildFile ("Read me.txt").replaceWithText (notes) && ok;

@@ -28,9 +28,14 @@ class RigLooper
 public:
     static constexpr int kLayers = 8;
     // Each layer starts with room for kStartSeconds; while it records, maintain() gives it more
-    // in the background, up to kMaxRecordSeconds (so a long loop only takes memory when you make one).
-    static constexpr double kStartSeconds = 32.0, kMaxRecordSeconds = 600.0;
+    // in the background, up to kMaxRecordSeconds (so a long loop only takes memory when you make one):
+    // a take as long as a whole long set. All the layers together stop growing at
+    // kTotalRecordSeconds, so memory stays bounded (about 1 GB per 45 minutes at 48 kHz). Undo of
+    // an overdub keeps a copy of the loop, so only loops up to kMaxUndoSeconds have one.
+    static constexpr double kStartSeconds = 32.0, kMaxRecordSeconds = 3600.0, kTotalRecordSeconds = 2.5 * 3600.0;
+    static constexpr double kMaxUndoSeconds = 600.0;
     static constexpr double kGrowAheadSeconds = 12.0;   // grows when less than this is left
+    static constexpr double kGrowStepSeconds = 300.0;   // grows by at most this at a time
 
     enum class State { empty, armed, recording, playing, overdubbing };
     // line: the Input strip (a guitar, keytar... on your interface, through its effects). New
@@ -52,6 +57,8 @@ public:
         std::atomic<double> position { 0 };   // 0..1 through the loop
         std::atomic<float> peak { 0 };
         std::atomic<int> version { 0 };       // changes when the sound does (for the waveform)
+        // How the last recording on this layer ended, for the window to say (see takeEnding()).
+        std::atomic<int> ending { 0 };
 
     private:
         friend class RigLooper;
@@ -78,6 +85,20 @@ public:
     Layer& getLayer (int i) { return layers[(size_t) i]; }
     const Layer& getLayer (int i) const { return layers[(size_t) i]; }
     State getState (int i) const { return (State) layers[(size_t) i].state.load(); }
+
+    // How a layer's last recording ended: as asked (pressed again, or its bars were up), it ran
+    // out of room (kMaxRecordSeconds, or all the layers together at kTotalRecordSeconds), the
+    // clock stopped (it keeps what was played, to the end of that bar), or a loop bank or song
+    // part tried to replace it while it recorded (it was kept and the switch skipped on this
+    // layer). takeEnding() reads it and resets it to `asked`.
+    enum class Ending { asked, full, clockStopped, kept };
+    Ending takeEnding (int i) { return (Ending) layers[(size_t) i].ending.exchange (0); }
+    Ending peekEnding (int i) const { return (Ending) layers[(size_t) i].ending.load(); }
+    // Seconds a layer has recorded so far (while it records), for the window.
+    double recordedSeconds (int i) const { return layers[(size_t) i].recorded.load() / sampleRate; }
+    // The longest a recording can still go on this layer now, in seconds (the per-layer limit, or
+    // what's left of the total), for the window.
+    double roomLeftSeconds (int i) const;
 
     // Any thread (the window, MIDI): record / stop / overdub, undo the last overdub, clear.
     void pressRecord (int layer) { ++layers[(size_t) layer].presses; }

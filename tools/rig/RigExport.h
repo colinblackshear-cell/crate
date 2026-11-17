@@ -13,6 +13,9 @@ class RigEngine;
 //               is the Timeline if it has anything on it, otherwise the Song grid's parts.
 //               Also "Song markers.mid": the tempo and a marker for each section or part
 //               (drag it into Logic to get the tempo and the names).
+//   Automation.mid  if you've recorded knob moves: a track per lane, its moves as a MIDI CC
+//               (named after the setting and its CC number) over the song, from bar 1. Read me
+//               lists which CC is which setting.
 //   Tempo.txt   the tempo and the time signature
 //
 // The Rig's built-in effects are printed into the "as heard" files; a plugin of your own on a
@@ -41,4 +44,9 @@ int songBars (RigEngine&);
 // A loop laid out over the timeline: playing in its lane's blocks, with their fades.
 juce::AudioBuffer<float> renderTimelineStem (RigEngine&, int layer, double bpm, double sampleRate, bool withEffects);
 int timelineBars (RigEngine&);
+// The CC each automation lane is written on (the CCs MIDI leaves free: 102-119, then 20-31,
+// 85-90, 3, 9, 14, 15), or -1 past the last.
+int ccForLane (int lane);
+// The automation lanes as MIDI CCs over `bars` (a track each; the tempo on the first), at `bpm`.
+juce::MidiFile automationMidi (RigEngine&, int bars, double bpm);
 }
