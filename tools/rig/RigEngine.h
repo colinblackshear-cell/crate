@@ -368,6 +368,13 @@ public:
     juce::String deleteLoopBank (int bank);
     // A bank switch waiting for its bar (-1 for none).
     int getQueuedLoopBank() const { return queuedLoopBank; }
+    // Clear all (start fresh): every layer of the bank on screen empty now, with its effects,
+    // name, level and mute back as a new layer has them (one that's recording stops and is
+    // dropped). Sources and lengths stay, ready to record the same way; other banks keep theirs.
+    // undoClearAllLoops brings back everything as it was, while the layers are still empty.
+    juce::String clearAllLoops();
+    juce::String undoClearAllLoops();
+    bool canUndoClearAllLoops() const;
     // The timer's part: puts each layer's effects on as its new loop comes in.
     void serviceLoopBanks();
 
@@ -415,6 +422,9 @@ private:
     // A switch waiting for its bar: each layer's effects, put on when its loop comes in.
     std::array<juce::MemoryBlock, RigLooper::kLayers> pendingBankFx;
     std::array<bool, RigLooper::kLayers> bankFxPending {};
+    // What Clear all took away, for its undo (with the loops' names).
+    std::unique_ptr<LoopBank> clearedLoops;
+    std::array<juce::String, RigLooper::kLayers> clearedLoopNames;
     void applyBankFx (int layer);
     void putLoopBankOnLayers (int bank, double beat, const RigScene::State* scene);
     RigScenes scenes;

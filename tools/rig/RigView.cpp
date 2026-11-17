@@ -342,6 +342,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     chordsDrawer->setLookAndFeel (&vintageLook);
     chordsDrawer->onClose = [this] { showChords (false); };
     chordsDrawer->onSay = [this] (const juce::String& text) { say (text); };
+    chordsDrawer->onOpenSampler = [this] { pickTrack (GrooveView::sampler); showView ("Edit"); };
     addChildComponent (*chordsDrawer);
 
     auto& transport = engine.getTransport();
