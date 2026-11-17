@@ -1418,6 +1418,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     loopBanks.clear();
     currentLoopBank = -1;
     queuedLoopBank = -1;
+    clearedLoops.reset();
     if (const auto banks = show.getChildWithName ("LoopBanks"); banks.isValid())
     {
         for (const auto t : banks)
@@ -2375,6 +2376,103 @@ juce::String RigEngine::newLoopBank (const juce::String& name)
             ++scene.state.loopBank;
     return "Kept your loops in \"" + kept + "\" and started \"" + getLoopBankName (index)
            + "\", empty and ready to record" + (transport.isPlaying() ? " (from the next bar)." : ".");
+}
+
+juce::String RigEngine::clearAllLoops()
+{
+    bool anything = false;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        anything = anything || looper.getState (i) != RigLooper::State::empty || looper.isSwapPending (i) || bankFxPending[(size_t) i]
+                   || loopFx[(size_t) i].isActive() || looper.getLayer (i).mute.load();
+    if (! anything)
+        return "The looper is already empty: no loops and no loop effects. Press Rec next layer to start.";
+
+    // Keep it all for Undo: each loop that's playing (not one half recorded), its effects and name.
+    auto kept = std::make_unique<LoopBank>();
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto& live = looper.getLayer (i);
+        auto& l = kept->layers[(size_t) i];
+        const auto state = looper.getState (i);
+        if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
+        {
+            auto audio = looper.copyLayerAudio (i);
+            if (audio.getNumSamples() > 0 && live.lengthBeats.load() > 0)
+            {
+                l.beats = live.lengthBeats.load();
+                l.audio = std::make_shared<const juce::AudioBuffer<float>> (std::move (audio));
+            }
+        }
+        l.source = live.source.load();
+        l.bars = live.bars.load();
+        l.level = live.level.load();
+        l.mute = live.mute.load();
+        if (loopFx[(size_t) i].isActive())
+            loopFx[(size_t) i].getStateInformation (l.fx);
+        clearedLoopNames[(size_t) i] = getLoopName (i);
+    }
+    const int loops = kept->loopCount();
+
+    // Empty now, from scratch: no loop waiting to come in, nothing armed, no effects.
+    queuedLoopBank = -1;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        looper.cancelSwap (i);
+        bankFxPending[(size_t) i] = false;
+        pendingBankFx[(size_t) i].reset();
+        looper.reset (i);
+        looper.queueLayerAudio (i, {}, 0.0, -1.0, LoopBank::Layer().level, false);
+        loopFx[(size_t) i].reset();
+        loopNames[(size_t) i] = {};
+        looper.makeRoom (i);
+    }
+    clearedLoops = std::move (kept);
+    return "Cleared all " + juce::String (loops) + (loops == 1 ? " loop" : " loops")
+           + " and their effects: eight empty layers, ready to record. Undo brings them back.";
+}
+
+bool RigEngine::canUndoClearAllLoops() const
+{
+    if (clearedLoops == nullptr)
+        return false;
+    // Only while the layers are still empty: it never records over something new.
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (looper.getState (i) != RigLooper::State::empty || looper.isSwapPending (i))
+            return false;
+    return true;
+}
+
+juce::String RigEngine::undoClearAllLoops()
+{
+    if (clearedLoops == nullptr)
+        return "Nothing to undo: Clear all hasn't been used.";
+    if (! canUndoClearAllLoops())
+    {
+        clearedLoops.reset();
+        return "Can't bring the cleared loops back: you've recorded since. (Clear all again first if you want them gone.)";
+    }
+    const auto kept = std::move (clearedLoops);
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto& l = kept->layers[(size_t) i];
+        auto& live = looper.getLayer (i);
+        live.source = l.source;
+        live.bars = l.bars;
+        juce::AudioBuffer<float> audio;
+        if (l.audio != nullptr)
+            audio.makeCopyOf (*l.audio);
+        looper.queueLayerAudio (i, std::move (audio), l.audio != nullptr ? l.beats : 0.0, -1.0, l.level, l.mute);
+        if (l.fx.isEmpty())
+            loopFx[(size_t) i].reset();
+        else
+            loopFx[(size_t) i].setStateInformation (l.fx.getData(), (int) l.fx.getSize());
+        if (l.audio != nullptr && clearedLoopNames[(size_t) i].isNotEmpty())
+            setLoopName (i, clearedLoopNames[(size_t) i]);
+        if (looper.getState (i) == RigLooper::State::empty)
+            looper.makeRoom (i);
+    }
+    const int loops = kept->loopCount();
+    return "Brought back " + juce::String (loops) + (loops == 1 ? " loop" : " loops") + " and their effects.";
 }
 
 juce::String RigEngine::switchLoopBank (int index)

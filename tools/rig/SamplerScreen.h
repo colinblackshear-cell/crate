@@ -67,6 +67,11 @@ public:
     void pressLoopPads();
     int loopBars = 0;
     void pressEditPad();
+    // Remove: takes the sound off the picked pad (its name, settings and effects with it). Until
+    // something goes on that pad again, the button says Undo and puts it all back.
+    void pressRemovePad();
+    bool canUndoRemovePad() const;
+    void pressUndoRemovePad();
 
     std::function<void (const juce::String&)> onSay;
     // Opens a page of the Rig ("Sampler editor", "MPC").
@@ -146,7 +151,11 @@ private:
         mpcModeButton { juce::String::fromUTF8 ("Sequencer \xc2\xb7 Kits") },
         editModeButton { juce::String::fromUTF8 ("Edit \xc2\xb7 Effects \xc2\xb7 Keys") },
         recordButton { "Rec sample" }, beatButton { "Beat on" }, loopPadsButton { "Loop pads" }, loopBarsButton { "Free" },
-        editPadButton { "Edit" };
+        editPadButton { "Edit" }, removePadButton { "Remove A01" };
+    Pad removedPad;
+    int removedPadIndex = -1, removedPadKit = -1;
+    void updateRemoveButton();
+    void showPadMenu (int padInBank);
     void updateTopButtons();
     juce::Rectangle<int> modeRow;
 

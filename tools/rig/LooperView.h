@@ -69,6 +69,8 @@ public:
     void pressRecNext();
     void pressOverdub();
     void pressUndo();
+    // Start fresh: every layer empty, with no effects (RigEngine::clearAllLoops); Undo brings it back.
+    void pressClearAll();
     void setNextBars (int bars);       // for the empty layers
     void setNextSource (int source);   // RigLooper::Source, for the empty layers
     void soloLayer (int layer);        // again to un-solo
@@ -94,7 +96,7 @@ private:
     juce::Label help;
     int selected = -1, soloed = -1;
     std::array<bool, RigLooper::kLayers> mutesBeforeSolo {};
-    juce::TextButton recNext { "Rec next layer" }, overdub { "Overdub" }, undoButton { "Undo" }, clearButton { "Clear" }, quantizeButton { "Quantize" };
+    juce::TextButton recNext { "Rec next layer" }, overdub { "Overdub" }, undoButton { "Undo" }, clearButton { "Clear" }, clearAllButton { "Clear all loops" }, quantizeButton { "Quantize" };
     juce::OwnedArray<juce::TextButton> lengthButtons, sourceButtons;
     juce::Rectangle<int> controlsArea, lengthLabel, sourceLabel, syncArea, statusArea, headings;
     juce::String shownStatus;
