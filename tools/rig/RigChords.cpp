@@ -69,7 +69,8 @@ juce::String RigChords::triggerName (int t)
     {
         case Trigger::pads:     return "Launchkey pads";
         case Trigger::lowKeys:  return "Lowest 16 keys";
-        case Trigger::everyKey: return "Every key";
+        case Trigger::everyKey: return "Every key: one shape";
+        case Trigger::keyMap:   return "Every key: chords in the key";
         case Trigger::screen:
         default:                return "Clicks only";
     }
@@ -217,9 +218,308 @@ void RigChords::fillFromKey (int key, int scale, int type)
     fillKey = juce::jlimit (0, 11, key);
     fillScale = juce::jlimit (0, vox::Chords::numScales - 1, scale);
     fillType = juce::jlimit (0, vox::Chords::numFlavours - 1, type);
+    rebuildMap();
     for (int degree = 0; degree < 7; ++degree)
         setPad (degree, toArray (vox::Chords::build (fillKey, fillScale, degree, fillType)));
     setPad (7, toArray (vox::Chords::build (fillKey, fillScale, 0, fillType), 12));
+}
+
+void RigChords::setKey (int key, int scale, int type)
+{
+    fillKey = juce::jlimit (0, 11, key);
+    fillScale = juce::jlimit (0, vox::Chords::numScales - 1, scale);
+    fillType = juce::jlimit (0, vox::Chords::numFlavours - 1, type);
+    rebuildMap();
+}
+
+//==============================================================================
+juce::String RigChords::mapLayoutName (int i)
+{
+    switch ((MapLayout) i)
+    {
+        case MapLayout::whiteKeys: return "White keys: I to vii";
+        case MapLayout::yourPads:  return "Your pads on the keys";
+        case MapLayout::scaleNotes:
+        default:                   return "Each scale note's chord";
+    }
+}
+
+juce::String RigChords::offScaleName (int i)
+{
+    switch ((OffScale) i)
+    {
+        case OffScale::notes:  return "Others: play notes";
+        case OffScale::silent: return "Others: silent";
+        case OffScale::snap:
+        default:               return "Others: chord below";
+    }
+}
+
+juce::String RigChords::mapVoicingName (int i)
+{
+    switch ((MapVoicing) i)
+    {
+        case MapVoicing::sameOctave: return "Same octave";
+        case MapVoicing::smooth:     return "Smooth voicing";
+        case MapVoicing::followKeys:
+        default:                     return "Follows the keys";
+    }
+}
+
+namespace
+{
+constexpr int kWhite[7] = { 0, 2, 4, 5, 7, 9, 11 };
+int whiteIndex (int pc)
+{
+    for (int i = 0; i < 7; ++i)
+        if (kWhite[i] == pc)
+            return i;
+    return -1;
+}
+// The pads the black keys play: C# 8, D# 9, F# 10, G# 11, A# 12 (0-based 7-11).
+int blackPad (int pc)
+{
+    switch (pc)
+    {
+        case 1: return 7; case 3: return 8; case 6: return 9; case 8: return 10; case 10: return 11;
+        default: return -1;
+    }
+}
+constexpr int kMapSource = 400;   // + the key: a key on the map
+constexpr int kMapPress = 1000;   // + the key: a click on a key of the map (the press queue)
+}
+
+void RigChords::rebuildMap()
+{
+    const int key = fillKey, scale = fillScale, type = fillType;
+    const auto& s = vox::Chords::scales[juce::jlimit (0, vox::Chords::numScales - 1, scale)];
+    const auto layout = (MapLayout) juce::jlimit (0, 2, mapLayout.load());
+    const auto off = (OffScale) juce::jlimit (0, 2, mapOffScale.load());
+
+    // The chord on scale degree `degree`, with its root on `rootNote` when it follows the keys.
+    auto chordOn = [&] (int degree, int rootNote)
+    {
+        MapEntry e;
+        e.kind = MapEntry::chord;
+        e.degree = degree;
+        e.notes = toArray (vox::Chords::build (key, scale, degree, type));
+        e.root = (key + s[degree]) % 12;
+        e.follow = rootNote - (48 + e.root);   // build() puts the root in C3-B3
+        return e;
+    };
+    auto offEntry = [&] (const std::function<MapEntry()>& snap)
+    {
+        MapEntry e;
+        e.kind = off == OffScale::notes ? MapEntry::pass : MapEntry::silent;
+        return off == OffScale::snap ? snap() : e;
+    };
+
+    for (int n = 0; n < 128; ++n)
+    {
+        const int pc = n % 12, octaveC = n - pc;
+        MapEntry e;
+        if (layout == MapLayout::yourPads)
+        {
+            e.kind = MapEntry::padChord;
+            e.pad = whiteIndex (pc) >= 0 ? whiteIndex (pc) : blackPad (pc);
+            e.follow = 12 * (n / 12 - 4);   // pads are built around C3
+        }
+        else if (layout == MapLayout::whiteKeys)
+        {
+            auto onWhite = [&] (int w) { return chordOn (w, octaveC + (key + s[w]) % 12); };
+            const int w = whiteIndex (pc);
+            e = w >= 0 ? onWhite (w) : offEntry ([&] { return onWhite (whiteIndex (pc - 1)); });
+        }
+        else
+        {
+            const int rel = (pc - key + 12) % 12;
+            int degree = -1;
+            for (int d = 0; d < 7; ++d)
+                if (s[d] == rel)
+                    degree = d;
+            if (degree >= 0)
+                e = chordOn (degree, n);
+            else
+                e = offEntry ([&]
+                {
+                    int below = 0;
+                    for (int d = 0; d < 7; ++d)
+                        if (s[d] < rel)
+                            below = d;
+                    return chordOn (below, n - (rel - s[below]));
+                });
+        }
+        map[(size_t) n] = e;
+
+        auto& out = liveMap[(size_t) n];
+        out.kind = (int) e.kind;
+        out.pad = e.pad;
+        out.follow = e.follow;
+        out.root = e.root;
+        for (int i = 0; i < kMaxNotes; ++i)
+            out.notes[(size_t) i] = i < e.notes.size() ? e.notes[i] : -1;
+    }
+}
+
+juce::String RigChords::mapChordName (int note) const
+{
+    const auto& e = getMapEntry (note);
+    if (e.kind == MapEntry::chord && e.degree >= 0)
+        return vox::Chords::name (fillKey, fillScale, e.degree, fillType);
+    if (e.kind == MapEntry::padChord && e.pad >= 0 && ! isEmpty (e.pad))
+        return padName (e.pad);
+    return {};
+}
+
+juce::String RigChords::mapDegreeName (int note) const
+{
+    const auto& e = getMapEntry (note);
+    if (e.kind != MapEntry::chord || e.degree < 0)
+        return {};
+    static const char* numerals[] = { "I", "II", "III", "IV", "V", "VI", "VII" };
+    juce::String numeral (numerals[e.degree % 7]);
+    const auto name = mapChordName (note);
+    // What follows the root's letter (and its sharp or flat).
+    auto rest = name.substring (name.length() > 1 && (name[1] == '#' || name[1] == 'b') ? 2 : 1);
+    if (rest.startsWith ("dim"))
+        return numeral.toLowerCase() + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")) + rest.substring (3);
+    if (rest.startsWith ("m") && ! rest.startsWith ("maj"))
+    {
+        rest = rest.substring (1);
+        if (rest == "7b5")
+            return numeral.toLowerCase() + juce::String (juce::CharPointer_UTF8 ("\xc3\xb8")) + "7";
+        return numeral.toLowerCase() + rest;
+    }
+    if (rest.startsWith ("aug"))
+        return numeral + "+" + rest.substring (3);
+    return numeral + rest;
+}
+
+int RigChords::voiceMapKey (int note, std::array<int, kMaxNotes>& out, double& centre) const
+{
+    if (note < 0 || note > 127)
+        return 0;
+    const auto& e = liveMap[(size_t) note];
+    const auto kind = (MapEntry::Kind) e.kind.load();
+    std::array<int, kMaxNotes + 1> base {};
+    int count = 0, root = e.root.load();
+    if (kind == MapEntry::chord)
+    {
+        for (const auto& n : e.notes)
+        {
+            const int v = n.load();
+            if (v < 0)
+                break;
+            base[(size_t) count++] = v;
+        }
+    }
+    else if (kind == MapEntry::padChord)
+    {
+        const int pad = e.pad.load();
+        if (pad < 0 || pad >= kPads)
+            return 0;
+        for (const auto& n : live[(size_t) pad])
+        {
+            const int v = n.load();
+            if (v < 0)
+                break;
+            base[(size_t) count++] = v;
+        }
+        root = count > 0 ? base[0] % 12 : 0;
+    }
+    if (count == 0)
+        return 0;
+
+    const auto voicing = (MapVoicing) juce::jlimit (0, 2, mapVoicing.load());
+    const int octaveShift = 12 * juce::jlimit (-2, 2, mapOctave.load());
+    int shift = octaveShift + (voicing == MapVoicing::followKeys ? e.follow.load() : 0);
+    for (int i = 0; i < count; ++i)
+        base[(size_t) i] += shift;
+
+    if (voicing == MapVoicing::smooth)
+    {
+        // Every inversion (the lowest note over the top, again and again), an octave either way:
+        // the one whose middle is nearest the last chord's, kept near where the chords live.
+        double home = 0;
+        for (int i = 0; i < count; ++i)
+            home += base[(size_t) i];
+        home /= count;
+        const double aim = centre >= 0 ? centre : home;
+        std::array<int, kMaxNotes + 1> best = base, trial = base;
+        double bestScore = 1.0e9;
+        for (int inversion = 0; inversion < count; ++inversion)
+        {
+            for (int o = -1; o <= 1; ++o)
+            {
+                double mean = 0;
+                for (int i = 0; i < count; ++i)
+                    mean += trial[(size_t) i] + 12 * o;
+                mean /= count;
+                // Close to the last chord, then to home; the top note moving least as a tie break.
+                const double score = std::abs (mean - aim) + 0.35 * std::abs (mean - home);
+                if (score < bestScore - 1.0e-9 && trial[0] + 12 * o >= 0 && trial[(size_t) count - 1] + 12 * o <= 127)
+                {
+                    bestScore = score;
+                    for (int i = 0; i < count; ++i)
+                        best[(size_t) i] = trial[(size_t) i] + 12 * o;
+                }
+            }
+            // Next inversion: the lowest note up an octave at a time until it's over the top.
+            int moved = trial[0];
+            const int top = trial[(size_t) count - 1];
+            for (int i = 0; i < count - 1; ++i)
+                trial[(size_t) i] = trial[(size_t) i + 1];
+            while (moved <= top)
+                moved += 12;
+            trial[(size_t) count - 1] = moved;
+        }
+        base = best;
+    }
+
+    double mean = 0;
+    for (int i = 0; i < count; ++i)
+        mean += base[(size_t) i];
+    centre = mean / count;
+
+    // Bass: the root under the chord, at least an octave below its lowest note... well, under it.
+    int lowest = base[0];
+    for (int i = 1; i < count; ++i)
+        lowest = juce::jmin (lowest, base[(size_t) i]);
+    int bass = -1;
+    if (mapBass.load())
+    {
+        bass = lowest - ((lowest - root) % 12 + 12) % 12;
+        if (lowest - bass < 12)
+            bass -= 12;
+    }
+
+    int n = 0;
+    auto add = [&] (int v)
+    {
+        if (v < 0 || v > 127 || n >= kMaxNotes)
+            return;
+        for (int i = 0; i < n; ++i)
+            if (out[(size_t) i] == v)
+                return;
+        out[(size_t) n++] = v;
+    };
+    if (bass >= 0)
+        add (bass);
+    for (int i = 0; i < count; ++i)
+        add (base[(size_t) i]);
+    std::sort (out.begin(), out.begin() + n);
+    return n;
+}
+
+juce::Array<int> RigChords::mapNotesFor (int note) const
+{
+    std::array<int, kMaxNotes> out {};
+    double centre = -1;
+    const int n = voiceMapKey (note, out, centre);
+    juce::Array<int> result;
+    for (int i = 0; i < n; ++i)
+        result.add (out[(size_t) i]);
+    return result;
 }
 
 juce::StringArray RigChords::starterNames()
@@ -327,6 +627,18 @@ void RigChords::release (int pad)
     if (! hold.load())
         down[(size_t) pad] = false;
     queue (-(pad + 1), 0.0f);
+}
+
+void RigChords::pressMapKey (int note, float velocity)
+{
+    if (note >= 0 && note < 128)
+        queue (kMapPress + note, juce::jlimit (0.05f, 1.0f, velocity));
+}
+
+void RigChords::releaseMapKey (int note)
+{
+    if (note >= 0 && note < 128)
+        queue (-(kMapPress + note + 1), 0.0f);
 }
 
 void RigChords::audition (int pad, int ms)
@@ -448,7 +760,7 @@ void RigChords::takeTriggers (juce::MidiBuffer& midi, int padChannel, int splitN
         auto& wasTaken = takenBy[(size_t) ch][(size_t) note];
         if (msg.isNoteOn())
         {
-            int code = -1;   // what it triggers: channel 1 = a pad (0-15), channel 2 = a key's shape
+            int code = -1;   // what it triggers: channel 1 = a pad (0-15), channel 2 = a key's shape, 3 = the key map
             int channel = 1;
             if (mode == Trigger::pads && isPad && note >= RigRouting::kFirstPadNote && note < RigRouting::kFirstPadNote + kPads)
                 code = note - RigRouting::kFirstPadNote;
@@ -458,6 +770,12 @@ void RigChords::takeTriggers (juce::MidiBuffer& midi, int padChannel, int splitN
             {
                 code = note;
                 channel = 2;
+            }
+            else if (mode == Trigger::keyMap && ! isPad && (splitNote <= 0 || note >= splitNote)
+                     && liveMap[(size_t) note].kind.load() != (int) MapEntry::pass)
+            {
+                code = note;   // a silent key is taken too, so it plays nothing
+                channel = 3;
             }
             if (code >= 0)
             {
@@ -525,8 +843,29 @@ void RigChords::noteOff (int dest, int note, int at, std::array<juce::MidiBuffer
 void RigChords::startVoice (int source, int pad, int transpose, float velocity, int dest, int at,
                             std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples)
 {
+    if (pad < 0 || pad >= kPads)
+    {
+        stopVoice (source, at, to);
+        return;
+    }
+    std::array<int, kMaxNotes> notes {};
+    int count = 0;
+    for (const auto& n : live[(size_t) pad])
+    {
+        const int note = n.load();
+        if (note < 0)
+            break;
+        notes[(size_t) count++] = note + transpose;
+    }
+    startNotes (source, notes.data(), count, velocity, dest, at, to, strumSamples);
+    sounding = pad;
+}
+
+void RigChords::startNotes (int source, const int* chord, int numNotes, float velocity, int dest, int at,
+                            std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples)
+{
     stopVoice (source, at, to);
-    if (pad < 0 || pad >= kPads || dest <= 0)
+    if (dest <= 0)
         return;
     int v = -1;
     for (int i = 0; i < kVoices && v < 0; ++i)
@@ -542,12 +881,9 @@ void RigChords::startVoice (int source, int pad, int transpose, float velocity, 
     voice.dest = dest;
     voice.count = 0;
     int index = 0;
-    for (const auto& n : live[(size_t) pad])
+    for (int i = 0; i < numNotes; ++i)
     {
-        const int note = n.load();
-        if (note < 0)
-            break;
-        const int played = note + transpose;
+        const int played = chord[i];
         if (played < 0 || played > 127)
             continue;
         const int when = at + index * strumSamples;
@@ -563,7 +899,6 @@ void RigChords::startVoice (int source, int pad, int transpose, float velocity, 
             pending[(size_t) numPending++] = { when - blockSize, dest, played, v, velocity };
         }
     }
-    sounding = pad;
     lastSoundingVoice = v;
 }
 
@@ -625,6 +960,7 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
             stopVoice (voices[(size_t) v].source, 0, to);
         numPending = 0;
         heldSource = -1;
+        lastMapCentre = -1;
         progressionStepNow = -1;
         playingStep = -1;
     }
@@ -675,6 +1011,31 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
             stopVoice (source, at, to);
     };
 
+    // A key of the map: its chord, voiced, as the key's own source.
+    auto pressMapSource = [&] (int note, float velocity, int at)
+    {
+        std::array<int, kMaxNotes> notes {};
+        const int count = voiceMapKey (note, notes, lastMapCentre);
+        if (count == 0)
+            return;
+        const int source = kMapSource + note;
+        lastMapKey = note;
+        if (latch)
+        {
+            if (heldSource == source)
+            {
+                stopVoice (source, at, to);
+                heldSource = -1;
+                return;
+            }
+            stopVoice (heldSource, at, to);
+            heldSource = source;
+        }
+        startNotes (source, notes.data(), count, velocity, dest, at, to, strumSamples);
+        const auto& e = liveMap[(size_t) note];
+        sounding = e.kind.load() == (int) MapEntry::padChord ? e.pad.load() : -1;
+    };
+
     // Clicks on the screen (at the start of the block).
     {
         const auto scope = pressFifo.read (pressFifo.getNumReady());
@@ -683,8 +1044,12 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
             for (int i = start; i < start + size; ++i)
             {
                 const auto p = pressQueue[(size_t) i];
-                if (p.pad >= 0)
+                if (p.pad >= kMapPress)
+                    pressMapSource (p.pad - kMapPress, p.velocity, 0);
+                else if (p.pad >= 0)
                     pressSource (p.pad, p.pad, 0, p.velocity, 0);
+                else if (-p.pad - 1 >= kMapPress)
+                    releaseSource (kMapSource + (-p.pad - 1 - kMapPress), 0);
                 else
                     releaseSource (-p.pad - 1, 0);
             }
@@ -698,11 +1063,13 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
     {
         const auto msg = m.getMessage();
         const int code = msg.getNoteNumber(), at = juce::jlimit (0, juce::jmax (0, numSamples - 1), m.samplePosition);
-        const bool shape = msg.getChannel() == 2;
-        const int source = 100 + (shape ? 16 + code : code);
+        const bool shape = msg.getChannel() == 2, mapped = msg.getChannel() == 3;
+        const int source = mapped ? kMapSource + code : 100 + (shape ? 16 + code : code);
         if (msg.isNoteOn())
         {
-            if (shape)
+            if (mapped)
+                pressMapSource (code, msg.getFloatVelocity(), at);
+            else if (shape)
             {
                 const int pad = juce::jlimit (0, kPads - 1, shapePad.load());
                 const int lowest = live[(size_t) pad][0].load();
@@ -878,7 +1245,14 @@ void RigChords::reset()
     shapePad = 0;
     stepLength = 2;
     progressionOn = false;
+    mapLayout = (int) MapLayout::scaleNotes;
+    mapOffScale = (int) OffScale::snap;
+    mapVoicing = (int) MapVoicing::followKeys;
+    mapBass = false;
+    mapOctave = 0;
+    lastMapCentre = -1;
     loadStarter (0);
+    rebuildMap();
 }
 
 juce::ValueTree RigChords::toTree() const
@@ -895,6 +1269,11 @@ juce::ValueTree RigChords::toTree() const
     t.setProperty ("fillKey", fillKey, nullptr);
     t.setProperty ("fillScale", fillScale, nullptr);
     t.setProperty ("fillType", fillType, nullptr);
+    t.setProperty ("mapLayout", mapLayout.load(), nullptr);
+    t.setProperty ("mapOffScale", mapOffScale.load(), nullptr);
+    t.setProperty ("mapVoicing", mapVoicing.load(), nullptr);
+    t.setProperty ("mapBass", mapBass.load(), nullptr);
+    t.setProperty ("mapOctave", mapOctave.load(), nullptr);
     juce::StringArray stepText;
     for (const auto& s : steps)
         stepText.add (juce::String (s.load()));
@@ -926,7 +1305,7 @@ void RigChords::fromTree (const juce::ValueTree& t)
         return;
     }
     target = juce::jlimit (kFollowKeys, RigRouting::kNumDests - 1, (int) t.getProperty ("target", kFollowKeys));
-    trigger = juce::jlimit (0, (int) Trigger::everyKey, (int) t.getProperty ("trigger", 0));
+    trigger = juce::jlimit (0, (int) Trigger::keyMap, (int) t.getProperty ("trigger", 0));
     hold = (bool) t.getProperty ("hold", false);
     strum = juce::jlimit (0, 3, (int) t.getProperty ("strum", 0));
     lowKey = juce::jlimit (0, 127 - kPads, (int) t.getProperty ("lowKey", 36));
@@ -936,6 +1315,11 @@ void RigChords::fromTree (const juce::ValueTree& t)
     fillKey = juce::jlimit (0, 11, (int) t.getProperty ("fillKey", 0));
     fillScale = juce::jlimit (0, vox::Chords::numScales - 1, (int) t.getProperty ("fillScale", 0));
     fillType = juce::jlimit (0, vox::Chords::numFlavours - 1, (int) t.getProperty ("fillType", 0));
+    mapLayout = juce::jlimit (0, 2, (int) t.getProperty ("mapLayout", 0));
+    mapOffScale = juce::jlimit (0, 2, (int) t.getProperty ("mapOffScale", (int) OffScale::snap));
+    mapVoicing = juce::jlimit (0, 2, (int) t.getProperty ("mapVoicing", 0));
+    mapBass = (bool) t.getProperty ("mapBass", false);
+    mapOctave = juce::jlimit (-2, 2, (int) t.getProperty ("mapOctave", 0));
     juce::StringArray stepText;
     stepText.addTokens (t.getProperty ("steps").toString(), " ", "");
     for (int i = 0; i < kSteps; ++i)
@@ -953,6 +1337,7 @@ void RigChords::fromTree (const juce::ValueTree& t)
             notes.add (n.getIntValue());
         setPad ((int) pad.getProperty ("index", -1), notes, pad.getProperty ("name").toString());
     }
+    rebuildMap();
 }
 
 juce::File RigChords::setsFolder()
