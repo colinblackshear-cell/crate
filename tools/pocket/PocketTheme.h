@@ -32,7 +32,7 @@ enum class Look { cream, amber, green, red, blue, dark, ghost, pad };
 
 void drawRaised (juce::Graphics&, juce::Rectangle<float>, Look, bool pressed, float radius = 12.0f);
 void drawWell (juce::Graphics&, juce::Rectangle<float>, float radius = 14.0f);
-void drawKnob (juce::Graphics&, juce::Rectangle<float> bounds, float value01, juce::Colour arc, bool active);
+void drawKnob (juce::Graphics&, juce::Rectangle<float> bounds, float value01, juce::Colour arc, bool active, bool onDark = false);
 
 // A raised button, with text or a drawn glyph. Always at least as big as the bounds it's given.
 class PButton : public juce::Component

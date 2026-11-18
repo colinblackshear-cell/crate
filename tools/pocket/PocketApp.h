@@ -11,6 +11,7 @@
 #include "PocketTheme.h"
 #include "RecordScreen.h"
 #include "SoundsScreen.h"
+#include "VocoderScreen.h"
 
 // The whole phone app: a header, five tabs (Record, Beats, Loops, Vocoder, More) and the Effects + Chop sheet.
 class PocketApp : public juce::Component, private PocketHost
@@ -64,12 +65,13 @@ private:
     pocket::AppSettings appSettings;
     BeatsScreen beats;     // before the sound card, so the card stops before the engine goes
     LoopsScreen loopsScreen;   // owns the one renderer the sound card plays (Beats inside it)
+    VocoderScreen vocoderScreen;   // plays inside that renderer, so it stops after the sound card does
     PocketAudio audio;
     EffectsSheet sheet;
     PadSheet padSheet;
     RecordScreen record;
     SoundsScreen sounds;
-    std::unique_ptr<Panel> vocoder, remote, macLink;
+    std::unique_ptr<Panel> remote, macLink;
     std::unique_ptr<SettingsScreen> settings;
     std::unique_ptr<MoreScreen> more;
     std::unique_ptr<TabBar> tabs;

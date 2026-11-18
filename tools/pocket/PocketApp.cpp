@@ -355,6 +355,7 @@ PocketApp::PocketApp (Options o)
       appSettings (lib.getRoot()),
       beats (static_cast<PocketHost&> (*this), lib),
       loopsScreen (static_cast<PocketHost&> (*this), lib, beats.engine(), appSettings),
+      vocoderScreen (static_cast<PocketHost&> (*this), lib, audio, loopsScreen, beats.engine()),
       padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
       sounds (static_cast<PocketHost&> (*this), audio, lib)
@@ -362,7 +363,6 @@ PocketApp::PocketApp (Options o)
     juce::LookAndFeel::setDefaultLookAndFeel (&look);
 
     auto backToMore = [this] { showMorePage (0); };
-    vocoder = std::make_unique<Panel> ("Vocoder", "Talk or sing through the vocoder with the phone's mic.");
     remote = std::make_unique<Panel> ("Remote", "Run the Rig on the Mac from here: play, sections, mutes and loops.", backToMore);
     macLink = std::make_unique<Panel> ("Mac link", "Link this iPhone to your Mac on the same Wi-Fi to send sounds across.", backToMore);
     settings = std::make_unique<SettingsScreen> (appSettings, backToMore, [this] { loopsScreen.engine().setCountIn (appSettings.countIn); });
@@ -402,7 +402,7 @@ PocketApp::PocketApp (Options o)
 
     addAndMakeVisible (record);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
     addAndMakeVisible (*tabs);
     addChildComponent (*dim);
@@ -414,6 +414,7 @@ PocketApp::PocketApp (Options o)
     sounds.selectFirst();
     animate = o.audio;
 
+    loopsScreen.engine().setVocoderSource (&vocoderScreen.engine(), &vocoderScreen.engine().monitorFlag());
     if (o.audio)
     {
         audio.setRenderer (&loopsScreen.engine());
@@ -441,9 +442,9 @@ void PocketApp::showTab (int i)
         closeSheet();
     closePadSheet();
     audio.stopPlaying();
-    if (i != 1 && i != 2)
+    if (i != 1 && i != 2 && i != 3)
     {
-        beats.leave();     // Beats and Loops share the clock, so moving between them keeps it going
+        beats.leave();     // Beats, Loops and Vocoder share the clock, so moving between them keeps it going
         loopsScreen.leave();
     }
     tab = i;
@@ -451,7 +452,7 @@ void PocketApp::showTab (int i)
     record.setVisible (i == 0);
     beats.setVisible (i == 1);
     loopsScreen.setVisible (i == 2);
-    vocoder->setVisible (i == 3);
+    vocoderScreen.setVisible (i == 3);
     if (i == 4)
         showMorePage (0);
     else
@@ -472,7 +473,7 @@ void PocketApp::showMorePage (int page)
         beats.leave();
         loopsScreen.leave();
         loopsScreen.setVisible (false);
-        vocoder->setVisible (false);
+        vocoderScreen.setVisible (false);
     }
     more->setVisible (page == 0);
     sounds.setVisible (page == 1);
@@ -659,7 +660,7 @@ void PocketApp::resized()
     tabs->setBounds (0, h - tabH, w, tabH);
 
     auto content = juce::Rectangle<int> (0, insets.getTop() + 62, w, h - tabH - insets.getTop() - 62);
-    for (auto* c : std::initializer_list<juce::Component*> { &record, &sounds, &beats, &loopsScreen, vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, &sounds, &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
 
     dim->setBounds (0, 0, w, h);
@@ -768,6 +769,16 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     showTab (2);
     savePng (folder.getChildFile ("07-loops.png"));
 
+    // Vocoder: the Robot pedal open, A-flat picked, five pedals on
+    vocoderScreen.showDemo();
+    showTab (3);
+    savePng (folder.getChildFile ("07-vocoder.png"));
+    vocoderScreen.engine().setMonitor (true);
+    vocoderScreen.setDemoHeadphones (false);
+    savePng (folder.getChildFile ("07b-vocoder-no-headphones.png"));
+    vocoderScreen.engine().setMonitor (false);
+    vocoderScreen.setDemoHeadphones (true);
+
     showTab (4);
     savePng (folder.getChildFile ("08-more.png"));
 
@@ -824,10 +835,15 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = LoopsScreen::selfCheck (loopsReport); why.isNotEmpty())
         problems.add ("Loops: " + why);
 
+    juce::String vocoderReport;
+    if (const auto why = VocoderEngine::selfCheck (vocoderReport); why.isNotEmpty())
+        problems.add ("Vocoder: " + why);
+
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: TO PAD, the MPC export round trip, the drum machine and the pads make sound, and loops record, line up and play with no gap\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: TO PAD, the MPC export round trip, the drum machine and the pads make sound, and loops record, line up and play with no gap, and the vocoder makes sound that follows the voice\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
-                          + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport);
+                          + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
+                          + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }

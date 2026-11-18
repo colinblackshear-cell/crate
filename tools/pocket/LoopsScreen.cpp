@@ -137,19 +137,57 @@ int LoopsScreen::barsForNext() const
     return master > 0 ? juce::jmax (1, juce::roundToInt (master / 4.0)) : 0;   // FREE: the first layer sets it, later ones snap
 }
 
-void LoopsScreen::startRecording (int layer)
+bool LoopsScreen::startRecording (int layer, int source)
 {
-    const auto src = (LoopSource) sourceChoice;
+    const auto src = (LoopSource) (source >= 0 ? source : sourceChoice);
     if (src == LoopSource::vocoder && ! loops.hasVocoder())
-        return host.toast ("The vocoder source comes with the Vocoder");
+    {
+        host.toast ("The vocoder source comes with the Vocoder");
+        return false;
+    }
     if (loops.state (layer) != LoopState::empty)
-        return;
+        return false;
     Undo u;
     u.items.push_back ({ layer, nullptr, false });
     if (! loops.arm (layer, src, barsForNext()))
-        return host.toast ("That layer is busy. Try again in a moment.");
+    {
+        host.toast ("That layer is busy. Try again in a moment.");
+        return false;
+    }
     pushUndo (std::move (u));
     selected = lastLayer = layer;
+    return true;
+}
+
+int LoopsScreen::recordVocoder()
+{
+    int layer = -1;
+    for (int l = 0; l < kLoopLayers && layer < 0; ++l)
+        if (loops.state (l) == LoopState::empty)
+            layer = l;
+    if (layer < 0)
+    {
+        host.toast ("All 8 layers are used. Clear one in Loops to record.");
+        return -1;
+    }
+    if (! startRecording (layer, (int) LoopSource::vocoder))
+        return -1;   // it said why
+    vocLayer = layer;
+    return layer;
+}
+
+int LoopsScreen::vocoderLayer() const
+{
+    if (vocLayer < 0)
+        return -1;
+    const auto st = loops.state (vocLayer);
+    return st == LoopState::waiting || st == LoopState::recording ? vocLayer : -1;
+}
+
+void LoopsScreen::stopVocoder()
+{
+    if (vocoderLayer() >= 0)
+        loops.stop (vocLayer);
 }
 
 void LoopsScreen::pushUndo (Undo u)

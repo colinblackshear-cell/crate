@@ -87,7 +87,7 @@ void drawWell (juce::Graphics& g, juce::Rectangle<float> r, float radius)
     g.fillRoundedRectangle (r.reduced (1.5f), radius - 1.0f);
 }
 
-void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colour arc, bool active)
+void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colour arc, bool active, bool onDark)
 {
     const auto c = b.getCentre();
     const float R = juce::jmin (b.getWidth(), b.getHeight()) * 0.5f;
@@ -97,7 +97,7 @@ void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colou
     const float arcR = R - 2.5f;
     juce::Path track;
     track.addCentredArc (c.x, c.y, arcR, arcR, 0, a0, a1, true);
-    g.setColour (col::creamDeep.darker (0.12f));
+    g.setColour (onDark ? juce::Colour (0xff3a332b) : col::creamDeep.darker (0.12f));
     g.strokePath (track, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     if (active)
     {

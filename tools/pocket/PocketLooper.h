@@ -43,9 +43,10 @@ public:
 
     //==========================================================================
     // Message thread
-    // The vocoder's hookup (step 4): call this once with whatever renders the vocoder and the
-    // VOCODER source works, with nothing else to change. Not owned.
-    void setVocoderSource (PocketAudio::Renderer* r) { vocoder = r; }
+    // The vocoder's hookup: call this once with whatever renders the vocoder and the VOCODER source
+    // works. Not owned. The vocoder always runs, so the VOCODER source can record it; it only reaches the
+    // speaker (and the MIX source) while `monitor` is true (HEAR ME). nullptr = always heard.
+    void setVocoderSource (PocketAudio::Renderer* r, const std::atomic<bool>* monitor = nullptr) { vocoder = r; vocoderMonitor = monitor; }
     bool hasVocoder() const { return vocoder != nullptr; }
     void setCountIn (bool on) { countIn = on; }
 
@@ -136,6 +137,8 @@ private:
 
     BeatsEngine& beats;
     PocketAudio::Renderer* vocoder = nullptr;
+    const std::atomic<bool>* vocoderMonitor = nullptr;
+    bool vocoderHeard = true;
     std::array<Layer, kLoopLayers> layers;
     std::array<SharedTake, kLoopLayers> takes;                          // the message thread's
     std::vector<std::pair<SharedTake, juce::uint32>> retired;           // kept a while after the audio thread lets go

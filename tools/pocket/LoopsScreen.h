@@ -16,6 +16,12 @@ public:
 
     pocket::LoopsEngine& engine() { return loops; }
     int layerCount() const;                 // layers that hold a loop
+    // The Vocoder tab's TO LOOP: records the vocoder on the next empty layer, from the next bar, for the chosen
+    // LENGTH. Returns the layer, or -1 when all eight are used (it says so itself).
+    int recordVocoder();
+    // The layer a vocoder take is waiting or recording on (-1 = none). stopVocoder() ends it at the bar.
+    int vocoderLayer() const;
+    void stopVocoder();
     void leave();                           // another tab (not Beats) was opened: stop the clock and the loops
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -38,7 +44,7 @@ private:
     void refresh();
     int idAt (juce::Point<float>) const;
     void press (int id);
-    void startRecording (int layer);
+    bool startRecording (int layer, int source = -1);
     void pushUndo (Undo);
     void undo();
     void clearLayer (int layer, bool withUndo);
@@ -71,7 +77,7 @@ private:
 
     std::array<Row, pocket::kLoopLayers> rows;
     std::vector<Undo> undoStack;
-    int selected = -1, lastLayer = -1;
+    int selected = -1, lastLayer = -1, vocLayer = -1;
     int sourceChoice = 0;   // pocket::LoopSource
     int lengthChoice = 2;   // 0..3 = 1, 2, 4, 8 bars, 4 = FREE
     int pressed = 0;

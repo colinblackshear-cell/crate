@@ -374,11 +374,15 @@ void LoopsEngine::chunk (float* left, float* right, int n)
                                     inChannels > 1 && inPtr != nullptr ? inPtr[1] + chunkOffset : nullptr };
         vocoder->setInput (shifted, juce::jmin (2, inChannels));
         vocoder->render (vocL.data(), vocR.data(), n);
+        vocoderHeard = vocoderMonitor == nullptr || vocoderMonitor->load();
         for (int i = 0; i < n; ++i)
         {
-            left[i] += vocL[(size_t) i];
-            if (right != nullptr)
-                right[i] += vocR[(size_t) i];
+            if (vocoderHeard)
+            {
+                left[i] += vocL[(size_t) i];
+                if (right != nullptr)
+                    right[i] += vocR[(size_t) i];
+            }
             srcVoc[(size_t) i] = 0.5f * (vocL[(size_t) i] + vocR[(size_t) i]);
         }
     }
@@ -389,7 +393,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
 
     for (int i = 0; i < n; ++i)
     {
-        float m = srcDrums[(size_t) i] + srcVoc[(size_t) i];
+        float m = srcDrums[(size_t) i] + (vocoderHeard ? srcVoc[(size_t) i] : 0.0f);
         for (auto& o : layerOut)
             m += o[(size_t) i];
         srcMix[(size_t) i] = m;
