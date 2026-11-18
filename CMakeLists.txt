@@ -85,10 +85,16 @@ target_link_libraries(crate_core INTERFACE
     juce::juce_audio_utils
     juce::juce_dsp)
 
-add_subdirectory(tools/editor)
-add_subdirectory(tools/mpc)
-add_subdirectory(tools/bass)
-add_subdirectory(tools/synth)
-add_subdirectory(tools/drums)
-add_subdirectory(tools/rig)
-add_subdirectory(tests)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # iPhone: only the phone app, built from the engine sources. The desktop tools host AU/VST3
+    # plugins, which iOS doesn't have.
+    add_subdirectory(tools/pocket)
+else()
+    add_subdirectory(tools/editor)
+    add_subdirectory(tools/mpc)
+    add_subdirectory(tools/bass)
+    add_subdirectory(tools/synth)
+    add_subdirectory(tools/drums)
+    add_subdirectory(tools/rig)
+    add_subdirectory(tests)
+endif()
