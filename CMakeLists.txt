@@ -85,10 +85,21 @@ target_link_libraries(crate_core INTERFACE
     juce::juce_audio_utils
     juce::juce_dsp)
 
-add_subdirectory(tools/editor)
-add_subdirectory(tools/mpc)
-add_subdirectory(tools/bass)
-add_subdirectory(tools/synth)
-add_subdirectory(tools/drums)
-add_subdirectory(tools/rig)
-add_subdirectory(tests)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # iPhone: only the phone app, built from the engine sources. The desktop tools host AU/VST3
+    # plugins, which iOS doesn't have.
+    add_subdirectory(tools/pocket)
+else()
+    add_subdirectory(tools/editor)
+    add_subdirectory(tools/mpc)
+    add_subdirectory(tools/bass)
+    add_subdirectory(tools/synth)
+    add_subdirectory(tools/drums)
+    add_subdirectory(tools/rig)
+    add_subdirectory(tests)
+    # Optional: Kaleidobox Pocket's screens as a desktop window, to check the look without a phone.
+    option(CRATE_POCKET_DESKTOP "Build the Kaleidobox Pocket UI as a 390x844 desktop app" OFF)
+    if(CRATE_POCKET_DESKTOP)
+        add_subdirectory(tools/pocket)
+    endif()
+endif()
