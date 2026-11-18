@@ -43,6 +43,8 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketTheme.cpp
     PocketWave.cpp
     EffectsSheet.cpp
+    LoopsScreen.cpp
+    PocketLooper.cpp
     RecordScreen.cpp
     SoundsScreen.cpp)
 

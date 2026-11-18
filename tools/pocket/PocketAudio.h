@@ -16,6 +16,10 @@ public:
         virtual ~Renderer() = default;
         virtual void prepare (double sampleRate) = 0;
         virtual void render (float* left, float* right, int numSamples) = 0;   // right may be null
+        // Called just before render() in each audio callback: this callback's microphone channels
+        // (numIn may be 0) and the device's input + output latency in samples.
+        virtual void setInput (const float* const* in, int numIn) { juce::ignoreUnused (in, numIn); }
+        virtual void setLatency (int samples) { juce::ignoreUnused (samples); }
     };
     // Set once, before start(). Not owned.
     void setRenderer (Renderer* r) { renderer = r; }
@@ -34,6 +38,7 @@ public:
     double recordedSeconds() const;
     float takeLevel() { return peak.exchange (0.0f); }   // loudest sample since the last call, 0..1
     double deviceRate() const { return sampleRate; }
+    int latencySamples() const { return latency.load(); }   // input + output, as the device reports
     bool hasOutputDevice() const { return running; }
 
     // Playback of `audio` from sample `start` up to `end`.
@@ -52,6 +57,7 @@ private:
     juce::AudioDeviceManager devices;
     bool running = false;
     double sampleRate = 44100.0;
+    std::atomic<int> latency { 0 };
 
     juce::TimeSliceThread writerThread { "Pocket recorder" };
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;

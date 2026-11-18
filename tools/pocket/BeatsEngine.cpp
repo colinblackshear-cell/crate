@@ -379,7 +379,8 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
         }
     }
 
-    const bool running = wantPlay.load();
+    const bool running = wantPlay.load() || clockHeld.load();
+    const bool drumsOn = wantPlay.load();
     const double tempo = bpm.load();
     if (running && ! wasRunning)
     {
@@ -387,6 +388,8 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
         lastPpq = -1;
     }
     wasRunning = running;
+    clockOn = running;
+    clockPpq = ppq;
 
     // A new pattern starts at the next bar (or straight away when stopped), so switching live stays in time.
     const int wanted = wantedSlot.load();
@@ -407,7 +410,7 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
     drums.setSettings (live.settings);
 
     drums::Clock clock;
-    clock.playing = running;
+    clock.playing = drumsOn;
     clock.ppq = ppq;
     clock.bpm = tempo;
     drums.render (left, right, numSamples, noMidi, clock);

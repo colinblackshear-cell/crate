@@ -63,6 +63,12 @@ public:
     int playingVariation() const { return playingB.load(); }   // 0 A, 1 B
     void hitVoice (int voice, float velocity = 0.85f, bool accent = false);
 
+    // The shared clock. It runs while the drum machine plays or while something else (the looper)
+    // holds it; the drums only sound while they are playing. Any thread.
+    void holdClock (bool on) { clockHeld = on; }
+    bool clockRunning() const { return clockOn.load(); }
+    double clockBeat() const { return clockPpq.load(); }   // beats at the start of the last block rendered
+
     void setPad (int pad, const PadSetup&);
     void padOn (int pad, float velocity = 1.0f);
     void padOff (int pad);
@@ -115,7 +121,8 @@ private:
     double ppq = 0, lastPpq = -1;
     bool wasRunning = false;
     juce::MidiBuffer noMidi;
-    std::atomic<bool> wantPlay { false };
+    std::atomic<bool> wantPlay { false }, clockHeld { false }, clockOn { false };
+    std::atomic<double> clockPpq { 0.0 };
     std::atomic<double> bpm { 97.0 };
     std::atomic<int> step { -1 };
     std::atomic<int> playingB { 0 };

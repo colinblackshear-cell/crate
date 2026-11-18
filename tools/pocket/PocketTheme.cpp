@@ -55,6 +55,7 @@ static Palette paletteFor (Look l)
         case Look::amber: return { juce::Colour (0xfffcca64), juce::Colour (0xffeea02a), juce::Colour (0xffb9741a), col::ink };
         case Look::green: return { juce::Colour (0xff78e6a2), juce::Colour (0xff35bc6b), juce::Colour (0xff1f8348), col::ink };
         case Look::red:   return { juce::Colour (0xfff58b78), juce::Colour (0xffd8452f), juce::Colour (0xff922a1c), juce::Colours::white };
+        case Look::blue:  return { juce::Colour (0xff7cc6e0), juce::Colour (0xff3a95b8), juce::Colour (0xff22627a), col::ink };
         case Look::dark:  return { juce::Colour (0xff3d362e), juce::Colour (0xff27221c), juce::Colour (0xff100d0a), juce::Colour (0xfff1e7d1) };
         case Look::pad:   return { juce::Colour (0xff6a5d50), juce::Colour (0xff3a322a), juce::Colour (0xff0d0b09), juce::Colour (0xfff1e7d1) };
         case Look::ghost: return { juce::Colours::transparentBlack, juce::Colours::transparentBlack, juce::Colours::transparentBlack, col::ink };

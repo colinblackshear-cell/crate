@@ -64,7 +64,7 @@ private:
 class PocketApp::MoreScreen : public juce::Component
 {
 public:
-    MoreScreen (Library& l) : lib (l) {}
+    MoreScreen (Library& l, std::function<int()> loopLayerCount) : lib (l), loopLayers (std::move (loopLayerCount)) {}
     std::function<void (int)> onOpen;
 
     void paint (juce::Graphics& g) override
@@ -75,7 +75,7 @@ public:
             U8("Everything you've recorded, imported or got from the Mac · ") + juce::String (n) + (n == 1 ? " sound" : " sounds"),
             "Run the Rig on the Mac: play, sections, mutes, loops",
             U8("Not linked · linking to your Mac comes in a later update"),
-            "Mic, tempo and click, keep sounds on this iPhone" };
+            U8("Loop count-in · mic, tempo and click come later") };
         for (int i = 0; i < 4; ++i)
         {
             auto r = rowBounds (i);
@@ -109,7 +109,7 @@ public:
         g.drawText ("ON THIS IPHONE", box.withTrimmedLeft (16).withHeight (30), juce::Justification::bottomLeft);
         g.setColour (juce::Colour (0xfff1e7d6));
         g.setFont (small (17.0f));
-        g.drawFittedText (juce::String ((int) lib.items().size()) + U8(" sounds · 0 kits · 0 drum patterns · 0 loop layers · ") + megabytes(),
+        g.drawFittedText (juce::String ((int) lib.items().size()) + U8(" sounds · 0 kits · 0 drum patterns · ") + juce::String (loopLayers()) + (loopLayers() == 1 ? " loop layer" : " loop layers") + U8(" · ") + megabytes(),
                           box.reduced (16, 0).withTrimmedTop (32).toNearestInt(), juce::Justification::topLeft, 2);
     }
 
@@ -129,8 +129,9 @@ private:
     juce::String megabytes() const
     {
         juce::int64 bytes = 0;
-        for (auto& f : lib.getRoot().getChildFile ("Sounds").findChildFiles (juce::File::findFiles, false))
-            bytes += f.getSize();
+        for (auto* folder : { "Sounds", "Loops" })
+            for (auto& f : lib.getRoot().getChildFile (folder).findChildFiles (juce::File::findFiles, false))
+                bytes += f.getSize();
         return juce::String (juce::roundToInt ((double) bytes / 1048576.0)) + " MB";
     }
 
@@ -168,6 +169,63 @@ private:
     }
 
     Library& lib;
+    std::function<int()> loopLayers;
+};
+
+// Settings: for now the loop count-in. (Mic, tempo and click come later.)
+class PocketApp::SettingsScreen : public juce::Component
+{
+public:
+    SettingsScreen (AppSettings& s, std::function<void()> back, std::function<void()> changed)
+        : settings (s), onChanged (std::move (changed))
+    {
+        backButton.setFontHeight (16.0f);
+        backButton.onClick = std::move (back);
+        addAndMakeVisible (backButton);
+    }
+
+    void resized() override { backButton.setBounds (16, 6, 96, 44); }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (col::ink);
+        g.setFont (fraunces (30.0f));
+        g.drawText ("Settings", getLocalBounds().withTrimmedTop (56).withHeight (44).withTrimmedLeft (20), juce::Justification::centredLeft);
+
+        auto r = row();
+        drawRaised (g, r, Look::cream, false, 16.0f);
+        g.setColour (col::ink);
+        g.setFont (spaced (condensed (21.0f), 0.08f));
+        g.drawText ("LOOP COUNT-IN", juce::Rectangle<float> (r.getX() + 18, r.getY() + 10, r.getWidth() - 110, 26), juce::Justification::centredLeft);
+        g.setColour (col::inkDim);
+        g.setFont (small (14.0f));
+        g.drawFittedText ("A silent one-bar count before a loop recording starts the clock.",
+                          juce::Rectangle<int> ((int) r.getX() + 18, (int) r.getY() + 38, (int) r.getWidth() - 110, 40), juce::Justification::topLeft, 2);
+        auto sw = switchBounds();
+        drawWell (g, sw, 15.0f);
+        g.setColour (settings.countIn ? col::amber : col::inkDim);
+        g.fillEllipse (settings.countIn ? sw.getRight() - 29 : sw.getX() + 3, sw.getY() + 3, 24, 24);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (row().contains (e.position))
+        {
+            settings.countIn = ! settings.countIn;
+            settings.save();
+            if (onChanged)
+                onChanged();
+            repaint();
+        }
+    }
+
+private:
+    juce::Rectangle<float> row() const { return { 16, 108, (float) getWidth() - 32, 86 }; }
+    juce::Rectangle<float> switchBounds() const { auto r = row(); return { r.getRight() - 78, r.getCentreY() - 17, 58, 30 }; }
+
+    AppSettings& settings;
+    std::function<void()> onChanged;
+    PButton backButton { "< More" };
 };
 
 class PocketApp::Dim : public juce::Component
@@ -294,7 +352,9 @@ private:
 //==============================================================================
 PocketApp::PocketApp (Options o)
     : lib (o.libraryRoot != juce::File() ? o.libraryRoot : Library::defaultRoot()),
+      appSettings (lib.getRoot()),
       beats (static_cast<PocketHost&> (*this), lib),
+      loopsScreen (static_cast<PocketHost&> (*this), lib, beats.engine(), appSettings),
       padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
       sounds (static_cast<PocketHost&> (*this), audio, lib)
@@ -302,12 +362,11 @@ PocketApp::PocketApp (Options o)
     juce::LookAndFeel::setDefaultLookAndFeel (&look);
 
     auto backToMore = [this] { showMorePage (0); };
-    loops = std::make_unique<Panel> ("Loops", "Layer loops from your sounds, right on the phone.");
     vocoder = std::make_unique<Panel> ("Vocoder", "Talk or sing through the vocoder with the phone's mic.");
     remote = std::make_unique<Panel> ("Remote", "Run the Rig on the Mac from here: play, sections, mutes and loops.", backToMore);
     macLink = std::make_unique<Panel> ("Mac link", "Link this iPhone to your Mac on the same Wi-Fi to send sounds across.", backToMore);
-    settings = std::make_unique<Panel> ("Settings", "Mic input, tempo and click, and keeping sounds on this iPhone.", backToMore);
-    more = std::make_unique<MoreScreen> (lib);
+    settings = std::make_unique<SettingsScreen> (appSettings, backToMore, [this] { loopsScreen.engine().setCountIn (appSettings.countIn); });
+    more = std::make_unique<MoreScreen> (lib, [this] { return loopsScreen.layerCount(); });
     more->onOpen = [this] (int page) { showMorePage (page); };
     tabs = std::make_unique<TabBar>();
     tabs->onSelect = [this] (int i) { showTab (i); };
@@ -343,7 +402,7 @@ PocketApp::PocketApp (Options o)
 
     addAndMakeVisible (record);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, loops.get(), vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
     addAndMakeVisible (*tabs);
     addChildComponent (*dim);
@@ -357,7 +416,7 @@ PocketApp::PocketApp (Options o)
 
     if (o.audio)
     {
-        audio.setRenderer (&beats.engine());
+        audio.setRenderer (&loopsScreen.engine());
         audio.start ([this] (juce::String error)
         {
             if (error.isNotEmpty())
@@ -382,13 +441,16 @@ void PocketApp::showTab (int i)
         closeSheet();
     closePadSheet();
     audio.stopPlaying();
-    if (i != 1)
-        beats.leave();
+    if (i != 1 && i != 2)
+    {
+        beats.leave();     // Beats and Loops share the clock, so moving between them keeps it going
+        loopsScreen.leave();
+    }
     tab = i;
     tabs->selected = i;
     record.setVisible (i == 0);
     beats.setVisible (i == 1);
-    loops->setVisible (i == 2);
+    loopsScreen.setVisible (i == 2);
     vocoder->setVisible (i == 3);
     if (i == 4)
         showMorePage (0);
@@ -408,7 +470,8 @@ void PocketApp::showMorePage (int page)
         record.setVisible (false);
         beats.setVisible (false);
         beats.leave();
-        loops->setVisible (false);
+        loopsScreen.leave();
+        loopsScreen.setVisible (false);
         vocoder->setVisible (false);
     }
     more->setVisible (page == 0);
@@ -596,7 +659,7 @@ void PocketApp::resized()
     tabs->setBounds (0, h - tabH, w, tabH);
 
     auto content = juce::Rectangle<int> (0, insets.getTop() + 62, w, h - tabH - insets.getTop() - 62);
-    for (auto* c : std::initializer_list<juce::Component*> { &record, &sounds, &beats, loops.get(), vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, &sounds, &beats, &loopsScreen, vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
 
     dim->setBounds (0, 0, w, h);
@@ -700,8 +763,16 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("02b-chop-markers.png"));
     closeSheet();
 
+    // Loops: layers 1-2 playing, 3 recording, 4 waiting for the next bar, 5 muted, 6-8 empty
+    loopsScreen.showDemo();
+    showTab (2);
+    savePng (folder.getChildFile ("07-loops.png"));
+
     showTab (4);
     savePng (folder.getChildFile ("08-more.png"));
+
+    showMorePage (4);
+    savePng (folder.getChildFile ("10-settings.png"));
 
     showMorePage (1);
     savePng (folder.getChildFile ("09-sounds.png"));
@@ -749,8 +820,14 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = beats.selfCheckSound(); why.isNotEmpty())
         problems.add ("Sound: " + why);
 
+    juce::String loopsReport;
+    if (const auto why = LoopsScreen::selfCheck (loopsReport); why.isNotEmpty())
+        problems.add ("Loops: " + why);
+
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText (problems.isEmpty() ? juce::String ("OK: TO PAD, the MPC export round trip, the drum machine and the pads make sound\n") : "FAILED\n" + problems.joinIntoString ("\n") + "\n");
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: TO PAD, the MPC export round trip, the drum machine and the pads make sound, and loops record, line up and play with no gap\n")
+                                              : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
+                          + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }
