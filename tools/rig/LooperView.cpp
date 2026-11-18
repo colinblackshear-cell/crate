@@ -378,7 +378,15 @@ private:
         const auto state = engine.getLooper().getState (index);
         menu.addItem ("Undo the last overdub", state == RigLooper::State::playing || state == RigLooper::State::overdubbing, false,
                       [this] { engine.getLooper().undo (index); });
-        menu.addItem ("Clear this layer", state != RigLooper::State::empty, false, [this] { clearLayer(); });
+        menu.addItem ("Clear this layer (keeps its effects)", state != RigLooper::State::empty, false, [this] { clearLayer(); });
+        menu.addItem ("Clear this layer and its effects", state != RigLooper::State::empty || engine.getLoopFx (index).isActive(), false,
+                      [this]
+                      {
+                          clearLayer();
+                          engine.getLoopFx (index).reset();
+                          owner.refresh();
+                          say ("Cleared layer " + juce::String (index + 1) + " and took off its effects.");
+                      });
         menu.addItem ("Quantize this loop...", state == RigLooper::State::playing, false, [this]
         {
             owner.selected = index;
@@ -580,7 +588,7 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     overdub.setTooltip ("Records over the layer you picked last (click a row to pick it). Press again to stop.");
     overdub.onClick = [this] { pressOverdub(); };
     setLit (overdub, Lit::arm);
-    undoButton.setTooltip ("Takes back the last overdub on the layer you picked last.");
+    undoButton.setTooltip ("Takes back the last overdub on the layer you picked last, or brings back what Clear all cleared.");
     undoButton.onClick = [this] { pressUndo(); };
     quantizeButton.setTooltip ("Quantize: slides each hit of the layer you picked last (or every loop, if none is picked) onto the "
                                "beat, on the grid you pick. Cmd+U does it straight away.");
@@ -591,7 +599,11 @@ LooperView::LooperView (RigEngine& e) : engine (e)
                             ? RigQuantizer::loopTarget (selected) : (int) RigQuantizer::allLoops,
                         &quantizeButton);
     };
-    clearButton.setTooltip ("Clears the layer you picked last: it goes quiet and empty, ready to record again.");
+    clearButton.setTooltip ("Clears the layer you picked last: it goes quiet and empty, ready to record again. Its effects stay "
+                            "(its menu has Clear this layer and its effects).");
+    clearAllButton.setTooltip ("Start fresh: empties all eight layers and takes off their effects, names, mutes and solo. "
+                               "Sources and lengths stay; your other loop banks keep theirs. Undo brings it all back.");
+    clearAllButton.onClick = [this] { pressClearAll(); };
     clearButton.onClick = [this]
     {
         auto& looper = engine.getLooper();
@@ -603,7 +615,7 @@ LooperView::LooperView (RigEngine& e) : engine (e)
                                      { if (safe != nullptr) safe->engine.getLooper().makeRoom (layer); });
         say ("Cleared layer " + juce::String (layer + 1) + ". Click its number to record it again from the next bar.");
     };
-    for (auto* b : { &recNext, &overdub, &undoButton, &clearButton, &quantizeButton })
+    for (auto* b : { &recNext, &overdub, &undoButton, &clearButton, &clearAllButton, &quantizeButton })
         addAndMakeVisible (*b);
     overdub.getProperties().set ("fontSize", 17.0f);
     undoButton.getProperties().set ("fontSize", 17.0f);
@@ -847,8 +859,28 @@ void LooperView::pressOverdub()
 
 void LooperView::pressUndo()
 {
-    if (selected >= 0)
+    // The last overdub on the picked layer, or else what Clear all took away.
+    if (selected >= 0 && engine.getLooper().canUndo (selected) && engine.getLooper().getState (selected) == RigLooper::State::playing)
         engine.getLooper().undo (selected);
+    else if (engine.canUndoClearAllLoops())
+    {
+        say (engine.undoClearAllLoops());
+        refresh();
+    }
+}
+
+void LooperView::pressClearAll()
+{
+    closeEditor();
+    if (fxPanel != nullptr && fxLayer >= 0)
+        showFx (fxLayer);   // closes it: the effects it shows are going
+    const auto text = engine.clearAllLoops();
+    // Solo off too, with every layer unmuted.
+    soloed = -1;
+    mutesBeforeSolo = {};
+    selected = -1;
+    refresh();
+    say (text);
 }
 
 void LooperView::setNextBars (int bars)
@@ -962,7 +994,8 @@ void LooperView::updateTop()
         dubbing = dubbing || looper.getState (i) == RigLooper::State::overdubbing;
     overdub.setToggleState (dubbing, juce::dontSendNotification);
     overdub.setButtonText (dubbing ? "Stop dub" : "Overdub");
-    undoButton.setEnabled (selected >= 0 && looper.canUndo (selected) && looper.getState (selected) == RigLooper::State::playing);
+    undoButton.setEnabled ((selected >= 0 && looper.canUndo (selected) && looper.getState (selected) == RigLooper::State::playing)
+                           || engine.canUndoClearAllLoops());
     clearButton.setEnabled (selected >= 0 && looper.getState (selected) != RigLooper::State::empty);
 
     const auto status = statusText() + "/" + juce::String (engine.getTransport().getBpm()) + "/" + juce::String ((int) engine.getTransport().isPlaying());
@@ -1203,6 +1236,9 @@ void LooperView::resized()
         saveBank.setBounds (b.removeFromLeft (110).reduced (0, 2));
         b.removeFromLeft (6);
         newBank.setBounds (b.removeFromLeft (130).reduced (0, 2));
+        // Start fresh, at the far right (away from Save bank).
+        b.removeFromLeft (14);
+        clearAllButton.setBounds (b.removeFromRight (juce::jmin (b.getWidth(), 170)).reduced (0, 2));
         overlayTop = bankArea.getBottom() + 4;
     }
     area.removeFromTop (6);

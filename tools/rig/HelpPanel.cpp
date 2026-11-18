@@ -56,6 +56,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Press Overdub to play over the layer you picked last; Undo takes the last overdub back.",
             "Double-click a loop to trim where it starts and ends. Its effect slot adds a filter, delay, reverb...",
             "Keys 1-8 record, stop or overdub layers 1-8.",
+            "Clear empties the layer you picked (its effects stay). Clear all loops (by the loop bank) starts fresh: all eight layers empty, their effects off. Undo brings them back.",
             "Loop bank: Save bank names this batch of eight loops. + New batch keeps them and gives you eight empty layers. "
             "Back and Next (or click the bank's name) bring a batch back, at the next bar while playing." },
           "Loops (and Rec takes) can be up to an hour long. A short loop and a long one play together in time." },
@@ -75,12 +76,14 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
 
         { "Sampler and MPC (pick one, then Edit): play the pads like an MPC",
           { "Your keyboard's drum pads (Launchkey in Drum mode, or a Launchpad in Drum mode) play the 16 pads of the bank on screen. "
-            "A Launchpad plays all four banks at once.",
+            "A Launchpad plays all four banks at once. Another controller (MPD, APC, MPK mini...)? "
+            "Settings > Audio & MIDI > MIDI controllers says what it is; Learn pad 1 sets where its pads start.",
             "Sounds (under the pads) opens your sound bank: click a sound to hear it, double-click to put it on the picked pad.",
             "FX (by the knobs) turns the picked pad's filter, decay, delay and reverb, live while it plays.",
             "16 Levels spreads the picked pad over all 16 pads: Tune plays it as a scale, Filter opens up, Velocity soft to loud, Decay short to long.",
             "Repeat: hold a pad and it plays again every 1/16 (or the rate you pick), in time. Record with the click on to keep the repeats.",
-            "The Sequencer + Kits side (beside the same pads) is the rest of the MPC: Play, Rec and steps, songs, your kits, and the picked pad's settings. Tapping a pad only plays it; Edit opens its sound editor.",
+            "The Sequencer + Kits side (beside the same pads) is the rest of the MPC: Play, Rec and steps, songs, your kits, and the picked pad's settings. Tapping a pad only plays it; Edit (or a triple-click on the pad) opens its sound editor.",
+            "Remove A01 (over the pads), or right-click a pad, takes its sound off. Undo remove puts it back.",
             "Beat on/off: the MPC's sequence plays whenever the Rig plays, or stays quiet (the pads still play). Its Play, Stop and Rec are the Rig's.",
             "Loop pads records the MPC into the next empty looper layer from the next bar (Free, or 1 to 16 bars). Switch Beat off to loop just what you play." },
           "Hits you record with 16 Levels keep their level when the sequence plays them back." },

@@ -26,7 +26,7 @@ public:
     std::function<void (int pad)> onPadReleased;
     std::function<void (int pad, const juce::StringArray& files)> onFilesDropped;
     std::function<void (int pad)> onClearPad;
-    // The right-click menu's Trim and effects... (a double-click is just two hits).
+    // The right-click menu's Trim and effects..., or a triple-click (a double-click is just two hits).
     std::function<void (int pad)> onEditPad;
     // 16 Levels: what each of the 16 pads on screen plays (slot 0 is pad 1), shown on the pad
     // instead of its own sound. Empty when 16 Levels is off.

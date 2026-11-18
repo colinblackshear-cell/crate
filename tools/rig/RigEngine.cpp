@@ -1,7 +1,6 @@
 #include "RigEngine.h"
 #include "RigSong.h"
 
-#include "core/control/Launchpad.h"
 
 #include <algorithm>
 
@@ -610,17 +609,21 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     if (notesOffRequested.load())
         chords.stopAll();
     // A one-tool plugin: whatever the routing made of it, every note plays its tool.
-    if (const int only = onlyTool.load(); only >= 0)
+    auto allToOnlyTool = [&]
     {
-        auto* to = only == mpcStrip ? &mpcMidi : only == drumsStrip ? &drumsMidi : only == vocoderStrip ? &vocoderMidi
-                 : only == bassStrip ? &bassMidi : &synthMidi;
-        for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
-            if (m != to && ! m->isEmpty())
-            {
-                to->addEvents (*m, 0, -1, 0);
-                m->clear();
-            }
-    }
+        if (const int only = onlyTool.load(); only >= 0)
+        {
+            auto* to = only == mpcStrip ? &mpcMidi : only == drumsStrip ? &drumsMidi : only == vocoderStrip ? &vocoderMidi
+                     : only == bassStrip ? &bassMidi : &synthMidi;
+            for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
+                if (m != to && ! m->isEmpty())
+                {
+                    to->addEvents (*m, 0, -1, 0);
+                    m->clear();
+                }
+        }
+    };
+    allToOnlyTool();
     if (notesOffRequested.exchange (false))
         for (auto* m : { &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi })
         {
@@ -666,6 +669,8 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         chordClock.beatsPerBar = transport.getBeatsPerBar();
         chordClock.playing = transport.isPlayingThisBlock();
         chords.process (chordClock, n, routing.keysTo.load(), destinations);
+        // In a one-tool plugin the chords play its tool too, wherever the chord builder sends them.
+        allToOnlyTool();
     }
 
     // Recording the set: what's played, by tool, before the tools see it.
@@ -1219,16 +1224,14 @@ void RigEngine::audioDeviceStopped()
 
 void RigEngine::handleIncomingMidiMessage (juce::MidiInput* source, const juce::MidiMessage& m)
 {
-    // A Launchpad's pads come in on the drum pads' channel, whatever channel it's set to, so it
-    // plays the MPC (or the drum machine) without setting anything up.
-    if (source != nullptr && crate::launchpad::isLaunchpad (source->getName()) && crate::launchpad::isPadMessage (m))
-    {
-        auto pad = m;
-        pad.setChannel (juce::jlimit (1, 16, routing.padChannel.load() > 0 ? routing.padChannel.load() : 10));
-        incoming.addMessageToQueue (pad);
+    // Each controller is read as what it is (Settings > MIDI controllers): a Launchpad's or an
+    // MPD's pads come in as the drum pads, on the pads' channel, whatever channel it's set to; a
+    // plain keyboard's notes are keys even on channel 10; learned knobs turn knobs 1-8.
+    auto msg = m;
+    const int pads = routing.padChannel.load();
+    if (source != nullptr && ! controllers.translate (source->getName(), msg, pads > 0 ? pads : 10))
         return;
-    }
-    incoming.addMessageToQueue (m);
+    incoming.addMessageToQueue (msg);
 }
 
 //==============================================================================
@@ -1454,6 +1457,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     loopBanks.clear();
     currentLoopBank = -1;
     queuedLoopBank = -1;
+    clearedLoops.reset();
     if (const auto banks = show.getChildWithName ("LoopBanks"); banks.isValid())
     {
         for (const auto t : banks)
@@ -2411,6 +2415,103 @@ juce::String RigEngine::newLoopBank (const juce::String& name)
             ++scene.state.loopBank;
     return "Kept your loops in \"" + kept + "\" and started \"" + getLoopBankName (index)
            + "\", empty and ready to record" + (transport.isPlaying() ? " (from the next bar)." : ".");
+}
+
+juce::String RigEngine::clearAllLoops()
+{
+    bool anything = false;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        anything = anything || looper.getState (i) != RigLooper::State::empty || looper.isSwapPending (i) || bankFxPending[(size_t) i]
+                   || loopFx[(size_t) i].isActive() || looper.getLayer (i).mute.load();
+    if (! anything)
+        return "The looper is already empty: no loops and no loop effects. Press Rec next layer to start.";
+
+    // Keep it all for Undo: each loop that's playing (not one half recorded), its effects and name.
+    auto kept = std::make_unique<LoopBank>();
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto& live = looper.getLayer (i);
+        auto& l = kept->layers[(size_t) i];
+        const auto state = looper.getState (i);
+        if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
+        {
+            auto audio = looper.copyLayerAudio (i);
+            if (audio.getNumSamples() > 0 && live.lengthBeats.load() > 0)
+            {
+                l.beats = live.lengthBeats.load();
+                l.audio = std::make_shared<const juce::AudioBuffer<float>> (std::move (audio));
+            }
+        }
+        l.source = live.source.load();
+        l.bars = live.bars.load();
+        l.level = live.level.load();
+        l.mute = live.mute.load();
+        if (loopFx[(size_t) i].isActive())
+            loopFx[(size_t) i].getStateInformation (l.fx);
+        clearedLoopNames[(size_t) i] = getLoopName (i);
+    }
+    const int loops = kept->loopCount();
+
+    // Empty now, from scratch: no loop waiting to come in, nothing armed, no effects.
+    queuedLoopBank = -1;
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        looper.cancelSwap (i);
+        bankFxPending[(size_t) i] = false;
+        pendingBankFx[(size_t) i].reset();
+        looper.reset (i);
+        looper.queueLayerAudio (i, {}, 0.0, -1.0, LoopBank::Layer().level, false);
+        loopFx[(size_t) i].reset();
+        loopNames[(size_t) i] = {};
+        looper.makeRoom (i);
+    }
+    clearedLoops = std::move (kept);
+    return "Cleared all " + juce::String (loops) + (loops == 1 ? " loop" : " loops")
+           + " and their effects: eight empty layers, ready to record. Undo brings them back.";
+}
+
+bool RigEngine::canUndoClearAllLoops() const
+{
+    if (clearedLoops == nullptr)
+        return false;
+    // Only while the layers are still empty: it never records over something new.
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (looper.getState (i) != RigLooper::State::empty || looper.isSwapPending (i))
+            return false;
+    return true;
+}
+
+juce::String RigEngine::undoClearAllLoops()
+{
+    if (clearedLoops == nullptr)
+        return "Nothing to undo: Clear all hasn't been used.";
+    if (! canUndoClearAllLoops())
+    {
+        clearedLoops.reset();
+        return "Can't bring the cleared loops back: you've recorded since. (Clear all again first if you want them gone.)";
+    }
+    const auto kept = std::move (clearedLoops);
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+    {
+        const auto& l = kept->layers[(size_t) i];
+        auto& live = looper.getLayer (i);
+        live.source = l.source;
+        live.bars = l.bars;
+        juce::AudioBuffer<float> audio;
+        if (l.audio != nullptr)
+            audio.makeCopyOf (*l.audio);
+        looper.queueLayerAudio (i, std::move (audio), l.audio != nullptr ? l.beats : 0.0, -1.0, l.level, l.mute);
+        if (l.fx.isEmpty())
+            loopFx[(size_t) i].reset();
+        else
+            loopFx[(size_t) i].setStateInformation (l.fx.getData(), (int) l.fx.getSize());
+        if (l.audio != nullptr && clearedLoopNames[(size_t) i].isNotEmpty())
+            setLoopName (i, clearedLoopNames[(size_t) i]);
+        if (looper.getState (i) == RigLooper::State::empty)
+            looper.makeRoom (i);
+    }
+    const int loops = kept->loopCount();
+    return "Brought back " + juce::String (loops) + (loops == 1 ? " loop" : " loops") + " and their effects.";
 }
 
 juce::String RigEngine::switchLoopBank (int index)

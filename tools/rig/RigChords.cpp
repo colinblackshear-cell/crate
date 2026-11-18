@@ -232,6 +232,60 @@ void RigChords::setKey (int key, int scale, int type)
     rebuildMap();
 }
 
+int RigChords::fullKeyboardFlavour (int octave)
+{
+    using F = vox::Chords::Flavour;
+    // C-1 to C9 (MIDI octaves 0-10). The Launchkey 61's C1-C6 are octaves 3-8.
+    static const int flavours[] = { F::power, F::big, F::sus2, F::triad, F::seventh, F::add9, F::ninth, F::sus4, F::sixth, F::big, F::power };
+    return flavours[juce::jlimit (0, 10, octave)];
+}
+
+void RigChords::setKeyChord (int note, const juce::Array<int>& notes)
+{
+    if (note < 0 || note > 127)
+        return;
+    auto clean = sortedUnique (notes);
+    while (clean.size() > kMaxNotes)
+        clean.remove (clean.size() - 1);
+    keyChords[(size_t) note] = clean;
+    if (mapLayout.load() == (int) MapLayout::yourKeys)
+        rebuildMap();
+}
+
+bool RigChords::hasKeyChords() const
+{
+    for (const auto& k : keyChords)
+        if (! k.isEmpty())
+            return true;
+    return false;
+}
+
+void RigChords::clearKeyChords()
+{
+    for (auto& k : keyChords)
+        k.clearQuick();
+    rebuildMap();
+}
+
+void RigChords::copyMapToYourKeys()
+{
+    if (mapLayout.load() == (int) MapLayout::yourKeys)
+        return;
+    std::array<juce::Array<int>, 128> made;
+    for (int n = 0; n < 128; ++n)
+        made[(size_t) n] = map[(size_t) n].kind == MapEntry::chord || map[(size_t) n].kind == MapEntry::padChord ? mapNotesFor (n) : juce::Array<int>();
+    keyChords = made;
+    mapLayout = (int) MapLayout::yourKeys;
+    rebuildMap();
+}
+
+void RigChords::catchForKey (int note)
+{
+    catchFromKeys (-1);
+    if (note >= 0 && note < 128)
+        catchPad = kCatchKey + note;
+}
+
 //==============================================================================
 juce::String RigChords::mapLayoutName (int i)
 {
@@ -239,6 +293,8 @@ juce::String RigChords::mapLayoutName (int i)
     {
         case MapLayout::whiteKeys: return "White keys: I to vii";
         case MapLayout::yourPads:  return "Your pads on the keys";
+        case MapLayout::fullKeyboard: return "Full keyboard: every key different";
+        case MapLayout::yourKeys:  return "Your keys: your chord on each";
         case MapLayout::scaleNotes:
         default:                   return "Each scale note's chord";
     }
@@ -293,7 +349,7 @@ void RigChords::rebuildMap()
 {
     const int key = fillKey, scale = fillScale, type = fillType;
     const auto& s = vox::Chords::scales[juce::jlimit (0, vox::Chords::numScales - 1, scale)];
-    const auto layout = (MapLayout) juce::jlimit (0, 2, mapLayout.load());
+    const auto layout = (MapLayout) juce::jlimit (0, kNumMapLayouts - 1, mapLayout.load());
     const auto off = (OffScale) juce::jlimit (0, 2, mapOffScale.load());
 
     // The chord on scale degree `degree`, with its root on `rootNote` when it follows the keys.
@@ -302,6 +358,9 @@ void RigChords::rebuildMap()
         MapEntry e;
         e.kind = MapEntry::chord;
         e.degree = degree;
+        e.chordKey = key;
+        e.chordScale = scale;
+        e.flavour = type;
         e.notes = toArray (vox::Chords::build (key, scale, degree, type));
         e.root = (key + s[degree]) % 12;
         e.follow = rootNote - (48 + e.root);   // build() puts the root in C3-B3
@@ -314,11 +373,68 @@ void RigChords::rebuildMap()
         return off == OffScale::snap ? snap() : e;
     };
 
+    // Full keyboard: the chord on key n, its type by the octave; off the scale, borrowed.
+    const bool minorThird = s[2] == 3;
+    const int parallel = minorThird ? 0 : 1;   // major's parallel is minor, and the other way
+    const auto& ps = vox::Chords::scales[parallel];
+    auto fullKeyboardEntry = [&] (int n)
+    {
+        const int flavour = fullKeyboardFlavour (n / 12);
+        const int rel = (n % 12 - key + 12) % 12;
+        MapEntry e;
+        e.kind = MapEntry::chord;
+        e.flavour = flavour;
+        int buildKey = key, buildScale = scale, degree = -1;
+        for (int d = 0; d < 7; ++d)
+            if (s[d] == rel)
+                degree = d;
+        if (degree < 0)
+        {
+            e.borrowed = true;
+            for (int d = 0; d < 7; ++d)
+                if (ps[d] == rel)
+                    degree = d;
+            if (degree >= 0)
+                buildScale = parallel;   // borrowed from the parallel key (bVI, bVII, iv...)
+            else
+            {
+                // In neither: a dominant chord on that note (its own Mixolydian I), a passing chord.
+                buildKey = n % 12;
+                buildScale = 3;
+                degree = 0;
+            }
+        }
+        e.degree = degree;
+        e.chordKey = buildKey;
+        e.chordScale = buildScale;
+        e.notes = toArray (vox::Chords::build (buildKey, buildScale, degree, flavour));
+        e.root = n % 12;
+        e.follow = n - (48 + e.root);
+        return e;
+    };
+
     for (int n = 0; n < 128; ++n)
     {
         const int pc = n % 12, octaveC = n - pc;
         MapEntry e;
-        if (layout == MapLayout::yourPads)
+        if (layout == MapLayout::yourKeys)
+        {
+            const auto& mine = keyChords[(size_t) n];
+            if (mine.isEmpty())
+                e.kind = off == OffScale::silent ? MapEntry::silent : MapEntry::pass;
+            else
+            {
+                e.kind = MapEntry::chord;
+                e.notes = mine;
+                e.root = mine.getFirst() % 12;
+                e.follow = 0;   // where you put it
+            }
+        }
+        else if (layout == MapLayout::fullKeyboard)
+        {
+            e = fullKeyboardEntry (n);
+        }
+        else if (layout == MapLayout::yourPads)
         {
             e.kind = MapEntry::padChord;
             e.pad = whiteIndex (pc) >= 0 ? whiteIndex (pc) : blackPad (pc);
@@ -365,7 +481,9 @@ juce::String RigChords::mapChordName (int note) const
 {
     const auto& e = getMapEntry (note);
     if (e.kind == MapEntry::chord && e.degree >= 0)
-        return vox::Chords::name (fillKey, fillScale, e.degree, fillType);
+        return vox::Chords::name (e.chordKey, e.chordScale, e.degree, e.flavour);
+    if (e.kind == MapEntry::chord)
+        return nameOf (e.notes);
     if (e.kind == MapEntry::padChord && e.pad >= 0 && ! isEmpty (e.pad))
         return padName (e.pad);
     return {};
@@ -378,17 +496,24 @@ juce::String RigChords::mapDegreeName (int note) const
         return {};
     static const char* numerals[] = { "I", "II", "III", "IV", "V", "VI", "VII" };
     juce::String numeral (numerals[e.degree % 7]);
+    if (e.borrowed)
+    {
+        // Named from the home key: bVI, bVII, #IV...
+        static const char* chromatic[] = { "I", "bII", "II", "bIII", "III", "IV", "#IV", "V", "bVI", "VI", "bVII", "VII" };
+        numeral = chromatic[(e.root - fillKey + 12) % 12];
+    }
+    auto lower = [] (const juce::String& n) { return n.startsWith ("b") || n.startsWith ("#") ? n.substring (0, 1) + n.substring (1).toLowerCase() : n.toLowerCase(); };
     const auto name = mapChordName (note);
     // What follows the root's letter (and its sharp or flat).
     auto rest = name.substring (name.length() > 1 && (name[1] == '#' || name[1] == 'b') ? 2 : 1);
     if (rest.startsWith ("dim"))
-        return numeral.toLowerCase() + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")) + rest.substring (3);
+        return lower (numeral) + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")) + rest.substring (3);
     if (rest.startsWith ("m") && ! rest.startsWith ("maj"))
     {
         rest = rest.substring (1);
         if (rest == "7b5")
-            return numeral.toLowerCase() + juce::String (juce::CharPointer_UTF8 ("\xc3\xb8")) + "7";
-        return numeral.toLowerCase() + rest;
+            return lower (numeral) + juce::String (juce::CharPointer_UTF8 ("\xc3\xb8")) + "7";
+        return lower (numeral) + rest;
     }
     if (rest.startsWith ("aug"))
         return numeral + "+" + rest.substring (3);
@@ -704,7 +829,10 @@ bool RigChords::serviceCatch()
     for (int n = 0; n < 128; ++n)
         if ((catchMask[(size_t) (n / 64)].load() >> (n % 64)) & 1)
             notes.add (n);
-    setPad (pad, notes);
+    if (pad >= kCatchKey)
+        setKeyChord (pad - kCatchKey, notes);
+    else
+        setPad (pad, notes);
     return true;
 }
 
@@ -762,16 +890,18 @@ void RigChords::takeTriggers (juce::MidiBuffer& midi, int padChannel, int splitN
         {
             int code = -1;   // what it triggers: channel 1 = a pad (0-15), channel 2 = a key's shape, 3 = the key map
             int channel = 1;
+            // While catching, the keys you hold are the chord being caught, not triggers.
+            const bool keysFree = ! (catching && ! isPad);
             if (mode == Trigger::pads && isPad && note >= RigRouting::kFirstPadNote && note < RigRouting::kFirstPadNote + kPads)
                 code = note - RigRouting::kFirstPadNote;
-            else if (mode == Trigger::lowKeys && ! isPad && note >= lowKey.load() && note < lowKey.load() + kPads)
+            else if (mode == Trigger::lowKeys && keysFree && ! isPad && note >= lowKey.load() && note < lowKey.load() + kPads)
                 code = note - lowKey.load();
-            else if (mode == Trigger::everyKey && ! isPad && (splitNote <= 0 || note >= splitNote))
+            else if (mode == Trigger::everyKey && keysFree && ! isPad && (splitNote <= 0 || note >= splitNote))
             {
                 code = note;
                 channel = 2;
             }
-            else if (mode == Trigger::keyMap && ! isPad && (splitNote <= 0 || note >= splitNote)
+            else if (mode == Trigger::keyMap && keysFree && ! isPad && (splitNote <= 0 || note >= splitNote)
                      && liveMap[(size_t) note].kind.load() != (int) MapEntry::pass)
             {
                 code = note;   // a silent key is taken too, so it plays nothing
@@ -1251,6 +1381,8 @@ void RigChords::reset()
     mapBass = false;
     mapOctave = 0;
     lastMapCentre = -1;
+    for (auto& k : keyChords)
+        k.clearQuick();
     loadStarter (0);
     rebuildMap();
 }
@@ -1293,6 +1425,19 @@ juce::ValueTree RigChords::toTree() const
             pad.setProperty ("name", p.name, nullptr);
         t.appendChild (pad, nullptr);
     }
+    for (int n = 0; n < 128; ++n)
+    {
+        const auto& k = keyChords[(size_t) n];
+        if (k.isEmpty())
+            continue;
+        juce::ValueTree key ("Key");
+        key.setProperty ("note", n, nullptr);
+        juce::StringArray noteText;
+        for (int v : k)
+            noteText.add (juce::String (v));
+        key.setProperty ("notes", noteText.joinIntoString (" "), nullptr);
+        t.appendChild (key, nullptr);
+    }
     return t;
 }
 
@@ -1315,7 +1460,26 @@ void RigChords::fromTree (const juce::ValueTree& t)
     fillKey = juce::jlimit (0, 11, (int) t.getProperty ("fillKey", 0));
     fillScale = juce::jlimit (0, vox::Chords::numScales - 1, (int) t.getProperty ("fillScale", 0));
     fillType = juce::jlimit (0, vox::Chords::numFlavours - 1, (int) t.getProperty ("fillType", 0));
-    mapLayout = juce::jlimit (0, 2, (int) t.getProperty ("mapLayout", 0));
+    mapLayout = juce::jlimit (0, kNumMapLayouts - 1, (int) t.getProperty ("mapLayout", 0));
+    for (auto& k : keyChords)
+        k.clearQuick();
+    for (const auto key : t)
+        if (key.hasType ("Key"))
+        {
+            juce::StringArray noteText;
+            noteText.addTokens (key.getProperty ("notes").toString(), " ", "");
+            juce::Array<int> notes;
+            for (const auto& n : noteText)
+                notes.add (n.getIntValue());
+            const int note = (int) key.getProperty ("note", -1);
+            if (note >= 0 && note < 128)
+            {
+                auto clean = sortedUnique (notes);
+                while (clean.size() > kMaxNotes)
+                    clean.remove (clean.size() - 1);
+                keyChords[(size_t) note] = clean;
+            }
+        }
     mapOffScale = juce::jlimit (0, 2, (int) t.getProperty ("mapOffScale", (int) OffScale::snap));
     mapVoicing = juce::jlimit (0, 2, (int) t.getProperty ("mapVoicing", 0));
     mapBass = (bool) t.getProperty ("mapBass", false);

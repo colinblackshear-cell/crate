@@ -45,6 +45,7 @@ public:
     // Shown in the song's window only while the song decides what plays: hands control back.
     PanelButton jam { "Jam" };
     std::function<void()> onMic;
+    std::function<void()> onKeyboard;   // a click on the keyboard lamp: MIDI controllers (in the app)
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
     std::function<void()> onRecording;  // a click on the red "recording" line: go to what records
 
@@ -70,7 +71,7 @@ public:
 
 private:
     const bool standalone;
-    juce::Rectangle<int> wordmarkArea, tempoArea, partArea, vuArea, lampsArea, micLampArea;
+    juce::Rectangle<int> wordmarkArea, tempoArea, partArea, vuArea, lampsArea, micLampArea, keyboardLampArea;
     bool showVu = true, showWordmark = true;
 };
 

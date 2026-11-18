@@ -21,6 +21,7 @@
 #include "RigQuantize.h"
 #include "RigChords.h"
 #include "RigAutomation.h"
+#include "core/control/Controllers.h"
 
 #include <array>
 
@@ -148,6 +149,10 @@ public:
     // The layer recording (or waiting to record) the pads, or -1.
     int getPadLoopLayer() const;
     RigRouting& getRouting() { return routing; }
+    // Your MIDI controllers (Settings > Audio & MIDI > MIDI controllers): what each one is, so a
+    // Launchpad, an MPD or any keyboard plays the Rig the way a Launchkey does. They belong to
+    // this Mac (their own file), not to the show.
+    crate::controllers::Setup& getControllers() { return controllers; }
 
     // (The vocoder came later, so it's last: saved shows keep their strip order.)
     enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, loopsStrip, drumsStrip, numStrips };
@@ -369,6 +374,13 @@ public:
     juce::String deleteLoopBank (int bank);
     // A bank switch waiting for its bar (-1 for none).
     int getQueuedLoopBank() const { return queuedLoopBank; }
+    // Clear all (start fresh): every layer of the bank on screen empty now, with its effects,
+    // name, level and mute back as a new layer has them (one that's recording stops and is
+    // dropped). Sources and lengths stay, ready to record the same way; other banks keep theirs.
+    // undoClearAllLoops brings back everything as it was, while the layers are still empty.
+    juce::String clearAllLoops();
+    juce::String undoClearAllLoops();
+    bool canUndoClearAllLoops() const;
     // The timer's part: puts each layer's effects on as its new loop comes in.
     void serviceLoopBanks();
 
@@ -399,6 +411,7 @@ private:
     DrumProcessor drums;
     RigTransport transport;
     RigRouting routing;
+    crate::controllers::Setup controllers { crate::controllers::Setup::defaultFile() };
     RigLooper looper;
     // Gives the looper's recording layers more room as they go, and finishes loop bank switches
     // (message thread).
@@ -416,6 +429,9 @@ private:
     // A switch waiting for its bar: each layer's effects, put on when its loop comes in.
     std::array<juce::MemoryBlock, RigLooper::kLayers> pendingBankFx;
     std::array<bool, RigLooper::kLayers> bankFxPending {};
+    // What Clear all took away, for its undo (with the loops' names).
+    std::unique_ptr<LoopBank> clearedLoops;
+    std::array<juce::String, RigLooper::kLayers> clearedLoopNames;
     void applyBankFx (int layer);
     void putLoopBankOnLayers (int bank, double beat, const RigScene::State* scene);
     RigScenes scenes;

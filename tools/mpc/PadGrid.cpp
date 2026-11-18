@@ -159,11 +159,19 @@ void PadGrid::mouseDown (const juce::MouseEvent& e)
     {
         setSelectedPad (pad);
         juce::PopupMenu menu;
-        menu.addItem ("Clear " + padLabel (pad), ! project.currentBank().pads[(size_t) pad].isEmpty(),
+        menu.addItem ("Remove the sound from " + padLabel (pad), ! project.currentBank().pads[(size_t) pad].isEmpty(),
                       false, [this, pad] { if (onClearPad) onClearPad (pad); });
         menu.addItem ("Trim and effects...", ! project.currentBank().pads[(size_t) pad].isEmpty(),
                       false, [this, pad] { if (onEditPad) onEditPad (pad); });
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+        return;
+    }
+
+    // A triple-click opens the pad's sound (a double-click is just two hits, for finger drumming).
+    if (e.getNumberOfClicks() >= 3 && ! project.currentBank().pads[(size_t) pad].isEmpty() && onEditPad)
+    {
+        setSelectedPad (pad);
+        onEditPad (pad);
         return;
     }
 

@@ -1,6 +1,8 @@
 #include "ChordsView.h"
 
 #include "Parameters.h"
+#include "Pedalboard.h"   // the tuner's pitch detector
+#include "core/AudioFiles.h"
 #include "dsp/Chords.h"
 
 using vintage::Lit;
@@ -142,7 +144,8 @@ public:
     explicit KeyBed (ChordsView& v) : view (v)
     {
         setTooltip ("Click a key to add it to the picked chord, or take it out. You hear the chord as it changes. "
-                    "With Map keys on, each key shows its chord: a click plays it (Option-click still edits the pad).");
+                    "With Map keys on, each key shows its chord: a click plays it (Option-click still edits the pad). "
+                    "Right-click a key to put a pad's chord on it, or catch one (Your keys).");
     }
 
     bool mapOn() const { return view.chords.trigger.load() == (int) RigChords::Trigger::keyMap; }
@@ -306,6 +309,11 @@ public:
         const int note = noteAt (e.position);
         if (note < 0)
             return;
+        if (e.mods.isPopupMenu())
+        {
+            view.showKeyMenu (note);
+            return;
+        }
         if (mapOn() && ! e.mods.isAltDown() && view.chords.mapChordName (note).isNotEmpty())
         {
             playingKey = note;
@@ -406,9 +414,10 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
     for (auto* c : { &key, &scale, &type })
         c->onChange = [this] { setKey (key.getSelectedId() - 1, scale.getSelectedId() - 1, type.getSelectedId() - 1); };
 
+    for (int i = 0; i < RigChords::kNumMapLayouts; ++i)
+        mapLayout.addItem (RigChords::mapLayoutName (i), i + 1);
     for (int i = 0; i < 3; ++i)
     {
-        mapLayout.addItem (RigChords::mapLayoutName (i), i + 1);
         mapOffScale.addItem (RigChords::offScaleName (i), i + 1);
         mapVoicing.addItem (RigChords::mapVoicingName (i), i + 1);
     }
@@ -416,14 +425,16 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
         mapOctave.addItem (o == 0 ? juce::String ("Oct 0") : "Oct " + juce::String (o > 0 ? "+" : "") + juce::String (o), o + 3);
     mapLayout.setTooltip ("How the chords lie on the keys. Each scale note's chord: D plays Dm in C major, so the chord's root is the key "
                           "you press. White keys: C to B play the key's chords I to vii in any key. Your pads: C to B play pads 1-7, "
-                          "the black keys pads 8-12, in every octave.");
+                          "the black keys pads 8-12, in every octave. Full keyboard: a different chord on every key, each octave its "
+                          "own kind (triads, sevenths, add9s, ninths, sus4s, sixths) with borrowed chords on the keys outside the scale. "
+                          "Your keys: your own chord on each key (right-click a key); it starts as a copy of the map you had.");
     mapOffScale.setTooltip ("Keys outside the scale (or the black keys, with White keys): play the chord of the scale note just below, "
                             "play as single notes (for a melody line), or play nothing.");
     mapVoicing.setTooltip ("Where the chords sit. Follows the keys: low keys play low chords. Same octave: every chord around C3, "
                            "wherever you play. Smooth voicing: each chord takes the inversion nearest the last one, as a "
                            "keyboard player would, so changes glide instead of jumping.");
     mapOctave.setTooltip ("Moves every chord on the map up or down by octaves.");
-    mapLayout.onChange = [this] { chords.stopAll(); chords.mapLayout = mapLayout.getSelectedId() - 1; chords.rebuildMap(); say (mapSummary()); refresh(); };
+    mapLayout.onChange = [this] { setMapLayout (mapLayout.getSelectedId() - 1); };
     mapOffScale.onChange = [this] { chords.stopAll(); chords.mapOffScale = mapOffScale.getSelectedId() - 1; chords.rebuildMap(); refresh(); };
     mapVoicing.onChange = [this] { chords.stopAll(); chords.mapVoicing = mapVoicing.getSelectedId() - 1; refresh(); };
     mapOctave.onChange = [this] { chords.stopAll(); chords.mapOctave = mapOctave.getSelectedId() - 3; refresh(); };
@@ -434,6 +445,9 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
     mapButton.onClick = [this] { pressMapKeys(); };
     bassButton.setTooltip ("+ Bass: adds each chord's root an octave under it on the map.");
     bassButton.onClick = [this] { chords.stopAll(); chords.mapBass = ! chords.mapBass.load(); refresh(); };
+    soundButton.setTooltip ("Your own sound for the chords: load a sample (or drop one from Splice or Finder onto the chords) and "
+                            "the chords play it, tuned to its note. Or pick the Synth or Bass in Plays to use your plugins.");
+    soundButton.onClick = [this] { showSoundMenu(); };
     vintage::setLit (mapButton, Lit::play);
     vintage::setLit (bassButton, Lit::next);
 
@@ -492,7 +506,7 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
     vintage::setLit (recButton, Lit::arm);
     for (auto* b : { &holdButton, &fillButton, &setsButton, &closeButton, &lowerButton, &higherButton, &octDown, &octUp, &spreadButton,
                      &closeVoicing, &catchButton, &nameButton, &clearButton, &playButton, &loopButton, &recButton, &logicButton,
-                     &mapButton, &bassButton })
+                     &mapButton, &bassButton, &soundButton })
     {
         b->getProperties().set ("fontSize", 15.0f);
         addAndMakeVisible (b);
@@ -574,7 +588,21 @@ void ChordsView::updateControls()
     mapButton.setToggleState (mapOn, juce::dontSendNotification);
     bassButton.setToggleState (chords.mapBass.load(), juce::dontSendNotification);
     // Your pads have no key, and no keys outside it.
-    mapOffScale.setEnabled (chords.mapLayout.load() != (int) RigChords::MapLayout::yourPads);
+    mapOffScale.setEnabled (chords.mapLayout.load() != (int) RigChords::MapLayout::yourPads
+                            && chords.mapLayout.load() != (int) RigChords::MapLayout::fullKeyboard);
+    {
+        // The Sampler, by its sound's name.
+        auto& doc = engine.getSampler().getDocument();
+        const auto name = doc.hasAudio() ? doc.getName() : juce::String();
+        if (name != shownSamplerName)
+        {
+            shownSamplerName = name;
+            target.changeItemText (2 + (int) RigRouting::Dest::sampler,
+                                   name.isEmpty() ? RigRouting::destName ((int) RigRouting::Dest::sampler) : "Sampler: " + name);
+            if (t == (int) RigRouting::Dest::sampler)
+                target.setText (target.getItemText (target.indexOfItemId (2 + t)), juce::dontSendNotification);
+        }
+    }
     length.setSelectedId (chords.stepLength.load() + 1, juce::dontSendNotification);
     holdButton.setToggleState (chords.hold.load(), juce::dontSendNotification);
     catchButton.setToggleState (chords.isCatching(), juce::dontSendNotification);
@@ -746,6 +774,10 @@ juce::String ChordsView::mapSummary() const
             return key.getText() + " " + scale.getText() + " on the white keys: C to B play I to vii.";
         case RigChords::MapLayout::yourPads:
             return "Your pads in every octave: C to B pads 1-7, black keys 8-12.";
+        case RigChords::MapLayout::fullKeyboard:
+            return key.getText() + " " + scale.getText() + ": a different chord on every key. C1 triads, C2 7ths, C3 add9, C4 9ths, C5 sus4, C6 6ths.";
+        case RigChords::MapLayout::yourKeys:
+            return "Your keys: right-click a key to put a pad's chord on it or catch one.";
         case RigChords::MapLayout::scaleNotes:
         default:
             return key.getText() + " " + scale.getText() + " (" + type.getText().toLowerCase() + ") on every key.";
@@ -768,6 +800,300 @@ void ChordsView::pressMapKeys()
         setTrigger (triggerBeforeMap == (int) RigChords::Trigger::keyMap ? (int) RigChords::Trigger::screen : triggerBeforeMap);
     else
         setTrigger ((int) RigChords::Trigger::keyMap);
+}
+
+void ChordsView::setMapLayout (int layout)
+{
+    chords.stopAll();
+    layout = juce::jlimit (0, RigChords::kNumMapLayouts - 1, layout);
+    if (layout == (int) RigChords::MapLayout::yourKeys && ! chords.hasKeyChords())
+    {
+        // Your keys start as the map you had, to change key by key.
+        chords.copyMapToYourKeys();
+        say ("Your keys: every key keeps the chord it had. Right-click a key to put a pad's chord on it, or catch one.");
+    }
+    else
+    {
+        chords.mapLayout = layout;
+        chords.rebuildMap();
+        say (mapSummary());
+    }
+    if (chords.trigger.load() != (int) RigChords::Trigger::keyMap)
+        setTrigger ((int) RigChords::Trigger::keyMap);
+    refresh();
+}
+
+void ChordsView::putPadOnKey (int pad, int note)
+{
+    if (chords.isEmpty (pad))
+        return;
+    if (chords.mapLayout.load() != (int) RigChords::MapLayout::yourKeys)
+        setMapLayout ((int) RigChords::MapLayout::yourKeys);
+    // The pad's chord, moved to the octave of the key, so the key's chord sits where it's played.
+    auto notes = chords.getPad (pad).notes;
+    const int shift = 12 * (int) std::round ((note - notes.getFirst()) / 12.0);
+    for (auto& n : notes)
+        n += shift;
+    chords.setKeyChord (note, notes);
+    if (chords.trigger.load() != (int) RigChords::Trigger::keyMap)
+        setTrigger ((int) RigChords::Trigger::keyMap);
+    say ("Key " + RigChords::noteName (note) + " plays " + chords.mapChordName (note) + " (pad " + juce::String (pad + 1) + ").");
+    refresh();
+}
+
+void ChordsView::showKeyMenu (int note)
+{
+    juce::PopupMenu fromPads;
+    for (int i = 0; i < RigChords::kPads; ++i)
+        if (! chords.isEmpty (i))
+            fromPads.addItem (100 + i, "Pad " + juce::String (i + 1) + ": " + chords.padName (i));
+    const auto now = chords.mapChordName (note);
+    const bool mine = chords.mapLayout.load() == (int) RigChords::MapLayout::yourKeys;
+    juce::PopupMenu m;
+    m.addSectionHeader ("Key " + RigChords::noteName (note) + (now.isNotEmpty() && chords.trigger.load() == (int) RigChords::Trigger::keyMap
+                                                                ? ": " + now : juce::String()));
+    m.addSubMenu ("Put a pad's chord on this key", fromPads, fromPads.getNumItems() > 0);
+    m.addItem (1, "Catch a chord for this key (hold it, let go)");
+    m.addItem (2, "Clear this key (it plays its note)", mine && ! chords.getKeyChord (note).isEmpty());
+    m.addSeparator();
+    m.addItem (3, "Make every key mine (copy this map to Your keys)", ! mine);
+    m.addItem (4, "Clear all of Your keys", chords.hasKeyChords());
+    juce::Component::SafePointer<ChordsView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (keys.get()), [safe, note] (int r)
+    {
+        if (safe == nullptr || r == 0)
+            return;
+        auto& c = safe->chords;
+        if (r >= 100)
+            safe->putPadOnKey (r - 100, note);
+        else if (r == 1)
+        {
+            if (c.mapLayout.load() != (int) RigChords::MapLayout::yourKeys)
+                safe->setMapLayout ((int) RigChords::MapLayout::yourKeys);
+            c.catchForKey (note);
+            safe->say ("Hold a chord on your keyboard and let go: it becomes key " + RigChords::noteName (note) + "'s chord.");
+        }
+        else if (r == 2)
+        {
+            c.setKeyChord (note, {});
+            safe->say ("Key " + RigChords::noteName (note) + " plays its own note now.");
+        }
+        else if (r == 3)
+            safe->setMapLayout ((int) RigChords::MapLayout::yourKeys);
+        else if (r == 4)
+        {
+            c.stopAll();
+            c.clearKeyChords();
+            safe->say ("Your keys are empty: every key plays its note until you put chords on them.");
+        }
+        safe->refresh();
+    });
+}
+
+int ChordsView::noteInName (const juce::String& fileName)
+{
+    juce::StringArray tokens;
+    tokens.addTokens (fileName, " _-.()[],", "");
+    int found = -1;
+    for (const auto& t : tokens)
+    {
+        if (t.isEmpty() || t[0] < 'A' || t[0] > 'G')
+            continue;
+        static const int letters[] = { 9, 11, 0, 2, 4, 5, 7 };   // A B C D E F G
+        int pc = letters[t[0] - 'A'];
+        auto rest = t.substring (1);
+        if (rest.startsWith ("#"))
+        {
+            ++pc;
+            rest = rest.substring (1);
+        }
+        else if (rest.startsWith ("b"))
+        {
+            --pc;
+            rest = rest.substring (1);
+        }
+        const auto q = rest.toLowerCase();
+        if (q.isEmpty() || q == "m" || q == "min" || q == "maj" || q == "minor" || q == "major" || rest == "M")
+            found = (pc + 12) % 12;   // the last one wins ("Kick_A_..._Cmin": C)
+    }
+    return found;
+}
+
+int ChordsView::guessRoot (const juce::AudioBuffer<float>& audio, const juce::String& fileName, juce::String& how)
+{
+    const int named = noteInName (fileName);
+    // The pitch heard, from a few stretches of its first seconds (after the attack).
+    float heard = 0;
+    {
+        const int len = juce::jmin (audio.getNumSamples(), 44100 * 3), window = 4096;
+        std::vector<float> mono ((size_t) window);
+        juce::Array<float> found;
+        for (const double at : { 0.1, 0.25, 0.4, 0.55 })
+        {
+            const int start = (int) (len * at);
+            if (start + window > audio.getNumSamples())
+                break;
+            for (int i = 0; i < window; ++i)
+            {
+                float v = 0;
+                for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+                    v += audio.getSample (ch, start + i);
+                mono[(size_t) i] = v / (float) juce::jmax (1, audio.getNumChannels());
+            }
+            if (const float f = pedalboard::detectPitch (mono.data(), window, 44100.0); f > 0)
+                found.add (f);
+        }
+        if (! found.isEmpty())
+        {
+            std::sort (found.begin(), found.end());
+            heard = found[found.size() / 2];
+        }
+    }
+    const int heardNote = heard > 0 ? juce::roundToInt (69.0 + 12.0 * std::log2 (heard / 440.0)) : -1;
+    if (named >= 0 && heardNote >= 0)
+    {
+        // The name's note, in the octave heard.
+        int best = heardNote - ((heardNote - named) % 12 + 12) % 12;
+        if (heardNote - best > 6)
+            best += 12;
+        how = "its name and pitch";
+        return juce::jlimit (0, 127, best);
+    }
+    if (named >= 0)
+    {
+        how = "its name";
+        return 60 + named;
+    }
+    if (heardNote >= 0 && heardNote < 128)
+    {
+        how = "its pitch";
+        return heardNote;
+    }
+    how = "no note found, so C3: set its note in Sound";
+    return 60;
+}
+
+juce::String ChordsView::loadSound (const juce::File& file)
+{
+    auto& sampler = engine.getSampler();
+    juce::String error;
+    auto audio = crate::AudioFiles::load (file, sampler.getFormats(), error);
+    if (audio == nullptr)
+        return error.isNotEmpty() ? error : "Couldn't open " + file.getFileName() + ".";
+    juce::String how;
+    const int root = guessRoot (*audio, file.getFileNameWithoutExtension(), how);
+    chords.stopAll();
+    engine.putInSampler (juce::AudioBuffer<float> (*audio), file.getFileNameWithoutExtension());
+    auto& sampleKeys = sampler.getKeys();
+    sampleKeys.setRootNote (root);
+    if (sampleKeys.getMode() == crate::KeyboardSampler::Mode::slices || sampleKeys.getMode() == crate::KeyboardSampler::Mode::oneShot)
+        sampleKeys.setMode (crate::KeyboardSampler::Mode::hold);
+    setTarget ((int) RigRouting::Dest::sampler);
+    const auto text = "The chords play " + file.getFileNameWithoutExtension() + " now, its note " + RigChords::noteName (root)
+                      + " (from " + how + ").";
+    say (text);
+    return text;
+}
+
+bool ChordsView::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+        if (crate::AudioFiles::isAudioFile (juce::File (f), engine.getSampler().getFormats()))
+            return true;
+    return false;
+}
+
+void ChordsView::fileDragEnter (const juce::StringArray&, int, int)
+{
+    dragOver = true;
+    repaint();
+}
+
+void ChordsView::fileDragExit (const juce::StringArray&)
+{
+    dragOver = false;
+    repaint();
+}
+
+void ChordsView::filesDropped (const juce::StringArray& files, int, int)
+{
+    dragOver = false;
+    for (const auto& f : files)
+        if (crate::AudioFiles::isAudioFile (juce::File (f), engine.getSampler().getFormats()))
+        {
+            loadSound (juce::File (f));
+            break;
+        }
+    refresh();
+}
+
+void ChordsView::showSoundMenu()
+{
+    auto& sampler = engine.getSampler();
+    auto& doc = sampler.getDocument();
+    auto& sampleKeys = sampler.getKeys();
+    const bool has = doc.hasAudio();
+    juce::PopupMenu m;
+    m.addItem (1, "Your own sample... (or drop one on the chords)");
+    if (has)
+    {
+        m.addSeparator();
+        m.addSectionHeader ("Sampler: " + doc.getName() + ", its note " + RigChords::noteName (sampleKeys.getRootNote()));
+        m.addItem (2, "Play the chords on it", true, targetDest() == (int) RigRouting::Dest::sampler);
+        juce::PopupMenu roots;
+        for (int octave = 0; octave <= 6; ++octave)
+        {
+            juce::PopupMenu notes;
+            for (int i = 0; i < 12; ++i)
+            {
+                const int n = 24 + octave * 12 + i;
+                notes.addItem (1000 + n, RigChords::noteName (n), true, sampleKeys.getRootNote() == n);
+            }
+            roots.addSubMenu ("C" + juce::String (octave) + " to B" + juce::String (octave), notes);
+        }
+        m.addSubMenu ("Its note (what it plays as recorded)", roots);
+        m.addItem (10, "Plays while held", true, sampleKeys.getMode() == crate::KeyboardSampler::Mode::hold);
+        m.addItem (11, "Loops while held", true, sampleKeys.getMode() == crate::KeyboardSampler::Mode::loop);
+        m.addItem (12, "Plays to the end", true, sampleKeys.getMode() == crate::KeyboardSampler::Mode::oneShot);
+        m.addItem (3, "Edit it in the Sampler (trim, loop, effects)", onOpenSampler != nullptr);
+    }
+    m.addSeparator();
+    m.addItem (4, "Your plugins (Arturia...): play on the Synth or Bass", true, false);
+    juce::Component::SafePointer<ChordsView> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (soundButton), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0)
+            return;
+        auto& k = safe->engine.getSampler().getKeys();
+        if (r == 1)
+        {
+            safe->chooser = std::make_unique<juce::FileChooser> ("A sound for the chords",
+                                                                 juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("Splice"),
+                                                                 crate::AudioFiles::wildcard (safe->engine.getSampler().getFormats()));
+            safe->chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc)
+            {
+                if (safe != nullptr && fc.getResult().existsAsFile())
+                    safe->loadSound (fc.getResult());
+            });
+        }
+        else if (r == 2)
+            safe->setTarget ((int) RigRouting::Dest::sampler);
+        else if (r == 3 && safe->onOpenSampler)
+            safe->onOpenSampler();
+        else if (r == 4)
+        {
+            safe->setTarget ((int) RigRouting::Dest::synth);
+            safe->say ("The chords play the Synth: load your plugin (Arturia, Quake...) on its screen with Plugin, and the chords play it.");
+        }
+        else if (r >= 10 && r <= 12)
+            k.setMode (r == 10 ? crate::KeyboardSampler::Mode::hold : r == 11 ? crate::KeyboardSampler::Mode::loop : crate::KeyboardSampler::Mode::oneShot);
+        else if (r >= 1000)
+        {
+            k.setRootNote (r - 1000);
+            safe->say ("The sample's note is " + RigChords::noteName (r - 1000) + ": that key plays it as recorded.");
+        }
+        safe->refresh();
+    });
 }
 
 void ChordsView::pressFill()
@@ -1082,6 +1408,15 @@ void ChordsView::paint (juce::Graphics& g)
         vintage::engraved (g, len, progressionTitle, juce::Justification::centredRight, 12.0f, true);
     }
 
+    if (dragOver)
+    {
+        g.setColour (vintage::colours::play.withAlpha (0.18f));
+        g.fillRect (getLocalBounds());
+        g.setColour (vintage::colours::play);
+        g.drawRect (getLocalBounds(), 3);
+        vintage::engraved (g, "Drop it: the chords play your sound", getLocalBounds().removeFromTop (60), juce::Justification::centred, 22.0f);
+    }
+
     auto statusBox = statusArea.toFloat();
     vintage::drawLcd (g, statusBox);
     vintage::lcdText (g, status.isEmpty() ? juce::String ("CLICK A PAD TO PLAY IT. CLICK KEYS TO CHANGE IT.") : status.toUpperCase(),
@@ -1097,9 +1432,11 @@ void ChordsView::resized()
 
     {
         auto top = right.removeFromTop (34);
-        closeButton.setBounds (top.removeFromRight (90).reduced (0, 1));
+        closeButton.setBounds (top.removeFromRight (80).reduced (0, 1));
         top.removeFromRight (8);
-        setsButton.setBounds (top.removeFromRight (80).reduced (0, 1));
+        setsButton.setBounds (top.removeFromRight (72).reduced (0, 1));
+        top.removeFromRight (8);
+        soundButton.setBounds (top.removeFromRight (78).reduced (0, 1));
     }
     right.removeFromTop (8);
     progressionWell = right;
