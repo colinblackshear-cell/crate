@@ -34,7 +34,11 @@ juce_add_gui_app(KaleidoboxPocket
 target_sources(KaleidoboxPocket PRIVATE
     Main.cpp
     PocketApp.cpp
+    BeatsEngine.cpp
+    BeatsScreen.cpp
+    PadSheet.cpp
     PocketAudio.cpp
+    PocketKit.cpp
     PocketLibrary.cpp
     PocketTheme.cpp
     PocketWave.cpp
@@ -50,16 +54,23 @@ target_compile_definitions(KaleidoboxPocket PRIVATE
     JUCE_APPLICATION_VERSION_STRING="0.2.0"
     JUCE_MODAL_LOOPS_PERMITTED=0)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    # The sound engines for later steps (pads, vocoder). They only need to compile for now.
+# The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools
+# already define mpc_format; on iOS the phone makes it here.
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/drums/DrumEngine.cpp)
+target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS} ${TOOLS}/drums ${TOOLS}/mpc)
+if(NOT TARGET mpc_format)
     add_library(mpc_format STATIC ${TOOLS}/mpc/mpc/MpcFiles.cpp ${TOOLS}/mpc/mpc/BankWriter.cpp)
     target_include_directories(mpc_format PUBLIC ${TOOLS}/mpc)
     set_target_properties(mpc_format PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+target_link_libraries(KaleidoboxPocket PRIVATE mpc_format)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # The sound engines for later steps (pads, vocoder). They only need to compile for now.
 
     crate_rename_vocoder_entry()
 
     target_sources(KaleidoboxPocket PRIVATE
-        ${TOOLS}/drums/DrumEngine.cpp
         ${TOOLS}/drums/DrumProcessor.cpp
         ${TOOLS}/drums/DrumView.cpp
         ${TOOLS}/mpc/BankBrowser.cpp
@@ -76,8 +87,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         ${TOOLS}/mpc/SequencerView.cpp
         ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
         ${VOCODER_SOURCES})
-    target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS}/drums ${TOOLS}/mpc ${VOCODER_INCLUDE})
-    target_link_libraries(KaleidoboxPocket PRIVATE mpc_format)
+    target_include_directories(KaleidoboxPocket PRIVATE ${VOCODER_INCLUDE})
 endif()
 
 target_link_libraries(KaleidoboxPocket

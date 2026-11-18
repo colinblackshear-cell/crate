@@ -9,6 +9,17 @@
 class PocketAudio : private juce::AudioIODeviceCallback
 {
 public:
+    // Something else that makes sound through the same device (the drum machine and pads). Its
+    // render runs on the audio thread and adds into the buffers: no allocations, no locks.
+    struct Renderer
+    {
+        virtual ~Renderer() = default;
+        virtual void prepare (double sampleRate) = 0;
+        virtual void render (float* left, float* right, int numSamples) = 0;   // right may be null
+    };
+    // Set once, before start(). Not owned.
+    void setRenderer (Renderer* r) { renderer = r; }
+
     PocketAudio();
     ~PocketAudio() override;
 
@@ -23,6 +34,7 @@ public:
     double recordedSeconds() const;
     float takeLevel() { return peak.exchange (0.0f); }   // loudest sample since the last call, 0..1
     double deviceRate() const { return sampleRate; }
+    bool hasOutputDevice() const { return running; }
 
     // Playback of `audio` from sample `start` up to `end`.
     void play (crate::SharedAudio audio, int start, int end);
@@ -36,6 +48,7 @@ private:
     void audioDeviceIOCallbackWithContext (const float* const*, int, float* const*, int, int,
                                            const juce::AudioIODeviceCallbackContext&) override;
 
+    Renderer* renderer = nullptr;
     juce::AudioDeviceManager devices;
     bool running = false;
     double sampleRate = 44100.0;

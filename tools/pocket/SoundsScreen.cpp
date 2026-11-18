@@ -145,7 +145,7 @@ SoundsScreen::SoundsScreen (PocketHost& h, PocketAudio& a, Library& lib) : host 
     sendToMac.setFontHeight (17.0f);
     sendToMac.onClick = [this] { host.toast (selected() ? "Sending to your Mac comes in the next update" : "Pick a sound first"); };
     toPad.setFontHeight (17.0f);
-    toPad.onClick = [this] { host.toast (selected() ? "Sending to a pad comes in the next update" : "Pick a sound first"); };
+    toPad.onClick = [this] { if (auto* s = selected()) host.sendToPad (s->id); else host.toast ("Pick a sound first"); };
     edit.setFontHeight (17.0f);
     edit.onClick = [this]
     {

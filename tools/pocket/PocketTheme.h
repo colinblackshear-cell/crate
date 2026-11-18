@@ -28,7 +28,7 @@ juce::Font lcdFont (float height);                     // VT323
 juce::Font small (float height);                       // Barlow, small text
 juce::Font spaced (juce::Font, float kerning = 0.06f);
 
-enum class Look { cream, amber, green, red, dark, ghost };
+enum class Look { cream, amber, green, red, dark, ghost, pad };
 
 void drawRaised (juce::Graphics&, juce::Rectangle<float>, Look, bool pressed, float radius = 12.0f);
 void drawWell (juce::Graphics&, juce::Rectangle<float>, float radius = 14.0f);

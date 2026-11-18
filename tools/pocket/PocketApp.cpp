@@ -294,13 +294,14 @@ private:
 //==============================================================================
 PocketApp::PocketApp (Options o)
     : lib (o.libraryRoot != juce::File() ? o.libraryRoot : Library::defaultRoot()),
+      beats (static_cast<PocketHost&> (*this), lib),
+      padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
       sounds (static_cast<PocketHost&> (*this), audio, lib)
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&look);
 
     auto backToMore = [this] { showMorePage (0); };
-    beats = std::make_unique<Panel> ("Beats", "The drum machine and the MPC pads, played from the phone.");
     loops = std::make_unique<Panel> ("Loops", "Layer loops from your sounds, right on the phone.");
     vocoder = std::make_unique<Panel> ("Vocoder", "Talk or sing through the vocoder with the phone's mic.");
     remote = std::make_unique<Panel> ("Remote", "Run the Rig on the Mac from here: play, sections, mutes and loops.", backToMore);
@@ -312,15 +313,42 @@ PocketApp::PocketApp (Options o)
     tabs->onSelect = [this] (int i) { showTab (i); };
     toastBox = std::make_unique<Toast>();
     dim = std::make_unique<Dim>();
-    dim->onTap = [this] { closeSheet(); };
+    dim->onTap = [this] { closeSheet(); closePadSheet(); };
+
+    padSheet.onChanged = [this] (int pad) { beats.padChanged (pad); };
+    padSheet.onDone = [this] { closePadSheet(); };
+    padSheet.onClear = [this] (int) { beats.padsChanged(); };
+    padSheet.onUndoClear = [this] (int) { beats.padsChanged(); };
+    padSheet.onTrim = [this] (int pad)
+    {
+        auto id = beats.kit().pads[(size_t) pad].soundId;
+        if (lib.find (id) == nullptr)
+            return toast ("That sound is gone from Sounds");
+        closePadSheet();
+        editSound (id);
+    };
+    padSheet.onChop = [this] (int pad)
+    {
+        const auto id = beats.kit().pads[(size_t) pad].soundId;
+        auto* item = lib.find (id);
+        if (item == nullptr)
+            return toast ("That sound is gone from Sounds");
+        if (item->markers.empty())
+            return toast ("No chop markers on this sound. Add some in Record, under Chop.");
+        const int n = beats.kit().chop (pad, id, false);
+        beats.padsChanged();
+        closePadSheet();
+        toast ("Chopped across " + juce::String (n) + (n == 1 ? " pad" : " pads"));
+    };
 
     addAndMakeVisible (record);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { beats.get(), loops.get(), vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, loops.get(), vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
     addAndMakeVisible (*tabs);
     addChildComponent (*dim);
     addChildComponent (sheet);
+    addChildComponent (padSheet);
     addChildComponent (*toastBox);
 
     setSize (390, 844);
@@ -328,11 +356,14 @@ PocketApp::PocketApp (Options o)
     animate = o.audio;
 
     if (o.audio)
+    {
+        audio.setRenderer (&beats.engine());
         audio.start ([this] (juce::String error)
         {
             if (error.isNotEmpty())
                 toast (error);
         });
+    }
 }
 
 PocketApp::~PocketApp()
@@ -349,11 +380,14 @@ void PocketApp::showTab (int i)
 {
     if (sheetOpen)
         closeSheet();
+    closePadSheet();
     audio.stopPlaying();
+    if (i != 1)
+        beats.leave();
     tab = i;
     tabs->selected = i;
     record.setVisible (i == 0);
-    beats->setVisible (i == 1);
+    beats.setVisible (i == 1);
     loops->setVisible (i == 2);
     vocoder->setVisible (i == 3);
     if (i == 4)
@@ -372,7 +406,8 @@ void PocketApp::showMorePage (int page)
         tabs->selected = 4;
         tabs->repaint();
         record.setVisible (false);
-        beats->setVisible (false);
+        beats.setVisible (false);
+        beats.leave();
         loops->setVisible (false);
         vocoder->setVisible (false);
     }
@@ -391,17 +426,103 @@ void PocketApp::editSound (const juce::String& id)
     record.loadSound (id);
 }
 
+void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
+{
+    auto closed = open.withY (getHeight());
+    if (! animate)
+        c.setBounds (shown ? open : closed);
+    else
+        juce::Desktop::getInstance().getAnimator().animateComponent (&c, shown ? open : closed, 1.0f, 220, false, 1.0, 1.0);
+}
+
 void PocketApp::layoutSheet (bool shown)
 {
     const int top = insets.getTop() + 102;
-    auto open = juce::Rectangle<int> (0, top, getWidth(), getHeight() - top);
-    auto closed = open.withY (getHeight());
-    if (! animate)
-    {
-        sheet.setBounds (shown ? open : closed);
+    slide (sheet, juce::Rectangle<int> (0, top, getWidth(), getHeight() - top), shown);
+}
+
+juce::Rectangle<int> PocketApp::padSheetBounds() const
+{
+    const int h = 418;
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::openPadSheet (int pad)
+{
+    if (padSheetOpen || sheetOpen || pad < 0)
         return;
-    }
-    juce::Desktop::getInstance().getAnimator().animateComponent (&sheet, shown ? open : closed, 1.0f, 220, false, 1.0, 1.0);
+    padSheetOpen = true;
+    padSheet.show (pad);
+    dim->setVisible (true);
+    padSheet.setBounds (padSheetBounds().withY (getHeight()));
+    padSheet.setVisible (true);
+    padSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (padSheet, padSheetBounds(), true);
+}
+
+void PocketApp::closePadSheet()
+{
+    if (! padSheetOpen)
+        return;
+    padSheetOpen = false;
+    dim->setVisible (false);
+    slide (padSheet, padSheetBounds(), false);
+    if (! animate)
+        padSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->padSheetOpen)
+                safe->padSheet.setVisible (false);
+        });
+}
+
+// TO PAD: the sound goes on the next empty pad of the current bank, and the pads open with it picked.
+void PocketApp::sendToPad (const juce::String& soundId)
+{
+    auto* item = lib.find (soundId);
+    if (item == nullptr)
+        return toast ("Pick a sound first");
+    const int first = beats.kit().nextEmpty (beats.currentBank());
+    if (first < 0)
+        return toast ("Bank " + juce::String::charToString ((juce::juce_wchar) ('A' + beats.currentBank())) + " is full. Pick another bank in Beats.");
+
+    if (item->markers.empty())
+        return placeOnPads (soundId, first, false);
+
+    auto options = juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::QuestionIcon)
+                       .withTitle ("Send to pad")
+                       .withMessage ("\"" + item->name + "\" has " + juce::String ((int) item->markers.size()) + " chop markers.")
+                       .withButton ("One pad").withButton ("Chop across pads").withButton ("Cancel")
+                       .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (options, [this, soundId, first] (int r)
+    {
+        if (r == 1 || r == 2)
+            placeOnPads (soundId, first, r == 2);
+    });
+}
+
+void PocketApp::placeOnPads (const juce::String& soundId, int first, bool chop)
+{
+    auto* item = lib.find (soundId);
+    if (item == nullptr)
+        return;
+    const auto name = item->name;
+    int used = 1;
+    if (chop)
+        used = beats.kit().chop (first, soundId, true);
+    else if (! beats.kit().assign (first, soundId))
+        used = 0;
+    if (used == 0)
+        return toast ("That sound couldn't be opened");
+
+    beats.padsChanged();
+    showTab (1);
+    beats.showMode (1);
+    beats.selectPad (first);
+    toast (chop ? "Chopped \"" + name + "\" across " + juce::String (used) + " pads from " + Kit::padLabel (first)
+                : "Put \"" + name + "\" on pad " + Kit::padLabel (first));
 }
 
 void PocketApp::openSheet()
@@ -475,11 +596,12 @@ void PocketApp::resized()
     tabs->setBounds (0, h - tabH, w, tabH);
 
     auto content = juce::Rectangle<int> (0, insets.getTop() + 62, w, h - tabH - insets.getTop() - 62);
-    for (auto* c : std::initializer_list<juce::Component*> { &record, &sounds, beats.get(), loops.get(), vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, &sounds, &beats, loops.get(), vocoder.get(), remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
 
     dim->setBounds (0, 0, w, h);
     layoutSheet (sheetOpen);
+    padSheet.setBounds (padSheetOpen ? padSheetBounds() : padSheetBounds().withY (h));
     toastBox->setBounds (24, h - tabH - 62, w - 48, 48);
 }
 
@@ -584,6 +706,51 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     showMorePage (1);
     savePng (folder.getChildFile ("09-sounds.png"));
 
+    // Beats: the drum machine with a beat in it, the MPC pads with a demo kit, and the pad sheet
     showTab (1);
-    savePng (folder.getChildFile ("03-beats-coming-next.png"));
+    beats.drums().variation = 2;
+    beats.drums().bpm = 97.0;
+    beats.drums().settings.swing = 0.16f;
+    beats.drums().settings.voices[0].level = 0.8f;
+    beats.drums().settings.voices[0].decay = 0.62f;
+    beats.drums().settings.voices[0].tone = 0.45f;
+    beats.setBpm (97.0);
+    beats.drumsChanged();
+    beats.showMode (0);
+    beats.selectVoice (0);
+    beats.setDemoStep (4);
+    savePng (folder.getChildFile ("03-beats-drum-machine.png"));
+    beats.setDemoStep (-1);
+
+    beats.fillDemoKit();
+    beats.showMode (1);
+    savePng (folder.getChildFile ("04-beats-mpc-pads.png"));
+
+    openPadSheet (4);
+    resized();
+    savePng (folder.getChildFile ("05-pad-sheet.png"));
+    closePadSheet();
+
+    // Checks for the things a picture can't show: TO PAD puts a sound on the next empty pad of the bank
+    // and shows it, and an export for the MPC reads back through the MPC file code.
+    juce::StringArray problems;
+    showTab (4);
+    showMorePage (1);
+    const auto* firstSound = &lib.items().front();
+    sendToPad (firstSound->id);
+    if (beats.selectedPad() != 2 || beats.kit().pads[2].empty() || tab != 1 || beats.mode() != 1)
+        problems.add ("TO PAD did not land on A03 in Beats > MPC Pads");
+    savePng (folder.getChildFile ("06-to-pad.png"));
+    if (const auto why = beats.selfCheckExport (folder.getChildFile ("export-check")); why.isNotEmpty())
+        problems.add ("MPC export: " + why);
+    else
+        DBG ("MPC export round-trip ok");
+
+    if (const auto why = beats.selfCheckSound(); why.isNotEmpty())
+        problems.add ("Sound: " + why);
+
+    auto note = folder.getChildFile ("selfcheck.txt");
+    note.replaceWithText (problems.isEmpty() ? juce::String ("OK: TO PAD, the MPC export round trip, the drum machine and the pads make sound\n") : "FAILED\n" + problems.joinIntoString ("\n") + "\n");
+    for (auto& line : problems)
+        std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }

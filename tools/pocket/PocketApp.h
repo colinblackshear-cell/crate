@@ -1,6 +1,8 @@
 #pragma once
 
+#include "BeatsScreen.h"
 #include "EffectsSheet.h"
+#include "PadSheet.h"
 #include "PocketAudio.h"
 #include "PocketHost.h"
 #include "PocketLibrary.h"
@@ -41,6 +43,12 @@ private:
     void openSheet() override;
     void closeSheet() override;
     void editSound (const juce::String&) override;
+    void sendToPad (const juce::String&) override;
+    void openPadSheet (int pad) override;
+    void closePadSheet() override;
+    void placeOnPads (const juce::String& soundId, int firstPad, bool chop);
+    void slide (juce::Component&, juce::Rectangle<int> open, bool shown);
+    juce::Rectangle<int> padSheetBounds() const;
     void showTab (int);
     void showMorePage (int);   // 0 list, 1 sounds, 2 remote, 3 mac link, 4 settings
     void layoutSheet (bool shown);
@@ -50,11 +58,13 @@ private:
     PocketLook look;
 
     pocket::Library lib;
+    BeatsScreen beats;     // before the sound card, so the card stops before the engine goes
     PocketAudio audio;
     EffectsSheet sheet;
+    PadSheet padSheet;
     RecordScreen record;
     SoundsScreen sounds;
-    std::unique_ptr<Panel> beats, loops, vocoder, remote, macLink, settings;
+    std::unique_ptr<Panel> loops, vocoder, remote, macLink, settings;
     std::unique_ptr<MoreScreen> more;
     std::unique_ptr<TabBar> tabs;
     std::unique_ptr<Toast> toastBox;
@@ -62,6 +72,6 @@ private:
     juce::Rectangle<float> status;
     juce::BorderSize<int> insets;
     int tab = 0;
-    bool sheetOpen = false;
+    bool sheetOpen = false, padSheetOpen = false;
     bool animate = true;
 };
