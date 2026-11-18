@@ -52,4 +52,7 @@ private:
     juce::String selectedId, playingId;
     juce::Rectangle<float> barArea, searchBox;
     std::unique_ptr<juce::FileChooser> chooser;
+   #if JUCE_IOS || JUCE_ANDROID
+    juce::ScopedMessageBox sharing;
+   #endif
 };

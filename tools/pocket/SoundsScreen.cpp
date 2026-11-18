@@ -330,11 +330,11 @@ void SoundsScreen::share (const juce::String& id)
     if (! f.existsAsFile())
         return host.toast ("That sound couldn't be found");
    #if JUCE_IOS || JUCE_ANDROID
-    juce::ContentSharer::getInstance()->shareFiles ({ juce::URL (f) }, [this] (bool ok, const juce::String& error)
+    sharing = juce::ContentSharer::shareFilesScoped ({ juce::URL (f) }, [this] (bool ok, const juce::String& error)
     {
         if (! ok && error.isNotEmpty())
             host.toast ("Couldn't share: " + error);
-    });
+    }, getTopLevelComponent());
    #else
     host.toast ("Sharing works on the phone. This file: " + f.getFullPathName());
    #endif
