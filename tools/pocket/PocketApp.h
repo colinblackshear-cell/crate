@@ -1,42 +1,67 @@
 #pragma once
 
-#include <juce_audio_utils/juce_audio_utils.h>
+#include "EffectsSheet.h"
+#include "PocketAudio.h"
+#include "PocketHost.h"
+#include "PocketLibrary.h"
+#include "PocketTheme.h"
+#include "RecordScreen.h"
+#include "SoundsScreen.h"
 
-#include "DrumEngine.h"
-
-class DrumProcessor;
-class MpcProcessor;
-class VocoderProcessor;
-
-// The placeholder screen: cream background, the name, and a Play button that plays an 808-style
-// kick pattern from the drum engine. It also creates the MPC and vocoder processors so the build
-// proves they link.
-class PocketApp : public juce::Component, private juce::AudioIODeviceCallback
+// The whole phone app: a header, four tabs (Record, Sounds, Pads, Remote) and the Effects + Chop sheet.
+class PocketApp : public juce::Component, private PocketHost
 {
 public:
-    PocketApp();
+    struct Options
+    {
+        juce::File libraryRoot;       // empty = the app's Documents folder
+        bool audio = true;            // false = no sound card (screenshots)
+    };
+
+    PocketApp() : PocketApp (Options()) {}
+    explicit PocketApp (Options);
     ~PocketApp() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // Screenshot mode: fills a demo library, then writes one PNG per screen into `folder`.
+    static void fillDemoLibrary (pocket::Library&);
+    void writeSnapshots (const juce::File& folder);
+    pocket::Library& library() { return lib; }
+
 private:
-    void audioDeviceAboutToStart (juce::AudioIODevice*) override;
-    void audioDeviceStopped() override;
-    void audioDeviceIOCallbackWithContext (const float* const* in, int numIn, float* const* out, int numOut,
-                                           int numSamples, const juce::AudioIODeviceCallbackContext&) override;
+    class TabBar;
+    class Panel;
+    class MoreScreen;
+    class Toast;
+    class Dim;
 
-    juce::AudioDeviceManager devices;
-    juce::TextButton play { "Play" };
+    void toast (const juce::String&) override;
+    void openSheet() override;
+    void closeSheet() override;
+    void editSound (const juce::String&) override;
+    void showTab (int);
+    void showMorePage (int);   // 0 list, 1 sounds, 2 remote, 3 mac link, 4 settings
+    void layoutSheet (bool shown);
+    void savePng (const juce::File&);
 
-    crate::drums::Engine engine;
-    crate::drums::Pattern pattern;
-    std::atomic<bool> playing { false };
-    double sampleRate = 44100.0, ppq = 0, bpm = 100;
+    struct PocketLook : juce::LookAndFeel_V4 { PocketLook(); juce::Font getPopupMenuFont() override; juce::Font getTextButtonFont (juce::TextButton&, int) override; };
+    PocketLook look;
 
-    std::unique_ptr<DrumProcessor> drumProcessor;
-    std::unique_ptr<MpcProcessor> mpcProcessor;
-    std::unique_ptr<VocoderProcessor> vocoderProcessor;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PocketApp)
+    pocket::Library lib;
+    PocketAudio audio;
+    EffectsSheet sheet;
+    RecordScreen record;
+    SoundsScreen sounds;
+    std::unique_ptr<Panel> beats, loops, vocoder, remote, macLink, settings;
+    std::unique_ptr<MoreScreen> more;
+    std::unique_ptr<TabBar> tabs;
+    std::unique_ptr<Toast> toastBox;
+    std::unique_ptr<Dim> dim;
+    juce::Rectangle<float> status;
+    juce::BorderSize<int> insets;
+    int tab = 0;
+    bool sheetOpen = false;
+    bool animate = true;
 };
