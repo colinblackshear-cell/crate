@@ -37,6 +37,7 @@ target_sources(CrateTests PRIVATE
     RigToolPluginTests.cpp
     RigLogicImportTests.cpp
     RigSongCaptureTests.cpp
+    RigControllersTests.cpp
     RigClearTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
     SoundBankTests.cpp

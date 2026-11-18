@@ -19,6 +19,7 @@
 #include "EffectsView.h"
 #include "RigSongStart.h"
 #include "QuantizePanel.h"
+#include "ControllersPanel.h"
 
 namespace Theme = crate::Theme;
 
@@ -365,6 +366,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         if (engine.micOn.load())
             sayMicOn();
     };
+    header.onKeyboard = [this] { showControllers(); };
     header.tap.onClick = [this]
     {
         const auto now = juce::Time::getMillisecondCounterHiRes();
@@ -420,7 +422,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     // The Setup page's parts.
     setupPage = new SetupPage (*this);
     for (auto* c : std::initializer_list<juce::Component*> { &clickButton, &micButton, &learnPlay, &learnStop, &learnPlayLabel, &learnStopLabel,
-                                                             &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
+                                                             &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
                                                              &darkButton, &popOutButton, &pluginsButton, &pluginsLabel, &pluginsHint,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
                                                              &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
@@ -458,6 +460,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     knobButton.onClick = [this] { showKnobMenu(); };
 
     audioButton.onClick = [this] { showAudioSettings(); };
+    controllersButton.setTooltip ("What each MIDI controller is (a Launchkey, another keyboard, a pad controller like a Launchpad, "
+                                  "MPD or APC), so its keys, pads and knobs play Kaleidobox. Learn pad 1 and Learn knobs for any other.");
+    controllersButton.onClick = [this] { showControllers(); };
     saveButton.onClick = [this] { saveShow(); };
     saveButton.setTooltip ("Saves everything: the show (sounds, patterns, mixer, song parts) and your loops, together. "
                            "The first time it asks for a name; after that it saves straight away (Cmd+S). The show menu (top left) has Save show as... for a copy.");
@@ -702,10 +707,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     }
     for (auto* l : { &learnPlayLabel, &learnStopLabel })
         l->setFont (vintage::cond (15.0f, vintage::Weight::bold, 0.06f));
-    for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
+    for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
                      &darkButton, &popOutButton, &pluginsButton })
         vintage::setInWell (*b, true);
-    for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &saveButton, &openButton,
+    for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
                      &darkButton, &popOutButton, &pluginsButton })
         b->getProperties().set ("fontSize", 15.0f);
     vintage::setLit (sampleButton, vintage::Lit::arm);
@@ -776,6 +781,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
 RigView::~RigView()
 {
+    if (controllersWindow != nullptr)
+        delete controllersWindow.getComponent();
     for (int t = 0; t < RigEngine::numTools; ++t)
         engine.getTool (t).removeListener (this);
     closeMixerPanel();
@@ -2272,28 +2279,85 @@ void RigView::openMidiInputs()
         keyboardFound = true;
         return;
     }
+    auto& controllers = engine.getControllers();
     const auto inputs = juce::MidiInput::getAvailableDevices();
-    juce::StringArray names;
+    juce::StringArray names, listened;
+    juce::String firstNew;
     for (const auto& input : inputs)
     {
-        if (! devices->isMidiInputDeviceEnabled (input.identifier))
-            devices->setMidiInputDeviceEnabled (input.identifier, true);
+        // Its translator first, so it's read as what it is from its first note.
+        controllers.translatorFor (input.name);
+        const bool on = controllers.isOn (input.name);
+        if (devices->isMidiInputDeviceEnabled (input.identifier) != on)
+            devices->setMidiInputDeviceEnabled (input.identifier, on);
         names.add (input.name);
+        if (on)
+            listened.add (input.name);
+        if (! controllers.isKnown (input.name))
+        {
+            // A Launchkey is what Kaleidobox is built around: nothing to ask.
+            if (controllers.profileFor (input.name).kind == crate::controllers::Kind::launchkey)
+                controllers.markKnown (input.name);
+            else if (firstNew.isEmpty())
+                firstNew = input.name;
+        }
     }
-    if (inputs != knownInputs || keyboardName.isEmpty())
+    if (firstNew.isNotEmpty())
+        showControllers (firstNew);
+
+    if (inputs != knownInputs || keyboardName.isEmpty() || listened != listenedInputs)
     {
         knownInputs = inputs;
-        // The top bar names the keyboard: a Launchkey if there is one, else the first found.
+        listenedInputs = listened;
+        // The top bar names the keyboard: a Launchkey if there is one, else the first listened to.
         juce::String shown;
-        for (const auto& n : names)
+        for (const auto& n : listened)
             if (n.containsIgnoreCase ("launchkey"))
                 shown = n.containsIgnoreCase ("61") ? "Launchkey 61" : "Launchkey";
-        if (shown.isEmpty() && ! names.isEmpty())
-            shown = names[0].upToFirstOccurrenceOf (" MIDI", false, true).substring (0, 16);
-        keyboardFound = ! names.isEmpty();
-        keyboardName = keyboardFound ? shown : "No keyboard";
-        header.setTooltip (names.isEmpty() ? "No MIDI keyboard found" : "MIDI: " + names.joinIntoString (", "));
+        if (shown.isEmpty() && ! listened.isEmpty())
+            shown = listened[0].upToFirstOccurrenceOf (" MIDI", false, true).substring (0, 16);
+        keyboardFound = ! listened.isEmpty();
+        keyboardName = keyboardFound ? shown : (names.isEmpty() ? "No keyboard" : "Not listening");
+        header.setTooltip ((names.isEmpty() ? juce::String ("No MIDI keyboard found") : "MIDI: " + listened.joinIntoString (", "))
+                           + ". Click the keyboard lamp for MIDI controllers (what each one is).");
     }
+}
+
+void RigView::showControllers (const juce::String& newDevice)
+{
+    if (devices == nullptr)
+        return;
+    if (auto* open = getControllersPanel())
+    {
+        if (newDevice.isNotEmpty())
+            open->setNewDevice (newDevice);
+        controllersWindow->toFront (true);
+        return;
+    }
+    auto panel = std::make_unique<ControllersPanel> (engine.getControllers(),
+        [] {
+            juce::StringArray n;
+            for (const auto& d : juce::MidiInput::getAvailableDevices())
+                n.add (d.name);
+            return n;
+        },
+        [safe = juce::Component::SafePointer<RigView> (this)] { if (safe != nullptr) safe->openMidiInputs(); });
+    if (newDevice.isNotEmpty())
+        panel->setNewDevice (newDevice);
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned (panel.release());
+    options.dialogTitle = "MIDI controllers";
+    options.dialogBackgroundColour = vintage::pal().face;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    options.componentToCentreAround = this;
+    controllersWindow = options.launchAsync();
+}
+
+ControllersPanel* RigView::getControllersPanel() const
+{
+    return controllersWindow != nullptr ? dynamic_cast<ControllersPanel*> (controllersWindow->getContentComponent()) : nullptr;
 }
 
 void RigView::sayMicOn()
@@ -3082,9 +3146,13 @@ void RigView::layoutSetup (juce::Rectangle<int> page)
     // Audio & MIDI.
     in = card (cell (1, 1), "Audio & MIDI", vintage::colours::arm);
     audioButton.setVisible (devices != nullptr);
+    controllersButton.setVisible (devices != nullptr);
     if (devices != nullptr)
+    {
         line (in, nullptr, { { &audioButton, 170 } });
-    sp.cards.back().hint = devices != nullptr ? "Your audio interface, its inputs and outputs, and the MIDI keyboards Kaleidobox listens to."
+        line (in, nullptr, { { &controllersButton, 200 } });
+    }
+    sp.cards.back().hint = devices != nullptr ? "Your audio interface and its inputs and outputs. MIDI controllers: what each keyboard or pad controller is, so it plays Kaleidobox."
                                               : "In Logic, Logic sets the audio and MIDI. Kaleidobox Input (on an audio track) brings in a mic or guitar.";
     hintBelow (in);
 
