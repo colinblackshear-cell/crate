@@ -436,13 +436,15 @@ TrackRail::TrackRail()
     newPattern.setTooltip ("Starts the next thing in the song on an empty pattern: a beat, a bass line, keys, the vocoder, a loop "
                            "or a sample. Also keeps what's playing as the next section, or starts over with a new, empty song.");
     addAndMakeVisible (newPattern);
-    for (auto* b : { &recTake, &toSong })
+    for (auto* b : { &recTake, &toSong, &recMoves, &moves })
     {
         b->fontSize = 15.0f;
         b->subSize = 10.5f;
         addAndMakeVisible (b);
     }
     recTake.icon = PanelButton::Icon::rec;
+    recMoves.icon = PanelButton::Icon::rec;
+
 }
 
 void TrackRail::setCards (const juce::Array<juce::Component*>& list)
@@ -473,6 +475,15 @@ void TrackRail::resized()
         recTake.setBounds (capture.removeFromLeft (w));
         capture.removeFromLeft (6);
         toSong.setBounds (capture);
+    }
+    if (recMoves.isVisible() || moves.isVisible())
+    {
+        auto automation = r.removeFromBottom (54).withTrimmedRight (4);
+        r.removeFromBottom (6);
+        const int w = (automation.getWidth() - 6) / 2;
+        recMoves.setBounds (automation.removeFromLeft (w));
+        automation.removeFromLeft (6);
+        moves.setBounds (automation);
     }
     const int n = cards.size();
     if (n == 0)

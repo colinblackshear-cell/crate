@@ -59,7 +59,20 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Clear empties the layer you picked (its effects stay). Clear all loops (by the loop bank) starts fresh: all eight layers empty, their effects off. Undo brings them back.",
             "Loop bank: Save bank names this batch of eight loops. + New batch keeps them and gives you eight empty layers. "
             "Back and Next (or click the bank's name) bring a batch back, at the next bar while playing." },
-          "Loops can be up to 10 minutes long. A short loop and a long one play together in time." },
+          "Loops (and Rec takes) can be up to an hour long. A short loop and a long one play together in time." },
+
+        { "Automation: record knob moves (Rec moves, under the tracks)",
+          { "Press Rec moves. From the next bar (with the clock stopped, the clock starts), every setting you turn is recorded: "
+            "the bass's Cutoff sweeping, the synth's filter, an effect's Mix or Feedback, on screen or with a learned knob.",
+            "Press Rec moves again to stop at the end of the bar. Each setting you moved gets a lane that plays back on the beat, "
+            "round and round (Loop), or once along the song from where you recorded it (Once: the default over the song).",
+            "Automation (beside it, or Cmd+Shift+A) shows the lanes: drag on one to draw new moves, halve or double its length, "
+            "switch it on or off, Clear one or Clear all (Undo brings them back). Read off stops them all moving.",
+            "Move a knob that has a lane and you have it while you move it; let go and the lane carries on.",
+            "Record again on the same setting to replace its lane. Switches (patterns, waves, on/off) aren't recorded.",
+            "Lanes are saved with the show. What you record for Logic (Record set, To Logic) has the moves in it, "
+            "and Export for Logic adds Automation.mid: each lane as a MIDI CC." },
+          "Lanes follow the beat, so in Logic they follow Logic's bars." },
 
         { "Sampler and MPC (pick one, then Edit): play the pads like an MPC",
           { "Your keyboard's drum pads (Launchkey in Drum mode, or a Launchpad in Drum mode) play the 16 pads of the bank on screen. "

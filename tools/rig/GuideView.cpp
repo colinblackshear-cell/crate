@@ -135,7 +135,7 @@ const std::vector<GuideView::Entry>& GuideView::entries()
           RigColours::vocoder, Art::vocoder, false, {} },
         { "Looper", "The Loops", "Time, folded neatly.",
           "Record a bar, record another on top, repeat until the room is full. Eight layers that never drift off the beat, "
-          "up to ten minutes each, with their own effects, in banks you can switch on the bar.",
+          "up to an hour each, with their own effects, in banks you can switch on the bar.",
           RigColours::loops, Art::looper, false, {} },
         { "Sampler", utf8 ("The Sampler \xc2\xb7 MPC"), "Any sound, caught and put to work.",
           "Catch a noise from the mic, a tool or your crate, then trim it, chop it and spread it across the keys or the pads. "

@@ -116,6 +116,9 @@ public:
     // play it, over the beat) onto the next empty loop from the next bar, until pressed again;
     // To Song puts what it plays (or the take) into the song's sections.
     PanelButton recTake { "Rec take" }, toSong { juce::String::fromUTF8 ("To Song \xe2\x80\xba") };
+    // Automation, under those: Rec moves records the knobs you turn (any tool, any effect) from the
+    // next bar, until pressed again; Automation opens the lanes (play, draw, clear).
+    PanelButton recMoves { "Rec moves" }, moves { juce::String::fromUTF8 ("Automation \xe2\x80\xba") };
 
     static constexpr int kWidth = 232;
 

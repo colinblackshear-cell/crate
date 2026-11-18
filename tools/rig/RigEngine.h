@@ -20,6 +20,7 @@
 #include "RigCapture.h"
 #include "RigQuantize.h"
 #include "RigChords.h"
+#include "RigAutomation.h"
 #include "core/control/Controllers.h"
 
 #include <array>
@@ -65,6 +66,11 @@ public:
     RigScenes& getScenes() { return scenes; }
     // The chord builder: your own chords, onto any instrument (saved with the show; kept by New song).
     RigChords& getChords() { return chords; }
+    // Automation: knob moves on any tool or its effects, recorded over the beat and played back
+    // (saved with the show; New song clears it). Rec moves arms it from the next bar, starting
+    // the clock if it's stopped (over the song, its lanes play Once along the song).
+    RigAutomation& getAutomation() { return automation; }
+    void pressRecMoves();
     // The song on a timeline (lanes of blocks over the bar ruler). While it's on and the clock
     // plays, it brings loops and tools in and out, with their fades.
     RigTimeline& getTimeline() { return timeline; }
@@ -412,11 +418,12 @@ private:
     struct LoopRoom : juce::Timer
     {
         explicit LoopRoom (RigEngine& e) : engine (e) {}
-        void timerCallback() override { engine.looper.maintain(); engine.serviceLoopBanks(); engine.quantizer.service(); }
+        void timerCallback() override { engine.looper.maintain(); engine.serviceLoopBanks(); engine.quantizer.service(); engine.automation.service(); }
         RigEngine& engine;
     } loopRoom { *this };
     RigQuantizer quantizer { *this };
     RigChords chords;
+    RigAutomation automation;
     std::vector<LoopBank> loopBanks;
     int currentLoopBank = -1;
     // A switch waiting for its bar: each layer's effects, put on when its loop comes in.

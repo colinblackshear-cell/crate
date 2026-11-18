@@ -95,6 +95,10 @@ public:
     // last take (its loop) there instead of what the track plays. Returns the section (-1: none).
     void showToSongMenu();
     int toSong (int section, bool take = false);
+    // Rec moves (the rail): records the knobs you turn from the next bar, or stops at the end of
+    // the bar. showAutomation opens the lanes (Cmd+Shift+A).
+    void pressRecMoves();
+    void showAutomation();
     // The walkthrough's steps (the Guide): going to the place a step shows.
     void showTourPlace (const juce::String& place);
     // The page that shows a track in full ("MPC", "Drum machine", "Bass"...).
@@ -195,9 +199,11 @@ private:
     juce::File currentShow;
     int takeLayer = -1, takeTrack = -1;
     bool takeStarted = false;   // the take's layer has been seen armed or recording
+    bool takeKeptSaid = false;  // told you the song left the take alone
     int tourStop = 0;   // the walkthrough's stop you were on
     std::array<int, 8> lastTake { -1, -1, -1, -1, -1, -1, -1, -1 };
     void updateCaptureButtons();
+    juce::Component::SafePointer<juce::Component> automationPanel;
     std::unique_ptr<juce::FileChooser> toolChooser;
     juce::File printedMidi, printedAudio;
     std::unique_ptr<juce::Component> dragMidi, dragAudio;
