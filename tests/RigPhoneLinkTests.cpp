@@ -17,6 +17,10 @@
 //
 // The link talks on the message thread, so the test runs the message loop here and does its
 // steps from a second thread, each one on the message thread.
+#if JUCE_MAC
+namespace juce { void initialiseNSApplication(); }   // in juce_events (makes NSApp)
+#endif
+
 namespace
 {
 constexpr const char* kLoopbackTest = "Rig: Kaleidobox Pocket link, phone and Mac talking";
@@ -336,6 +340,11 @@ struct RigPhoneLinkLoopback : juce::UnitTest
             juce::MessageManager::getInstance()->stopDispatchLoop();
         });
 
+       #if JUCE_MAC
+        // A console program has no NSApplication until something makes one, and without it the
+        // Mac's message loop returns at once (nothing would run the steps' messages).
+        juce::initialiseNSApplication();
+       #endif
         juce::MessageManager::getInstance()->runDispatchLoop();
         steps.join();
         finished = true;
