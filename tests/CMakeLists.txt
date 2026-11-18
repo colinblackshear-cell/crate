@@ -70,6 +70,8 @@ target_link_libraries(CrateTests PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 add_test(NAME crate_tests COMMAND CrateTests)
+# A hung test fails the run instead of holding the runner for hours.
+set_tests_properties(crate_tests PROPERTIES TIMEOUT 900)
 
 # The MPC2000XL file format on its own. Set MPC_FIXTURES to a folder of files saved by an
 # MPC2000XL (CI uses the vMPC2000XL demo kits) to also check that each one reads and writes

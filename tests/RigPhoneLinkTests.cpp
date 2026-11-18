@@ -7,6 +7,8 @@
 #include "tools/pocket/PocketLinkClient.h"
 #include "core/AudioFiles.h"
 
+#include <atomic>
+#include <iostream>
 #include <thread>
 
 // Kaleidobox Pocket linked to the Mac app, for real over a socket on this computer: the four
@@ -49,6 +51,14 @@ void onMain (std::function<void()> f)
 std::function<void()> audioTick;
 
 // Waits (up to `ms`) for something that's checked on the message thread.
+// Where the loopback test is, for the watchdog to say.
+std::atomic<const char*> step { "starting" };
+void at (const char* name)
+{
+    step = name;
+    std::cout << "  step: " << name << std::endl;
+}
+
 bool waitFor (std::function<bool()> done, int ms = 5000)
 {
     const auto end = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
@@ -114,10 +124,22 @@ struct RigPhoneLinkTests : juce::UnitTest
             expect (started, "the copy starts");
             if (started)
             {
-                const auto out = child.readAllProcessOutput();
-                child.waitForProcessToFinish (120000);
-                const bool ok = child.getExitCode() == 0 && out.contains ("All tests passed") && out.contains ("run the Remote");
-                expect (ok, out.fromLastOccurrenceOf ("Starting tests in", true, false).substring (0, 3000));
+                // Read as it goes (so the pipe never fills), and never wait forever: the copy has
+                // its own watchdog, and this one kills it if even that doesn't end it.
+                juce::String out;
+                const auto end = juce::Time::getMillisecondCounter() + 150000;
+                std::atomic<bool> reading { true };
+                std::thread reader ([&] { out = child.readAllProcessOutput(); reading = false; });
+                while (reading && juce::Time::getMillisecondCounter() < end)
+                    juce::Thread::sleep (50);
+                const bool timedOut = reading;
+                if (timedOut)
+                    child.kill();
+                reader.join();
+                child.waitForProcessToFinish (5000);
+                expect (! timedOut, "the copy finished in time");
+                const bool ok = ! timedOut && child.getExitCode() == 0 && out.contains ("All tests passed") && out.contains ("run the Remote");
+                expect (ok, out.fromLastOccurrenceOf ("Starting tests in", true, false).substring (0, 3000) + "\n" + out.getLastCharacters (1500));
             }
         }
     }
@@ -142,8 +164,23 @@ struct RigPhoneLinkLoopback : juce::UnitTest
         juce::StringArray phoneHeard, macSaid;
         juce::String recPressed;
 
+        // If anything stops the message loop or a step hangs, say where and end the copy, so
+        // the test fails instead of waiting forever.
+        std::atomic<bool> finished { false };
+        std::thread watchdog ([&]
+        {
+            const auto end = juce::Time::getMillisecondCounter() + 100000;
+            while (! finished && juce::Time::getMillisecondCounter() < end)
+                juce::Thread::sleep (50);
+            if (finished)
+                return;
+            std::cout << "Watchdog: stuck at step '" << step.load() << "'" << std::endl;
+            std::_Exit (3);
+        });
+
         std::thread steps ([&]
         {
+            at ("make the Mac and the phone");
             onMain ([&]
             {
                 engine = std::make_unique<RigEngine>();
@@ -168,12 +205,14 @@ struct RigPhoneLinkLoopback : juce::UnitTest
             expect (port > 0, "the Mac listens");
             expectEquals (code.length(), 4);
 
+            at ("wrong numbers");
             // Wrong numbers: refused, nothing linked.
             const auto wrong = juce::String ((code.getIntValue() + 1) % 10000).paddedLeft ('0', 4);
             onMain ([&] { phone->linkTo ("Test Mac", "127.0.0.1", port, wrong); });
             expect (waitFor ([&] { return phone->getStatus() == pocket::LinkClient::Status::notLinked && phone->getError().isNotEmpty(); }), "wrong numbers are refused");
             onMain ([&] { expect (! mac->isLinked()); expect (phone->getError().contains ("don't match"), phone->getError()); });
 
+            at ("the right numbers");
             // The right numbers: linked, and the numbers are used up.
             onMain ([&] { phone->linkTo ("Test Mac", "127.0.0.1", port, code); });
             expect (waitFor ([&] { return phone->isLinked() && mac->isLinked(); }), "linked with the four numbers");
@@ -197,6 +236,7 @@ struct RigPhoneLinkLoopback : juce::UnitTest
                 expect (ok, dest + ": " + text);
                 return text;
             };
+            at ("send sounds");
             auto text = sendTo ("sounds");
             expect (text.contains ("Sounds"), text);
             expect (home.getChildFile ("From iPhone").getChildFile ("Porch rain.wav").existsAsFile(), "the WAV is in From iPhone");
@@ -217,6 +257,7 @@ struct RigPhoneLinkLoopback : juce::UnitTest
                 expectEquals (engine->getLoopName (0), juce::String ("Porch rain"));
             });
 
+            at ("send a kit");
             // A kit of pads: onto the MPC as a new kit.
             {
                 pocket::MacSend kit;
@@ -230,6 +271,7 @@ struct RigPhoneLinkLoopback : juce::UnitTest
                 expect (ok && said.isNotEmpty(), said);
             }
 
+            at ("the Remote");
             // The Remote: mute, tempo, Rec, a loop layer, and what the phone sees.
             onMain ([&] { phone->remote ("mute", 1); phone->remote ("bpm", 97.0); phone->remote ("rec", "take"); });
             expect (waitFor ([&] { return engine->getStrip (RigEngine::drumsStrip).mute.load(); }), "Drums muted from the phone");
@@ -267,6 +309,7 @@ struct RigPhoneLinkLoopback : juce::UnitTest
                 return names.isArray() && names.size() == 2 && names[1].toString() == "Verse";
             }), "the phone sees the sections");
 
+            at ("gone and back");
             // Gone and back: links again by itself with its key (no numbers).
             onMain ([&] { phone.reset(); });
             expect (waitFor ([&] { return ! mac->isLinked(); }), "the Mac sees the phone go");
@@ -277,6 +320,7 @@ struct RigPhoneLinkLoopback : juce::UnitTest
             });
             expect (waitFor ([&] { return phone->isLinked() && mac->isLinked(); }), "links again with its key");
 
+            at ("unlink");
             // Unlink on the Mac: the phone forgets its key and can't come back without numbers.
             onMain ([&] { mac->unlink(); });
             expect (waitFor ([&] { return ! phone->isLinked(); }), "the phone hears it was unlinked");
@@ -285,13 +329,17 @@ struct RigPhoneLinkLoopback : juce::UnitTest
                     "no key, no numbers: refused");
             onMain ([&] { expect (! mac->isLinked()); });
 
+            at ("tidy up");
             audioTick = nullptr;
             onMain ([&] { phone.reset(); mac.reset(); engine.reset(); });
+            at ("stop the message loop");
             juce::MessageManager::getInstance()->stopDispatchLoop();
         });
 
         juce::MessageManager::getInstance()->runDispatchLoop();
         steps.join();
+        finished = true;
+        watchdog.join();
         home.deleteRecursively();
     }
 };

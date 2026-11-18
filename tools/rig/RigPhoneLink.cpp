@@ -9,7 +9,7 @@ using crate::link::Message;
 class RigPhoneLink::PhoneConnection : public crate::link::Connection
 {
 public:
-    explicit PhoneConnection (RigPhoneLink& l) : link (l)
+    explicit PhoneConnection (RigPhoneLink& l) : link (l), alive (l.alive)
     {
         onMessage = [this] (const Message& m)
         {
@@ -24,11 +24,16 @@ public:
         };
         onLost = [this]
         {
-            juce::MessageManager::callAsync ([&l = link, self = this] { l.connectionGone (self); });
+            juce::MessageManager::callAsync ([&l = link, a = alive, self = this]
+            {
+                if (*a)
+                    l.connectionGone (self);
+            });
         };
     }
 
     RigPhoneLink& link;
+    std::shared_ptr<std::atomic<bool>> alive;   // the link's
     bool linked = false;
     juce::String id;
 };
@@ -48,10 +53,21 @@ RigPhoneLink::RigPhoneLink (RigEngine& e, juce::File phonesFile, bool advertise)
 
 RigPhoneLink::~RigPhoneLink()
 {
+    // Stopping the server wakes its accept() by connecting to it, which would hand us one more
+    // connection from its thread: `stopping` refuses it, and `alive` stops anything already
+    // posted to the message thread from touching this after it's gone.
+    stopping = true;
+    *alive = false;
     stopTimer();
     stop();
     advertiser.reset();
     phone = nullptr;
+    for (auto* c : connections)
+    {
+        c->onMessage = nullptr;
+        c->onLost = nullptr;
+        c->disconnect();
+    }
     connections.clear();
 }
 
@@ -113,8 +129,20 @@ void RigPhoneLink::unlink()
 juce::InterprocessConnection* RigPhoneLink::createConnectionObject()
 {
     // The server's thread: the connection is kept here and only used on the message thread.
+    if (stopping)
+        return nullptr;
     auto* c = new PhoneConnection (*this);
-    juce::MessageManager::callAsync ([this, c] { connections.add (c); });
+    juce::MessageManager::callAsync ([this, c, a = alive]
+    {
+        if (*a)
+            connections.add (c);
+        else
+        {
+            c->onMessage = nullptr;   // this went away first
+            c->onLost = nullptr;
+            delete c;
+        }
+    });
     return c;
 }
 

@@ -2,6 +2,7 @@
 
 #include "RigEngine.h"
 #include "core/link/PocketLink.h"
+#include <atomic>
 
 // Kaleidobox Pocket, linked (Settings > iPhone): the Mac's end of the link to the phone app.
 //
@@ -90,4 +91,6 @@ private:
     int remoteLayer = -1;
     juce::String lastState;
     int quietTicks = 0;
+    std::atomic<bool> stopping { false };
+    std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
 };
