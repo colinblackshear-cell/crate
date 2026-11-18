@@ -29,7 +29,9 @@ juce_add_gui_app(KaleidoboxPocket
     FILE_SHARING_ENABLED TRUE
     DOCUMENT_BROWSER_ENABLED TRUE
     IPHONE_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait
-    IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait)
+    IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait
+    # Link to Mac: finds Kaleidobox on the Wi-Fi with Bonjour (iOS asks once for the local network).
+    PLIST_TO_MERGE "<plist><dict><key>NSLocalNetworkUsageDescription</key><string>Kaleidobox Pocket finds Kaleidobox on your Mac over the Wi-Fi, to send it sounds and run its Remote.</string><key>NSBonjourServices</key><array><string>_kaleidobox._tcp</string></array></dict></plist>")
 
 target_sources(KaleidoboxPocket PRIVATE
     Main.cpp
@@ -49,6 +51,9 @@ target_sources(KaleidoboxPocket PRIVATE
     SoundsScreen.cpp
     PocketVocoder.cpp
     VocoderScreen.cpp
+    PocketLinkClient.cpp
+    LinkScreens.cpp
+    ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
     ${VOCODER_SOURCES})
 
 # The Vocoder tab runs the real Kaleidobox vocoder (its own repo, built in like the Mac's Rig does).

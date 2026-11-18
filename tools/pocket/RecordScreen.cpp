@@ -176,7 +176,12 @@ RecordScreen::RecordScreen (PocketHost& h, PocketAudio& a, Library& lib, Effects
         if (currentId.isNotEmpty())
             host.sendToPad (currentId);
     };
-    toMac.onClick = [this] { host.toast ("Sending to your Mac comes in the next update"); };
+    toMac.onClick = [this]
+    {
+        saveToSounds();   // what goes is the saved sound, with its effects
+        if (currentId.isNotEmpty())
+            host.sendSoundToMac (currentId);
+    };
 
     for (auto* b : { &keep, &del, &trim, &fadeIn, &fadeOut, &normal, &reverse, &selectAll, &toPad, &toMac })
         b->setFontHeight (16.0f);

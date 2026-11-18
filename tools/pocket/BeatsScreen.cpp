@@ -464,7 +464,22 @@ public:
         addAndMakeVisible (editPads);
 
         toMac.setFontHeight (15.0f);
-        toMac.onClick = [this] { owner.host.toast ("Sending kits to your Mac comes with Mac linking"); };
+        // The kit onto the Mac's MPC as a new kit (or its sounds into the Mac's Sounds).
+        toMac.onClick = [this]
+        {
+            pocket::MacSend send;
+            for (int i = 0; i < (int) owner.padKit.pads.size(); ++i)
+                if (const auto& pad = owner.padKit.pads[(size_t) i]; ! pad.empty())
+                    send.items.push_back ({ pad.name.isNotEmpty() ? pad.name : pocket::Kit::padLabel (i), pad.audio, 0.0 });
+            if (send.items.empty())
+                return owner.host.toast ("The pads are empty. Put sounds on them first (TO PAD in Sounds or Record).");
+            send.kitName = "Pocket kit";
+            send.title = "Pocket kit";
+            send.detail = juce::String ((int) send.items.size()) + (send.items.size() == 1 ? " pad" : " pads");
+            send.dests = { "kit", "sounds" };
+            send.dest = "kit";
+            owner.host.sendToMac (std::move (send));
+        };
         addAndMakeVisible (toMac);
         refresh();
     }

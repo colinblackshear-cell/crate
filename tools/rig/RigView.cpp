@@ -10,6 +10,7 @@
 #include "MixerView.h"
 #include "GrooveView.h"
 #include "SoundsView.h"
+#include "RigPhoneLink.h"
 #include "RigColours.h"
 #include "EditorView.h"
 #include "MpcView.h"
@@ -433,8 +434,57 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
                                                              &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
                                                              &darkButton, &popOutButton, &pluginsButton, &pluginsLabel, &pluginsHint,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
-                                                             &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo })
+                                                             &sourceLabel, &sampleSource, &sampleDest, &sampleBars, &splitLabel, &splitNote, &lowerKeysTo,
+                                                             &phoneCode, &phoneUnlink })
         setupPage->addAndMakeVisible (c);
+
+    // Settings > iPhone: Kaleidobox Pocket links over the Wi-Fi (the app only: in Logic, the app
+    // isn't what's open).
+    phoneCode.setFont (vintage::lcd (40.0f));
+    phoneCode.setColour (juce::Label::textColourId, vintage::colours::lcdAmber);
+    phoneCode.setColour (juce::Label::backgroundColourId, vintage::colours::lcdBack);
+    phoneCode.setJustificationType (juce::Justification::centred);
+    phoneCode.setTooltip ("On the iPhone, in Kaleidobox Pocket: More > Mac link, then type these four numbers.");
+    phoneUnlink.setTooltip ("Forgets every iPhone linked to this Mac. A phone links again with the new numbers.");
+    phoneUnlink.onClick = [this]
+    {
+        if (phoneLink == nullptr)
+            return;
+        const bool was = phoneLink->isLinked();
+        phoneLink->unlink();
+        say (was ? "The iPhone is unlinked. New numbers are on Settings > iPhone." : "Every iPhone is forgotten. New numbers are on Settings > iPhone.");
+    };
+    if (devices != nullptr)
+    {
+        phoneLink = std::make_unique<RigPhoneLink> (engine);
+        phoneLink->onSay = [this] (const juce::String& text) { say (text); };
+        phoneLink->onChange = [this] { updatePhoneCard(); };
+        phoneLink->onNewSound = [this] (const juce::File& file)
+        {
+            if (auto* sv = dynamic_cast<SoundsView*> (pageContent ("Sounds")))
+            {
+                auto& bank = sv->getBank();
+                bool covered = false;
+                for (auto& f : bank.getFolders())
+                    covered = covered || file.isAChildOf (f);
+                if (covered)
+                    bank.rescan();
+                else
+                    bank.addFolder (RigPhoneLink::soundsFolder());
+            }
+        };
+        phoneLink->pressRec = [this] (const juce::String& target)
+        {
+            if (target == "set")
+                toggleRecordSet();
+            else if (target == "take")
+                pressRecTake();
+            else if (target == "moves")
+                pressRecMoves();
+        };
+        phoneLink->recState = [this] (const juce::String& target) { return phoneRecState (target); };
+    }
+    updatePhoneCard();
 
     clickButton.setClickingTogglesState (true);
     clickButton.onClick = [this, &transport] { transport.metronome = clickButton.getToggleState(); };
@@ -718,10 +768,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     for (auto* l : { &learnPlayLabel, &learnStopLabel })
         l->setFont (vintage::cond (15.0f, vintage::Weight::bold, 0.06f));
     for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
-                     &darkButton, &popOutButton, &pluginsButton })
+                     &darkButton, &popOutButton, &pluginsButton, &phoneUnlink })
         vintage::setInWell (*b, true);
     for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
-                     &darkButton, &popOutButton, &pluginsButton })
+                     &darkButton, &popOutButton, &pluginsButton, &phoneUnlink })
         b->getProperties().set ("fontSize", 15.0f);
     vintage::setLit (sampleButton, vintage::Lit::arm);
     vintage::setLit (clickButton, vintage::Lit::play);
@@ -791,6 +841,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
 RigView::~RigView()
 {
+    phoneLink.reset();
     if (controllersWindow != nullptr)
         delete controllersWindow.getComponent();
     for (int t = 0; t < RigEngine::numTools; ++t)
@@ -2046,6 +2097,8 @@ void RigView::timerCallback()
     if (moreView != nullptr && moreView->isShowing())
         moreView->tick();
     updateCaptureButtons();
+    if (phoneLink != nullptr)
+        phoneLink->setShow (currentShow.getFileNameWithoutExtension());
 
     // The Main screen sends the keys to the track you pick.
     if (keysTo.getSelectedId() != engine.getRouting().keysTo.load() + 1)
@@ -2211,6 +2264,57 @@ void RigView::updateSampleButton()
                                  juce::dontSendNotification);
     if (sampleButton.getButtonText() != text)
         sampleButton.setButtonText (text);
+}
+
+void RigView::updatePhoneCard()
+{
+    const bool app = phoneLink != nullptr;
+    phoneCode.setVisible (app);
+    phoneUnlink.setVisible (app);
+    if (! app)
+        phoneHint = "Open the Kaleidobox app (not the Logic plugin) to link Kaleidobox Pocket on your iPhone.";
+    else if (! phoneLink->isListening())
+        phoneHint = "Couldn't open the link on this Mac's network. Quit and reopen Kaleidobox, or check the firewall in System Settings > Network.";
+    else if (phoneLink->isLinked())
+        phoneHint = "Linked to " + phoneLink->getPhoneName() + ". It sends sounds here, and its Remote page runs this Mac. Another phone can link with these numbers.";
+    else
+        phoneHint = "On the iPhone, in Kaleidobox Pocket: More > Mac link, then type these numbers. Same Wi-Fi as this Mac.";
+    if (app)
+    {
+        auto digits = phoneLink->getCode();
+        juce::String spaced;
+        for (int i = 0; i < digits.length(); ++i)
+            spaced << (i > 0 ? " " : "") << digits.substring (i, i + 1);
+        phoneCode.setText (spaced, juce::dontSendNotification);
+        phoneUnlink.setEnabled (true);
+    }
+    if (setupPage != nullptr)
+    {
+        setupPage->resized();
+        setupPage->repaint();
+    }
+}
+
+int RigView::phoneRecState (const juce::String& target) const
+{
+    if (target == "set")
+    {
+        const auto st = engine.getRecorder().getState();
+        return st == RigRecorder::State::idle ? 0 : st == RigRecorder::State::armed ? 1 : 2;
+    }
+    if (target == "take")
+    {
+        if (takeLayer < 0)
+            return 0;
+        const auto st = engine.getLooper().getState (takeLayer);
+        return st == RigLooper::State::armed ? 1 : st == RigLooper::State::recording ? 2 : 0;
+    }
+    if (target == "moves")
+    {
+        const auto st = engine.getAutomation().getRecState();
+        return st == RigAutomation::RecState::off ? 0 : st == RigAutomation::RecState::armed ? 1 : 2;
+    }
+    return 0;
 }
 
 void RigView::toggleRecordSet()
@@ -3290,13 +3394,25 @@ void RigView::layoutSetup (juce::Rectangle<int> page)
     hintBelow (in);
 
     // Plugins.
-    in = card (juce::Rectangle<int> (cell (1, 2).getX(), cell (1, 2).getY(), colW * 2 + gap, rowH), "Plugins (Arturia, Quake...)",
-               vintage::colours::mute);
+    in = card (cell (1, 2), "Plugins (Arturia, Quake...)", vintage::colours::mute);
     line (in, nullptr, { { &pluginsButton, 180 } });
     pluginsLabel.setVisible (false);
     pluginsHint.setVisible (false);
     sp.cards.back().hint = "Instruments play the Bass or Synth, with their own screen in Edit (F2). "
                            "Effects go on any track: Mix (F4) > Effects > + Plugin.";
+    hintBelow (in);
+
+    // iPhone: Kaleidobox Pocket.
+    in = card (cell (2, 2), "iPhone", vintage::colours::loops);
+    if (phoneLink != nullptr)
+    {
+        auto row = in.removeFromTop (46);
+        in.removeFromTop (rowGap);
+        phoneCode.setBounds (row.removeFromLeft (150).reduced (0, 1));
+        row.removeFromLeft (10);
+        phoneUnlink.setBounds (row.removeFromLeft (juce::jmin (110, row.getWidth())).withSizeKeepingCentre (juce::jmin (110, row.getWidth()), 32));
+    }
+    sp.cards.back().hint = phoneHint;
     hintBelow (in);
 }
 

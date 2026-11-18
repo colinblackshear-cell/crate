@@ -213,26 +213,18 @@ void SoundsView::sendToLoop()
     auto audio = loadSelected (sound);
     if (audio == nullptr)
         return;
-    auto& looper = engine.getLooper();
-    int layer = -1;
-    for (int i = 0; i < RigLooper::kLayers && layer < 0; ++i)
-        if (looper.getState (i) == RigLooper::State::empty)
-            layer = i;
+    auto& transport = engine.getTransport();
+    const int bpb = transport.getBeatsPerBar();
+    // Its length in beats: from the tempo in its name, else a guess at the Rig's tempo.
+    const double beats = sound->bpm > 0 ? std::round (sound->seconds * sound->bpm / 60.0) : 0.0;
+    const int layer = engine.putOnLoopLayer (audio, {}, beats);
     if (layer < 0)
     {
         say ("Every loop layer is full: clear one first.");
         return;
     }
-    auto& transport = engine.getTransport();
-    const int bpb = transport.getBeatsPerBar();
-    // Its length in beats: from the tempo in its name, else a guess at the Rig's tempo.
-    double beats = sound->bpm > 0 ? std::round (sound->seconds * sound->bpm / 60.0) : crate::SoundFx::guessBeats (audio->getNumSamples(), transport.getBpm());
-    if (beats <= 0)
-        beats = bpb;
-    auto fitted = crate::SoundFx::fitToTempo (audio, beats, transport.getBpm());
-    looper.makeRoom (layer);
-    looper.setLayerAudio (layer, juce::AudioBuffer<float> (*fitted), beats);
-    say (sound->name + " is on loop " + juce::String (layer + 1) + " (" + juce::String (beats / bpb, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".")
+    const double placed = engine.getLooper().getLayer (layer).lengthBeats.load();
+    say (sound->name + " is on loop " + juce::String (layer + 1) + " (" + juce::String (placed / bpb, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".")
          + " bars), in time at " + juce::String (transport.getBpm(), 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") + " BPM.");
 }
 

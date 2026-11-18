@@ -2,6 +2,7 @@
 
 #include "BeatsScreen.h"
 #include "EffectsSheet.h"
+#include "LinkScreens.h"
 #include "LoopsScreen.h"
 #include "PadSheet.h"
 #include "PocketAudio.h"
@@ -29,6 +30,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseUp (const juce::MouseEvent&) override;
 
     // Screenshot mode: fills a demo library, then writes one PNG per screen into `folder`.
     static void fillDemoLibrary (pocket::Library&);
@@ -37,7 +39,6 @@ public:
 
 private:
     class TabBar;
-    class Panel;
     class MoreScreen;
     class SettingsScreen;
     class Toast;
@@ -50,9 +51,17 @@ private:
     void sendToPad (const juce::String&) override;
     void openPadSheet (int pad) override;
     void closePadSheet() override;
+    void sendSoundToMac (const juce::String& soundId, const juce::String& dest) override;
+    void sendToMac (pocket::MacSend) override;
+    void openMacLink() override;
+    void closeSendSheet();
+    void linkChanged();
+    juce::Rectangle<float> chipRect() const;
+    bool remoteShowing() const;
     void placeOnPads (const juce::String& soundId, int firstPad, bool chop);
     void slide (juce::Component&, juce::Rectangle<int> open, bool shown);
     juce::Rectangle<int> padSheetBounds() const;
+    juce::Rectangle<int> sendSheetBounds() const;
     void showTab (int);
     void showMorePage (int);   // 0 list, 1 sounds, 2 remote, 3 mac link, 4 settings
     void layoutSheet (bool shown);
@@ -63,6 +72,7 @@ private:
 
     pocket::Library lib;
     pocket::AppSettings appSettings;
+    pocket::LinkClient link;   // the Mac
     BeatsScreen beats;     // before the sound card, so the card stops before the engine goes
     LoopsScreen loopsScreen;   // owns the one renderer the sound card plays (Beats inside it)
     VocoderScreen vocoderScreen;   // plays inside that renderer, so it stops after the sound card does
@@ -71,7 +81,9 @@ private:
     PadSheet padSheet;
     RecordScreen record;
     SoundsScreen sounds;
-    std::unique_ptr<Panel> remote, macLink;
+    std::unique_ptr<RemoteScreen> remote;
+    std::unique_ptr<MacLinkScreen> macLink;
+    std::unique_ptr<SendToMacSheet> sendSheet;
     std::unique_ptr<SettingsScreen> settings;
     std::unique_ptr<MoreScreen> more;
     std::unique_ptr<TabBar> tabs;
@@ -80,6 +92,6 @@ private:
     juce::Rectangle<float> status;
     juce::BorderSize<int> insets;
     int tab = 0;
-    bool sheetOpen = false, padSheetOpen = false;
+    bool sheetOpen = false, padSheetOpen = false, sendOpen = false;
     bool animate = true;
 };

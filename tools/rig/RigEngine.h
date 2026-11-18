@@ -115,6 +115,9 @@ public:
     // into the Sampler. `beats` > 0 sets the pad's length for the MPC's keep in time.
     juce::String putOnMpcPad (juce::AudioBuffer<float>, const juce::String& name, double beats);
     void putInSampler (juce::AudioBuffer<float>, const juce::String& name);
+    // Onto the first empty loop layer, `beats` long (0: guessed from its length at the Rig's
+    // tempo), stretched to the Rig's tempo, and named. Returns the layer (-1: every layer is full).
+    int putOnLoopLayer (crate::SharedAudio, const juce::String& name, double beats);
     // Plays a 44.1 kHz sound once to the speakers (not recorded), to hear it; null stops it.
     void preview (std::shared_ptr<const juce::AudioBuffer<float>>);
     bool isPreviewing() const { return previewPlaying.load(); }

@@ -252,7 +252,13 @@ void VocoderScreen::press (int id)
             host.toast ("Recording the vocoder onto layer " + juce::String (layer + 1) + " from the next bar");
     }
     else if (id == toMac)
-        host.toast ("Sending the vocoder to the Mac comes with Mac linking");
+    {
+        // The newest vocoder take (REC A TAKE saves them to Sounds).
+        for (auto& item : library.items())   // newest first
+            if (item.name.startsWith ("Vocoder take "))
+                return host.sendSoundToMac (item.id);
+        host.toast ("Record a take first with REC A TAKE, then send it");
+    }
 }
 
 void VocoderScreen::showKeyMenu()

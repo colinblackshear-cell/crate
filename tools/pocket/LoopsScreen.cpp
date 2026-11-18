@@ -1,5 +1,7 @@
 #include "LoopsScreen.h"
 
+#include "core/AudioFiles.h"
+
 using namespace pocket;
 
 namespace
@@ -315,7 +317,38 @@ void LoopsScreen::press (int id)
     else if (id == clearAllId)
         clearAll();
     else if (id == toMacId)
-        host.toast ("Sending loops to the Mac comes with Mac linking");
+    {
+        // The picked layer, or every layer with a loop, onto the Mac's loop layers (stretched to its tempo).
+        pocket::MacSend send;
+        auto addLayer = [&] (int l)
+        {
+            auto take = loops.copyOf (l);
+            if (take == nullptr || take->length.load() <= 0)
+                return;
+            juce::AudioBuffer<float> b (1, take->length.load());
+            b.copyFrom (0, 0, take->data.data(), b.getNumSamples());
+            if (std::abs (take->sampleRate - crate::kSampleRate) > 1.0)
+                b = crate::AudioFiles::resample (b, take->sampleRate);   // the phone records at its own rate; sounds travel at 44.1 kHz
+            static const char* sources[] = { "Mic", "Drums", "Vocoder", "Mix" };
+            send.items.push_back ({ "Pocket loop " + juce::String (l + 1) + " " + sources[juce::jlimit (0, 3, take->source)],
+                                    crate::share (std::move (b)), take->lengthBeats.load() });
+        };
+        if (selected >= 0 && loops.state (selected) != LoopState::empty)
+            addLayer (selected);
+        else
+            for (int l = 0; l < kLoopLayers; ++l)
+                if (loops.state (l) != LoopState::empty)
+                    addLayer (l);
+        if (send.items.empty())
+            return host.toast ("No loops to send yet. Record a layer first.");
+        send.title = send.items.size() == 1 ? send.items.front().name : juce::String ((int) send.items.size()) + " loop layers";
+        const double bars = send.items.front().beats / 4.0;
+        send.detail = send.items.size() == 1 ? juce::String (bars, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") + (bars == 1.0 ? " bar" : " bars")
+                                             : juce::String ("WAVs");
+        send.dests = { "loop", "sounds", "pad" };
+        send.dest = "loop";
+        host.sendToMac (std::move (send));
+    }
     else if (id >= rowSelect && id < rowSelect + kLoopLayers)
         selected = lastLayer = id - rowSelect;
     else if (id >= rowAct && id < rowAct + kLoopLayers)

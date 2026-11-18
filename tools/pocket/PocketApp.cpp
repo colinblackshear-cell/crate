@@ -26,55 +26,24 @@ juce::Font PocketApp::PocketLook::getPopupMenuFont() { return small (18.0f); }
 juce::Font PocketApp::PocketLook::getTextButtonFont (juce::TextButton&, int) { return condensed (17.0f); }
 
 //==============================================================================
-class PocketApp::Panel : public juce::Component
-{
-public:
-    Panel (juce::String t, juce::String b, std::function<void()> back = {}) : title (std::move (t)), blurb (std::move (b))
-    {
-        if (back)
-        {
-            backButton.setFontHeight (16.0f);
-            backButton.onClick = std::move (back);
-            addAndMakeVisible (backButton);
-        }
-    }
-
-    void resized() override { backButton.setBounds (16, 6, 96, 44); }
-
-    void paint (juce::Graphics& g) override
-    {
-        auto card = getLocalBounds().toFloat().reduced (16, 20).withHeight (230).translated (0, backButton.onClick ? 44.0f : 0.0f);
-        drawRaised (g, card, Look::cream, false, 20.0f);
-        g.setColour (col::ink);
-        g.setFont (fraunces (30.0f));
-        g.drawText (title, card.withTrimmedTop (28).withHeight (40), juce::Justification::centred);
-        g.setFont (spaced (condensed (14.0f), 0.18f));
-        g.setColour (col::amberDark);
-        g.drawText ("COMING NEXT", card.withTrimmedTop (84).withHeight (24), juce::Justification::centred);
-        g.setColour (col::inkDim);
-        g.setFont (small (16.0f));
-        g.drawFittedText (blurb, card.reduced (28, 0).withTrimmedTop (120).withHeight (80).toNearestInt(), juce::Justification::centredTop, 4);
-    }
-
-private:
-    juce::String title, blurb;
-    PButton backButton { "< More" };
-};
-
 class PocketApp::MoreScreen : public juce::Component
 {
 public:
-    MoreScreen (Library& l, std::function<int()> loopLayerCount) : lib (l), loopLayers (std::move (loopLayerCount)) {}
+    MoreScreen (Library& l, LinkClient& c, std::function<int()> loopLayerCount) : lib (l), link (c), loopLayers (std::move (loopLayerCount)) {}
     std::function<void (int)> onOpen;
 
     void paint (juce::Graphics& g) override
     {
         static const char* titles[] = { "SOUNDS", "REMOTE", "MAC LINK", "SETTINGS" };
         const int n = (int) lib.items().size();
+        const bool linked = link.isLinked();
+        const auto mac = link.getMacName();
         const juce::String blurbs[] = {
             U8("Everything you've recorded, imported or got from the Mac · ") + juce::String (n) + (n == 1 ? " sound" : " sounds"),
-            "Run the Rig on the Mac: play, sections, mutes, loops",
-            U8("Not linked · linking to your Mac comes in a later update"),
+            linked ? "Run Kaleidobox on " + mac + U8(": play, sections, mutes, loops") : U8("Run the Rig on the Mac: play, sections, mutes, loops · link first"),
+            linked ? U8("Linked to ") + mac + U8(" · Kaleidobox open")
+                   : link.getStatus() == LinkClient::Status::connecting ? U8("Linking to ") + mac + U8("…")
+                                                                        : U8("Not linked · link to your Mac on this Wi-Fi"),
             U8("Loop count-in · mic, tempo and click come later") };
         for (int i = 0; i < 4; ++i)
         {
@@ -92,7 +61,7 @@ public:
             g.drawFittedText (blurbs[i], juce::Rectangle<int> (84, (int) r.getY() + 36, (int) r.getWidth() - 140, 44), juce::Justification::topLeft, 2);
             if (i == 2)
             {
-                g.setColour (col::grey);
+                g.setColour (linked ? col::green : link.getStatus() == LinkClient::Status::connecting ? col::amber : col::grey);
                 g.fillEllipse (r.getRight() - 52, r.getCentreY() - 5, 10, 10);
             }
             g.setColour (col::ink);
@@ -169,6 +138,7 @@ private:
     }
 
     Library& lib;
+    LinkClient& link;
     std::function<int()> loopLayers;
 };
 
@@ -353,6 +323,7 @@ private:
 PocketApp::PocketApp (Options o)
     : lib (o.libraryRoot != juce::File() ? o.libraryRoot : Library::defaultRoot()),
       appSettings (lib.getRoot()),
+      link (lib.getRoot(), o.audio),
       beats (static_cast<PocketHost&> (*this), lib),
       loopsScreen (static_cast<PocketHost&> (*this), lib, beats.engine(), appSettings),
       vocoderScreen (static_cast<PocketHost&> (*this), lib, audio, loopsScreen, beats.engine()),
@@ -363,16 +334,27 @@ PocketApp::PocketApp (Options o)
     juce::LookAndFeel::setDefaultLookAndFeel (&look);
 
     auto backToMore = [this] { showMorePage (0); };
-    remote = std::make_unique<Panel> ("Remote", "Run the Rig on the Mac from here: play, sections, mutes and loops.", backToMore);
-    macLink = std::make_unique<Panel> ("Mac link", "Link this iPhone to your Mac on the same Wi-Fi to send sounds across.", backToMore);
+    remote = std::make_unique<RemoteScreen> (link);
+    remote->onLink = [this] { openMacLink(); };
+    remote->onSay = [this] (const juce::String& t) { toast (t); };
+    macLink = std::make_unique<MacLinkScreen> (link);
+    macLink->onClose = backToMore;
+    macLink->onRemote = [this] { showMorePage (2); };
+    macLink->onSay = [this] (const juce::String& t) { toast (t); };
+    sendSheet = std::make_unique<SendToMacSheet> (link);
+    sendSheet->onClose = [this] { closeSendSheet(); };
+    sendSheet->onLink = [this] { closeSendSheet(); openMacLink(); };
+    sendSheet->onSay = [this] (const juce::String& t) { toast (t); };
+    link.onChange = [this] { linkChanged(); };
+    link.onSay = [this] (const juce::String& t) { toast (t); };
     settings = std::make_unique<SettingsScreen> (appSettings, backToMore, [this] { loopsScreen.engine().setCountIn (appSettings.countIn); });
-    more = std::make_unique<MoreScreen> (lib, [this] { return loopsScreen.layerCount(); });
+    more = std::make_unique<MoreScreen> (lib, link, [this] { return loopsScreen.layerCount(); });
     more->onOpen = [this] (int page) { showMorePage (page); };
     tabs = std::make_unique<TabBar>();
     tabs->onSelect = [this] (int i) { showTab (i); };
     toastBox = std::make_unique<Toast>();
     dim = std::make_unique<Dim>();
-    dim->onTap = [this] { closeSheet(); closePadSheet(); };
+    dim->onTap = [this] { closeSheet(); closePadSheet(); closeSendSheet(); };
 
     padSheet.onChanged = [this] (int pad) { beats.padChanged (pad); };
     padSheet.onDone = [this] { closePadSheet(); };
@@ -408,6 +390,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (*dim);
     addChildComponent (sheet);
     addChildComponent (padSheet);
+    addChildComponent (*sendSheet);
     addChildComponent (*toastBox);
 
     setSize (390, 844);
@@ -441,6 +424,7 @@ void PocketApp::showTab (int i)
     if (sheetOpen)
         closeSheet();
     closePadSheet();
+    closeSendSheet();
     audio.stopPlaying();
     if (i != 1 && i != 2 && i != 3)
     {
@@ -482,6 +466,9 @@ void PocketApp::showMorePage (int page)
     settings->setVisible (page == 4);
     if (page == 1)
         sounds.selectFirst();
+    if (page == 3)
+        macLink->shown();
+    repaint();   // the header is dark on the Remote
 }
 
 void PocketApp::editSound (const juce::String& id)
@@ -622,25 +609,136 @@ void PocketApp::closeSheet()
 }
 
 //==============================================================================
+// The Mac: the Send to Mac sheet, Link to your Mac, and the header's link chip.
+juce::Rectangle<int> PocketApp::sendSheetBounds() const
+{
+    const int h = juce::jmin (getHeight() - insets.getTop() - 40, 640);
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::sendSoundToMac (const juce::String& soundId, const juce::String& dest)
+{
+    auto* item = lib.find (soundId);
+    if (item == nullptr)
+        return toast ("Pick a sound first");
+    auto audio = lib.load (soundId);
+    if (audio == nullptr)
+        return toast ("That sound couldn't be opened");
+    if (item->fx.anyOn())   // what you hear with its effects on is what goes
+        audio = crate::share (crate::SoundFx::apply (*audio, item->fx.toSettings()));
+    MacSend send;
+    send.items.push_back ({ item->name, audio, 0.0 });
+    send.title = item->name;
+    send.detail = Kit::lengthText ((double) audio->getNumSamples() / crate::kSampleRate) + U8(" · WAV");
+    send.dests = { "sounds", "pad", "sampler", "loop" };
+    send.dest = dest;
+    sendToMac (std::move (send));
+}
+
+void PocketApp::sendToMac (MacSend send)
+{
+    closeSheet();
+    closePadSheet();
+    sendSheet->show (std::move (send));
+    sendOpen = true;
+    dim->setVisible (true);
+    dim->toFront (false);
+    sendSheet->setBounds (sendSheetBounds().withY (getHeight()));
+    sendSheet->setVisible (true);
+    sendSheet->toFront (false);
+    toastBox->toFront (false);
+    slide (*sendSheet, sendSheetBounds(), true);
+}
+
+void PocketApp::closeSendSheet()
+{
+    if (! sendOpen)
+        return;
+    sendOpen = false;
+    dim->setVisible (false);
+    slide (*sendSheet, sendSheetBounds(), false);
+    if (! animate)
+        sendSheet->setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->sendOpen)
+                safe->sendSheet->setVisible (false);
+        });
+}
+
+void PocketApp::openMacLink()
+{
+    closeSheet();
+    closePadSheet();
+    closeSendSheet();
+    showMorePage (3);
+}
+
+void PocketApp::linkChanged()
+{
+    repaint();
+    more->repaint();
+    macLink->refresh();
+    remote->refresh();
+    sendSheet->refresh();
+}
+
+juce::Rectangle<float> PocketApp::chipRect() const
+{
+    return { (float) getWidth() - 150, (float) insets.getTop() + 12, 138, 38 };
+}
+
+bool PocketApp::remoteShowing() const
+{
+    return remote != nullptr && remote->isVisible();
+}
+
+void PocketApp::mouseUp (const juce::MouseEvent& e)
+{
+    if (chipRect().expanded (4).contains (e.position))
+        openMacLink();
+}
+
+//==============================================================================
 void PocketApp::paint (juce::Graphics& g)
 {
     g.fillAll (col::cream);
 
     const int top = insets.getTop();
-    g.setColour (col::ink);
+    const bool dark = remoteShowing();
+    if (dark)
+        g.fillAll (juce::Colour (0xff1f1b17));
+    g.setColour (dark ? juce::Colour (0xfff1e7d6) : col::ink);
     g.setFont (fraunces (32.0f));
     g.drawText ("Kaleidobox", 16, top + 8, 220, 46, juce::Justification::centredLeft);
 
-    // link status: grey, because linking to the Mac comes in a later update
-    g.setColour (col::grey);
-    g.fillEllipse ((float) getWidth() - 132, (float) top + 24, 11, 11);
+    // the link to the Mac: green with its name when linked; tap it for Link to your Mac
+    auto chip = chipRect();
+    if (dark)
+    {
+        g.setColour (juce::Colour (0xff332c26));
+        g.fillRoundedRectangle (chip, 9.0f);
+    }
+    const auto status = link.getStatus();
+    const auto dotColour = status == LinkClient::Status::linked ? col::green : status == LinkClient::Status::connecting ? col::amber : col::grey;
+    auto dot = juce::Rectangle<float> (chip.getX() + 12, chip.getCentreY() - 5.5f, 11, 11);
+    if (status == LinkClient::Status::linked)
+    {
+        g.setColour (dotColour.withAlpha (0.3f));
+        g.fillEllipse (dot.expanded (3.5f));
+    }
+    g.setColour (dotColour);
+    g.fillEllipse (dot);
     g.setColour (juce::Colours::black.withAlpha (0.25f));
-    g.drawEllipse ((float) getWidth() - 132, (float) top + 24, 11, 11, 1.0f);
-    g.setColour (col::inkDim);
+    g.drawEllipse (dot, 1.0f);
+    g.setColour (dark ? juce::Colour (0xfff1e7d6) : status == LinkClient::Status::linked ? col::ink : col::inkDim);
     g.setFont (spaced (condensed (15.0f), 0.1f));
-    g.drawText ("NOT LINKED", getWidth() - 116, top + 8, 100, 46, juce::Justification::centredLeft);
+    const auto text = status == LinkClient::Status::linked ? link.getMacName().toUpperCase()
+                    : status == LinkClient::Status::connecting ? U8("LINKING…") : juce::String ("NOT LINKED");
+    g.drawFittedText (text, chip.withTrimmedLeft (30).withTrimmedRight (6).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
 
-    g.setColour (col::rule);
+    g.setColour (dark ? juce::Colour (0xff3a332c) : col::rule);
     g.fillRect (0, top + 60, getWidth(), 2);
 }
 
@@ -662,6 +760,7 @@ void PocketApp::resized()
     auto content = juce::Rectangle<int> (0, insets.getTop() + 62, w, h - tabH - insets.getTop() - 62);
     for (auto* c : std::initializer_list<juce::Component*> { &record, &sounds, &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
+    sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
 
     dim->setBounds (0, 0, w, h);
     layoutSheet (sheetOpen);
@@ -739,6 +838,27 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     folder.createDirectory();
     animate = false;
 
+    // Linked to a Mac (made up), so the header shows it as in the design.
+    crate::link::Message state ("state");
+    {
+        juce::Array<juce::var> sections, mutes, layers;
+        for (auto* n : { "Intro", "Verse", "Chorus", "Verse 2", "Bridge", "Outro" })
+            sections.add (n);
+        for (int i = 0; i < 8; ++i)
+            mutes.add (i == 3 || i == 7);
+        for (int i = 0; i < 8; ++i)
+            layers.add (i < 3 ? 3 : 0);
+        auto* rec = new juce::DynamicObject();
+        rec->setProperty ("set", 0);
+        rec->setProperty ("take", 0);
+        rec->setProperty ("moves", 0);
+        state.set ("bpm", 97.0).set ("playing", true).set ("bpb", 4).set ("bar", 12.3).set ("sections", sections).set ("section", 1)
+             .set ("song", true).set ("barIn", 5.3).set ("sectionBars", 8).set ("next", 2).set ("mutes", mutes).set ("layers", layers)
+             .set ("remoteLayer", -1).set ("rec", juce::var (rec)).set ("show", "Friday Set");
+    }
+    const std::vector<LinkClient::MacRow> demoMacs { { "Colin's MacBook", "Friday Set", true, true }, { "Studio iMac", {}, false, true } };
+    link.setDemo (demoMacs, "Colin's MacBook", state);
+
     auto take = lib.load (lib.items().front().id);
 
     showTab (0);
@@ -812,6 +932,25 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     resized();
     savePng (folder.getChildFile ("05-pad-sheet.png"));
     closePadSheet();
+
+    // The Mac pages: Send to Mac (from Sounds), the Remote, and Link to your Mac (not linked yet, three numbers typed)
+    showTab (4);
+    showMorePage (1);
+    sendSoundToMac (lib.items().front().id, "sounds");
+    resized();
+    savePng (folder.getChildFile ("13-send-to-mac.png"));
+    closeSendSheet();
+
+    showMorePage (2);
+    savePng (folder.getChildFile ("12-remote.png"));
+
+    link.setDemo ({ { "Colin's MacBook", "Friday Set", true, false }, { "Studio iMac", {}, false, true } }, {}, {});
+    showMorePage (3);
+    macLink->setDemoCode ("472");
+    savePng (folder.getChildFile ("11-link-mac.png"));
+    showMorePage (2);
+    savePng (folder.getChildFile ("12b-remote-not-linked.png"));
+    link.setDemo (demoMacs, "Colin's MacBook", state);
 
     // Checks for the things a picture can't show: TO PAD puts a sound on the next empty pad of the bank
     // and shows it, and an export for the MPC reads back through the MPC file code.

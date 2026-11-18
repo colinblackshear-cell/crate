@@ -6,6 +6,7 @@
 
 #include "core/AudioFiles.h"
 #include "core/Edits.h"
+#include "core/SoundFx.h"
 
 namespace
 {
@@ -1044,6 +1045,27 @@ juce::String RigEngine::putOnMpcPad (juce::AudioBuffer<float> audio, const juce:
 void RigEngine::putInSampler (juce::AudioBuffer<float> audio, const juce::String& name)
 {
     sampler.getDocument().load (crate::share (std::move (audio)), name, "Sample");
+}
+
+int RigEngine::putOnLoopLayer (crate::SharedAudio audio, const juce::String& name, double beats)
+{
+    if (audio == nullptr || audio->getNumSamples() == 0)
+        return -1;
+    int layer = -1;
+    for (int i = 0; i < RigLooper::kLayers && layer < 0; ++i)
+        if (looper.getState (i) == RigLooper::State::empty)
+            layer = i;
+    if (layer < 0)
+        return -1;
+    if (beats <= 0)
+        beats = crate::SoundFx::guessBeats (audio->getNumSamples(), transport.getBpm());
+    if (beats <= 0)
+        beats = transport.getBeatsPerBar();
+    auto fitted = crate::SoundFx::fitToTempo (audio, beats, transport.getBpm());
+    looper.makeRoom (layer);
+    looper.setLayerAudio (layer, juce::AudioBuffer<float> (*fitted), beats);
+    setLoopName (layer, name);
+    return layer;
 }
 
 void RigEngine::preview (std::shared_ptr<const juce::AudioBuffer<float>> sound)
