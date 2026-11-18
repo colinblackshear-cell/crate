@@ -20,7 +20,9 @@ juce_add_gui_app(Kaleidobox
     PRODUCT_NAME "Kaleidobox"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/icon/kaleidobox-icon.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "Kaleidobox samples from your microphone or audio interface when you record in the Sampler.")
+    MICROPHONE_PERMISSION_TEXT "Kaleidobox samples from your microphone or audio interface when you record in the Sampler."
+    # Kaleidobox Pocket on the iPhone finds the app on the Wi-Fi (Settings > iPhone).
+    PLIST_TO_MERGE "<plist><dict><key>NSLocalNetworkUsageDescription</key><string>Kaleidobox links to Kaleidobox Pocket on your iPhone over the Wi-Fi, so it can send sounds here and run the Remote.</string><key>NSBonjourServices</key><array><string>_kaleidobox._tcp</string></array></dict></plist>")
 
 # The Rig hosts your own plugins (Audio Units on the Mac, VST3): Arturia synths, effects.
 add_library(rig_hosting INTERFACE)
@@ -32,6 +34,8 @@ endif()
 
 set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/RigEngine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RigPhoneLink.cpp
+    ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigAutomation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/AutomationPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigRouting.cpp
@@ -79,7 +83,7 @@ set(RIG_SOURCES
     ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
     PARENT_SCOPE)
 
-target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp AutomationPanel.cpp ControllersPanel.cpp ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
+target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp AutomationPanel.cpp ControllersPanel.cpp RigPhoneLink.cpp ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
     ${MPC_SOURCES}
     ${VOCODER_SOURCES}
     ${BASS_SOURCES}
@@ -139,7 +143,7 @@ juce_add_plugin(KaleidoboxPlugin
 
 # What every Kaleidobox plugin is made of (the instrument and the Input version share it all).
 macro(kaleidobox_plugin_parts target)
-    target_sources(${target} PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp AutomationPanel.cpp ControllersPanel.cpp ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
+    target_sources(${target} PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp AutomationPanel.cpp ControllersPanel.cpp RigPhoneLink.cpp ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
         ${MPC_SOURCES}
         ${VOCODER_SOURCES}
         ${BASS_SOURCES}

@@ -214,6 +214,8 @@ private:
     juce::SharedResourcePointer<juce::TooltipWindow> tooltips;
 public:
     class MixerView* getMixer() const { return mixer; }
+    // Kaleidobox Pocket on the iPhone (Settings > iPhone), in the app only (null in Logic).
+    class RigPhoneLink* getPhoneLink() const { return phoneLink.get(); }
     // Takes the effects rack off the Mixer, if one is showing.
     void closeMixerPanel();
     // Opens (or closes) the how-to guide, on the current screen's guide.
@@ -281,6 +283,13 @@ private:
     juce::TextButton audioButton { "Audio + MIDI" }, saveButton { "Save show" }, openButton { "Open show" };
     juce::TextButton darkButton { "Dark panel" }, popOutButton { "Second screen..." }, pluginsButton { "Your plugins..." };
     juce::Label pluginsLabel { {}, "Plugins" }, pluginsHint;
+    // Settings > iPhone: the four numbers Kaleidobox Pocket types to link, and Unlink.
+    std::unique_ptr<class RigPhoneLink> phoneLink;
+    juce::Label phoneCode;
+    juce::TextButton phoneUnlink { "Unlink" };
+    juce::String phoneHint;
+    void updatePhoneCard();
+    int phoneRecState (const juce::String& target) const;
     juce::String keyboardName;
     bool keyboardFound = false, keyboardActive = false;
     float vuLevel = 0;

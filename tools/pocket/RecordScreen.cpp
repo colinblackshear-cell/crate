@@ -170,8 +170,18 @@ RecordScreen::RecordScreen (PocketHost& h, PocketAudio& a, Library& lib, Effects
 
     saveButton.setFontHeight (17.0f);
     saveButton.onClick = [this] { saveToSounds(); };
-    toPad.onClick = [this] { host.toast ("Sending to a pad comes in the next update"); };
-    toMac.onClick = [this] { host.toast ("Sending to your Mac comes in the next update"); };
+    toPad.onClick = [this]
+    {
+        saveToSounds();   // the pad plays the saved sound, with its chop markers and effects
+        if (currentId.isNotEmpty())
+            host.sendToPad (currentId);
+    };
+    toMac.onClick = [this]
+    {
+        saveToSounds();   // what goes is the saved sound, with its effects
+        if (currentId.isNotEmpty())
+            host.sendSoundToMac (currentId);
+    };
 
     for (auto* b : { &keep, &del, &trim, &fadeIn, &fadeOut, &normal, &reverse, &selectAll, &toPad, &toMac })
         b->setFontHeight (16.0f);

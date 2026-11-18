@@ -30,6 +30,12 @@ void PocketAudio::start (std::function<void (juce::String)> done)
 void PocketAudio::audioDeviceAboutToStart (juce::AudioIODevice* d)
 {
     sampleRate = d->getCurrentSampleRate();
+    latency = d->getInputLatencyInSamples() + d->getOutputLatencyInSamples();
+    if (renderer != nullptr)
+    {
+        renderer->prepare (sampleRate);
+        renderer->setLatency (latency.load());
+    }
 }
 
 bool PocketAudio::startRecording (const juce::File& file)
@@ -120,6 +126,12 @@ void PocketAudio::audioDeviceIOCallbackWithContext (const float* const* in, int 
         if (out[c] != nullptr)
             juce::FloatVectorOperations::clear (out[c], n);
 
+    if (renderer != nullptr && numOut > 0 && out[0] != nullptr)
+    {
+        renderer->setInput (in, numIn);
+        renderer->render (out[0], numOut > 1 ? out[1] : nullptr, n);
+    }
+
     if (! playing.load() || numOut < 1)
         return;
 
@@ -148,7 +160,7 @@ void PocketAudio::audioDeviceIOCallbackWithContext (const float* const* in, int 
                 continue;
             const int src = juce::jmin (c, a.getNumChannels() - 1);
             const float* d = a.getReadPointer (src);
-            out[c][i] = d[i0] + (d[i1] - d[i0]) * frac;
+            out[c][i] += d[i0] + (d[i1] - d[i0]) * frac;
         }
         pos += step;
     }

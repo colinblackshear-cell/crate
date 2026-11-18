@@ -55,7 +55,9 @@ static Palette paletteFor (Look l)
         case Look::amber: return { juce::Colour (0xfffcca64), juce::Colour (0xffeea02a), juce::Colour (0xffb9741a), col::ink };
         case Look::green: return { juce::Colour (0xff78e6a2), juce::Colour (0xff35bc6b), juce::Colour (0xff1f8348), col::ink };
         case Look::red:   return { juce::Colour (0xfff58b78), juce::Colour (0xffd8452f), juce::Colour (0xff922a1c), juce::Colours::white };
+        case Look::blue:  return { juce::Colour (0xff7cc6e0), juce::Colour (0xff3a95b8), juce::Colour (0xff22627a), col::ink };
         case Look::dark:  return { juce::Colour (0xff3d362e), juce::Colour (0xff27221c), juce::Colour (0xff100d0a), juce::Colour (0xfff1e7d1) };
+        case Look::pad:   return { juce::Colour (0xff6a5d50), juce::Colour (0xff3a322a), juce::Colour (0xff0d0b09), juce::Colour (0xfff1e7d1) };
         case Look::ghost: return { juce::Colours::transparentBlack, juce::Colours::transparentBlack, juce::Colours::transparentBlack, col::ink };
         case Look::cream: break;
     }
@@ -85,7 +87,7 @@ void drawWell (juce::Graphics& g, juce::Rectangle<float> r, float radius)
     g.fillRoundedRectangle (r.reduced (1.5f), radius - 1.0f);
 }
 
-void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colour arc, bool active)
+void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colour arc, bool active, bool onDark)
 {
     const auto c = b.getCentre();
     const float R = juce::jmin (b.getWidth(), b.getHeight()) * 0.5f;
@@ -95,7 +97,7 @@ void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colou
     const float arcR = R - 2.5f;
     juce::Path track;
     track.addCentredArc (c.x, c.y, arcR, arcR, 0, a0, a1, true);
-    g.setColour (col::creamDeep.darker (0.12f));
+    g.setColour (onDark ? juce::Colour (0xff3a332b) : col::creamDeep.darker (0.12f));
     g.strokePath (track, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     if (active)
     {

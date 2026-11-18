@@ -1,5 +1,5 @@
 # Kaleidobox Pocket: the iPhone companion (Record, Effects + Chop, Sounds). On iOS it also compiles
-# the reusable sound engines (drums, MPC, vocoder) for the later steps. With -DCRATE_POCKET_DESKTOP=ON
+# the reusable sound engines (drums, MPC) for the later steps; the vocoder runs on every build. With -DCRATE_POCKET_DESKTOP=ON
 # the same screens build as a 390x844 desktop window, for checking the look without a phone.
 set(TOOLS ${PROJECT_SOURCE_DIR}/tools)
 
@@ -29,20 +29,43 @@ juce_add_gui_app(KaleidoboxPocket
     FILE_SHARING_ENABLED TRUE
     DOCUMENT_BROWSER_ENABLED TRUE
     IPHONE_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait
-    IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait)
+    IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait
+    # Link to Mac: finds Kaleidobox on the Wi-Fi with Bonjour (iOS asks once for the local network).
+    PLIST_TO_MERGE "<plist><dict><key>NSLocalNetworkUsageDescription</key><string>Kaleidobox Pocket finds Kaleidobox on your Mac over the Wi-Fi, to send it sounds and run its Remote.</string><key>NSBonjourServices</key><array><string>_kaleidobox._tcp</string></array></dict></plist>")
 
 target_sources(KaleidoboxPocket PRIVATE
     Main.cpp
     PocketApp.cpp
+    BeatsEngine.cpp
+    BeatsScreen.cpp
+    PadSheet.cpp
     PocketAudio.cpp
+    PocketKit.cpp
     PocketLibrary.cpp
     PocketTheme.cpp
     PocketWave.cpp
     EffectsSheet.cpp
+    LoopsScreen.cpp
+    PocketLooper.cpp
     RecordScreen.cpp
-    SoundsScreen.cpp)
+    SoundsScreen.cpp
+    PocketVocoder.cpp
+    VocoderScreen.cpp
+    PocketLinkClient.cpp
+    LinkScreens.cpp
+    ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
+    ${VOCODER_SOURCES})
 
-target_include_directories(KaleidoboxPocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# The Vocoder tab runs the real Kaleidobox vocoder (its own repo, built in like the Mac's Rig does).
+crate_rename_vocoder_entry()
+target_include_directories(KaleidoboxPocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${VOCODER_INCLUDE})
+
+# Whether the sound is going to headphones: the phone asks the audio session, a computer says yes.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(KaleidoboxPocket PRIVATE PocketRoute.mm)
+else()
+    target_sources(KaleidoboxPocket PRIVATE PocketRoute.cpp)
+endif()
 
 target_compile_definitions(KaleidoboxPocket PRIVATE
     JucePlugin_Name="Kaleidobox Pocket"
@@ -50,16 +73,21 @@ target_compile_definitions(KaleidoboxPocket PRIVATE
     JUCE_APPLICATION_VERSION_STRING="0.2.0"
     JUCE_MODAL_LOOPS_PERMITTED=0)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    # The sound engines for later steps (pads, vocoder). They only need to compile for now.
+# The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools
+# already define mpc_format; on iOS the phone makes it here.
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/drums/DrumEngine.cpp)
+target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS} ${TOOLS}/drums ${TOOLS}/mpc)
+if(NOT TARGET mpc_format)
     add_library(mpc_format STATIC ${TOOLS}/mpc/mpc/MpcFiles.cpp ${TOOLS}/mpc/mpc/BankWriter.cpp)
     target_include_directories(mpc_format PUBLIC ${TOOLS}/mpc)
     set_target_properties(mpc_format PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+target_link_libraries(KaleidoboxPocket PRIVATE mpc_format)
 
-    crate_rename_vocoder_entry()
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # The sound engines for later steps (the pad player). They only need to compile for now.
 
     target_sources(KaleidoboxPocket PRIVATE
-        ${TOOLS}/drums/DrumEngine.cpp
         ${TOOLS}/drums/DrumProcessor.cpp
         ${TOOLS}/drums/DrumView.cpp
         ${TOOLS}/mpc/BankBrowser.cpp
@@ -74,10 +102,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         ${TOOLS}/mpc/Sequence.cpp
         ${TOOLS}/mpc/SequencerEngine.cpp
         ${TOOLS}/mpc/SequencerView.cpp
-        ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
-        ${VOCODER_SOURCES})
-    target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS}/drums ${TOOLS}/mpc ${VOCODER_INCLUDE})
-    target_link_libraries(KaleidoboxPocket PRIVATE mpc_format)
+        ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp)
 endif()
 
 target_link_libraries(KaleidoboxPocket

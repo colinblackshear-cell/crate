@@ -1,0 +1,142 @@
+#pragma once
+
+#include <juce_audio_utils/juce_audio_utils.h>
+
+#include "PocketAudio.h"
+#include "core/Audio.h"
+#include "drums/DrumEngine.h"
+
+#include <array>
+#include <atomic>
+
+// Everything that plays on the Beats tab, in one audio-thread renderer: the Mac app's 808 engine
+// stepping through the patterns, and the 64 MPC pads playing samples. The drum machine and the pads
+// share one clock and one tempo. The screens talk to it from the message thread: edits are
+// published under a try-lock, hits go through a lock-free queue, and nothing in render() allocates.
+namespace pocket
+{
+constexpr int kPatternSlots = 6;
+constexpr int kPads = 64;
+
+enum class PadMode { oneShot, mono, noteOff };
+
+// The drum machine's whole state, as the screens edit it and as it's saved to Documents.
+struct DrumData
+{
+    std::array<std::array<crate::drums::Pattern, 2>, kPatternSlots> patterns {};   // [slot][A or B]
+    crate::drums::Settings settings;
+    int slot = 0;          // the pattern that plays
+    int variation = 0;     // 0 A, 1 B, 2 A then B (crate::drums::Plan::Variation)
+    bool editB = false;    // the grid edits the B variation
+    double bpm = 97.0;
+
+    DrumData();
+    crate::drums::Pattern& edited() { return patterns[(size_t) slot][editB ? 1 : 0]; }
+    const crate::drums::Pattern& edited() const { return patterns[(size_t) slot][editB ? 1 : 0]; }
+
+    juce::var toVar() const;
+    static DrumData fromVar (const juce::var&);
+    static crate::drums::Pattern demoPattern();
+};
+
+struct PadSetup
+{
+    crate::SharedAudio audio;   // null = empty pad
+    int volume = 100;           // 0..100
+    int pan = 50;               // 0..100
+    int tune = 0;               // tenths of a semitone
+    PadMode mode = PadMode::oneShot;
+};
+
+class BeatsEngine : public PocketAudio::Renderer
+{
+public:
+    BeatsEngine();
+
+    // Message thread
+    void setDrums (const DrumData&);
+    void setPlaying (bool);
+    bool isPlaying() const { return wantPlay.load(); }
+    void setBpm (double);
+    double getBpm() const { return bpm.load(); }
+    int currentStep() const { return step.load(); }            // -1 when stopped
+    int playingVariation() const { return playingB.load(); }   // 0 A, 1 B
+    void hitVoice (int voice, float velocity = 0.85f, bool accent = false);
+
+    // The shared clock. It runs while the drum machine plays or while something else (the looper)
+    // holds it; the drums only sound while they are playing. Any thread.
+    void holdClock (bool on) { clockHeld = on; }
+    bool clockRunning() const { return clockOn.load(); }
+    double clockBeat() const { return clockPpq.load(); }   // beats at the start of the last block rendered
+
+    void setPad (int pad, const PadSetup&);
+    void padOn (int pad, float velocity = 1.0f);
+    void padOff (int pad);
+    void stopPads();
+    juce::uint64 soundingPads() const { return sounding.load(); }
+
+    // Audio thread
+    void prepare (double sampleRate) override;
+    void render (float* left, float* right, int numSamples) override;
+
+private:
+    struct Event { enum Kind { drum, padOn, padOff, stopPads } kind = drum; int index = 0; float velocity = 0; bool accent = false; };
+
+    struct Slot
+    {
+        std::atomic<const juce::AudioBuffer<float>*> audio { nullptr };
+        std::atomic<float> left { 1.0f }, right { 1.0f };
+        std::atomic<int> tune { 0 }, mode { 0 };
+    };
+
+    struct Voice
+    {
+        const juce::AudioBuffer<float>* audio = nullptr;
+        double position = 0, step = 1;
+        float gainL = 0, gainR = 0, release = 1.0f;
+        int pad = -1;
+        bool releasing = false;
+        juce::uint32 age = 0;
+    };
+
+    void push (const Event&);
+    void handle (const Event&);
+    void startPad (int pad, float velocity);
+    void renderPads (float* left, float* right, int n);
+
+    // drums
+    struct DrumState
+    {
+        std::array<crate::drums::Pattern, crate::drums::kPatterns> a, b;
+        crate::drums::Settings settings;
+    };
+    crate::drums::Engine drums;
+    DrumState pending, live;
+    int slotWanted = 0, variationWanted = 0;
+    juce::SpinLock drumLock;
+    std::atomic<int> drumVersion { 0 };
+    int liveVersion = -1;
+    std::atomic<int> wantedSlot { 0 }, wantedVariation { 0 };
+    int playingSlot = 0;
+    double ppq = 0, lastPpq = -1;
+    bool wasRunning = false;
+    juce::MidiBuffer noMidi;
+    std::atomic<bool> wantPlay { false }, clockHeld { false }, clockOn { false };
+    std::atomic<double> clockPpq { 0.0 };
+    std::atomic<double> bpm { 97.0 };
+    std::atomic<int> step { -1 };
+    std::atomic<int> playingB { 0 };
+
+    // pads
+    std::array<Slot, kPads> slots;
+    std::array<Voice, 16> voices;
+    std::vector<crate::SharedAudio> keepAlive;   // replaced sounds stay until the engine goes: a voice may still read them
+    std::atomic<juce::uint64> sounding { 0 };
+    juce::uint32 voiceClock = 0;
+    double sampleRate = 44100.0;
+
+    juce::AbstractFifo fifo { 256 };
+    std::array<Event, 256> events;
+    juce::SpinLock pushLock;
+};
+}
