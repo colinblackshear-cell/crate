@@ -86,6 +86,7 @@ private:
     void sendSoundToMac (const juce::String& soundId, const juce::String& dest) override;
     void sendToMac (pocket::MacSend) override;
     void openMacLink() override;
+    void lockBeat (int bars) override;
     void closeSendSheet();
     void linkChanged();
     juce::Rectangle<float> chipRect() const;
@@ -127,6 +128,11 @@ private:
     // The phone only knows its safe area (the clock, the Dynamic Island, a Maps or call pill, the home bar)
     // once the window is up, and it changes when the status bar does: look again now and then.
     juce::TimedCallback insetWatch { [this] { if (safeInsets() != insets) { resized(); repaint(); } } };
+    // LOCK BEAT: waits for the pattern's last bar, arms the layer, then waits for it to finish.
+    void lockWatchTick();
+    juce::TimedCallback lockWatch { [this] { lockWatchTick(); } };
+    int lockLayer = -1, lockBars = 0;
+    bool lockArmed = false;
     int tab = 0;
     bool sheetOpen = false, padSheetOpen = false, sendOpen = false;
     bool animate = true;

@@ -677,6 +677,74 @@ void PocketApp::openMacLink()
     showMorePage (3);
 }
 
+//==============================================================================
+// LOCK BEAT
+void PocketApp::lockBeat (int bars)
+{
+    if (lockWatch.isTimerRunning())
+        return toast ("Already locking the beat");
+    auto& loops = loopsScreen.engine();
+    int layer = -1;
+    for (int i = 0; i < pocket::kLoopLayers && layer < 0; ++i)
+        if (loops.state (i) == pocket::LoopState::empty)
+            layer = i;
+    if (layer < 0)
+        return toast ("All 8 loop layers are full: clear one in Loops first");
+    lockLayer = layer;
+    lockBars = bars;
+    lockArmed = false;
+    auto& b = beats.engine();
+    if (! b.patternPlaying())
+        b.setPatternPlaying (true);
+    toast ("Locking: the beat goes onto loop " + juce::String (layer + 1) + " from its next start");
+    lockWatch.startTimer (20);
+}
+
+void PocketApp::lockWatchTick()
+{
+    auto& b = beats.engine();
+    auto& loops = loopsScreen.engine();
+    if (! lockArmed)
+    {
+        if (! b.patternPlaying())
+        {
+            lockWatch.stopTimer();
+            return toast ("Lock cancelled");
+        }
+        if (! b.clockRunning())
+            return;
+        const double len = lockBars * 4.0;
+        const double pos = std::fmod (b.clockBeat(), len);
+        // Arm in the pattern's last bar, so recording starts on the next bar line: the pattern's start.
+        if (pos >= len - 4.0 && pos < len - 0.3)
+        {
+            if (! loops.arm (lockLayer, pocket::LoopSource::drums, lockBars))
+            {
+                lockWatch.stopTimer();
+                return toast ("Couldn't arm loop " + juce::String (lockLayer + 1));
+            }
+            lockArmed = true;
+        }
+        return;
+    }
+    const auto st = loops.state (lockLayer);
+    if (st == pocket::LoopState::playing)
+    {
+        lockWatch.stopTimer();
+        loops.setTransport (true);     // the loop keeps the clock going once the pattern stops
+        b.setPatternPlaying (false);
+        b.setPlaying (false);
+        b.setClick (false);
+        beats.refreshPads();
+        toast ("Beat locked on loop " + juce::String (lockLayer + 1) + ". Next: sing over it");
+    }
+    else if (st == pocket::LoopState::empty)
+    {
+        lockWatch.stopTimer();
+        toast ("Lock cancelled");
+    }
+}
+
 void PocketApp::linkChanged()
 {
     repaint();
@@ -938,6 +1006,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     beats.fillDemoKit();
     beats.showMode (1);
     savePng (folder.getChildFile ("04-beats-mpc-pads.png"));
+    beats.fillDemoPattern();
+    savePng (folder.getChildFile ("04b-pads-pattern.png"));
 
     openPadSheet (4);
     resized();
@@ -980,6 +1050,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
 
     if (const auto why = beats.selfCheckSound(); why.isNotEmpty())
         problems.add ("Sound: " + why);
+    if (const auto why = beats.selfCheckPattern(); why.isNotEmpty())
+        problems.add ("Pad pattern: " + why);
 
     juce::String loopsReport;
     if (const auto why = LoopsScreen::selfCheck (loopsReport); why.isNotEmpty())

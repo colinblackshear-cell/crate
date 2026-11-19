@@ -1,5 +1,7 @@
 #include "BeatsEngine.h"
 
+#include <algorithm>
+
 using namespace crate;
 
 namespace pocket
@@ -97,7 +99,48 @@ juce::var DrumData::toVar() const
         voices.add (juce::var (o));
     }
     root->setProperty ("voices", voices);
+    root->setProperty ("padPattern", padPattern.toVar());
     return juce::var (root);
+}
+
+juce::var PadPattern::toVar() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("bars", bars);
+    o->setProperty ("quantize", quantize);
+    juce::Array<juce::var> list;
+    for (auto& h : hits)
+    {
+        juce::Array<juce::var> one;
+        one.add (h.pad);
+        one.add (h.beat);
+        one.add (h.velocity);
+        list.add (one);
+    }
+    o->setProperty ("hits", list);
+    return juce::var (o);
+}
+
+PadPattern PadPattern::fromVar (const juce::var& v)
+{
+    PadPattern p;
+    if (! v.isObject())
+        return p;
+    const int b = (int) v.getProperty ("bars", 2);
+    p.bars = b == 1 || b == 4 ? b : 2;
+    const int q = (int) v.getProperty ("quantize", 4);
+    p.quantize = q == 0 || q == 2 || q == 4 ? q : 4;
+    if (auto* list = v.getProperty ("hits", {}).getArray())
+        for (auto& h : *list)
+            if (h.isArray() && h.size() >= 2 && (int) p.hits.size() < kMaxPadHits)
+            {
+                PadHit hit;
+                hit.pad = juce::jlimit (0, kPads - 1, (int) h[0]);
+                hit.beat = juce::jlimit (0.0, p.lengthBeats() - 1.0e-6, (double) h[1]);
+                hit.velocity = h.size() > 2 ? juce::jlimit (0.05f, 1.0f, (float) (double) h[2]) : 1.0f;
+                p.hits.push_back (hit);
+            }
+    return p;
 }
 
 DrumData DrumData::fromVar (const juce::var& v)
@@ -110,6 +153,7 @@ DrumData DrumData::fromVar (const juce::var& v)
     d.variation = juce::jlimit (0, 2, (int) v.getProperty ("variation", 0));
     d.editB = (bool) v.getProperty ("editB", false);
     d.settings.swing = juce::jlimit (0.0f, 1.0f, (float) (double) v.getProperty ("swing", 0.0));
+    d.padPattern = PadPattern::fromVar (v.getProperty ("padPattern", {}));
 
     if (auto* pats = v.getProperty ("patterns", {}).getArray())
     {
@@ -183,6 +227,16 @@ void BeatsEngine::setDrums (const DrumData& d)
 }
 
 void BeatsEngine::setPlaying (bool on) { wantPlay = on; }
+
+void BeatsEngine::setPadPattern (const PadPattern& p)
+{
+    const juce::SpinLock::ScopedLockType lock (patternLock);
+    pendingCount = juce::jmin ((int) p.hits.size(), kMaxPadHits);
+    for (int i = 0; i < pendingCount; ++i)
+        pendingHits[(size_t) i] = p.hits[(size_t) i];
+    pendingLength = p.lengthBeats();
+    ++patternVersion;
+}
 void BeatsEngine::setBpm (double b) { bpm = juce::jlimit (40.0, 240.0, b); }
 
 void BeatsEngine::push (const Event& e)
@@ -379,13 +433,26 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
         }
     }
 
-    const bool running = wantPlay.load() || clockHeld.load();
+    if (livePatternVersion != patternVersion.load())
+    {
+        const juce::SpinLock::ScopedTryLockType lock (patternLock);
+        if (lock.isLocked())
+        {
+            liveHits = pendingHits;
+            liveCount = pendingCount;
+            liveLength = pendingLength;
+            livePatternVersion = patternVersion.load();
+        }
+    }
+
+    const bool running = wantPlay.load() || clockHeld.load() || patternOn.load();
     const bool drumsOn = wantPlay.load();
     const double tempo = bpm.load();
     if (running && ! wasRunning)
     {
         ppq = 0;
         lastPpq = -1;
+        run = run.load() + 1;
     }
     wasRunning = running;
     clockOn = running;
@@ -414,11 +481,77 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
     clock.ppq = ppq;
     clock.bpm = tempo;
     drums.render (left, right, numSamples, noMidi, clock);
+
+    // The pad pattern's hits in this block, at the sample they fall on.
+    const double beatsPerSample = tempo / (60.0 * sampleRate);
+    int numTriggers = 0;
+    if (running && patternOn.load() && liveCount > 0 && liveLength > 0)
+    {
+        const double start = ppq, end = ppq + numSamples * beatsPerSample;
+        const int thisRun = run.load();
+        for (int i = 0; i < liveCount && numTriggers < (int) triggers.size(); ++i)
+        {
+            const auto& h = liveHits[(size_t) i];
+            const double k = std::ceil ((start - h.beat) / liveLength - 1.0e-9);
+            const double t = h.beat + k * liveLength;
+            if (t < start || t >= end)
+                continue;
+            if (h.skipRun == thisRun && t < h.skipUntil)
+                continue;
+            triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - start) / beatsPerSample)), h.pad, h.velocity };
+        }
+        std::sort (triggers.begin(), triggers.begin() + numTriggers, [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
+    }
+    if (running && clickOn.load())
+        renderClick (left, right, numSamples, ppq, beatsPerSample);
+
     if (running)
-        ppq += numSamples * tempo / (60.0 * sampleRate);
+        ppq += numSamples * beatsPerSample;
     step = drums.getCurrentStep();
     playingB = drums.getCurrentCode() >= 0 ? (drums.getCurrentCode() & 1) : 0;
 
-    renderPads (left, right, numSamples);
+    int done = 0;
+    for (int i = 0; i <= numTriggers; ++i)
+    {
+        const int upTo = i < numTriggers ? triggers[(size_t) i].offset : numSamples;
+        if (upTo > done)
+        {
+            renderPads (left + done, right != nullptr ? right + done : nullptr, upTo - done);
+            done = upTo;
+        }
+        if (i < numTriggers)
+        {
+            startPad (triggers[(size_t) i].pad, triggers[(size_t) i].velocity);
+            hitsPlayed = hitsPlayed.load() + 1;
+        }
+    }
+}
+
+// A click on each beat (higher on the bar), while REC PADS records.
+void BeatsEngine::renderClick (float* left, float* right, int n, double startBeat, double beatsPerSample)
+{
+    const float decay = std::exp (-1.0f / (0.012f * (float) sampleRate));
+    double beat = startBeat;
+    for (int i = 0; i < n; ++i)
+    {
+        const double next = beat + beatsPerSample;
+        if (std::floor (next) != std::floor (beat) || (i == 0 && beat == 0.0))
+        {
+            const auto whole = (long long) std::floor (beat == 0.0 && i == 0 ? 0.0 : next);
+            clickFreq = whole % 4 == 0 ? 1500.0f : 1000.0f;
+            clickEnv = 0.35f;
+            clickPhase = 0;
+        }
+        if (clickEnv > 1.0e-4f)
+        {
+            const float s = std::sin (clickPhase) * clickEnv;
+            clickPhase += juce::MathConstants<float>::twoPi * clickFreq / (float) sampleRate;
+            clickEnv *= decay;
+            left[i] += s;
+            if (right != nullptr)
+                right[i] += s;
+        }
+        beat = next;
+    }
 }
 }

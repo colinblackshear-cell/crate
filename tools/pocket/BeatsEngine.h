@@ -20,6 +20,26 @@ constexpr int kPads = 64;
 
 enum class PadMode { oneShot, mono, noteOff };
 
+// The pads played into a pattern (REC PADS): each hit is a pad at a beat inside the pattern.
+constexpr int kMaxPadHits = 512;
+struct PadHit
+{
+    int pad = 0;
+    double beat = 0;          // from the pattern's start
+    float velocity = 1.0f;
+    int skipRun = -1;         // just played by hand: not played again by the pattern in this run of the clock
+    double skipUntil = 0;     // ... before this beat
+};
+struct PadPattern
+{
+    int bars = 2;             // 1, 2 or 4
+    int quantize = 4;         // hits per beat it snaps to (4 = 1/16, 2 = 1/8, 0 = off)
+    std::vector<PadHit> hits;
+    double lengthBeats() const { return bars * 4.0; }
+    juce::var toVar() const;
+    static PadPattern fromVar (const juce::var&);
+};
+
 // The drum machine's whole state, as the screens edit it and as it's saved to Documents.
 struct DrumData
 {
@@ -29,6 +49,7 @@ struct DrumData
     int variation = 0;     // 0 A, 1 B, 2 A then B (crate::drums::Plan::Variation)
     bool editB = false;    // the grid edits the B variation
     double bpm = 97.0;
+    PadPattern padPattern;
 
     DrumData();
     crate::drums::Pattern& edited() { return patterns[(size_t) slot][editB ? 1 : 0]; }
@@ -75,6 +96,15 @@ public:
     void stopPads();
     juce::uint64 soundingPads() const { return sounding.load(); }
 
+    // The pad pattern: plays on the shared clock (and runs it) while on. REC adds a click on each beat.
+    void setPadPattern (const PadPattern&);
+    void setPatternPlaying (bool on) { patternOn = on; }
+    bool patternPlaying() const { return patternOn.load(); }
+    void setClick (bool on) { clickOn = on; }
+    // Each start of the clock is a new run (the clock counts from 0 again).
+    int clockRun() const { return run.load(); }
+    int patternHitsPlayed() const { return hitsPlayed.load(); }   // how many pattern hits have played (for the self-check)
+
     // Audio thread
     void prepare (double sampleRate) override;
     void render (float* left, float* right, int numSamples) override;
@@ -101,6 +131,7 @@ private:
 
     void push (const Event&);
     void handle (const Event&);
+    void renderClick (float* left, float* right, int n, double startBeat, double beatsPerSample);
     void startPad (int pad, float velocity);
     void renderPads (float* left, float* right, int n);
 
@@ -121,7 +152,19 @@ private:
     double ppq = 0, lastPpq = -1;
     bool wasRunning = false;
     juce::MidiBuffer noMidi;
-    std::atomic<bool> wantPlay { false }, clockHeld { false }, clockOn { false };
+    std::atomic<bool> wantPlay { false }, clockHeld { false }, clockOn { false }, patternOn { false }, clickOn { false };
+    std::atomic<int> hitsPlayed { 0 };
+    std::atomic<int> run { 0 };
+    // the pad pattern: published under a try-lock like the drums
+    std::array<PadHit, kMaxPadHits> pendingHits {}, liveHits {};
+    int pendingCount = 0, liveCount = 0;
+    double pendingLength = 8.0, liveLength = 8.0;
+    juce::SpinLock patternLock;
+    std::atomic<int> patternVersion { 0 };
+    int livePatternVersion = -1;
+    struct Trigger { int offset; int pad; float velocity; };
+    std::array<Trigger, 64> triggers {};
+    float clickEnv = 0, clickPhase = 0, clickFreq = 1000;
     std::atomic<double> clockPpq { 0.0 };
     std::atomic<double> bpm { 97.0 };
     std::atomic<int> step { -1 };

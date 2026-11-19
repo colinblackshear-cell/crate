@@ -19,4 +19,7 @@ struct PocketHost
     virtual void sendSoundToMac (const juce::String& soundId, const juce::String& dest = "sounds") = 0;
     virtual void sendToMac (pocket::MacSend) = 0;
     virtual void openMacLink() = 0;                        // More > Mac link
+    // LOCK BEAT: records what the Beats tab plays (the pad pattern and the drum machine) onto the next
+    // empty loop layer, `bars` long, from the pattern's start.
+    virtual void lockBeat (int bars) = 0;
 };
