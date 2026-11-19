@@ -38,6 +38,38 @@ public:
     pocket::Library& library() { return lib; }
 
 private:
+    // The phone's keyboard goes away with a swipe down anywhere, or a tap outside the text box
+    // (the number pad has no Return key).
+    struct KeyboardDismisser : juce::MouseListener
+    {
+        static juce::TextEditor* focusedEditor()
+        {
+            return dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent());
+        }
+        static bool inside (juce::Component* c, juce::Component* editor)
+        {
+            return c != nullptr && (c == editor || editor->isParentOf (c));
+        }
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            swiped = false;
+            if (auto* ed = focusedEditor(); ed != nullptr && ! inside (e.originalComponent, ed))
+                ed->giveAwayKeyboardFocus();
+        }
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (swiped || e.getDistanceFromDragStartY() < 40 || std::abs (e.getDistanceFromDragStartX()) > e.getDistanceFromDragStartY())
+                return;
+            if (auto* ed = focusedEditor())
+            {
+                swiped = true;
+                ed->giveAwayKeyboardFocus();
+            }
+        }
+        bool swiped = false;
+    };
+    KeyboardDismisser keyboardDismisser;
+
     class TabBar;
     class MoreScreen;
     class SettingsScreen;
@@ -91,6 +123,10 @@ private:
     std::unique_ptr<Dim> dim;
     juce::Rectangle<float> status;
     juce::BorderSize<int> insets;
+    static juce::BorderSize<int> safeInsets();
+    // The phone only knows its safe area (the clock, the Dynamic Island, a Maps or call pill, the home bar)
+    // once the window is up, and it changes when the status bar does: look again now and then.
+    juce::TimedCallback insetWatch { [this] { if (safeInsets() != insets) { resized(); repaint(); } } };
     int tab = 0;
     bool sheetOpen = false, padSheetOpen = false, sendOpen = false;
     bool animate = true;

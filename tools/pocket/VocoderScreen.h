@@ -75,7 +75,7 @@ private:
     LoopsScreen& loopsScreen;
     pocket::VocoderEngine voc;
 
-    int shown = 2;                 // the pedal whose panel is open (ROBOT)
+    int shown = 3;                 // the pedal whose panel is open (ROBOT)
     int pressed = 0, pressedPedal = -1;
     float scrollX = 0.0f, scrollStart = 0.0f;
     bool dragged = false, held = false;

@@ -332,6 +332,7 @@ PocketApp::PocketApp (Options o)
       sounds (static_cast<PocketHost&> (*this), audio, lib)
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&look);
+    juce::Desktop::getInstance().addGlobalMouseListener (&keyboardDismisser);
 
     auto backToMore = [this] { showMorePage (0); };
     remote = std::make_unique<RemoteScreen> (link);
@@ -411,6 +412,7 @@ PocketApp::PocketApp (Options o)
 
 PocketApp::~PocketApp()
 {
+    juce::Desktop::getInstance().removeGlobalMouseListener (&keyboardDismisser);
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
 
@@ -742,15 +744,24 @@ void PocketApp::paint (juce::Graphics& g)
     g.fillRect (0, top + 60, getWidth(), 2);
 }
 
+juce::BorderSize<int> PocketApp::safeInsets()
+{
+   #if JUCE_IOS
+    auto display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    auto b = display != nullptr ? display->safeAreaInsets : juce::BorderSize<int>();
+    // Never under the clock, even before the phone has said where it is.
+    return { juce::jmax (b.getTop(), 59), b.getLeft(), juce::jmax (b.getBottom(), 0), b.getRight() };
+   #else
+    return { 47, 0, 34, 0 };   // pretend to be an iPhone with a notch
+   #endif
+}
+
 void PocketApp::resized()
 {
     if (more == nullptr || toastBox == nullptr || dim == nullptr)
         return;   // still being built
-    auto display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-    insets = display != nullptr ? display->safeAreaInsets : juce::BorderSize<int>();
-   #if ! JUCE_IOS
-    insets = juce::BorderSize<int> (47, 0, 34, 0);   // pretend to be an iPhone with a notch
-   #endif
+    insets = safeInsets();
+    insetWatch.startTimer (500);
 
     const int w = getWidth(), h = getHeight();
     const int tabH = 47 + insets.getBottom();

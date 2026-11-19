@@ -14,6 +14,8 @@ namespace
 using namespace ParamIDs;
 
 const PedalDef kDefs[kPedals] = {
+    { "VOICE", "your own voice under the robot", 0xffd9b98a, 4,
+      { { voiceLevel, "VOICE", KnobText::percent }, { robotLevel, "ROBOT", KnobText::percent }, { inputGain, "MIC", KnobText::semitones }, { outputGain, "OUT", KnobText::semitones } } },
     { "TUNE", "pulls your voice onto the notes", 0xff4fb39a, 4,
       { { tuneKey, "KEY", KnobText::text }, { tuneScale, "SCALE", KnobText::text }, { tuneSpeed, "SPEED", KnobText::percent }, { tuneAmount, "AMOUNT", KnobText::percent } } },
     { "HARMONY", "sing one note, hear a chord", 0xff8fc06a, 4,
@@ -146,6 +148,7 @@ bool VocoderEngine::pedalOn (int pedal) const
 {
     switch ((Pedal) pedal)
     {
+        case Pedal::voice: return param (voiceOn) > 0.5f && param (voiceLevel) > 0.005f;
         case Pedal::tune: return param (tuneOn) > 0.5f;
         case Pedal::harmony: return param (tuneOn) > 0.5f && juce::roundToInt (param (singToPlay)) != 0;
         case Pedal::robot: return param (robotOn) > 0.5f;
@@ -196,6 +199,12 @@ void VocoderEngine::stomp (int pedal)
 
     switch ((Pedal) pedal)
     {
+        case Pedal::voice:
+            // Your dry voice in what you hear (and record): off leaves only the robot and the effects.
+            setParam (voiceOn, wasOn ? 0.0f : 1.0f);
+            if (! wasOn && param (voiceLevel) < 0.05f)
+                setParam (voiceLevel, 0.5f);
+            break;
         case Pedal::tune: setParam (tuneOn, wasOn ? 0.0f : 1.0f); break;
         case Pedal::harmony:
             if (wasOn)
@@ -294,6 +303,9 @@ void VocoderEngine::setKnob01 (int pedal, int k, float v)
     // The effects only sound while the Effects switch is on, so turning one up switches it on.
     if (v > 0.0f && (id == chorusMix || id == delayMix || id == reverbMix || id == drive || id == crush))
         setParam (fxOn, 1.0f);
+    // Turning your voice up brings it in; all the way down takes it out.
+    if (id == voiceLevel)
+        setParam (voiceOn, v > 0.005f ? 1.0f : 0.0f);
     // The key's knobs are the same settings as the chord buttons', so they move the chord too.
     if ((id == chordKey || id == chordScale || id == chordFlavour) && chord >= 0)
         requestChord (notesOf (chord));
