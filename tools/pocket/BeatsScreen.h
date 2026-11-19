@@ -16,6 +16,7 @@ public:
     pocket::BeatsEngine& engine() { return beatsEngine; }
     pocket::Kit& kit() { return padKit; }
     pocket::DrumData& drums() { return drumData; }
+    const pocket::DrumData& drums() const { return drumData; }
 
     void showMode (int mode);   // 0 drum machine, 1 MPC pads
     int mode() const { return screenMode; }
@@ -29,9 +30,27 @@ public:
     void drumsChanged();        // the drum machine's patterns or knobs changed
     void setBpm (double);       // the one tempo of the app
     void leave();               // the tab was left: stop the drums and the pads
+    void refreshPads();         // redraw the pad buttons' states (after LOCK BEAT)
+    void flush();               // save anything waiting to be saved, now (before switching ideas)
+    void reloadIdea (const juce::String& ideaName);   // the library points at another idea: load its pads and beat
+    juce::String summary() const;   // "92 BPM · 4 pads · beat recorded", for the Ideas list
 
     void exportForMpc();
     void renameKit();
+
+    // The pad pattern (REC PADS). Recording runs the clock with a click; pads played go into the
+    // pattern, snapped to the grid. LOCK BEAT records the beat onto the next empty loop layer.
+    void toggleRecordPads();
+    bool recordingPads() const { return recPads; }
+    void togglePatternPlay();
+    void setPatternBars (int bars);
+    void cycleQuantize();
+    void undoPatternHit();
+    void clearPattern();
+    void lockBeat();
+    void patternChanged();
+    double patternPosition() const;   // beats into the pattern, -1 when it isn't playing
+    void recordHit (int pad, float velocity);
 
     // Screenshot mode
     void setDemoStep (int step) { demoStep = step; repaint(); }
@@ -41,6 +60,8 @@ public:
     juce::String selfCheckExport (juce::File work);
     // Plays the drum machine and a pad through the engine with no sound card; returns what was wrong.
     juce::String selfCheckSound();
+    juce::String selfCheckPattern();   // a recorded hit plays on its beat, and LOCK BEAT's timing holds
+    void fillDemoPattern();
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -63,6 +84,8 @@ private:
     std::unique_ptr<PadsView> padsView;
 
     int screenMode = 0, bank = 0, selected = -1, voice = 0, demoStep = -1, saveCountdown = 0;
+    bool recPads = false;
+    std::vector<pocket::PadPattern> patternUndo;
     bool drumsDirty = false, kitDirty = false;
    #if JUCE_IOS || JUCE_ANDROID
     juce::ScopedMessageBox sharing;

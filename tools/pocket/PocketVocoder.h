@@ -15,8 +15,8 @@
 // what the Loops tab's VOCODER source records. Nothing in render() allocates or waits.
 namespace pocket
 {
-constexpr int kPedals = 13;
-enum class Pedal { tune, harmony, robot, character, synth, chords, arp, filter, vintage, dirt, chorus, echo, space };
+constexpr int kPedals = 14;
+enum class Pedal { voice, tune, harmony, robot, character, synth, chords, arp, filter, vintage, dirt, chorus, echo, space };
 
 // How a pedal knob's number reads under it.
 enum class KnobText { percent, text, semitones };

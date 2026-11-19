@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "BeatsScreen.h"
 
 using namespace pocket;
@@ -481,6 +482,27 @@ public:
             owner.host.sendToMac (std::move (send));
         };
         addAndMakeVisible (toMac);
+
+        for (auto* b : { &recButton, &barsButton, &quantButton, &undoButton, &lockButton })
+        {
+            b->setFontHeight (15.0f);
+            addAndMakeVisible (*b);
+        }
+        recButton.onClick = [this] { owner.toggleRecordPads(); };
+        barsButton.onClick = [this]
+        {
+            const int b = owner.drumData.padPattern.bars;
+            owner.setPatternBars (b == 1 ? 2 : b == 2 ? 4 : 1);
+        };
+        quantButton.onClick = [this] { owner.cycleQuantize(); };
+        undoButton.onClick = [this]
+        {
+            juce::PopupMenu m;
+            m.addItem ("Undo the last change", ! owner.patternUndo.empty(), false, [this] { owner.undoPatternHit(); });
+            m.addItem ("Clear the whole pattern", ! owner.drumData.padPattern.hits.empty(), false, [this] { owner.clearPattern(); });
+            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&undoButton));
+        };
+        lockButton.onClick = [this] { owner.lockBeat(); };
         refresh();
     }
 
@@ -488,6 +510,12 @@ public:
     {
         for (int i = 0; i < 4; ++i)
             banks[i].setLook (owner.bank == i ? Look::amber : Look::ghost);
+        const auto& p = owner.drumData.padPattern;
+        recButton.setLook (owner.recPads ? Look::red : Look::cream);
+        recButton.setText (owner.recPads ? U8("\xe2\x97\x8f Rec on") : U8("\xe2\x97\x8f Rec pads"));
+        barsButton.setText (juce::String (p.bars) + (p.bars == 1 ? " bar" : " bars"));
+        quantButton.setText (p.quantize == 4 ? "1/16" : p.quantize == 2 ? "1/8" : "Free");
+        lockButton.setLook (p.hits.empty() ? Look::cream : Look::amber);
         repaint();
     }
 
@@ -499,9 +527,61 @@ public:
             lastMask = mask;
             repaint (wellBounds().toNearestInt());
         }
+        if (owner.beatsEngine.patternPlaying() || wasPlaying)
+        {
+            wasPlaying = owner.beatsEngine.patternPlaying();
+            repaint (stripBounds().expanded (2).toNearestInt());
+        }
     }
 
-    juce::Rectangle<float> wellBounds() const { return { 16, 172, 358, 424 }; }
+    juce::Rectangle<float> stripBounds() const { return { 16, 172, 358, 50 }; }
+    juce::Rectangle<float> wellBounds() const { return { 16, 280, 358, 316 }; }
+
+    void paintPattern (juce::Graphics& g)
+    {
+        auto r = stripBounds();
+        drawWell (g, r, 12.0f);
+        auto inner = r.reduced (10, 7);
+        const auto& p = owner.drumData.padPattern;
+        const double len = p.lengthBeats();
+        // the beats and bars
+        for (int b = 0; b <= (int) len; ++b)
+        {
+            const float x = inner.getX() + inner.getWidth() * (float) (b / len);
+            g.setColour (juce::Colour (b % 4 == 0 ? 0x55f1e7d1 : 0x22f1e7d1));
+            g.fillRect (x, inner.getY(), 1.0f, inner.getHeight());
+        }
+        // the pads in it, one row each (in the order they first come)
+        std::vector<int> rows;
+        for (auto& h : p.hits)
+            if (std::find (rows.begin(), rows.end(), h.pad) == rows.end())
+                rows.push_back (h.pad);
+        const int numRows = juce::jmax (1, juce::jmin (6, (int) rows.size()));
+        const float rowH = inner.getHeight() / (float) numRows;
+        const juce::Colour colours[] = { col::lcdText, col::amber, col::blue, col::green, juce::Colour (0xffb9a3dc), juce::Colour (0xfff6dfa0) };
+        for (auto& h : p.hits)
+        {
+            const int row = (int) (std::find (rows.begin(), rows.end(), h.pad) - rows.begin()) % numRows;
+            const float x = inner.getX() + inner.getWidth() * (float) (h.beat / len);
+            g.setColour (colours[row % 6].withAlpha (0.5f + 0.5f * h.velocity));
+            g.fillRoundedRectangle (x - 1.5f, inner.getY() + rowH * (float) row + 1.0f, 3.5f, juce::jmax (2.0f, rowH - 2.0f), 1.0f);
+        }
+        if (p.hits.empty())
+        {
+            g.setColour (juce::Colour (0x99f1e7d1));
+            g.setFont (small (13.5f));
+            g.drawText (owner.recPads ? "Play the pads: they go into the pattern" : U8("REC PADS, then play: a beat to loop and lock"),
+                        inner, juce::Justification::centred);
+        }
+        // where it's playing
+        const double pos = owner.patternPosition();
+        if (pos >= 0)
+        {
+            const float x = inner.getX() + inner.getWidth() * (float) (pos / len);
+            g.setColour (owner.recPads ? col::red : col::amber);
+            g.fillRect (x - 1.0f, r.getY() + 3.0f, 2.0f, r.getHeight() - 6.0f);
+        }
+    }
 
     juce::Rectangle<float> padBounds (int index) const
     {
@@ -527,6 +607,8 @@ public:
         g.setColour (col::lcdAmber);
         g.setFont (spaced (lcdFont (32.0f), 0.04f));
         g.drawText (owner.padKit.name, lcd.reduced (14, 0), juce::Justification::centredLeft);
+
+        paintPattern (g);
 
         drawWell (g, wellBounds(), 18.0f);
         const auto sounding = owner.beatsEngine.soundingPads();
@@ -568,6 +650,11 @@ public:
             banks[i].setBounds (16 + i * 66, 122, 66, 40);
         editPads.setBounds (292, 122, 82, 40);
         toMac.setBounds (292, 606, 82, 40);
+        recButton.setBounds (16, 230, 84, 40);
+        barsButton.setBounds (106, 230, 58, 40);
+        quantButton.setBounds (170, 230, 54, 40);
+        undoButton.setBounds (230, 230, 56, 40);
+        lockButton.setBounds (292, 230, 82, 40);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -576,6 +663,11 @@ public:
         if (juce::Rectangle<float> (16, 67, 210, 44).contains (e.position))
         {
             renaming = true;
+            return;
+        }
+        if (stripBounds().contains (e.position))
+        {
+            owner.togglePatternPlay();
             return;
         }
         const int pad = padAt (e.position);
@@ -587,7 +679,9 @@ public:
         if (! owner.padKit.pads[(size_t) pad].empty())
         {
             owner.beatsEngine.padOn (pad);
-            startTimer (550);
+            owner.recordHit (pad, 1.0f);
+            if (! owner.recPads)
+                startTimer (550);
         }
         repaint();
     }
@@ -621,6 +715,8 @@ private:
 
     BeatsScreen& owner;
     PButton exportButton { "Export for MPC", Look::amber }, banks[4], editPads { "Edit pads" }, toMac { "To mac" };
+    PButton recButton { "Rec pads" }, barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, lockButton { "Lock beat" };
+    bool wasPlaying = false;
     juce::uint64 lastMask = 0;
     int held = -1;
     bool longPress = false, renaming = false;
@@ -629,10 +725,11 @@ private:
 //==============================================================================
 BeatsScreen::BeatsScreen (PocketHost& h, Library& lib) : host (h), library (lib), padKit (lib)
 {
-    auto drumFile = lib.getRoot().getChildFile ("Beats").getChildFile ("drums.json");
+    auto drumFile = lib.ideaRoot().getChildFile ("Beats").getChildFile ("drums.json");
     if (drumFile.existsAsFile())
         drumData = DrumData::fromVar (juce::JSON::parse (drumFile));
     beatsEngine.setDrums (drumData);
+    beatsEngine.setPadPattern (drumData.padPattern);
 
     padKit.load();
     pushPads();
@@ -727,7 +824,195 @@ void BeatsScreen::padsChanged()
 void BeatsScreen::leave()
 {
     beatsEngine.setPlaying (false);
+    beatsEngine.setPatternPlaying (false);
+    beatsEngine.setClick (false);
+    recPads = false;
     beatsEngine.stopPads();
+    if (padsView != nullptr)
+        padsView->refresh();
+}
+
+void BeatsScreen::reloadIdea (const juce::String& ideaName)
+{
+    leave();
+    auto drumFile = library.ideaRoot().getChildFile ("Beats").getChildFile ("drums.json");
+    const double tempo = drumData.bpm;
+    drumData = drumFile.existsAsFile() ? DrumData::fromVar (juce::JSON::parse (drumFile)) : DrumData();
+    if (! drumFile.existsAsFile())
+        drumData.bpm = tempo;   // a new idea starts at the tempo you were at
+    drumsDirty = kitDirty = false;
+    patternUndo.clear();
+    beatsEngine.setDrums (drumData);
+    beatsEngine.setPadPattern (drumData.padPattern);
+    setBpm (drumData.bpm);
+    padKit.pads = {};
+    padKit.name = Kit::mpcName (ideaName.toUpperCase());
+    if (padKit.name.isEmpty())
+        padKit.name = "IDEA";
+    padKit.load();
+    pushPads();
+    bank = 0;
+    selected = 0;
+    if (drumView != nullptr)
+        drumView->refresh();
+    if (padsView != nullptr)
+        padsView->refresh();
+    repaint();
+}
+
+juce::String BeatsScreen::summary() const
+{
+    juce::StringArray bits;
+    bits.add (juce::String (juce::roundToInt (drumData.bpm)) + " BPM");
+    if (const int n = padKit.usedPads(); n > 0)
+        bits.add (juce::String (n) + (n == 1 ? " pad" : " pads"));
+    if (! drumData.padPattern.hits.empty())
+        bits.add ("beat recorded");
+    return bits.joinIntoString (U8(" · "));
+}
+
+void BeatsScreen::refreshPads()
+{
+    if (padsView != nullptr)
+        padsView->refresh();
+}
+
+//==============================================================================
+// The pad pattern
+double BeatsScreen::patternPosition() const
+{
+    if (! beatsEngine.patternPlaying() || ! beatsEngine.clockRunning())
+        return -1.0;
+    return std::fmod (beatsEngine.clockBeat(), drumData.padPattern.lengthBeats());
+}
+
+void BeatsScreen::patternChanged()
+{
+    beatsEngine.setPadPattern (drumData.padPattern);
+    drumsDirty = true;
+    saveSoon();
+    if (padsView != nullptr)
+        padsView->refresh();
+}
+
+void BeatsScreen::toggleRecordPads()
+{
+    recPads = ! recPads;
+    if (recPads)
+        beatsEngine.setPatternPlaying (true);
+    beatsEngine.setClick (recPads);
+    if (recPads)
+        host.toast ("Recording: play the pads in time with the click");
+    padsView->refresh();
+}
+
+void BeatsScreen::togglePatternPlay()
+{
+    const bool on = ! beatsEngine.patternPlaying();
+    beatsEngine.setPatternPlaying (on);
+    if (! on)
+    {
+        recPads = false;
+        beatsEngine.setClick (false);
+    }
+    padsView->refresh();
+}
+
+void BeatsScreen::setPatternBars (int bars)
+{
+    auto& p = drumData.padPattern;
+    if (bars == p.bars)
+        return;
+    patternUndo.push_back (p);
+    const double oldLen = p.lengthBeats();
+    const int oldBars = p.bars;
+    p.bars = bars;
+    const double len = p.lengthBeats();
+    if (bars > oldBars)
+    {
+        // Longer: what's there repeats to fill it, like the MPC.
+        const auto first = p.hits;
+        for (double at = oldLen; at < len - 1.0e-9; at += oldLen)
+            for (auto h : first)
+                if ((int) p.hits.size() < kMaxPadHits)
+                {
+                    h.beat += at;
+                    h.skipRun = -1;
+                    p.hits.push_back (h);
+                }
+    }
+    else
+        p.hits.erase (std::remove_if (p.hits.begin(), p.hits.end(), [len] (const PadHit& h) { return h.beat >= len; }), p.hits.end());
+    patternChanged();
+}
+
+void BeatsScreen::cycleQuantize()
+{
+    auto& q = drumData.padPattern.quantize;
+    q = q == 4 ? 2 : q == 2 ? 0 : 4;
+    host.toast (q == 4 ? "New hits snap to 1/16 notes" : q == 2 ? "New hits snap to 1/8 notes" : "New hits land where you play them");
+    patternChanged();
+}
+
+void BeatsScreen::undoPatternHit()
+{
+    if (patternUndo.empty())
+        return host.toast ("Nothing to undo in the pattern");
+    drumData.padPattern = patternUndo.back();
+    patternUndo.pop_back();
+    patternChanged();
+}
+
+void BeatsScreen::clearPattern()
+{
+    if (drumData.padPattern.hits.empty())
+        return;
+    patternUndo.push_back (drumData.padPattern);
+    drumData.padPattern.hits.clear();
+    patternChanged();
+}
+
+void BeatsScreen::recordHit (int pad, float velocity)
+{
+    if (! recPads || ! beatsEngine.clockRunning())
+        return;
+    auto& p = drumData.padPattern;
+    if ((int) p.hits.size() >= kMaxPadHits)
+        return host.toast ("The pattern is full");
+    const double len = p.lengthBeats();
+    const double now = beatsEngine.clockBeat();
+    double beat = std::fmod (now, len);
+    if (p.quantize > 0)
+    {
+        const double grid = 1.0 / p.quantize;
+        beat = std::round (beat / grid) * grid;
+        if (beat >= len - 1.0e-9)
+            beat -= len;
+    }
+    patternUndo.push_back (p);
+    if (patternUndo.size() > 64)
+        patternUndo.erase (patternUndo.begin());
+    // The same pad on the same spot again just replaces it.
+    p.hits.erase (std::remove_if (p.hits.begin(), p.hits.end(), [&] (const PadHit& h) { return h.pad == pad && std::abs (h.beat - beat) < 1.0e-6; }), p.hits.end());
+    PadHit h;
+    h.pad = pad;
+    h.beat = beat;
+    h.velocity = velocity;
+    // It was just heard by hand: if the grid moved it a little later, don't play it again this time round.
+    h.skipRun = beatsEngine.clockRun();
+    h.skipUntil = now + 0.5;
+    p.hits.push_back (h);
+    patternChanged();
+}
+
+void BeatsScreen::lockBeat()
+{
+    if (drumData.padPattern.hits.empty() && ! beatsEngine.isPlaying())
+        return host.toast ("Record a pattern first: REC PADS, then play the pads");
+    recPads = false;
+    beatsEngine.setClick (false);
+    padsView->refresh();
+    host.lockBeat (drumData.padPattern.bars);
 }
 
 void BeatsScreen::timerCallback()
@@ -738,10 +1023,16 @@ void BeatsScreen::timerCallback()
         padsView->tick();
 
     if (saveCountdown > 0 && --saveCountdown == 0)
+        flush();
+}
+
+void BeatsScreen::flush()
+{
+    saveCountdown = 0;
     {
         if (drumsDirty)
         {
-            auto dir = library.getRoot().getChildFile ("Beats");
+            auto dir = library.ideaRoot().getChildFile ("Beats");
             dir.createDirectory();
             dir.getChildFile ("drums.json").replaceWithText (juce::JSON::toString (drumData.toVar()));
             drumsDirty = false;
@@ -833,6 +1124,80 @@ juce::String BeatsScreen::selfCheckSound()
     if (padPeak < 0.01f)
         return "pad A13 is silent";
     return {};
+}
+
+juce::String BeatsScreen::selfCheckPattern()
+{
+    const auto saved = drumData.padPattern;
+    const double sr = 44100.0;
+    const double bpm = beatsEngine.getBpm();
+    PadPattern p;
+    p.bars = 1;
+    PadHit h;
+    h.pad = 12;
+    h.beat = 1.0;
+    p.hits.push_back (h);
+    beatsEngine.setPlaying (false);
+    beatsEngine.stopPads();
+    beatsEngine.setClick (false);
+    beatsEngine.prepare (sr);
+    const int n = (int) (sr * 60.0 / bpm * 5.5);   // the hit on beat 2 plays, then again a bar later
+    std::vector<float> left ((size_t) n, 0.0f);
+    for (int i = 0; i < (int) sr * 4; i += 512)   // let anything still sounding (an 808 tail) fade out first
+    {
+        std::fill (left.begin(), left.begin() + 512, 0.0f);
+        beatsEngine.render (left.data(), nullptr, 512);
+        float peak = 0;
+        for (int j = 0; j < 512; ++j)
+            peak = juce::jmax (peak, std::abs (left[(size_t) j]));
+        if (peak < 0.001f)
+            break;
+    }
+    std::fill (left.begin(), left.end(), 0.0f);
+    beatsEngine.setPadPattern (p);
+    beatsEngine.setPatternPlaying (true);
+    const int hitsBefore = beatsEngine.patternHitsPlayed();
+    for (int i = 0; i < n; i += 512)
+        beatsEngine.render (left.data() + i, nullptr, juce::jmin (512, n - i));
+    const int played = beatsEngine.patternHitsPlayed() - hitsBefore;
+    beatsEngine.setPatternPlaying (false);
+    beatsEngine.stopPads();
+    beatsEngine.setPadPattern (saved);
+    std::vector<int> onsets;
+    bool quiet = true;
+    int lastLoud = -100000;
+    for (int i = 0; i < n; ++i)
+        if (std::abs (left[(size_t) i]) > 0.01f)
+        {
+            if (quiet && i - lastLoud > (int) sr / 4)
+                onsets.push_back (i);
+            quiet = false;
+            lastLoud = i;
+        }
+        else if (i - lastLoud > 64)
+            quiet = true;
+    const int beatLen = (int) std::lround (sr * 60.0 / bpm);
+    if (onsets.empty())
+        return "the pattern's hit never played";
+    if (std::abs (onsets[0] - beatLen) > 600)
+        return "the pattern's hit played at sample " + juce::String (onsets[0]) + ", not on beat 2 (" + juce::String (beatLen) + ")";
+    if (played != 2)
+        return "the hit played " + juce::String (played) + " times in 5.5 beats, not twice (it should loop back round)";
+    return {};
+}
+
+void BeatsScreen::fillDemoPattern()
+{
+    auto& p = drumData.padPattern;
+    p = {};
+    p.bars = 2;
+    auto add = [&p] (int pad, double beat) { PadHit h; h.pad = pad; h.beat = beat; p.hits.push_back (h); };
+    for (double b : { 0.0, 4.0 }) add (0, b);            // horn
+    for (double b : { 2.5, 6.5 }) add (1, b);
+    for (double b : { 0.0, 1.5, 4.0, 5.5 }) add (12, b); // kick
+    for (double b : { 2.0, 6.0 }) add (13, b);           // snare
+    for (double b = 0.5; b < 8.0; b += 1.0) add (14, b); // hat
+    patternChanged();
 }
 
 void BeatsScreen::fillDemoKit()

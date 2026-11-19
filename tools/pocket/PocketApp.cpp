@@ -98,8 +98,8 @@ private:
     juce::String megabytes() const
     {
         juce::int64 bytes = 0;
-        for (auto* folder : { "Sounds", "Loops" })
-            for (auto& f : lib.getRoot().getChildFile (folder).findChildFiles (juce::File::findFiles, false))
+        for (auto* folder : { "Sounds", "Ideas" })   // every sound, and every idea's loops
+            for (auto& f : lib.getRoot().getChildFile (folder).findChildFiles (juce::File::findFiles, true))
                 bytes += f.getSize();
         return juce::String (juce::roundToInt ((double) bytes / 1048576.0)) + " MB";
     }
@@ -322,6 +322,7 @@ private:
 //==============================================================================
 PocketApp::PocketApp (Options o)
     : lib (o.libraryRoot != juce::File() ? o.libraryRoot : Library::defaultRoot()),
+      ideas (lib),
       appSettings (lib.getRoot()),
       link (lib.getRoot(), o.audio),
       beats (static_cast<PocketHost&> (*this), lib),
@@ -332,6 +333,7 @@ PocketApp::PocketApp (Options o)
       sounds (static_cast<PocketHost&> (*this), audio, lib)
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&look);
+    juce::Desktop::getInstance().addGlobalMouseListener (&keyboardDismisser);
 
     auto backToMore = [this] { showMorePage (0); };
     remote = std::make_unique<RemoteScreen> (link);
@@ -350,6 +352,11 @@ PocketApp::PocketApp (Options o)
     settings = std::make_unique<SettingsScreen> (appSettings, backToMore, [this] { loopsScreen.engine().setCountIn (appSettings.countIn); });
     more = std::make_unique<MoreScreen> (lib, link, [this] { return loopsScreen.layerCount(); });
     more->onOpen = [this] (int page) { showMorePage (page); };
+    ideasScreen = std::make_unique<IdeasScreen> (ideas);
+    ideasScreen->onOpen = [this] (const juce::String& id) { openIdea (id); };
+    ideasScreen->onNew = [this] { newIdea(); };
+    ideasScreen->onRename = [this] (const juce::String& id) { renameIdea (id); };
+    ideasScreen->onDelete = [this] (const juce::String& id) { deleteIdea (id); };
     tabs = std::make_unique<TabBar>();
     tabs->onSelect = [this] (int i) { showTab (i); };
     toastBox = std::make_unique<Toast>();
@@ -382,7 +389,8 @@ PocketApp::PocketApp (Options o)
         toast ("Chopped across " + juce::String (n) + (n == 1 ? " pad" : " pads"));
     };
 
-    addAndMakeVisible (record);
+    addChildComponent (record);
+    addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
     for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
@@ -411,6 +419,7 @@ PocketApp::PocketApp (Options o)
 
 PocketApp::~PocketApp()
 {
+    juce::Desktop::getInstance().removeGlobalMouseListener (&keyboardDismisser);
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
 
@@ -431,9 +440,17 @@ void PocketApp::showTab (int i)
         beats.leave();     // Beats, Loops and Vocoder share the clock, so moving between them keeps it going
         loopsScreen.leave();
     }
+    if (i == 0 && tab == 0 && ! ideasShown && ! audio.isRecording())
+        ideasShown = true;   // RECORD again from the recorder: back to the Ideas list, like Voice Memos
     tab = i;
     tabs->selected = i;
-    record.setVisible (i == 0);
+    record.setVisible (i == 0 && ! ideasShown);
+    ideasScreen->setVisible (i == 0 && ideasShown);
+    if (i == 0 && ideasShown)
+    {
+        ideas.setSummary (beats.summary() + (loopsScreen.layerCount() > 0 ? U8(" · ") + juce::String (loopsScreen.layerCount()) + (loopsScreen.layerCount() == 1 ? " loop" : " loops") : juce::String()));
+        ideasScreen->refresh();
+    }
     beats.setVisible (i == 1);
     loopsScreen.setVisible (i == 2);
     vocoderScreen.setVisible (i == 3);
@@ -442,6 +459,8 @@ void PocketApp::showTab (int i)
     else
         showMorePage (-1);
     tabs->repaint();
+    noteStep();
+    repaint();
 }
 
 // page: -1 = not on the More tab
@@ -453,6 +472,7 @@ void PocketApp::showMorePage (int page)
         tabs->selected = 4;
         tabs->repaint();
         record.setVisible (false);
+        ideasScreen->setVisible (false);
         beats.setVisible (false);
         beats.leave();
         loopsScreen.leave();
@@ -473,6 +493,7 @@ void PocketApp::showMorePage (int page)
 
 void PocketApp::editSound (const juce::String& id)
 {
+    ideasShown = false;
     showTab (0);
     record.loadSound (id);
 }
@@ -675,6 +696,244 @@ void PocketApp::openMacLink()
     showMorePage (3);
 }
 
+//==============================================================================
+// Ideas and the seven steps
+void PocketApp::showIdeasList (bool shown)
+{
+    ideasShown = shown;
+    showTab (0);
+}
+
+void PocketApp::switchIdea (const juce::String& id)
+{
+    if (id == ideas.current().id)
+        return;
+    lockWatch.stopTimer();
+    if (sheetOpen)
+        closeSheet();
+    closePadSheet();
+    closeSendSheet();
+    audio.stopPlaying();
+    beats.leave();
+    loopsScreen.leave();
+    beats.flush();
+    loopsScreen.flush();
+    ideas.setSummary (beats.summary() + (loopsScreen.layerCount() > 0 ? U8(" · ") + juce::String (loopsScreen.layerCount()) + (loopsScreen.layerCount() == 1 ? " loop" : " loops") : juce::String()));
+    ideas.open (id);
+    beats.reloadIdea (ideas.current().name);
+    loopsScreen.reloadIdea();
+}
+
+void PocketApp::openIdea (const juce::String& id)
+{
+    switchIdea (id);
+    const auto& idea = ideas.current();
+    // Carry on where it left off: the step after the furthest one reached.
+    goStep (idea.sent ? stepSong : juce::jlimit (0, kSteps - 1, idea.reached + 1), true);
+}
+
+void PocketApp::newIdea()
+{
+    switchIdea (ideas.create (ideas.nextName()));
+    ideasShown = false;
+    showTab (0);
+    record.startRecording();
+    toast (ideas.current().name + U8(": recording. Tap the red button again to stop."));
+}
+
+void PocketApp::renameIdea (const juce::String& id)
+{
+    auto* info = ideas.find (id);
+    if (info == nullptr)
+        return;
+    auto* w = new juce::AlertWindow ("Name this idea", {}, juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", info->name);
+    w->addButton ("Rename", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, id] (int result)
+    {
+        if (result != 1)
+            return;
+        ideas.rename (id, w->getTextEditorContents ("name").substring (0, 60));
+        ideasScreen->refresh();
+        repaint();
+    }), true);
+}
+
+void PocketApp::deleteIdea (const juce::String& id)
+{
+    auto* info = ideas.find (id);
+    if (info == nullptr)
+        return;
+    auto* w = new juce::AlertWindow ("Delete " + info->name + "?", "Its pads, beat and loops are deleted. The sounds stay in Sounds.", juce::MessageBoxIconType::NoIcon, this);
+    w->addButton ("Delete", 1);
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, id] (int result)
+    {
+        if (result != 1)
+            return;
+        if (! ideas.remove (id))
+            return toast ("Open another idea before deleting this one");
+        ideasScreen->refresh();
+        toast ("Idea deleted");
+    }), true);
+}
+
+int PocketApp::currentStep() const
+{
+    if (sendOpen)
+        return stepSend;
+    switch (tab)
+    {
+        case 0:  return ideasShown ? -1 : (sheetOpen ? stepShape : stepRecord);
+        case 1:  return beats.mode() == 1 && beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
+        case 2:
+        case 3:  return stepSing;
+        default: return -1;
+    }
+}
+
+void PocketApp::noteStep()
+{
+    if (const int s = currentStep(); s >= 0)
+        ideas.reachedStep (s);
+}
+
+void PocketApp::goStep (int step, bool explain)
+{
+    switch (step)
+    {
+        case stepRecord:
+            showIdeasList (false);
+            break;
+        case stepShape:
+            showIdeasList (false);
+            openSheet();
+            break;
+        case stepPads:
+        case stepBeat:
+            showTab (1);
+            beats.showMode (1);
+            break;
+        case stepSing:
+            showTab (2);
+            break;
+        case stepSong:
+            showTab (2);
+            break;
+        case stepSend:
+            showTab (2);
+            loopsScreen.sendToMac (false);
+            break;
+        default:
+            return;
+    }
+    noteStep();
+    repaint();
+    if (! explain)
+        return;
+    static const char* tips[kSteps] = {
+        "RECORD: tap the red button to record a sound, then Save to sounds",
+        "SHAPE: trim, fade and add effects; Chop finds the hits",
+        "PADS: TO PAD puts sounds on pads, or EDIT PADS",
+        "BEAT: REC PADS, play along with the click, then LOCK BEAT",
+        "SING: pick Mic or Vocoder, then REC records a layer over the beat",
+        "SONG: mute and unmute layers as it plays. Song sections come next.",
+        "SEND: every loop layer goes to your Mac" };
+    if (step != stepSend)
+        toast (tips[step]);
+}
+
+bool PocketApp::stripShown() const
+{
+    return currentStep() >= 0 || (tab == 0 && ! ideasShown);
+}
+
+juce::Rectangle<float> PocketApp::stepRect (int step) const
+{
+    const float x0 = 16.0f, x1 = (float) getWidth() - 98.0f, gap = 4.0f;
+    const float w = (x1 - x0 - gap * (kSteps - 1)) / (float) kSteps;
+    return { x0 + (float) step * (w + gap), (float) insets.getTop() + 36.0f, w, 24.0f };
+}
+
+juce::Rectangle<float> PocketApp::nextRect() const
+{
+    return { (float) getWidth() - 90.0f, (float) insets.getTop() + 35.0f, 78.0f, 22.0f };
+}
+
+juce::Rectangle<float> PocketApp::backRect() const
+{
+    return { 8.0f, (float) insets.getTop() + 2.0f, (float) getWidth() - 180.0f, 32.0f };
+}
+
+//==============================================================================
+// LOCK BEAT
+void PocketApp::lockBeat (int bars)
+{
+    if (lockWatch.isTimerRunning())
+        return toast ("Already locking the beat");
+    auto& loops = loopsScreen.engine();
+    int layer = -1;
+    for (int i = 0; i < pocket::kLoopLayers && layer < 0; ++i)
+        if (loops.state (i) == pocket::LoopState::empty)
+            layer = i;
+    if (layer < 0)
+        return toast ("All 8 loop layers are full: clear one in Loops first");
+    lockLayer = layer;
+    lockBars = bars;
+    lockArmed = false;
+    auto& b = beats.engine();
+    if (! b.patternPlaying())
+        b.setPatternPlaying (true);
+    toast ("Locking: the beat goes onto loop " + juce::String (layer + 1) + " from its next start");
+    lockWatch.startTimer (20);
+}
+
+void PocketApp::lockWatchTick()
+{
+    auto& b = beats.engine();
+    auto& loops = loopsScreen.engine();
+    if (! lockArmed)
+    {
+        if (! b.patternPlaying())
+        {
+            lockWatch.stopTimer();
+            return toast ("Lock cancelled");
+        }
+        if (! b.clockRunning())
+            return;
+        const double len = lockBars * 4.0;
+        const double pos = std::fmod (b.clockBeat(), len);
+        // Arm in the pattern's last bar, so recording starts on the next bar line: the pattern's start.
+        if (pos >= len - 4.0 && pos < len - 0.3)
+        {
+            if (! loops.arm (lockLayer, pocket::LoopSource::drums, lockBars))
+            {
+                lockWatch.stopTimer();
+                return toast ("Couldn't arm loop " + juce::String (lockLayer + 1));
+            }
+            lockArmed = true;
+        }
+        return;
+    }
+    const auto st = loops.state (lockLayer);
+    if (st == pocket::LoopState::playing)
+    {
+        lockWatch.stopTimer();
+        loops.setTransport (true);     // the loop keeps the clock going once the pattern stops
+        b.setPatternPlaying (false);
+        b.setPlaying (false);
+        b.setClick (false);
+        beats.refreshPads();
+        toast ("Beat locked on loop " + juce::String (lockLayer + 1) + ". Next: sing over it");
+    }
+    else if (st == pocket::LoopState::empty)
+    {
+        lockWatch.stopTimer();
+        toast ("Lock cancelled");
+    }
+}
+
 void PocketApp::linkChanged()
 {
     repaint();
@@ -686,6 +945,8 @@ void PocketApp::linkChanged()
 
 juce::Rectangle<float> PocketApp::chipRect() const
 {
+    if (stripShown())
+        return { (float) getWidth() - 150, (float) insets.getTop() + 3, 138, 28 };
     return { (float) getWidth() - 150, (float) insets.getTop() + 12, 138, 38 };
 }
 
@@ -697,7 +958,17 @@ bool PocketApp::remoteShowing() const
 void PocketApp::mouseUp (const juce::MouseEvent& e)
 {
     if (chipRect().expanded (4).contains (e.position))
-        openMacLink();
+        return openMacLink();
+    if (! stripShown())
+        return;
+    if (backRect().contains (e.position))
+        return showIdeasList (true);
+    const int now = currentStep();
+    if (nextRect().expanded (2).contains (e.position))
+        return goStep (juce::jmin (kSteps - 1, now + 1), true);
+    for (int s = 0; s < kSteps; ++s)
+        if (stepRect (s).expanded (2, 4).contains (e.position))
+            return goStep (s, s != now);
 }
 
 //==============================================================================
@@ -709,9 +980,45 @@ void PocketApp::paint (juce::Graphics& g)
     const bool dark = remoteShowing();
     if (dark)
         g.fillAll (juce::Colour (0xff1f1b17));
-    g.setColour (dark ? juce::Colour (0xfff1e7d6) : col::ink);
-    g.setFont (fraunces (32.0f));
-    g.drawText ("Kaleidobox", 16, top + 8, 220, 46, juce::Justification::centredLeft);
+    if (stripShown())
+    {
+        // The idea's name (tap it, or the arrow, for the Ideas list), then the seven steps and NEXT.
+        auto back = backRect();
+        g.setColour (col::ink);
+        juce::Path arrow;
+        arrow.startNewSubPath (back.getX() + 15, back.getCentreY() - 8);
+        arrow.lineTo (back.getX() + 8, back.getCentreY());
+        arrow.lineTo (back.getX() + 15, back.getCentreY() + 8);
+        g.strokePath (arrow, juce::PathStrokeType (2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setFont (condensedBold (23.0f));
+        g.drawFittedText (ideas.current().name, back.withTrimmedLeft (24).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+
+        const int now = currentStep();
+        const int reached = ideas.current().reached;
+        for (int s = 0; s < kSteps; ++s)
+        {
+            auto r = stepRect (s);
+            g.setColour (s <= juce::jmax (reached, now) ? stepColour (s) : col::creamDeep);
+            g.fillRoundedRectangle (r.getX(), r.getY(), r.getWidth(), s == now ? 7.0f : 5.0f, 2.5f);
+            g.setColour (s == now ? col::ink : col::inkDim);
+            g.setFont (spaced (condensedBold (s == now ? 12.0f : 11.0f), 0.04f));
+            g.drawFittedText (stepName (s), r.withTrimmedTop (8).toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        }
+        if (now < kSteps - 1)
+        {
+            auto n = nextRect();
+            drawRaised (g, n, Look::amber, false, 8.0f);
+            g.setColour (col::ink);
+            g.setFont (spaced (condensedBold (13.0f), 0.06f));
+            g.drawFittedText (juce::String (stepName (now + 1)) + U8(" \xe2\x80\xba"), n.withTrimmedBottom (3).toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        }
+    }
+    else
+    {
+        g.setColour (dark ? juce::Colour (0xfff1e7d6) : col::ink);
+        g.setFont (fraunces (32.0f));
+        g.drawText ("Kaleidobox", 16, top + 8, 220, 46, juce::Justification::centredLeft);
+    }
 
     // the link to the Mac: green with its name when linked; tap it for Link to your Mac
     auto chip = chipRect();
@@ -742,15 +1049,24 @@ void PocketApp::paint (juce::Graphics& g)
     g.fillRect (0, top + 60, getWidth(), 2);
 }
 
+juce::BorderSize<int> PocketApp::safeInsets()
+{
+   #if JUCE_IOS
+    auto display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    auto b = display != nullptr ? display->safeAreaInsets : juce::BorderSize<int>();
+    // Never under the clock, even before the phone has said where it is.
+    return { juce::jmax (b.getTop(), 59), b.getLeft(), juce::jmax (b.getBottom(), 0), b.getRight() };
+   #else
+    return { 47, 0, 34, 0 };   // pretend to be an iPhone with a notch
+   #endif
+}
+
 void PocketApp::resized()
 {
     if (more == nullptr || toastBox == nullptr || dim == nullptr)
         return;   // still being built
-    auto display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-    insets = display != nullptr ? display->safeAreaInsets : juce::BorderSize<int>();
-   #if ! JUCE_IOS
-    insets = juce::BorderSize<int> (47, 0, 34, 0);   // pretend to be an iPhone with a notch
-   #endif
+    insets = safeInsets();
+    insetWatch.startTimer (500);
 
     const int w = getWidth(), h = getHeight();
     const int tabH = 47 + insets.getBottom();
@@ -758,7 +1074,7 @@ void PocketApp::resized()
     tabs->setBounds (0, h - tabH, w, tabH);
 
     auto content = juce::Rectangle<int> (0, insets.getTop() + 62, w, h - tabH - insets.getTop() - 62);
-    for (auto* c : std::initializer_list<juce::Component*> { &record, &sounds, &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
 
@@ -861,6 +1177,20 @@ void PocketApp::writeSnapshots (const juce::File& folder)
 
     auto take = lib.load (lib.items().front().id);
 
+    // The Ideas list, like Voice Memos
+    {
+        const auto now = juce::Time::getCurrentTime();
+        const auto day = juce::RelativeTime::days (1);
+        ideas.rename (ideas.current().id, "Porch rain groove");
+        ideas.setDemo (ideas.current().id, stepSing, false, U8("92 BPM · 6 pads · 3 loops"), now - juce::RelativeTime::minutes (20));
+        ideas.setDemo (ideas.create ("Train horn chop"), stepBeat, false, U8("92 BPM · 4 pads · beat recorded"), now - day);
+        ideas.setDemo (ideas.create ("Humming in the car"), stepRecord, false, U8("0:38 recording"), now - juce::RelativeTime::days (3));
+        ideas.setDemo (ideas.create ("Late night vocoder"), stepSend, true, U8("84 BPM · 5 loops"), now - juce::RelativeTime::days (4));
+    }
+    showIdeasList (true);
+    savePng (folder.getChildFile ("00-ideas.png"));
+
+    ideasShown = false;
     showTab (0);
     record.showDemoTake (take, "Porch rain", false);
     savePng (folder.getChildFile ("01-record.png"));
@@ -927,6 +1257,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     beats.fillDemoKit();
     beats.showMode (1);
     savePng (folder.getChildFile ("04-beats-mpc-pads.png"));
+    beats.fillDemoPattern();
+    savePng (folder.getChildFile ("04b-pads-pattern.png"));
 
     openPadSheet (4);
     resized();
@@ -969,6 +1301,27 @@ void PocketApp::writeSnapshots (const juce::File& folder)
 
     if (const auto why = beats.selfCheckSound(); why.isNotEmpty())
         problems.add ("Sound: " + why);
+    if (const auto why = beats.selfCheckPattern(); why.isNotEmpty())
+        problems.add ("Pad pattern: " + why);
+
+    // Ideas: each keeps its own pads and beat
+    {
+        const auto first = ideas.current().id;
+        const int pads = beats.kit().usedPads();
+        const auto hits = beats.drums().padPattern.hits.size();
+        const auto check = ideas.create ("Self-check idea");
+        switchIdea (check);
+        const int emptyPads = beats.kit().usedPads();
+        const auto emptyHits = beats.drums().padPattern.hits.size();
+        switchIdea (first);
+        if (emptyPads != 0 || emptyHits != 0)
+            problems.add ("Ideas: a new idea didn't start with empty pads and beat");
+        if (beats.kit().usedPads() != pads || beats.drums().padPattern.hits.size() != hits)
+            problems.add ("Ideas: going back didn't bring the pads (" + juce::String (beats.kit().usedPads()) + " of " + juce::String (pads)
+                          + ") and beat (" + juce::String ((int) beats.drums().padPattern.hits.size()) + " of " + juce::String ((int) hits) + ") back");
+        if (! ideas.remove (check))
+            problems.add ("Ideas: couldn't delete an idea");
+    }
 
     juce::String loopsReport;
     if (const auto why = LoopsScreen::selfCheck (loopsReport); why.isNotEmpty())
@@ -979,7 +1332,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         problems.add ("Vocoder: " + why);
 
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: TO PAD, the MPC export round trip, the drum machine and the pads make sound, and loops record, line up and play with no gap, and the vocoder makes sound that follows the voice\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: ideas keep their own pads and beat, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, and loops record, line up and play with no gap, and the vocoder makes sound that follows the voice\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport);

@@ -69,7 +69,7 @@ juce::File Library::defaultRoot()
 }
 
 Library::Library (juce::File r)
-    : root (std::move (r)), soundsFolder (root.getChildFile ("Sounds")), indexFile (root.getChildFile ("sounds.json"))
+    : root (std::move (r)), soundsFolder (root.getChildFile ("Sounds")), indexFile (root.getChildFile ("sounds.json")), ideaFolder (root)
 {
     formatManager.registerBasicFormats();
     soundsFolder.createDirectory();
