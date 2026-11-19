@@ -146,7 +146,7 @@ int Kit::chop (int first, const juce::String& soundId, bool onlyEmpty)
 }
 
 //==============================================================================
-juce::File Kit::kitsFolder() const { return library.getRoot().getChildFile ("Kits"); }
+juce::File Kit::kitsFolder() const { return library.ideaRoot().getChildFile ("Kits"); }
 
 void Kit::save() const
 {

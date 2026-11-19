@@ -16,6 +16,7 @@ public:
     pocket::BeatsEngine& engine() { return beatsEngine; }
     pocket::Kit& kit() { return padKit; }
     pocket::DrumData& drums() { return drumData; }
+    const pocket::DrumData& drums() const { return drumData; }
 
     void showMode (int mode);   // 0 drum machine, 1 MPC pads
     int mode() const { return screenMode; }
@@ -30,6 +31,9 @@ public:
     void setBpm (double);       // the one tempo of the app
     void leave();               // the tab was left: stop the drums and the pads
     void refreshPads();         // redraw the pad buttons' states (after LOCK BEAT)
+    void flush();               // save anything waiting to be saved, now (before switching ideas)
+    void reloadIdea (const juce::String& ideaName);   // the library points at another idea: load its pads and beat
+    juce::String summary() const;   // "92 BPM · 4 pads · beat recorded", for the Ideas list
 
     void exportForMpc();
     void renameKit();

@@ -725,7 +725,7 @@ private:
 //==============================================================================
 BeatsScreen::BeatsScreen (PocketHost& h, Library& lib) : host (h), library (lib), padKit (lib)
 {
-    auto drumFile = lib.getRoot().getChildFile ("Beats").getChildFile ("drums.json");
+    auto drumFile = lib.ideaRoot().getChildFile ("Beats").getChildFile ("drums.json");
     if (drumFile.existsAsFile())
         drumData = DrumData::fromVar (juce::JSON::parse (drumFile));
     beatsEngine.setDrums (drumData);
@@ -830,6 +830,45 @@ void BeatsScreen::leave()
     beatsEngine.stopPads();
     if (padsView != nullptr)
         padsView->refresh();
+}
+
+void BeatsScreen::reloadIdea (const juce::String& ideaName)
+{
+    leave();
+    auto drumFile = library.ideaRoot().getChildFile ("Beats").getChildFile ("drums.json");
+    const double tempo = drumData.bpm;
+    drumData = drumFile.existsAsFile() ? DrumData::fromVar (juce::JSON::parse (drumFile)) : DrumData();
+    if (! drumFile.existsAsFile())
+        drumData.bpm = tempo;   // a new idea starts at the tempo you were at
+    drumsDirty = kitDirty = false;
+    patternUndo.clear();
+    beatsEngine.setDrums (drumData);
+    beatsEngine.setPadPattern (drumData.padPattern);
+    setBpm (drumData.bpm);
+    padKit.pads = {};
+    padKit.name = Kit::mpcName (ideaName.toUpperCase());
+    if (padKit.name.isEmpty())
+        padKit.name = "IDEA";
+    padKit.load();
+    pushPads();
+    bank = 0;
+    selected = 0;
+    if (drumView != nullptr)
+        drumView->refresh();
+    if (padsView != nullptr)
+        padsView->refresh();
+    repaint();
+}
+
+juce::String BeatsScreen::summary() const
+{
+    juce::StringArray bits;
+    bits.add (juce::String (juce::roundToInt (drumData.bpm)) + " BPM");
+    if (const int n = padKit.usedPads(); n > 0)
+        bits.add (juce::String (n) + (n == 1 ? " pad" : " pads"));
+    if (! drumData.padPattern.hits.empty())
+        bits.add ("beat recorded");
+    return bits.joinIntoString (U8(" · "));
 }
 
 void BeatsScreen::refreshPads()
@@ -984,10 +1023,16 @@ void BeatsScreen::timerCallback()
         padsView->tick();
 
     if (saveCountdown > 0 && --saveCountdown == 0)
+        flush();
+}
+
+void BeatsScreen::flush()
+{
+    saveCountdown = 0;
     {
         if (drumsDirty)
         {
-            auto dir = library.getRoot().getChildFile ("Beats");
+            auto dir = library.ideaRoot().getChildFile ("Beats");
             dir.createDirectory();
             dir.getChildFile ("drums.json").replaceWithText (juce::JSON::toString (drumData.toVar()));
             drumsDirty = false;

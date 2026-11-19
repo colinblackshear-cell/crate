@@ -15,6 +15,7 @@ public:
     ~RecordScreen() override;
 
     void loadSound (const juce::String& id);
+    void startRecording() { if (! audio.isRecording()) toggleRecord(); }   // NEW IDEA
     // Demo for screenshots: puts a take on the screen as if it had just been recorded.
     void showDemoTake (crate::SharedAudio, const juce::String& name, bool recordingLook);
     void sheetOpened();

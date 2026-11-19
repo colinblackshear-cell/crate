@@ -23,6 +23,9 @@ public:
     int vocoderLayer() const;
     void stopVocoder();
     void leave();                           // another tab (not Beats) was opened: stop the clock and the loops
+    void flush() { save(); }                // before switching ideas
+    void reloadIdea();
+    void sendToMac (bool onlyPicked);       // TO MAC: the picked layer (or every layer) onto the Mac's loop layers                      // the library points at another idea: load its loops
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -53,7 +56,7 @@ private:
     void save();
     void restore();
     int barsForNext() const;
-    juce::File folder() const { return library.getRoot().getChildFile ("Loops"); }
+    juce::File folder() const { return library.ideaRoot().getChildFile ("Loops"); }
     juce::Rectangle<float> rowRect (int l) const;
     juce::Rectangle<float> actRect (int l) const;
     juce::Rectangle<float> muteRect (int l) const;

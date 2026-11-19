@@ -45,6 +45,10 @@ public:
 
     static juce::File defaultRoot();
     const juce::File& getRoot() const { return root; }
+    // The idea being worked on: its pads, beat and loops live in this folder (Ideas/<id>). The sounds
+    // stay shared by every idea. Until an idea is picked it's the root, as before ideas.
+    const juce::File& ideaRoot() const { return ideaFolder; }
+    void setIdeaRoot (juce::File f) { ideaFolder = std::move (f); }
 
     const std::vector<SoundItem>& items() const { return sounds; }   // newest first
     const SoundItem* find (const juce::String& id) const;
@@ -69,7 +73,7 @@ private:
     void loadIndex();
     juce::File uniqueFile (const juce::String& name) const;
 
-    juce::File root, soundsFolder, indexFile;
+    juce::File root, soundsFolder, indexFile, ideaFolder;
     std::vector<SoundItem> sounds;
     juce::AudioFormatManager formatManager;
 };

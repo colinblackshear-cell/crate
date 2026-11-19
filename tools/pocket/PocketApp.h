@@ -2,11 +2,13 @@
 
 #include "BeatsScreen.h"
 #include "EffectsSheet.h"
+#include "IdeasScreen.h"
 #include "LinkScreens.h"
 #include "LoopsScreen.h"
 #include "PadSheet.h"
 #include "PocketAudio.h"
 #include "PocketHost.h"
+#include "PocketIdeas.h"
 #include "PocketLibrary.h"
 #include "PocketSettings.h"
 #include "PocketTheme.h"
@@ -96,6 +98,20 @@ private:
     juce::Rectangle<int> padSheetBounds() const;
     juce::Rectangle<int> sendSheetBounds() const;
     void showTab (int);
+    // Ideas and the seven steps (Record, Shape, Pads, Beat, Sing, Song, Send)
+    void showIdeasList (bool shown);
+    void openIdea (const juce::String& id);
+    void newIdea();
+    void switchIdea (const juce::String& id);
+    void renameIdea (const juce::String& id);
+    void deleteIdea (const juce::String& id);
+    int currentStep() const;     // -1 = not on a step (the Ideas list, More)
+    void goStep (int step, bool explain);
+    void noteStep();
+    bool stripShown() const;
+    juce::Rectangle<float> stepRect (int step) const;
+    juce::Rectangle<float> nextRect() const;
+    juce::Rectangle<float> backRect() const;
     void showMorePage (int);   // 0 list, 1 sounds, 2 remote, 3 mac link, 4 settings
     void layoutSheet (bool shown);
     void savePng (const juce::File&);
@@ -104,6 +120,7 @@ private:
     PocketLook look;
 
     pocket::Library lib;
+    pocket::Ideas ideas;       // before the screens: it points the library at the current idea's folder
     pocket::AppSettings appSettings;
     pocket::LinkClient link;   // the Mac
     BeatsScreen beats;     // before the sound card, so the card stops before the engine goes
@@ -119,6 +136,8 @@ private:
     std::unique_ptr<SendToMacSheet> sendSheet;
     std::unique_ptr<SettingsScreen> settings;
     std::unique_ptr<MoreScreen> more;
+    std::unique_ptr<IdeasScreen> ideasScreen;
+    bool ideasShown = true;   // the Record tab shows the Ideas list (true) or the recorder
     std::unique_ptr<TabBar> tabs;
     std::unique_ptr<Toast> toastBox;
     std::unique_ptr<Dim> dim;

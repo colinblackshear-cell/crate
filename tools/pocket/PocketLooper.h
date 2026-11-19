@@ -72,6 +72,7 @@ public:
     bool transportRunning() const { return beats.clockRunning(); }
 
     LoopState state (int layer) const { return (LoopState) layers[(size_t) layer].uiState.load(); }
+    bool settling (int layer) const { return layers[(size_t) layer].pending.load() > 0; }   // a command the audio hasn't handled yet
     float position (int layer) const { return layers[(size_t) layer].uiPos.load(); }   // 0..1 through the loop
     int version (int layer) const { return layers[(size_t) layer].version.load(); }
     double startBeat (int layer) const { return layers[(size_t) layer].uiStart.load(); }
