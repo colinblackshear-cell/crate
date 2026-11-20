@@ -1,6 +1,7 @@
 #include "PocketApp.h"
 
 #include "core/AudioFiles.h"
+#include "PocketFactory.h"
 
 using namespace pocket;
 
@@ -34,7 +35,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        static const char* titles[] = { "SOUNDS", "REMOTE", "MAC LINK", "SETTINGS" };
+        static const char* titles[] = { "SOUNDS", "REMOTE", "MAC LINK", "SETTINGS", "TAKE THE TOUR" };
         const int n = (int) lib.items().size();
         const bool linked = link.isLinked();
         const auto mac = link.getMacName();
@@ -44,8 +45,9 @@ public:
             linked ? U8("Linked to ") + mac + U8(" · Kaleidobox open")
                    : link.getStatus() == LinkClient::Status::connecting ? U8("Linking to ") + mac + U8("…")
                                                                         : U8("Not linked · link to your Mac on this Wi-Fi"),
-            U8("Loop count-in · mic, tempo and click come later") };
-        for (int i = 0; i < 4; ++i)
+            U8("Loop count-in · mic, tempo and click come later"),
+            U8("Seven stops from a sound to a song · two minutes") };
+        for (int i = 0; i < 5; ++i)
         {
             auto r = rowBounds (i);
             drawRaised (g, r, Look::cream, false, 16.0f);
@@ -86,7 +88,7 @@ public:
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < 5; ++i)
             if (rowBounds (i).contains (e.position) && onOpen)
                 onOpen (i + 1);
     }
@@ -125,6 +127,16 @@ private:
         {
             g.drawRoundedRectangle (c.x - 15, c.y - 5, 17, 10, 5.0f, 2.6f);
             g.drawRoundedRectangle (c.x - 2, c.y - 5, 17, 10, 5.0f, 2.6f);
+        }
+        else if (i == 4)
+        {
+            for (int k = 0; k < 6; ++k)
+            {
+                juce::Path petal;
+                petal.addRoundedRectangle (-3.0f, -15.0f, 6.0f, 15.0f, 3.0f);
+                petal.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::twoPi * (float) k / 6.0f).translated (c));
+                g.fillPath (petal);
+            }
         }
         else
         {
@@ -328,6 +340,7 @@ PocketApp::PocketApp (Options o)
       beats (static_cast<PocketHost&> (*this), lib),
       loopsScreen (static_cast<PocketHost&> (*this), lib, beats.engine(), appSettings),
       vocoderScreen (static_cast<PocketHost&> (*this), lib, audio, loopsScreen, beats.engine()),
+      singScreen (static_cast<PocketHost&> (*this), loopsScreen, vocoderScreen.engine(), beats, appSettings),
       padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
       sounds (static_cast<PocketHost&> (*this), audio, lib)
@@ -351,17 +364,54 @@ PocketApp::PocketApp (Options o)
     link.onSay = [this] (const juce::String& t) { toast (t); };
     settings = std::make_unique<SettingsScreen> (appSettings, backToMore, [this] { loopsScreen.engine().setCountIn (appSettings.countIn); });
     more = std::make_unique<MoreScreen> (lib, link, [this] { return loopsScreen.layerCount(); });
-    more->onOpen = [this] (int page) { showMorePage (page); };
+    more->onOpen = [this] (int page) { if (page == 5) startTour(); else showMorePage (page); };
     ideasScreen = std::make_unique<IdeasScreen> (ideas);
     ideasScreen->onOpen = [this] (const juce::String& id) { openIdea (id); };
     ideasScreen->onNew = [this] { newIdea(); };
+    ideasScreen->onNewBeat = [this] { newSongWithBeat(); };
+    ideasScreen->onNewKit = [this] { newSongWithKit(); };
+    ideasScreen->onPlay = [this] (const juce::String& id) { playIdea (id); };
+    ideasScreen->isPlaying = [this] (const juce::String& id) { return id == ideas.current().id && beats.engine().clockRunning(); };
+    title = std::make_unique<TitleScreen>();
+    title->micLevel = [this] { return vocoderScreen.engine().takeMicLevel(); };
+    title->onStart = [this] { showTitle (false); };
+    title->onTour = [this] { showTitle (false); startTour(); };
+    tour = std::make_unique<TourOverlay>();
+    tour->show = [this] (int stop) { return tourStop (stop); };
+    tour->onFinish = [this] { endTour(); };
     ideasScreen->onRename = [this] (const juce::String& id) { renameIdea (id); };
     ideasScreen->onDelete = [this] (const juce::String& id) { deleteIdea (id); };
     tabs = std::make_unique<TabBar>();
     tabs->onSelect = [this] (int i) { showTab (i); };
     toastBox = std::make_unique<Toast>();
     dim = std::make_unique<Dim>();
-    dim->onTap = [this] { closeSheet(); closePadSheet(); closeSendSheet(); closeTempo(); };
+    dim->onTap = [this] { closeSheet(); closePadSheet(); closeSendSheet(); closeTempo(); closeSoundBank(); };
+    soundBank.onLoad = [this] (int k) { loadKit (k); };
+    soundBank.onDone = [this] { closeSoundBank(); };
+    soundBank.onOpenSounds = [this] { closeSoundBank(); showMorePage (1); };
+    soundBank.loadedKitName = [this] { return beats.kit().name; };
+    soundBank.onImport = [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Choose sounds to import", juce::File(), "*.wav;*.aif;*.aiff;*.mp3");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
+                              [this] (const juce::FileChooser& fc)
+        {
+            int ok = 0;
+            juce::String error;
+            for (auto& f : fc.getResults())
+            {
+                juce::String e;
+                if (lib.importFile (f, e).isNotEmpty())
+                    ++ok;
+                else
+                    error = e;
+            }
+            if (ok > 0)
+                toast ("Imported " + juce::String (ok) + (ok == 1 ? " sound" : " sounds") + U8(". They're in More › Sounds: TO PAD puts one on a pad."));
+            else if (error.isNotEmpty())
+                toast (error);
+        });
+    };
     tempoSheet.getBpm = [this] { return beats.drums().bpm; };
     tempoSheet.setBpm = [this] (double b) { beats.setBpm (b); repaint(); };
     tempoSheet.getClick = [this] { return appSettings.click; };
@@ -392,7 +442,10 @@ PocketApp::PocketApp (Options o)
         if (lib.find (id) == nullptr)
             return toast ("That sound is gone from Sounds");
         closePadSheet();
-        editSound (id);
+        ideasShown = false;
+        showTab (0);
+        record.editForPad (pad, id);
+        noteStep();
     };
     padSheet.onChop = [this] (int pad)
     {
@@ -411,17 +464,24 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
     addAndMakeVisible (*tabs);
     addChildComponent (*dim);
     addChildComponent (sheet);
     addChildComponent (padSheet);
     addChildComponent (tempoSheet);
+    addChildComponent (soundBank);
     addChildComponent (*sendSheet);
     addChildComponent (*toastBox);
+    addChildComponent (*tour);
+    addChildComponent (*title);
 
     setSize (390, 844);
+    if (o.audio)
+        fillEmptyIdea();   // the first launch: the pads start with the Street kit
+    if (o.audio)
+        title->setVisible (true);   // the opening title, each time the app opens
     sounds.selectFirst();
     animate = o.audio;
 
@@ -448,8 +508,9 @@ void PocketApp::toast (const juce::String& t)
     toastBox->show (t);
 }
 
-void PocketApp::showTab (int i)
+void PocketApp::showTab (int i, bool sing)
 {
+    singShown = i == 3 && sing;
     if (sheetOpen)
         closeSheet();
     closePadSheet();
@@ -473,7 +534,8 @@ void PocketApp::showTab (int i)
     }
     beats.setVisible (i == 1);
     loopsScreen.setVisible (i == 2);
-    vocoderScreen.setVisible (i == 3);
+    vocoderScreen.setVisible (i == 3 && ! singShown);
+    singScreen.setVisible (i == 3 && singShown);
     if (i == 4)
         showMorePage (0);
     else
@@ -498,6 +560,7 @@ void PocketApp::showMorePage (int page)
         loopsScreen.leave();
         loopsScreen.setVisible (false);
         vocoderScreen.setVisible (false);
+        singScreen.setVisible (false);
     }
     more->setVisible (page == 0);
     sounds.setVisible (page == 1);
@@ -717,6 +780,110 @@ void PocketApp::openMacLink()
 }
 
 //==============================================================================
+// SOUNDS: the factory kits and your own sounds
+void PocketApp::openSoundBank()
+{
+    if (bankOpen)
+        return;
+    if (const int n = lib.importDropFolder(); n > 0)
+        toast (juce::String (n) + (n == 1 ? " sound" : " sounds") + U8(" came in from Drop Sounds Here. They're in More › Sounds."));
+    closeSheet();
+    closePadSheet();
+    closeSendSheet();
+    closeTempo();
+    bankOpen = true;
+    auto open = tempoBounds().withTop (getHeight() - 560 - insets.getBottom());
+    dim->setVisible (true);
+    soundBank.setBounds (open.withY (getHeight()));
+    soundBank.setVisible (true);
+    soundBank.toFront (false);
+    toastBox->toFront (false);
+    slide (soundBank, open, true);
+}
+
+void PocketApp::closeSoundBank()
+{
+    if (! bankOpen)
+        return;
+    bankOpen = false;
+    dim->setVisible (false);
+    slide (soundBank, tempoBounds().withTop (getHeight() - 560 - insets.getBottom()), false);
+    if (! animate)
+        soundBank.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->bankOpen)
+                safe->soundBank.setVisible (false);
+        });
+}
+
+void PocketApp::loadKit (int index)
+{
+    auto doLoad = [this, index]
+    {
+        const int bank = beats.currentBank();
+        const int n = loadFactoryKit (lib, beats.kit(), index, bank);
+        beats.padsChanged();
+        soundBank.repaint();
+        closeSoundBank();
+        toast (juce::String (factoryKits()[(size_t) index].name) + " is on bank " + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
+               + U8(" (") + juce::String (n) + U8(" pads). Hold a pad for its sample page."));
+    };
+    bool used = false;
+    for (int i = 0; i < 16; ++i)
+        used = used || ! beats.kit().pads[(size_t) (beats.currentBank() * 16 + i)].empty();
+    if (! used)
+        return doLoad();
+    auto* w = new juce::AlertWindow ("Replace bank " + juce::String::charToString ((juce::juce_wchar) ('A' + beats.currentBank())) + "'s pads?",
+                                     "The kit goes on its 16 pads. The sounds on them now stay in Sounds.", juce::MessageBoxIconType::NoIcon, this);
+    w->addButton ("Replace", 1);
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([doLoad] (int r) { if (r == 1) doLoad(); }), true);
+}
+
+void PocketApp::fillEmptyIdea()
+{
+    if (beats.kit().usedPads() > 0)
+        return;
+    loadFactoryKit (lib, beats.kit(), 0, 0);
+    beats.padsChanged();
+}
+
+//==============================================================================
+// The pad sample page
+void PocketApp::padSoundEdited (const juce::String& soundId)
+{
+    auto& kit = beats.kit();
+    int n = 0;
+    for (int p = 0; p < kPads; ++p)
+    {
+        auto old = kit.pads[(size_t) p];
+        if (old.empty() || old.soundId != soundId)
+            continue;
+        if (! kit.assign (p, soundId, old.from, old.to, old.name))
+            continue;
+        auto& now = kit.pads[(size_t) p];
+        now.volume = old.volume;
+        now.pan = old.pan;
+        now.tune = old.tune;
+        now.mode = old.mode;
+        ++n;
+    }
+    beats.padsChanged();
+    if (n > 0)
+        toast (n == 1 ? juce::String ("The pad has the new sound") : juce::String (n) + " pads have the new sound");
+}
+
+void PocketApp::backToPads (int pad)
+{
+    record.endPadMode();
+    showTab (1);
+    beats.showMode (1);
+    beats.selectPad (pad);
+}
+
+//==============================================================================
 // Ideas and the seven steps
 void PocketApp::showIdeasList (bool shown)
 {
@@ -739,9 +906,11 @@ void PocketApp::switchIdea (const juce::String& id)
     beats.flush();
     loopsScreen.flush();
     ideas.setSummary (beats.summary() + (loopsScreen.layerCount() > 0 ? U8(" · ") + juce::String (loopsScreen.layerCount()) + (loopsScreen.layerCount() == 1 ? " loop" : " loops") : juce::String()));
+    record.endPadMode();
     ideas.open (id);
     beats.reloadIdea (ideas.current().name);
     loopsScreen.reloadIdea();
+    fillEmptyIdea();
 }
 
 void PocketApp::openIdea (const juce::String& id)
@@ -807,7 +976,7 @@ int PocketApp::currentStep() const
     {
         case 0:  return ideasShown ? -1 : (sheetOpen ? stepShape : stepRecord);
         case 1:  return beats.mode() == 1 && beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
-        case 2:
+        case 2:  return stepSong;
         case 3:  return stepSing;
         default: return -1;
     }
@@ -836,7 +1005,7 @@ void PocketApp::goStep (int step, bool explain)
             beats.showMode (1);
             break;
         case stepSing:
-            showTab (2);
+            showTab (3, true);
             break;
         case stepSong:
             showTab (2);
@@ -857,8 +1026,8 @@ void PocketApp::goStep (int step, bool explain)
         "SHAPE: trim, fade and add effects; Chop finds the hits",
         "PADS: TO PAD puts sounds on pads, or EDIT PADS",
         "BEAT: REC PADS, play along with the click, then LOCK BEAT",
-        "SING: pick Mic or Vocoder, then REC records a layer over the beat",
-        "SONG: mute and unmute layers as it plays. Song sections come next.",
+        "SING: headphones on, pick your voice or the vocoder, chords on the pads, then REC",
+        "SONG: your layers. Mute, dub and EDIT them (trim, effects, moves) as it plays.",
         "SEND: every loop layer goes to your Mac" };
     if (step != stepSend)
         toast (tips[step]);
@@ -1216,7 +1385,7 @@ void PocketApp::resized()
     tabs->setBounds (0, h - tabH, w, tabH);
 
     auto content = juce::Rectangle<int> (0, insets.getTop() + 62, w, h - tabH - insets.getTop() - 62);
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
 
@@ -1224,7 +1393,96 @@ void PocketApp::resized()
     layoutSheet (sheetOpen);
     padSheet.setBounds (padSheetOpen ? padSheetBounds() : padSheetBounds().withY (h));
     tempoSheet.setBounds (tempoOpen ? tempoBounds() : tempoBounds().withY (h));
+    soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - 560 - insets.getBottom()) : tempoBounds().withTop (h - 560 - insets.getBottom()).withY (h));
     toastBox->setBounds (24, h - tabH - 62, w - 48, 48);
+    title->setBounds (0, 0, w, h);
+    tour->setBounds (0, 0, w, h);
+}
+
+//==============================================================================
+// The opening title, the tour, and the other ways to start a song
+void PocketApp::showTitle (bool shown)
+{
+    title->setVisible (shown);
+    if (shown)
+        title->toFront (false);
+}
+
+void PocketApp::startTour()
+{
+    showTitle (false);
+    tour->setBounds (getLocalBounds());
+    tour->setVisible (true);
+    tour->begin();
+}
+
+void PocketApp::endTour()
+{
+    tour->setVisible (false);
+    showIdeasList (true);
+    toast ("That's the tour. Start a song with a sound, a beat or a kit.");
+}
+
+juce::Rectangle<int> PocketApp::tourStop (int stop)
+{
+    switch (stop)
+    {
+        case 0:
+            ideasShown = false;
+            showTab (0);
+            return getLocalArea (&record, record.tourSpot());
+        case 1:
+            ideasShown = false;
+            showTab (0);
+            return stepRect (stepShape).toNearestInt().expanded (4, 2);
+        case 2:
+        case 3:
+            showTab (1);
+            beats.showMode (1);
+            return getLocalArea (&beats, beats.tourSpot (stop == 2 ? 0 : 1));
+        case 4:
+            showTab (3, true);
+            return getLocalArea (&singScreen, singScreen.tourSpot());
+        case 5:
+        case 6:
+            showTab (2);
+            return getLocalArea (&loopsScreen, loopsScreen.tourSpot (stop == 5 ? 0 : 1));
+        default:
+            return {};
+    }
+}
+
+void PocketApp::newSongWithBeat()
+{
+    switchIdea (ideas.create (ideas.nextName()));
+    beats.fillStarterBeat();
+    showTab (1);
+    beats.showMode (1);
+    togglePlay();
+    noteStep();
+    toast ("A ready beat on the Street kit. Play the pads over it, or REC PADS to add your own.");
+}
+
+void PocketApp::newSongWithKit()
+{
+    switchIdea (ideas.create (ideas.nextName()));
+    showTab (1);
+    beats.showMode (1);
+    openSoundBank();
+    toast ("Pick a kit to start from. The Street kit is on the pads already.");
+}
+
+void PocketApp::playIdea (const juce::String& id)
+{
+    if (id == ideas.current().id && beats.engine().clockRunning())
+    {
+        togglePlay();
+        ideasScreen->refresh();
+        return;
+    }
+    switchIdea (id);
+    togglePlay();
+    ideasScreen->refresh();
 }
 
 //==============================================================================
@@ -1364,6 +1622,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     openTempo();
     savePng (folder.getChildFile ("07c-tempo.png"));
     closeTempo();
+    loopsScreen.showEditorDemo();
+    savePng (folder.getChildFile ("07d-loop-editor.png"));
+    loopsScreen.leave();
 
     // Vocoder: the Robot pedal open, A-flat picked, five pedals on
     vocoderScreen.showDemo();
@@ -1374,6 +1635,12 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("07b-vocoder-no-headphones.png"));
     vocoderScreen.engine().setMonitor (false);
     vocoderScreen.setDemoHeadphones (true);
+    singScreen.showDemo();
+    showTab (3, true);
+    savePng (folder.getChildFile ("07e-sing.png"));
+    singScreen.setDemoHeadphones (false);
+    savePng (folder.getChildFile ("07f-sing-no-headphones.png"));
+    singScreen.setDemoHeadphones (true);
 
     showTab (4);
     savePng (folder.getChildFile ("08-more.png"));
@@ -1410,6 +1677,12 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     resized();
     savePng (folder.getChildFile ("05-pad-sheet.png"));
     closePadSheet();
+    openSoundBank();
+    savePng (folder.getChildFile ("05b-sound-bank.png"));
+    closeSoundBank();
+    padSheet.onTrim (4);   // SAMPLE PAGE: the pad's sound in the editor
+    savePng (folder.getChildFile ("05c-pad-sample-page.png"));
+    record.endPadMode();
 
     // The Mac pages: Send to Mac (from Sounds), the Remote, and Link to your Mac (not linked yet, three numbers typed)
     showTab (4);
@@ -1429,6 +1702,18 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     showMorePage (2);
     savePng (folder.getChildFile ("12b-remote-not-linked.png"));
     link.setDemo (demoMacs, "Colin's MacBook", state);
+
+    // The opening title and two stops of the tour
+    title->setDemoAngle (0.3f);
+    showTitle (true);
+    savePng (folder.getChildFile ("00a-title.png"));
+    showTitle (false);
+    startTour();
+    tour->goTo (2);
+    savePng (folder.getChildFile ("00b-tour-pads.png"));
+    tour->goTo (4);
+    savePng (folder.getChildFile ("00c-tour-sing.png"));
+    tour->setVisible (false);
 
     // Checks for the things a picture can't show: TO PAD puts a sound on the next empty pad of the bank
     // and shows it, and an export for the MPC reads back through the MPC file code.
@@ -1460,13 +1745,37 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         const int emptyPads = beats.kit().usedPads();
         const auto emptyHits = beats.drums().padPattern.hits.size();
         switchIdea (first);
-        if (emptyPads != 0 || emptyHits != 0)
-            problems.add ("Ideas: a new idea didn't start with empty pads and beat");
+        if (emptyPads != 16 || emptyHits != 0)
+            problems.add ("Ideas: a new idea didn't start with the Street kit (" + juce::String (emptyPads) + " of 16 pads) and an empty beat");
         if (beats.kit().usedPads() != pads || beats.drums().padPattern.hits.size() != hits)
             problems.add ("Ideas: going back didn't bring the pads (" + juce::String (beats.kit().usedPads()) + " of " + juce::String (pads)
                           + ") and beat (" + juce::String ((int) beats.drums().padPattern.hits.size()) + " of " + juce::String ((int) hits) + ") back");
         if (! ideas.remove (check))
             problems.add ("Ideas: couldn't delete an idea");
+    }
+
+    // The factory kits: 16 sounds each, none silent, none clipped, none overlong
+    for (int k = 0; k < (int) factoryKits().size(); ++k)
+    {
+        auto sounds = makeFactorySounds (k);
+        if (sounds.size() != 16)
+            problems.add (juce::String ("Factory kit ") + factoryKits()[(size_t) k].name + " has " + juce::String ((int) sounds.size()) + " sounds");
+        auto dir = folder.getChildFile ("factory").getChildFile (factoryKits()[(size_t) k].name);
+        dir.createDirectory();
+        for (auto& [name, b] : sounds)
+        {
+            juce::WavAudioFormat wav;
+            if (auto stream = std::unique_ptr<juce::OutputStream> (dir.getChildFile (name + ".wav").createOutputStream()))
+                if (std::unique_ptr<juce::AudioFormatWriter> w { wav.createWriterFor (stream.get(), 44100.0, 1, 16, {}, 0) })
+                {
+                    stream.release();
+                    w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+                }
+            const float peak = b.getNumSamples() > 0 ? b.getMagnitude (0, b.getNumSamples()) : 0.0f;
+            const double secs = b.getNumSamples() / 44100.0;
+            if (peak < 0.5f || peak > 0.95f || secs < 0.02 || secs > 4.5 || std::isnan (peak))
+                problems.add ("Factory sound " + name + ": peak " + juce::String (peak, 2) + ", " + juce::String (secs, 2) + " s");
+        }
     }
 
     juce::String loopsReport;
@@ -1478,7 +1787,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         problems.add ("Vocoder: " + why);
 
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: ideas keep their own pads and beat, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, and loops record, line up and play with no gap, and the vocoder makes sound that follows the voice\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, and loops record, line up and play with no gap, and the vocoder makes sound that follows the voice\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport);

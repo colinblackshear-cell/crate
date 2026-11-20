@@ -308,7 +308,7 @@ void VocoderEngine::setKnob01 (int pedal, int k, float v)
         setParam (voiceOn, v > 0.005f ? 1.0f : 0.0f);
     // The key's knobs are the same settings as the chord buttons', so they move the chord too.
     if ((id == chordKey || id == chordScale || id == chordFlavour) && chord >= 0)
-        requestChord (notesOf (chord));
+        requestChord (padNotes (chord));
 }
 
 void VocoderEngine::resetKnob (int pedal, int k)
@@ -403,7 +403,51 @@ void VocoderEngine::pressChord (int degree)
             setParam (robotOn, 1.0f);   // chords are sung by the robot
         if (param (ParamIDs::drone) > 0.5f)
             setParam (ParamIDs::drone, 0.0f);
-        requestChord (notesOf (chord));
+        requestChord (padNotes (chord));
+    }
+    changed = true;
+}
+
+juce::Array<int> VocoderEngine::padNotes (int pad) const
+{
+    if (pad < 7)
+        return notesOf (juce::jlimit (0, 6, pad));
+    auto five = notesOf (4);
+    const int root = five.isEmpty() ? 55 : five[0];
+    return { root, root + 4, root + 7, root + 10 };
+}
+
+juce::String VocoderEngine::padName (int pad) const
+{
+    return pad < 7 ? chordName (pad) : keyName ((key() + 7) % 12) + "7";
+}
+
+juce::String VocoderEngine::padNumeral (int pad) const
+{
+    static const char* const majorN[7] = { "I", "ii", "iii", "IV", "V", "vi", "vii\xc2\xb0" };
+    static const char* const minorN[7] = { "i", "ii\xc2\xb0", "III", "iv", "v", "VI", "VII" };
+    if (pad >= 7)
+        return "V7";
+    return juce::String (juce::CharPointer_UTF8 ((minor() ? minorN : majorN)[juce::jlimit (0, 6, pad)]));
+}
+
+void VocoderEngine::pressPad (int pad)
+{
+    if (pad < 7)
+        return pressChord (pad);
+    if (chord == pad)
+    {
+        chord = -1;
+        proc.requestChord ({}, true);
+    }
+    else
+    {
+        chord = pad;
+        if (param (robotOn) < 0.5f)
+            setParam (robotOn, 1.0f);
+        if (param (ParamIDs::drone) > 0.5f)
+            setParam (ParamIDs::drone, 0.0f);
+        requestChord (padNotes (pad));
     }
     changed = true;
 }
@@ -440,7 +484,7 @@ void VocoderEngine::setKey (int k, bool isMinor)
     if (drone())
         setParam (droneNote, (float) (48 + k));
     if (chord >= 0)
-        requestChord (notesOf (chord));
+        requestChord (padNotes (chord));
     changed = true;
 }
 
@@ -500,11 +544,11 @@ void VocoderEngine::load (const juce::File& file)
     if (xml == nullptr || ! xml->hasTagName (proc.params.state.getType()))
         return;
     auto state = juce::ValueTree::fromXml (*xml);
-    const int saved = juce::jlimit (-1, 6, (int) state.getProperty ("pocketChord", -1));
+    const int saved = juce::jlimit (-1, kChordPads - 1, (int) state.getProperty ("pocketChord", -1));
     proc.params.replaceState (state);
     chord = -1;
     if (saved >= 0)
-        pressChord (saved);
+        pressPad (saved);
     else
         proc.requestChord ({}, true);
     changed = false;

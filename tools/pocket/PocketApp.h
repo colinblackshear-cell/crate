@@ -15,7 +15,10 @@
 #include "RecordScreen.h"
 #include "SoundsScreen.h"
 #include "TempoSheet.h"
+#include "SoundBankSheet.h"
 #include "VocoderScreen.h"
+#include "SingScreen.h"
+#include "PocketIntro.h"
 
 // The whole phone app: a header, five tabs (Record, Beats, Loops, Vocoder, More) and the Effects + Chop sheet.
 class PocketApp : public juce::Component, private PocketHost
@@ -98,7 +101,7 @@ private:
     void slide (juce::Component&, juce::Rectangle<int> open, bool shown);
     juce::Rectangle<int> padSheetBounds() const;
     juce::Rectangle<int> sendSheetBounds() const;
-    void showTab (int);
+    void showTab (int, bool sing = false);   // sing: tab 3 shows the Sing step, not the full vocoder
     // Ideas and the seven steps (Record, Shape, Pads, Beat, Sing, Song, Send)
     void showIdeasList (bool shown);
     void openIdea (const juce::String& id);
@@ -115,6 +118,14 @@ private:
     juce::Rectangle<float> backRect() const;
     // The transport in the header: BPM (tap for Tempo), the bar, Play/Stop for the whole song.
     void togglePlay() override;
+    void padSoundEdited (const juce::String& soundId) override;
+    void backToPads (int pad) override;
+    void openSoundBank() override;
+    void showLoops() override { showTab (2); }
+    void showVocoder() override { showTab (3); }
+    void closeSoundBank();
+    void loadKit (int index);
+    void fillEmptyIdea();   // a new idea (or one with no pads) starts with the Street kit
     juce::Rectangle<float> transportRect() const;
     juce::Rectangle<float> playRect() const;
     void openTempo();
@@ -134,10 +145,14 @@ private:
     BeatsScreen beats;     // before the sound card, so the card stops before the engine goes
     LoopsScreen loopsScreen;   // owns the one renderer the sound card plays (Beats inside it)
     VocoderScreen vocoderScreen;   // plays inside that renderer, so it stops after the sound card does
+    SingScreen singScreen;         // its chord player too
+    bool singShown = false;
     PocketAudio audio;
     EffectsSheet sheet;
     PadSheet padSheet;
     TempoSheet tempoSheet;
+    SoundBankSheet soundBank;
+    std::unique_ptr<juce::FileChooser> chooser;
     RecordScreen record;
     SoundsScreen sounds;
     std::unique_ptr<RemoteScreen> remote;
@@ -146,6 +161,15 @@ private:
     std::unique_ptr<SettingsScreen> settings;
     std::unique_ptr<MoreScreen> more;
     std::unique_ptr<IdeasScreen> ideasScreen;
+    std::unique_ptr<TitleScreen> title;
+    std::unique_ptr<TourOverlay> tour;
+    void showTitle (bool shown);
+    void startTour();
+    void endTour();
+    juce::Rectangle<int> tourStop (int stop);   // opens the stop's screen, returns its spotlight
+    void newSongWithBeat();
+    void newSongWithKit();
+    void playIdea (const juce::String& id);
     bool ideasShown = true;   // the Record tab shows the Ideas list (true) or the recorder
     std::unique_ptr<TabBar> tabs;
     std::unique_ptr<Toast> toastBox;
@@ -162,7 +186,7 @@ private:
     int lockLayer = -1, lockBars = 0;
     bool lockArmed = false;
     int tab = 0;
-    bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false;
+    bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false, bankOpen = false;
     bool shownRunning = false;
     juce::String shownBar;
     juce::TimedCallback headerTick { [this] {

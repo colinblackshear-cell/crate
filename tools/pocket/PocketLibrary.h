@@ -65,6 +65,10 @@ public:
     bool remove (const juce::String& id);
     // Copies a WAV/AIFF/MP3 in as a WAV. Returns the id, or empty with `error` set.
     juce::String importFile (const juce::File&, juce::String& error);
+    // The Files app's "Drop Sounds Here" folder: brings in every sound in it (then removes it from
+    // there). Returns how many came in.
+    int importDropFolder();
+    juce::File dropFolder() const { return root.getChildFile ("Drop Sounds Here"); }
 
     juce::AudioFormatManager& formats() { return formatManager; }
 

@@ -68,6 +68,12 @@ public:
     juce::String chordName (int degree) const;                   // "Cm", "Dm°", "E♭"
     int activeChord() const { return chord; }                    // -1 = none
     void pressChord (int degree);
+    // Sing's eight chord pads: the seven chords of the key, then the dominant seventh (V7).
+    static constexpr int kChordPads = 8;
+    juce::Array<int> padNotes (int pad) const;
+    juce::String padName (int pad) const;          // "Am", "E7"
+    juce::String padNumeral (int pad) const;       // "i", "V7"
+    void pressPad (int pad);                       // the same pad again lets go
     bool drone() const;
     void toggleDrone();
 

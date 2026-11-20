@@ -62,6 +62,10 @@ public:
     juce::String selfCheckSound();
     juce::String selfCheckPattern();   // a recorded hit plays on its beat, and LOCK BEAT's timing holds
     void fillDemoPattern();
+    // A ready beat for a new song: a 2-bar boom-bap pattern on the Street kit's pads at 90 BPM.
+    void fillStarterBeat();
+    // The tour's spotlights, in this screen's coordinates: 0 = pad A13, 1 = the REC PADS ... LOCK BEAT row.
+    juce::Rectangle<int> tourSpot (int which) const;
 
     void paint (juce::Graphics&) override;
     void resized() override;
