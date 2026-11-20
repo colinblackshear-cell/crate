@@ -329,6 +329,7 @@ PocketApp::PocketApp (Options o)
       beats (static_cast<PocketHost&> (*this), lib),
       loopsScreen (static_cast<PocketHost&> (*this), lib, beats.engine(), appSettings),
       vocoderScreen (static_cast<PocketHost&> (*this), lib, audio, loopsScreen, beats.engine()),
+      singScreen (static_cast<PocketHost&> (*this), loopsScreen, vocoderScreen.engine(), beats, appSettings),
       padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
       sounds (static_cast<PocketHost&> (*this), audio, lib)
@@ -441,7 +442,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
     addAndMakeVisible (*tabs);
     addChildComponent (*dim);
@@ -481,8 +482,9 @@ void PocketApp::toast (const juce::String& t)
     toastBox->show (t);
 }
 
-void PocketApp::showTab (int i)
+void PocketApp::showTab (int i, bool sing)
 {
+    singShown = i == 3 && sing;
     if (sheetOpen)
         closeSheet();
     closePadSheet();
@@ -506,7 +508,8 @@ void PocketApp::showTab (int i)
     }
     beats.setVisible (i == 1);
     loopsScreen.setVisible (i == 2);
-    vocoderScreen.setVisible (i == 3);
+    vocoderScreen.setVisible (i == 3 && ! singShown);
+    singScreen.setVisible (i == 3 && singShown);
     if (i == 4)
         showMorePage (0);
     else
@@ -531,6 +534,7 @@ void PocketApp::showMorePage (int page)
         loopsScreen.leave();
         loopsScreen.setVisible (false);
         vocoderScreen.setVisible (false);
+        singScreen.setVisible (false);
     }
     more->setVisible (page == 0);
     sounds.setVisible (page == 1);
@@ -946,7 +950,7 @@ int PocketApp::currentStep() const
     {
         case 0:  return ideasShown ? -1 : (sheetOpen ? stepShape : stepRecord);
         case 1:  return beats.mode() == 1 && beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
-        case 2:
+        case 2:  return stepSong;
         case 3:  return stepSing;
         default: return -1;
     }
@@ -975,7 +979,7 @@ void PocketApp::goStep (int step, bool explain)
             beats.showMode (1);
             break;
         case stepSing:
-            showTab (2);
+            showTab (3, true);
             break;
         case stepSong:
             showTab (2);
@@ -996,8 +1000,8 @@ void PocketApp::goStep (int step, bool explain)
         "SHAPE: trim, fade and add effects; Chop finds the hits",
         "PADS: TO PAD puts sounds on pads, or EDIT PADS",
         "BEAT: REC PADS, play along with the click, then LOCK BEAT",
-        "SING: pick Mic or Vocoder, then REC records a layer over the beat",
-        "SONG: mute and unmute layers as it plays. Song sections come next.",
+        "SING: headphones on, pick your voice or the vocoder, chords on the pads, then REC",
+        "SONG: your layers. Mute, dub and EDIT them (trim, effects, moves) as it plays.",
         "SEND: every loop layer goes to your Mac" };
     if (step != stepSend)
         toast (tips[step]);
@@ -1355,7 +1359,7 @@ void PocketApp::resized()
     tabs->setBounds (0, h - tabH, w, tabH);
 
     auto content = juce::Rectangle<int> (0, insets.getTop() + 62, w, h - tabH - insets.getTop() - 62);
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
 
@@ -1517,6 +1521,12 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("07b-vocoder-no-headphones.png"));
     vocoderScreen.engine().setMonitor (false);
     vocoderScreen.setDemoHeadphones (true);
+    singScreen.showDemo();
+    showTab (3, true);
+    savePng (folder.getChildFile ("07e-sing.png"));
+    singScreen.setDemoHeadphones (false);
+    savePng (folder.getChildFile ("07f-sing-no-headphones.png"));
+    singScreen.setDemoHeadphones (true);
 
     showTab (4);
     savePng (folder.getChildFile ("08-more.png"));

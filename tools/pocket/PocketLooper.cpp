@@ -331,7 +331,7 @@ void LoopsEngine::prepare (double rate)
     sampleRate = rate;
     for (auto& v : layerOut)
         v.assign ((size_t) kChunk, 0.0f);
-    for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &vocL, &vocR, &busDelay, &busReverb, &busL, &busR })
+    for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &srcBoth, &vocL, &vocR, &busDelay, &busReverb, &busL, &busR })
         v->assign ((size_t) kChunk, 0.0f);
     bus.prepare (rate);
     for (auto& l : layers)
@@ -339,6 +339,8 @@ void LoopsEngine::prepare (double rate)
     beats.prepare (rate);
     if (vocoder != nullptr)
         vocoder->prepare (rate);
+    if (chordSource != nullptr)
+        chordSource->prepare (rate);
 }
 
 void LoopsEngine::setState (Layer& l, LoopState s)
@@ -540,6 +542,23 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         }
     }
 
+    // the chord pads in your own sound: heard, and recorded with the vocoder
+    if (chordSource != nullptr)
+    {
+        std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
+        std::fill (vocR.begin(), vocR.begin() + n, 0.0f);
+        chordSource->render (vocL.data(), vocR.data(), n);
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += vocL[(size_t) i];
+            if (right != nullptr)
+                right[i] += vocR[(size_t) i];
+            srcVoc[(size_t) i] += 0.5f * (vocL[(size_t) i] + vocR[(size_t) i]);
+        }
+    }
+    for (int i = 0; i < n; ++i)
+        srcBoth[(size_t) i] = srcMic[(size_t) i] + srcVoc[(size_t) i];
+
     // play the layers, through their effects; the delay and reverb they send to
     std::fill (busDelay.begin(), busDelay.begin() + n, 0.0f);
     std::fill (busReverb.begin(), busReverb.begin() + n, 0.0f);
@@ -653,7 +672,7 @@ void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps
     if (l.st == LoopState::overdubWait && l.dubBeat < 0 && l.lenBeats > 0)
         l.dubBeat = l.startBeat + std::ceil ((blockBeat - l.startBeat) / l.lenBeats - kEps) * l.lenBeats;
 
-    const bool fromDevice = l.source == LoopSource::mic || l.source == LoopSource::vocoder;
+    const bool fromDevice = l.source == LoopSource::mic || l.source == LoopSource::vocoder || l.source == LoopSource::both;
     const double latBeats = fromDevice ? (double) latency.load() * bps : 0.0;
     const float* src = srcMic.data();
     switch (l.source)
@@ -661,6 +680,7 @@ void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps
         case LoopSource::drums: src = srcDrums.data(); break;
         case LoopSource::vocoder: src = srcVoc.data(); break;
         case LoopSource::mix: src = srcMix.data(); break;
+        case LoopSource::both: src = srcBoth.data(); break;
         default: break;
     }
     const bool takeOutSelf = l.source == LoopSource::mix;

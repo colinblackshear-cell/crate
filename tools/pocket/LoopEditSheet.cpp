@@ -6,7 +6,7 @@ namespace
 {
 const juce::Colour kKnobColours[kFxKnobs] = { juce::Colour (0xfff5b13d), juce::Colour (0xff5fb3c4), juce::Colour (0xff9a7fd0),
                                               juce::Colour (0xffb9a3dc), juce::Colour (0xfff0674f) };
-const char* const kSources[4] = { "Mic", "Drums", "Vocoder", "Mix" };
+const char* const kSources[5] = { "Mic", "Drums", "Vocoder", "Mix", "Voice + vocoder" };
 constexpr int kWaveBins = 140;
 
 bool hasLoop (LoopState s) { return s == LoopState::playing || s == LoopState::overdubWait || s == LoopState::overdubbing; }
@@ -173,7 +173,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
     const double total = totalBeats();
     g.setColour (col::ink);
     g.setFont (condensedBold (25.0f));
-    g.drawText ("Layer " + juce::String (current + 1) + U8(" \xc2\xb7 ") + (take != nullptr ? kSources[juce::jlimit (0, 3, take->source)] : ""),
+    g.drawText ("Layer " + juce::String (current + 1) + U8(" \xc2\xb7 ") + (take != nullptr ? kSources[juce::jlimit (0, 4, take->source)] : ""),
                 juce::Rectangle<float> (18, 12, (float) getWidth() - 130, 34), juce::Justification::centredLeft);
 
     // the wave, the trim handles and where it's playing

@@ -1,6 +1,7 @@
 #include "LoopsScreen.h"
 
 #include "core/AudioFiles.h"
+#include "PocketChordPlayer.h"
 
 using namespace pocket;
 
@@ -149,7 +150,7 @@ int LoopsScreen::barsForNext() const
     return master > 0 ? juce::jmax (1, juce::roundToInt (master / 4.0)) : 0;   // FREE: the first layer sets it, later ones snap
 }
 
-bool LoopsScreen::startRecording (int layer, int source)
+bool LoopsScreen::startRecording (int layer, int source, int bars)
 {
     const auto src = (LoopSource) (source >= 0 ? source : sourceChoice);
     if (src == LoopSource::vocoder && ! loops.hasVocoder())
@@ -161,7 +162,9 @@ bool LoopsScreen::startRecording (int layer, int source)
         return false;
     Undo u;
     u.items.push_back ({ layer, nullptr, false });
-    if (! loops.arm (layer, src, barsForNext()))
+    if (bars == 0)
+        bars = loops.masterBeats() > 0 ? juce::jmax (1, juce::roundToInt (loops.masterBeats() / 4.0)) : 0;
+    if (! loops.arm (layer, src, bars >= 0 ? bars : barsForNext()))
     {
         host.toast ("That layer is busy. Try again in a moment.");
         return false;
@@ -186,6 +189,20 @@ int LoopsScreen::recordVocoder()
         return -1;   // it said why
     vocLayer = layer;
     return layer;
+}
+
+int LoopsScreen::recordFrom (int source, int bars)
+{
+    int layer = -1;
+    for (int l = 0; l < kLoopLayers && layer < 0; ++l)
+        if (loops.state (l) == LoopState::empty && ! loops.settling (l))
+            layer = l;
+    if (layer < 0)
+    {
+        host.toast ("All 8 layers are used. Clear one in Loops to record.");
+        return -1;
+    }
+    return startRecording (layer, source, bars) ? layer : -1;
 }
 
 int LoopsScreen::vocoderLayer() const
@@ -898,8 +915,8 @@ void LoopsScreen::sendToMac (bool onlyPicked)
                 b = std::move (*printed);   // with its effects and moves, in stereo
         if (std::abs (take->sampleRate - crate::kSampleRate) > 1.0)
             b = crate::AudioFiles::resample (b, take->sampleRate);   // the phone records at its own rate; sounds travel at 44.1 kHz
-        static const char* sources[] = { "Mic", "Drums", "Vocoder", "Mix" };
-        send.items.push_back ({ "Pocket loop " + juce::String (l + 1) + " " + sources[juce::jlimit (0, 3, take->source)],
+        static const char* sources[] = { "Mic", "Drums", "Vocoder", "Mix", "Voice and vocoder" };
+        send.items.push_back ({ "Pocket loop " + juce::String (l + 1) + " " + sources[juce::jlimit (0, 4, take->source)],
                                 crate::share (std::move (b)), take->lengthBeats.load() });
     };
     if (onlyPicked && selected >= 0 && loops.state (selected) != LoopState::empty)
@@ -1243,6 +1260,40 @@ juce::String LoopsScreen::selfCheck (juce::String& report)
         const auto& m = ramp.moves[fxDelay];
         if (std::abs (m[10] - m[(size_t) kMoveBins / 2 + 10]) > 0.01f || std::abs (m[(size_t) kMoveBins / 2 - 1] - 1.0f) > 0.02f)
             problems.add ("moves did not follow a doubled loop");
+    }
+    // Sing's BOTH source: your voice plus the chord pads in a pad's sound
+    {
+        auto beatsEngine = std::make_unique<BeatsEngine>();
+        auto engine = std::make_unique<LoopsEngine> (*beatsEngine);
+        ChordPlayer player;
+        engine->setChordSource (&player);
+        engine->prepare (sr);
+        engine->setLatency (0);
+        engine->setCountIn (false);
+        beatsEngine->setBpm (bpm);
+        Pump pump (*beatsEngine, *engine);
+        pump.input = [] (juce::int64) { return 0.1f; };
+        juce::AudioBuffer<float> tone (1, (int) crate::kSampleRate * 4);
+        for (int i = 0; i < tone.getNumSamples(); ++i)
+            tone.setSample (0, i, 0.5f * (float) std::sin (i * 2.0 * juce::MathConstants<double>::pi * 261.6 / crate::kSampleRate));
+        player.setSound (crate::share (std::move (tone)), 0.0);
+        player.play ({ 60, 64, 67 });
+        engine->arm (0, LoopSource::both, 1);
+        for (int guard = 0; guard < 400000 && engine->state (0) != LoopState::playing; guard += 512)
+            pump.run (512);
+        auto take = engine->takeOf (0);
+        double mean = 0, swing = 0;
+        const int len = take != nullptr ? take->length.load() : 0;
+        for (int i = 0; i < len; ++i)
+        {
+            mean += take->data[(size_t) i];
+            swing = juce::jmax (swing, (double) std::abs (take->data[(size_t) i] - 0.1f));
+        }
+        mean /= juce::jmax (1, len);
+        report << "sing: BOTH took " << len << " samples, voice level " << juce::String (mean, 3) << ", chord swing " << juce::String (swing, 3) << "\n";
+        if (len < 1000 || std::abs (mean - 0.1) > 0.03 || swing < 0.1)
+            problems.add ("Sing's BOTH source did not record the voice and the chord pads");
+        engine->setChordSource (nullptr);
     }
     return problems.joinIntoString ("\n");
 }

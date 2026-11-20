@@ -20,6 +20,9 @@ public:
     // The Vocoder tab's TO LOOP: records the vocoder on the next empty layer, from the next bar, for the chosen
     // LENGTH. Returns the layer, or -1 when all eight are used (it says so itself).
     int recordVocoder();
+    // Sing's REC: records `source` (a pocket::LoopSource) on the next empty layer from the next bar, for
+    // `bars` bars (0 = FREE: until stopped, or the first layer's length). -1 when it can't (it says why).
+    int recordFrom (int source, int bars);
     // The layer a vocoder take is waiting or recording on (-1 = none). stopVocoder() ends it at the bar.
     int vocoderLayer() const;
     void stopVocoder();
@@ -50,7 +53,7 @@ private:
     void refresh();
     int idAt (juce::Point<float>) const;
     void press (int id);
-    bool startRecording (int layer, int source = -1);
+    bool startRecording (int layer, int source = -1, int bars = -1);
     void pushUndo (Undo);
     void undo();
     void clearLayer (int layer, bool withUndo);

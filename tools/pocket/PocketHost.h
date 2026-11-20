@@ -29,4 +29,6 @@ struct PocketHost
     virtual void padSoundEdited (const juce::String& soundId) = 0;
     virtual void backToPads (int pad) = 0;
     virtual void openSoundBank() = 0;   // SOUNDS on the pads: factory kits and your own sounds
+    virtual void showLoops() = 0;       // the Loops tab (layers)
+    virtual void showVocoder() = 0;     // the Vocoder tab with every setting (Sing's display opens it)
 };

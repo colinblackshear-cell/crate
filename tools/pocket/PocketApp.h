@@ -17,6 +17,7 @@
 #include "TempoSheet.h"
 #include "SoundBankSheet.h"
 #include "VocoderScreen.h"
+#include "SingScreen.h"
 
 // The whole phone app: a header, five tabs (Record, Beats, Loops, Vocoder, More) and the Effects + Chop sheet.
 class PocketApp : public juce::Component, private PocketHost
@@ -99,7 +100,7 @@ private:
     void slide (juce::Component&, juce::Rectangle<int> open, bool shown);
     juce::Rectangle<int> padSheetBounds() const;
     juce::Rectangle<int> sendSheetBounds() const;
-    void showTab (int);
+    void showTab (int, bool sing = false);   // sing: tab 3 shows the Sing step, not the full vocoder
     // Ideas and the seven steps (Record, Shape, Pads, Beat, Sing, Song, Send)
     void showIdeasList (bool shown);
     void openIdea (const juce::String& id);
@@ -119,6 +120,8 @@ private:
     void padSoundEdited (const juce::String& soundId) override;
     void backToPads (int pad) override;
     void openSoundBank() override;
+    void showLoops() override { showTab (2); }
+    void showVocoder() override { showTab (3); }
     void closeSoundBank();
     void loadKit (int index);
     void fillEmptyIdea();   // a new idea (or one with no pads) starts with the Street kit
@@ -141,6 +144,8 @@ private:
     BeatsScreen beats;     // before the sound card, so the card stops before the engine goes
     LoopsScreen loopsScreen;   // owns the one renderer the sound card plays (Beats inside it)
     VocoderScreen vocoderScreen;   // plays inside that renderer, so it stops after the sound card does
+    SingScreen singScreen;         // its chord player too
+    bool singShown = false;
     PocketAudio audio;
     EffectsSheet sheet;
     PadSheet padSheet;

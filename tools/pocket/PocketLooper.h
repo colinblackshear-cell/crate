@@ -23,7 +23,7 @@ namespace pocket
 {
 constexpr int kLoopLayers = 8;
 
-enum class LoopSource { mic, drums, vocoder, mix, count };
+enum class LoopSource { mic, drums, vocoder, mix, both, count };   // both = your voice and the vocoder (Sing)
 enum class LoopState { empty, waiting, recording, playing, overdubWait, overdubbing };
 
 // One layer's recorded sound. The audio thread writes `data` while the layer records or overdubs.
@@ -49,6 +49,8 @@ public:
     // speaker (and the MIX source) while `monitor` is true (HEAR ME). nullptr = always heard.
     void setVocoderSource (PocketAudio::Renderer* r, const std::atomic<bool>* monitor = nullptr) { vocoder = r; vocoderMonitor = monitor; }
     bool hasVocoder() const { return vocoder != nullptr; }
+    // Sing's chord pads in your own sound: always heard, and part of the VOCODER and BOTH sources. Not owned.
+    void setChordSource (PocketAudio::Renderer* r) { chordSource = r; }
     void setCountIn (bool on) { countIn = on; }
 
     // Arms an empty layer: it starts at the next bar (or after a one-bar count-in when the clock is
@@ -172,6 +174,7 @@ private:
 
     BeatsEngine& beats;
     PocketAudio::Renderer* vocoder = nullptr;
+    PocketAudio::Renderer* chordSource = nullptr;
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;
     std::array<Layer, kLoopLayers> layers;
@@ -198,6 +201,6 @@ private:
     int chunkOffset = 0;
     std::array<std::vector<float>, kLoopLayers> layerOut;
     std::vector<float> busDelay, busReverb, busL, busR;
-    std::vector<float> srcMic, srcDrums, srcVoc, srcMix, vocL, vocR;
+    std::vector<float> srcMic, srcDrums, srcVoc, srcMix, srcBoth, vocL, vocR;
 };
 }
