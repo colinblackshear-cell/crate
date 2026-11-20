@@ -5,6 +5,12 @@ namespace pedalboard
 const std::vector<Pedal>& pedals()
 {
     static const std::vector<Pedal> list {
+        { "Mic", "mic locker",
+          "Makes a mic sound like a classic studio mic: clean condensers, vintage tubes, ribbons and dynamics. "
+          "Your mic is what you really sing into, so its stock sound is taken out first. Works on anything: a mic on the line in, loops, pads.",
+          0xffc79a55, { "micModel", "Mic" }, "micOn",
+          { { "micModel", "Mic" }, { "micSource", "Your mic" }, { "micDistance", "Distance" }, { "micWarmth", "Warmth" },
+            { "micAir", "Air" }, { "micPolish", "Polish" }, { "micAmount", "Amount" } } },
         { "Gate", "noise gate",
           "Shuts out the hum and hiss between notes (a guitar's buzz, a noisy amp). Threshold is how loud a note has to be to get through.",
           0xff7f8c8d, { "gateThreshold", "Threshold" }, "gateOn",

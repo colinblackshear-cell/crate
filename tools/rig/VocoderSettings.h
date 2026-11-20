@@ -25,7 +25,7 @@ public:
     VocoderSettings (RigEngine&, VocoderScreen&);
     ~VocoderSettings() override;
 
-    enum SectionId { voice, tune, robot, synth, chords, rhythm, filter, vintageMic, effects, out, numSections };
+    enum SectionId { voice, mic, tune, robot, synth, chords, rhythm, filter, vintageMic, effects, out, numSections };
     static juce::String sectionName (int);
 
     void resized() override;

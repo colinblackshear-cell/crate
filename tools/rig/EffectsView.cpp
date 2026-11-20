@@ -6,6 +6,16 @@ using namespace vintage;
 
 namespace
 {
+// A setting as the pedal shows it. The Mic's choices use their short names, to fit.
+juce::String fxText (juce::RangedAudioParameter* param, double v)
+{
+    if (param == nullptr)
+        return juce::String (v, 2);
+    if (param->getParameterID() == "micModel" || param->getParameterID() == "micSource")
+        return vintage::readable (param, v);
+    return param->getText (param->convertTo0to1 ((float) v), 16);
+}
+
 juce::Colour sourceColour (int source)
 {
     if (source >= EffectsView::firstLoop && source <= EffectsView::allLoops)
@@ -82,7 +92,7 @@ public:
         auto* param = state.getParameter (info.knob.id);
         if (param != nullptr)
             knob.setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
-        knob.textFromValueFunction = [param] (double v) { return param != nullptr ? param->getText (param->convertTo0to1 ((float) v), 16) : juce::String (v, 2); };
+        knob.textFromValueFunction = [param] (double v) { return fxText (param, v); };
         attaching = false;
         repaint();
     }
@@ -493,7 +503,7 @@ void EffectsView::rebuildRack()
         knob->inWell = true;
         knob->nameSize = 13.5f;
         auto* param = rack().params.getParameter (s.id);
-        knob->slider.textFromValueFunction = [param] (double v) { return param != nullptr ? param->getText (param->convertTo0to1 ((float) v), 16) : juce::String (v, 2); };
+        knob->slider.textFromValueFunction = [param] (double v) { return fxText (param, v); };
         if (info.onId != nullptr)
             knob->slider.onDragStart = [this, pedal = selected] { if (! isOn (pedal)) pedalboard::setOn (rack(), pedal, true); };
         addAndMakeVisible (*knob);

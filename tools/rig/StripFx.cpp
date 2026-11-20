@@ -1,4 +1,5 @@
 #include "StripFx.h"
+#include "Parameters.h"   // the vocoder's: MicText, how the Mic knobs read
 
 namespace
 {
@@ -112,6 +113,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout StripFx::createLayout()
     amount ("tremDepth", "Tremolo depth", 0.0f, 1.0f, 0.6f, percentAttributes());
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "tremRate", 1 }, "Tremolo speed", tremoloNames(), 1));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "tremShape", 1 }, "Tremolo shape", juce::StringArray { "Smooth", "Choppy" }, 0));
+
+    // Mic: a classic studio mic style (added last, so learned knobs and saved shows keep theirs).
+    juce::StringArray micNames, sourceNames;
+    for (const auto& m : vox::MicModel::mics)
+        micNames.add (m.name);
+    for (const auto& s : vox::MicModel::sources)
+        sourceNames.add (s.name);
+    auto worded = [] (juce::String (*text) (float))
+    {
+        return AudioParameterFloatAttributes().withStringFromValueFunction ([text] (float v, int) { return text (v); });
+    };
+    onOff ("micOn", "Mic");
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "micModel", 1 }, "Mic", micNames, 1));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "micSource", 1 }, "Your mic", sourceNames, 4));
+    amount ("micDistance", "Mic distance", 0.0f, 1.0f, 0.4f, worded (MicText::distance));
+    amount ("micWarmth", "Mic warmth", 0.0f, 1.0f, 0.5f, worded (MicText::percent));
+    amount ("micAir", "Mic air", 0.0f, 1.0f, 0.5f, worded (MicText::air));
+    amount ("micPolish", "Mic polish", 0.0f, 1.0f, 0.6f, worded (MicText::percent));
+    amount ("micAmount", "Mic amount", 0.0f, 1.0f, 1.0f, worded (MicText::percent));
     return layout;
 }
 
@@ -165,6 +185,14 @@ StripFx::StripFx()
     tremDepth = raw ("tremDepth");
     tremRate = raw ("tremRate");
     tremShape = raw ("tremShape");
+    micOn = raw ("micOn");
+    micModel = raw ("micModel");
+    micSource = raw ("micSource");
+    micDistance = raw ("micDistance");
+    micWarmth = raw ("micWarmth");
+    micAir = raw ("micAir");
+    micPolish = raw ("micPolish");
+    micAmount = raw ("micAmount");
 }
 
 void StripFx::readTuner (float* dest, int count) const
@@ -188,7 +216,8 @@ bool StripFx::isActive() const
     return plugin.isLoaded() || std::abs (filter->load()) >= 0.02f || drive->load() > 0.01f || crush->load() > 0.01f
         || delayMix->load() > 0.01f || reverbMix->load() > 0.01f || repeat->load() > 0.5f
         || std::abs (inputGain->load()) > 0.05f || gateOn->load() > 0.5f || compOn->load() > 0.5f || wahOn->load() > 0.5f
-        || ampOn->load() > 0.5f || eqOn->load() > 0.5f || chorusOn->load() > 0.5f || phaserOn->load() > 0.5f || tremOn->load() > 0.5f;
+        || ampOn->load() > 0.5f || eqOn->load() > 0.5f || chorusOn->load() > 0.5f || phaserOn->load() > 0.5f || tremOn->load() > 0.5f
+        || micOn->load() > 0.5f;
 }
 
 void StripFx::reset()
@@ -238,6 +267,9 @@ void StripFx::prepareToPlay (double sampleRate, int samplesPerBlock)
     reverb.reset();
     wet.setSize (2, juce::jmax (1, samplesPerBlock));
 
+    mic.prepare (rate);
+    micMix.reset (rate, 0.03);
+    micMix.setCurrentAndTargetValue (micOn->load() > 0.5f ? micAmount->load() : 0.0f);
     trimSmooth.reset (rate, 0.03);
     trimSmooth.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (inputGain->load()));
     gateEnv = compEnv = 0;
@@ -560,6 +592,26 @@ void StripFx::processModulation (float* left, float* right, int n, double bpm)
     }
 }
 
+void StripFx::processMic (float* left, float* right, int n)
+{
+    micMix.setTargetValue (micOn->load() > 0.5f ? micAmount->load() : 0.0f);
+    if (! micMix.isSmoothing() && micMix.getTargetValue() <= 0.0f)
+        return;
+    vox::MicModel::Settings s;
+    s.mic = juce::roundToInt (micModel->load());
+    s.source = juce::roundToInt (micSource->load());
+    s.distance = micDistance->load();
+    s.warmth = micWarmth->load();
+    s.air = micAir->load();
+    s.polish = micPolish->load();
+    for (int i = 0; i < n; ++i)
+    {
+        s.amount = micMix.getNextValue();
+        mic.set (s);
+        mic.process (left[i], right[i]);
+    }
+}
+
 void StripFx::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     const int n = buffer.getNumSamples();
@@ -594,6 +646,7 @@ void StripFx::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
     if (bypass->load() > 0.5f)
         return;
 
+    processMic (left, right, n);
     processDynamics (left, right, n);
     if (wahOn->load() > 0.5f)
         processWah (left, right, n);

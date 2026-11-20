@@ -49,6 +49,11 @@ struct RigVocoderScreenTests : juce::UnitTest
             screen.stomp (VocoderScreen::vintageMic);
             expect (param (engine, ParamIDs::vintageOn) > 0.5f);
 
+            screen.stomp (VocoderScreen::mic);
+            expect (param (engine, ParamIDs::micOn) > 0.5f, "the Mic pedal switches the Mic locker on");
+            screen.turnKnob (VocoderScreen::mic, 4.0);
+            expectEquals (juce::roundToInt (param (engine, ParamIDs::micModel)), 4, "its knob picks the mic (Golden Tube)");
+
             screen.stomp (VocoderScreen::arp);
             expect (screen.isOn (VocoderScreen::arp));
             expectEquals (juce::roundToInt (param (engine, ParamIDs::arpMode)), 1, "with the robot on, a note arp");
@@ -80,7 +85,8 @@ struct RigVocoderScreenTests : juce::UnitTest
             screen.pressBypassAll();
             for (int i : { (int) VocoderScreen::tune, (int) VocoderScreen::harmony, (int) VocoderScreen::robot, (int) VocoderScreen::character,
                            (int) VocoderScreen::synth, (int) VocoderScreen::arp, (int) VocoderScreen::filter, (int) VocoderScreen::vintageMic,
-                           (int) VocoderScreen::dirt, (int) VocoderScreen::chorus, (int) VocoderScreen::echo, (int) VocoderScreen::space })
+                           (int) VocoderScreen::dirt, (int) VocoderScreen::chorus, (int) VocoderScreen::echo, (int) VocoderScreen::space,
+                           (int) VocoderScreen::mic })
                 expect (screen.isOn (i), "back on: " + VocoderScreen::pedalName (i));
             expectWithinAbsoluteError (param (engine, ParamIDs::formant), 8.0f, 0.01f, "Character comes back as it was");
 
@@ -308,7 +314,7 @@ struct RigVocoderScreenTests : juce::UnitTest
             int knobs = 0;
             for (int i = 0; i < VocoderSettings::numSections; ++i)
                 knobs += page.numKnobs (i);
-            expectEquals (knobs, shown.size() - 7, "a knob for each setting, a switch for each part");
+            expectEquals (knobs, shown.size() - 8, "a knob for each setting, a switch for each part");
             expectEquals (shown.size(), (int) juce::StringArray (shown).size());
             {
                 juce::StringArray unique (shown);
@@ -323,6 +329,8 @@ struct RigVocoderScreenTests : juce::UnitTest
             expect (screen.isOn (VocoderScreen::arp));
             page.pressSwitch (VocoderSettings::vintageMic);
             expect (param (engine, ParamIDs::vintageOn) > 0.5f);
+            page.pressSwitch (VocoderSettings::mic);
+            expect (param (engine, ParamIDs::micOn) > 0.5f, "Mic's switch is the Mic pedal");
             page.pressSwitch (VocoderSettings::voice);
             expect (screen.isMonitoring(), "Your voice's switch is Monitor");
             page.pressSwitch (VocoderSettings::chords);
