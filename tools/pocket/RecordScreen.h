@@ -15,6 +15,11 @@ public:
     ~RecordScreen() override;
 
     void loadSound (const juce::String& id);
+    // The pad sample page: opens the pad's sound here, aimed at that pad. SAVE TO PAD saves it and the
+    // pads pick it up; BACK TO PADS returns. Loading another sound, or a new idea, ends it.
+    void editForPad (int pad, const juce::String& id);
+    void endPadMode();
+    int padTarget() const { return targetPad; }
     void startRecording() { if (! audio.isRecording()) toggleRecord(); }   // NEW IDEA
     // Demo for screenshots: puts a take on the screen as if it had just been recorded.
     void showDemoTake (crate::SharedAudio, const juce::String& name, bool recordingLook);
@@ -76,4 +81,5 @@ private:
     bool playingWithFx = false;
     double lastRecordSeconds = 0;
     juce::File takeFile;
+    int targetPad = -1;
 };

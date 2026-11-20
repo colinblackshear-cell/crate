@@ -146,6 +146,6 @@ void PadSheet::resized()
         modes[i].setBounds (16 + i * each, 188, each - 6, 46);
 
     clear.setBounds (w - 16 - 72, 248, 72, 46);
-    trim.setBounds (clear.getX() - 6 - 68, 248, 68, 46);
+    trim.setBounds (clear.getX() - 6 - 120, 248, 120, 46);
     chop.setBounds (16, 248, trim.getX() - 12 - 16, 46);
 }

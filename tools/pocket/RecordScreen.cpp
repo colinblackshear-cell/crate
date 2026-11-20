@@ -1,4 +1,5 @@
 #include "RecordScreen.h"
+#include "PocketKit.h"
 
 #include "core/AudioFiles.h"
 #include "core/SoundFx.h"
@@ -169,9 +170,16 @@ RecordScreen::RecordScreen (PocketHost& h, PocketAudio& a, Library& lib, Effects
     chopRow.setLamp (true, false);
 
     saveButton.setFontHeight (17.0f);
-    saveButton.onClick = [this] { saveToSounds(); };
+    saveButton.onClick = [this]
+    {
+        saveToSounds();
+        if (targetPad >= 0 && currentId.isNotEmpty())
+            host.padSoundEdited (currentId);
+    };
     toPad.onClick = [this]
     {
+        if (targetPad >= 0)
+            return host.backToPads (targetPad);
         saveToSounds();   // the pad plays the saved sound, with its chop markers and effects
         if (currentId.isNotEmpty())
             host.sendToPad (currentId);
@@ -252,7 +260,7 @@ void RecordScreen::edit (const juce::String& what,
 void RecordScreen::updateLabels()
 {
     auto a = wave.getAudio();
-    juce::String title = nameField.getText().toUpperCase();
+    juce::String title = (targetPad >= 0 ? "PAD " + pocket::Kit::padLabel (targetPad) + U8(" · ") : juce::String()) + nameField.getText().toUpperCase();
     if (a != nullptr)
         title += U8(" · ") + clock (crate::seconds (a->getNumSamples()));
     wave.setTitle (title);
@@ -369,8 +377,32 @@ void RecordScreen::saveToSounds()
     host.toast (currentId.isEmpty() ? juce::String ("Couldn't save that sound") : "Saved \"" + name + "\" to Sounds");
 }
 
+void RecordScreen::editForPad (int pad, const juce::String& id)
+{
+    loadSound (id);
+    if (currentId != id)
+        return;
+    targetPad = pad;
+    const auto label = pocket::Kit::padLabel (pad);
+    saveButton.setText ("Save to pad " + label);
+    toPad.setText (U8("\xe2\x80\xb9 Pads"));
+    updateLabels();
+    host.toast ("Pad " + label + U8("'s sound. Edit it, then SAVE TO PAD ") + label + ". Every pad playing it picks it up.");
+}
+
+void RecordScreen::endPadMode()
+{
+    if (targetPad < 0)
+        return;
+    targetPad = -1;
+    saveButton.setText ("Save to sounds");
+    toPad.setText ("To pad");
+    updateLabels();
+}
+
 void RecordScreen::loadSound (const juce::String& id)
 {
+    endPadMode();
     auto* item = library.find (id);
     auto loaded = library.load (id);
     if (item == nullptr || loaded == nullptr)

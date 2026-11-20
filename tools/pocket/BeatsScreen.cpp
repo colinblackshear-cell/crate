@@ -443,8 +443,11 @@ class BeatsScreen::PadsView : public BelowSwitch, private juce::Timer
 public:
     explicit PadsView (BeatsScreen& o) : owner (o)
     {
-        exportButton.setFontHeight (17.0f);
+        exportButton.setFontHeight (15.0f);
         exportButton.onClick = [this] { owner.exportForMpc(); };
+        soundsButton.setFontHeight (16.0f);
+        soundsButton.onClick = [this] { owner.host.openSoundBank(); };
+        addAndMakeVisible (soundsButton);
         addAndMakeVisible (exportButton);
 
         for (int i = 0; i < 4; ++i)
@@ -602,11 +605,11 @@ public:
     void paint (juce::Graphics& g) override
     {
         // the kit name
-        auto lcd = juce::Rectangle<float> (16, 67, 210, 44);
+        auto lcd = juce::Rectangle<float> (16, 67, 158, 44);
         drawWell (g, lcd, 12.0f);
         g.setColour (col::lcdAmber);
-        g.setFont (spaced (lcdFont (32.0f), 0.04f));
-        g.drawText (owner.padKit.name, lcd.reduced (14, 0), juce::Justification::centredLeft);
+        g.setFont (spaced (lcdFont (28.0f), 0.04f));
+        g.drawFittedText (owner.padKit.name, lcd.reduced (12, 0).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
 
         paintPattern (g);
 
@@ -645,7 +648,8 @@ public:
 
     void resized() override
     {
-        exportButton.setBounds (235, 67, 139, 44);
+        soundsButton.setBounds (180, 67, 92, 44);
+        exportButton.setBounds (278, 67, 96, 44);
         for (int i = 0; i < 4; ++i)
             banks[i].setBounds (16 + i * 66, 122, 66, 40);
         editPads.setBounds (292, 122, 82, 40);
@@ -660,7 +664,7 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         held = -1;
-        if (juce::Rectangle<float> (16, 67, 210, 44).contains (e.position))
+        if (juce::Rectangle<float> (16, 67, 158, 44).contains (e.position))
         {
             renaming = true;
             return;
@@ -692,7 +696,7 @@ public:
         if (renaming)
         {
             renaming = false;
-            if (juce::Rectangle<float> (16, 67, 210, 44).contains (e.position))
+            if (juce::Rectangle<float> (16, 67, 158, 44).contains (e.position))
                 owner.renameKit();
             return;
         }
@@ -714,7 +718,7 @@ private:
     }
 
     BeatsScreen& owner;
-    PButton exportButton { "Export for MPC", Look::amber }, banks[4], editPads { "Edit pads" }, toMac { "To mac" };
+    PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit pads" }, toMac { "To mac" };
     PButton recButton { "Rec pads" }, barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, lockButton { "Lock beat" };
     bool wasPlaying = false;
     juce::uint64 lastMask = 0;

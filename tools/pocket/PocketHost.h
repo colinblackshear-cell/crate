@@ -24,4 +24,9 @@ struct PocketHost
     virtual void lockBeat (int bars) = 0;
     // Play/Stop for the whole song (the header's button): loops, else the pad pattern, else the drum machine.
     virtual void togglePlay() = 0;
+    // The pad sample page: the Record tab edited the sound a pad plays and saved it. Every pad playing
+    // that sound picks it up. backToPads returns to Beats > MPC Pads with the pad picked.
+    virtual void padSoundEdited (const juce::String& soundId) = 0;
+    virtual void backToPads (int pad) = 0;
+    virtual void openSoundBank() = 0;   // SOUNDS on the pads: factory kits and your own sounds
 };

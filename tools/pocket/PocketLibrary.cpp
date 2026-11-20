@@ -73,7 +73,23 @@ Library::Library (juce::File r)
 {
     formatManager.registerBasicFormats();
     soundsFolder.createDirectory();
+    dropFolder().createDirectory();
     loadIndex();
+}
+
+int Library::importDropFolder()
+{
+    int n = 0;
+    for (auto& f : dropFolder().findChildFiles (juce::File::findFiles, true, "*.wav;*.WAV;*.aif;*.aiff;*.AIF;*.AIFF;*.mp3;*.MP3;*.m4a;*.caf"))
+    {
+        juce::String error;
+        if (importFile (f, error).isNotEmpty())
+        {
+            f.deleteFile();
+            ++n;
+        }
+    }
+    return n;
 }
 
 void Library::loadIndex()

@@ -31,6 +31,6 @@ private:
     bool hasCleared = false;
 
     juce::OwnedArray<pocket::KnobView> knobs;   // volume, pan, tune
-    pocket::PButton modes[3], chop { "Chop across pads" }, trim { "Trim" }, clear { "Clear", pocket::Look::ghost },
+    pocket::PButton modes[3], chop { "Chop across pads" }, trim { "Sample page", pocket::Look::amber }, clear { "Clear", pocket::Look::ghost },
                     done { "Done", pocket::Look::ghost };
 };

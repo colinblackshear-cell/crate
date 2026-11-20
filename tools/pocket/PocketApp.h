@@ -15,6 +15,7 @@
 #include "RecordScreen.h"
 #include "SoundsScreen.h"
 #include "TempoSheet.h"
+#include "SoundBankSheet.h"
 #include "VocoderScreen.h"
 
 // The whole phone app: a header, five tabs (Record, Beats, Loops, Vocoder, More) and the Effects + Chop sheet.
@@ -115,6 +116,12 @@ private:
     juce::Rectangle<float> backRect() const;
     // The transport in the header: BPM (tap for Tempo), the bar, Play/Stop for the whole song.
     void togglePlay() override;
+    void padSoundEdited (const juce::String& soundId) override;
+    void backToPads (int pad) override;
+    void openSoundBank() override;
+    void closeSoundBank();
+    void loadKit (int index);
+    void fillEmptyIdea();   // a new idea (or one with no pads) starts with the Street kit
     juce::Rectangle<float> transportRect() const;
     juce::Rectangle<float> playRect() const;
     void openTempo();
@@ -138,6 +145,8 @@ private:
     EffectsSheet sheet;
     PadSheet padSheet;
     TempoSheet tempoSheet;
+    SoundBankSheet soundBank;
+    std::unique_ptr<juce::FileChooser> chooser;
     RecordScreen record;
     SoundsScreen sounds;
     std::unique_ptr<RemoteScreen> remote;
@@ -162,7 +171,7 @@ private:
     int lockLayer = -1, lockBars = 0;
     bool lockArmed = false;
     int tab = 0;
-    bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false;
+    bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false, bankOpen = false;
     bool shownRunning = false;
     juce::String shownBar;
     juce::TimedCallback headerTick { [this] {
