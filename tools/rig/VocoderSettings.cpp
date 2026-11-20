@@ -36,6 +36,10 @@ const std::vector<SectionInfo>& sectionInfo()
     static const std::vector<SectionInfo> info {
         { "Your voice", "the mic", 0xffd8c49a,
           { { inputGain, "Mic gain" }, { gateThreshold, "Gate" }, { voiceLevel, "Level" }, { fillGaps, "Fill gaps" } }, 0.0f, -1 },
+        { "Mic", "mic locker", 0xffc79a55,
+          { { micModel, "Mic" }, { micSource, "Your mic" }, { micDistance, "Distance" }, { micWarmth, "Warmth" }, { micAir, "Air" },
+            { micPolish, "Polish" }, { micAmount, "Amount" } },
+          0.0f, VocoderScreen::mic },
         { "Tune", "auto-tune + harmony", 0xff4fb39a,
           { { tuneKey, "Key" }, { tuneScale, "Scale" }, { tuneSpeed, "Speed" }, { tuneAmount, "Amount" }, { singToPlay, "Harmony", 0xff8fc06a } },
           1.6f, VocoderScreen::tune },
@@ -448,7 +452,7 @@ juce::StringArray VocoderSettings::shownIds() const
         for (const auto& k : s.knobs)
             ids.add (k.id);
     // The switches.
-    for (auto* id : { ParamIDs::voiceOn, ParamIDs::tuneOn, ParamIDs::robotOn, ParamIDs::drone, ParamIDs::arpOn, ParamIDs::vintageOn, ParamIDs::fxOn })
+    for (auto* id : { ParamIDs::voiceOn, ParamIDs::tuneOn, ParamIDs::robotOn, ParamIDs::drone, ParamIDs::arpOn, ParamIDs::vintageOn, ParamIDs::fxOn, ParamIDs::micOn })
         ids.add (id);
     return ids;
 }

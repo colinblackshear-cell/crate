@@ -3,11 +3,12 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "PluginSlot.h"
+#include "dsp/MicModel.h"   // the vocoder's Mic locker, shared
 
 // A rack of live effects on one of the Rig's mixer strips (and on each loop): a pedalboard.
 // In the order the sound goes through them:
 //
-//   Gain in, Gate, Comp, Wah (an envelope filter), Filter (DJ style: one knob, left is
+//   Gain in, Mic (a classic studio mic style), Gate, Comp, Wah (an envelope filter), Filter (DJ style: one knob, left is
 //   low-pass, right is high-pass, the middle is off), Drive + Crush, Amp (clean, crunch, lead,
 //   fuzz or a bass amp, with its cabinet), EQ, Chorus, Phaser, Tremolo, Delay and Repeat in
 //   time with the Rig's tempo, Reverb, then your own plugin.
@@ -152,7 +153,16 @@ private:
     std::atomic<float>* tremDepth = nullptr;
     std::atomic<float>* tremRate = nullptr;
     std::atomic<float>* tremShape = nullptr;
+    std::atomic<float>* micOn = nullptr;
+    std::atomic<float>* micModel = nullptr;
+    std::atomic<float>* micSource = nullptr;
+    std::atomic<float>* micDistance = nullptr;
+    std::atomic<float>* micWarmth = nullptr;
+    std::atomic<float>* micAir = nullptr;
+    std::atomic<float>* micPolish = nullptr;
+    std::atomic<float>* micAmount = nullptr;
 
+    void processMic (float* left, float* right, int n);
     void processDynamics (float* left, float* right, int n);
     void processWah (float* left, float* right, int n);
     void processAmp (float* left, float* right, int n);
@@ -164,6 +174,10 @@ private:
     // Tuner.
     std::vector<float> tunerRing = std::vector<float> ((size_t) kTunerSize, 0.0f);
     std::atomic<int> tunerWrite { 0 };
+
+    // Mic: the vocoder's Mic locker, faded in and out so switching never clicks.
+    vox::MicModel mic;
+    juce::SmoothedValue<float> micMix;
 
     // Gate and comp.
     float gateEnv = 0, gateGain = 1, compEnv = 0, compGain = 1;

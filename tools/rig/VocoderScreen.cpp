@@ -26,6 +26,12 @@ const std::vector<PedalInfo>& pedalInfo()
 {
     using namespace ParamIDs;
     static const std::vector<PedalInfo> info {
+        { "Mic", "mic locker",
+          "Sing through a classic studio mic instead of your laptop or phone mic: clean condensers, vintage tubes, ribbons and dynamics. "
+          "Set Your mic to what you really sing into. With the robot off it's just a great vocal sound.",
+          0xffc79a55, { micModel, "Mic" }, nullptr,
+          { { micModel, "Mic" }, { micSource, "Your mic" }, { micDistance, "Distance" }, { micWarmth, "Warmth" }, { micAir, "Air" },
+            { micPolish, "Polish" }, { micAmount, "Amount" } } },
         { "Tune", "auto-tune",
           "Pulls your voice onto the notes of a key. Fast speed gives the hard robotic snap, slow sounds natural. Amount is how far it pulls.",
           0xff4fb39a, { tuneSpeed, "Speed" }, nullptr,
@@ -591,6 +597,7 @@ bool VocoderScreen::isOn (int pedal) const
             return mode != 0 && ! wideOpen;
         }
         case vintageMic: return param (vintageOn) > 0.5f;
+        case mic: return param (micOn) > 0.5f;
         case dirt: return param (drive) > 0.005f || param (crush) > 0.005f;
         case chorus: return param (chorusMix) > 0.005f;
         case echo: return param (delayMix) > 0.005f;
@@ -673,6 +680,7 @@ void VocoderScreen::stomp (int pedal)
             }
             break;
         case vintageMic: setParam (vintageOn, wasOn ? 0.0f : 1.0f); break;
+        case mic: setParam (micOn, wasOn ? 0.0f : 1.0f); break;
         case dirt:
             if (wasOn)
             {
@@ -890,7 +898,7 @@ void VocoderScreen::pressBypassAll()
             beforeBypass[(size_t) i] = isOn (i);
         // Harmony before Tune (Harmony sits on Tune), and the rest in order.
         for (int i : { (int) harmony, (int) tune, (int) robot, (int) character, (int) synth, (int) chords, (int) arp, (int) filter,
-                       (int) vintageMic, (int) dirt, (int) chorus, (int) echo, (int) space })
+                       (int) vintageMic, (int) dirt, (int) chorus, (int) echo, (int) space, (int) mic })
             if (beforeBypass[(size_t) i] && isOn (i))
             {
                 stomp (i);

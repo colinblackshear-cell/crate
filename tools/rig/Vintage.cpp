@@ -1,4 +1,5 @@
 #include "Vintage.h"
+#include "dsp/MicModel.h"   // the vocoder's Mic locker
 #include "RigFonts.h"
 
 namespace vintage
@@ -724,6 +725,13 @@ juce::String readable (juce::RangedAudioParameter* p, double v)
 {
     if (p == nullptr)
         return juce::String (v, 2);
+    // The Mic locker's knobs say what they mean themselves (cm, %, dB), and its choices are short.
+    if (p->getParameterID() == "micModel")
+        return vox::MicModel::shortMicName (juce::roundToInt (v));
+    if (p->getParameterID() == "micSource")
+        return vox::MicModel::shortSourceName (juce::roundToInt (v));
+    if (p->getParameterID().startsWith ("mic"))
+        return p->getText (p->convertTo0to1 ((float) v), 32);
     if (dynamic_cast<juce::AudioParameterFloat*> (p) == nullptr)
         return p->getText (p->convertTo0to1 ((float) v), 32);
     const auto range = p->getNormalisableRange();

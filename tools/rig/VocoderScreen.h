@@ -48,7 +48,7 @@ public:
     std::function<void()> onOpenChords;
 
     // The pedals, in the chain's order.
-    enum PedalId { tune, harmony, robot, character, synth, chords, arp, filter, vintageMic, dirt, chorus, echo, space, numPedals };
+    enum PedalId { mic, tune, harmony, robot, character, synth, chords, arp, filter, vintageMic, dirt, chorus, echo, space, numPedals };
     static juce::String pedalName (int);
 
     // As a click does (the tests use these).
