@@ -287,17 +287,11 @@ void LoopsScreen::press (int id)
         lengthChoice = id - lenBase;
         settingsDirty = true;
     }
-    else if (id == lcd)
+    else if (id == lcd || id == playId)
     {
-        if (loops.transportRunning())
-        {
-            loops.setTransport (false);
-            beats.setPlaying (false);
-        }
-        else if (layerCount() > 0)
-            loops.setTransport (true);
-        else
-            host.toast ("Press REC to record a layer. The clock starts with it.");
+        if (! loops.transportRunning() && layerCount() == 0)
+            host.toast ("Nothing recorded yet: playing the beat. REC records a layer over it.");
+        host.togglePlay();
     }
     else if (id == undoId)
         undo();
@@ -357,6 +351,8 @@ int LoopsScreen::idAt (juce::Point<float> p) const
 {
     if (recRect().expanded (4).contains (p))
         return rec;
+    if (playRect().expanded (4).contains (p))
+        return playId;
     if (lcdRect().contains (p))
         return lcd;
     for (int i = 0; i < 4; ++i)
@@ -451,15 +447,34 @@ void LoopsScreen::drawLcd (juce::Graphics& g)
         else if (running)
             line2 = "BAR " + bar (beat) + U8(" · ") + tempo;
         else
-            line2 = (layerCount() > 0 ? juce::String ("TAP TO PLAY") : juce::String ("STOPPED")) + U8(" · ") + tempo;
+            line2 = (layerCount() > 0 ? juce::String ("READY") : juce::String ("STOPPED")) + U8(" · ") + tempo;
     }
 
     g.setColour (col::lcdText);
     g.setFont (spaced (lcdFont (31.0f), 0.03f));
-    g.drawText (line1, r.withTrimmedLeft (14).withHeight (34).translated (0, 6), juce::Justification::centredLeft);
+    g.drawFittedText (line1, r.withTrimmedLeft (14).withTrimmedRight (70).withHeight (34).translated (0, 6).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
     g.setColour (juce::Colour (0xffe8a24a));
     g.setFont (spaced (lcdFont (17.0f), 0.04f));
-    g.drawText (line2, r.withTrimmedLeft (15).withHeight (20).translated (0, 38), juce::Justification::centredLeft);
+    g.drawFittedText (line2, r.withTrimmedLeft (15).withTrimmedRight (70).withHeight (20).translated (0, 38).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+
+    // PLAY / STOP: the whole song, the same as the header's button
+    {
+        const bool on = beats.clockRunning();
+        auto pr = playRect();
+        drawRaised (g, pr, on ? Look::red : Look::green, pressed == playId, 10.0f);
+        auto c = pr.getCentre().translated (0, -8);
+        g.setColour (on ? juce::Colours::white : col::ink);
+        if (on)
+            g.fillRoundedRectangle (c.x - 6, c.y - 6, 12, 12, 2.0f);
+        else
+        {
+            juce::Path tri;
+            tri.addTriangle (c.x - 5, c.y - 7, c.x - 5, c.y + 7, c.x + 7, c.y);
+            g.fillPath (tri);
+        }
+        g.setFont (spaced (condensedBold (12.0f), 0.08f));
+        g.drawText (on ? "STOP" : "PLAY", pr.withTrimmedTop (24).withTrimmedBottom (4), juce::Justification::centred);
+    }
 
     const int segs = 16;
     const float x0 = r.getX() + 14.0f, segW = (r.getWidth() - 28.0f - 3.0f * (float) (segs - 1)) / (float) segs;

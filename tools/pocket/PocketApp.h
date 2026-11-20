@@ -14,6 +14,7 @@
 #include "PocketTheme.h"
 #include "RecordScreen.h"
 #include "SoundsScreen.h"
+#include "TempoSheet.h"
 #include "VocoderScreen.h"
 
 // The whole phone app: a header, five tabs (Record, Beats, Loops, Vocoder, More) and the Effects + Chop sheet.
@@ -112,6 +113,13 @@ private:
     juce::Rectangle<float> stepRect (int step) const;
     juce::Rectangle<float> nextRect() const;
     juce::Rectangle<float> backRect() const;
+    // The transport in the header: BPM (tap for Tempo), the bar, Play/Stop for the whole song.
+    void togglePlay() override;
+    juce::Rectangle<float> transportRect() const;
+    juce::Rectangle<float> playRect() const;
+    void openTempo();
+    void closeTempo();
+    juce::Rectangle<int> tempoBounds() const;
     void showMorePage (int);   // 0 list, 1 sounds, 2 remote, 3 mac link, 4 settings
     void layoutSheet (bool shown);
     void savePng (const juce::File&);
@@ -129,6 +137,7 @@ private:
     PocketAudio audio;
     EffectsSheet sheet;
     PadSheet padSheet;
+    TempoSheet tempoSheet;
     RecordScreen record;
     SoundsScreen sounds;
     std::unique_ptr<RemoteScreen> remote;
@@ -153,6 +162,14 @@ private:
     int lockLayer = -1, lockBars = 0;
     bool lockArmed = false;
     int tab = 0;
-    bool sheetOpen = false, padSheetOpen = false, sendOpen = false;
+    bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false;
+    bool shownRunning = false;
+    juce::String shownBar;
+    juce::TimedCallback headerTick { [this] {
+        const bool running = beats.engine().clockRunning();
+        const double b = beats.engine().clockBeat();
+        const auto bar = running ? juce::String ((int) (b / 4.0) + 1) + "." + juce::String ((int) std::fmod (b, 4.0) + 1) : juce::String ("1.1");
+        if (running != shownRunning || bar != shownBar) { shownRunning = running; shownBar = bar; repaint (transportRect().expanded (2).toNearestInt()); }
+    } };
     bool animate = true;
 };

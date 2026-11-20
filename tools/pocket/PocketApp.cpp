@@ -361,7 +361,26 @@ PocketApp::PocketApp (Options o)
     tabs->onSelect = [this] (int i) { showTab (i); };
     toastBox = std::make_unique<Toast>();
     dim = std::make_unique<Dim>();
-    dim->onTap = [this] { closeSheet(); closePadSheet(); closeSendSheet(); };
+    dim->onTap = [this] { closeSheet(); closePadSheet(); closeSendSheet(); closeTempo(); };
+    tempoSheet.getBpm = [this] { return beats.drums().bpm; };
+    tempoSheet.setBpm = [this] (double b) { beats.setBpm (b); repaint(); };
+    tempoSheet.getClick = [this] { return appSettings.click; };
+    tempoSheet.setClick = [this] (bool on)
+    {
+        appSettings.click = on;
+        appSettings.save();
+        if (beats.engine().clockRunning())
+            beats.engine().setClick (on);
+    };
+    tempoSheet.getCountIn = [this] { return appSettings.countIn; };
+    tempoSheet.setCountIn = [this] (bool on)
+    {
+        appSettings.countIn = on;
+        appSettings.save();
+        loopsScreen.engine().setCountIn (on);
+    };
+    tempoSheet.onDone = [this] { closeTempo(); };
+    headerTick.startTimerHz (15);
 
     padSheet.onChanged = [this] (int pad) { beats.padChanged (pad); };
     padSheet.onDone = [this] { closePadSheet(); };
@@ -398,6 +417,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (*dim);
     addChildComponent (sheet);
     addChildComponent (padSheet);
+    addChildComponent (tempoSheet);
     addChildComponent (*sendSheet);
     addChildComponent (*toastBox);
 
@@ -863,7 +883,88 @@ juce::Rectangle<float> PocketApp::nextRect() const
 
 juce::Rectangle<float> PocketApp::backRect() const
 {
-    return { 8.0f, (float) insets.getTop() + 2.0f, (float) getWidth() - 180.0f, 32.0f };
+    return { 8.0f, (float) insets.getTop() + 2.0f, transportRect().getX() - 14.0f, 32.0f };
+}
+
+juce::Rectangle<float> PocketApp::transportRect() const
+{
+    return { (float) getWidth() - 182.0f, (float) insets.getTop() + 3.0f, 146.0f, 30.0f };
+}
+
+juce::Rectangle<float> PocketApp::playRect() const
+{
+    auto t = transportRect();
+    return { t.getRight() - 38.0f, t.getY() + 2.0f, 36.0f, t.getHeight() - 4.0f };
+}
+
+// Play: the loop layers if there are any, otherwise the pad pattern, otherwise the drum machine.
+// Stop: everything.
+void PocketApp::togglePlay()
+{
+    auto& b = beats.engine();
+    auto& l = loopsScreen.engine();
+    if (b.clockRunning())
+    {
+        lockWatch.stopTimer();
+        l.setTransport (false);
+        b.setPlaying (false);
+        b.setPatternPlaying (false);
+        b.setClick (false);
+        b.stopPads();
+    }
+    else
+    {
+        if (loopsScreen.layerCount() > 0)
+            l.setTransport (true);
+        else if (! beats.drums().padPattern.hits.empty())
+            b.setPatternPlaying (true);
+        else
+            b.setPlaying (true);
+        b.setClick (appSettings.click);
+    }
+    beats.refreshPads();
+    repaint();
+}
+
+juce::Rectangle<int> PocketApp::tempoBounds() const
+{
+    const int h = 410 + insets.getBottom();
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::openTempo()
+{
+    if (tempoOpen)
+        return;
+    closeSheet();
+    closePadSheet();
+    closeSendSheet();
+    tempoOpen = true;
+    tempoSheet.refresh();
+    dim->setVisible (true);
+    tempoSheet.setBounds (tempoBounds().withY (getHeight()));
+    tempoSheet.setVisible (true);
+    tempoSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (tempoSheet, tempoBounds(), true);
+}
+
+void PocketApp::closeTempo()
+{
+    if (! tempoOpen)
+        return;
+    tempoOpen = false;
+    dim->setVisible (false);
+    slide (tempoSheet, tempoBounds(), false);
+    if (! animate)
+        tempoSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->tempoOpen)
+                safe->tempoSheet.setVisible (false);
+        });
+    repaint();
 }
 
 //==============================================================================
@@ -946,7 +1047,7 @@ void PocketApp::linkChanged()
 juce::Rectangle<float> PocketApp::chipRect() const
 {
     if (stripShown())
-        return { (float) getWidth() - 150, (float) insets.getTop() + 3, 138, 28 };
+        return { (float) getWidth() - 32, (float) insets.getTop() + 5, 26, 26 };   // just the dot: the transport needs the room
     return { (float) getWidth() - 150, (float) insets.getTop() + 12, 138, 38 };
 }
 
@@ -961,6 +1062,10 @@ void PocketApp::mouseUp (const juce::MouseEvent& e)
         return openMacLink();
     if (! stripShown())
         return;
+    if (playRect().expanded (3).contains (e.position))
+        return togglePlay();
+    if (transportRect().contains (e.position))
+        return openTempo();
     if (backRect().contains (e.position))
         return showIdeasList (true);
     const int now = currentStep();
@@ -1029,7 +1134,9 @@ void PocketApp::paint (juce::Graphics& g)
     }
     const auto status = link.getStatus();
     const auto dotColour = status == LinkClient::Status::linked ? col::green : status == LinkClient::Status::connecting ? col::amber : col::grey;
-    auto dot = juce::Rectangle<float> (chip.getX() + 12, chip.getCentreY() - 5.5f, 11, 11);
+    const bool dotOnly = stripShown();
+    auto dot = dotOnly ? juce::Rectangle<float> (chip.getCentreX() - 5.5f, chip.getCentreY() - 5.5f, 11, 11)
+                       : juce::Rectangle<float> (chip.getX() + 12, chip.getCentreY() - 5.5f, 11, 11);
     if (status == LinkClient::Status::linked)
     {
         g.setColour (dotColour.withAlpha (0.3f));
@@ -1039,11 +1146,46 @@ void PocketApp::paint (juce::Graphics& g)
     g.fillEllipse (dot);
     g.setColour (juce::Colours::black.withAlpha (0.25f));
     g.drawEllipse (dot, 1.0f);
+    if (! dotOnly)
+    {
     g.setColour (dark ? juce::Colour (0xfff1e7d6) : status == LinkClient::Status::linked ? col::ink : col::inkDim);
     g.setFont (spaced (condensed (15.0f), 0.1f));
     const auto text = status == LinkClient::Status::linked ? link.getMacName().toUpperCase()
                     : status == LinkClient::Status::connecting ? U8("LINKING…") : juce::String ("NOT LINKED");
     g.drawFittedText (text, chip.withTrimmedLeft (30).withTrimmedRight (6).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+    }
+
+    if (stripShown())
+    {
+        // The transport: BPM (tap for Tempo), where the song is, Play/Stop
+        auto t = transportRect();
+        g.setColour (col::well);
+        g.fillRoundedRectangle (t, 9.0f);
+        const bool running = beats.engine().clockRunning();
+        g.setFont (lcdFont (22.0f));
+        g.setColour (col::lcdAmber);
+        const auto bpmText = juce::String (juce::roundToInt (beats.drums().bpm));
+        g.drawText (bpmText, t.getX() + 8, t.getY(), 34, t.getHeight(), juce::Justification::centredLeft);
+        g.setColour (col::inkFaint);
+        g.setFont (lcdFont (14.0f));
+        g.drawText ("BPM", t.getX() + 38, t.getY() + 2, 26, t.getHeight(), juce::Justification::centredLeft);
+        g.setColour (col::lcdText);
+        g.setFont (lcdFont (22.0f));
+        g.drawText (shownBar.isEmpty() ? juce::String ("1.1") : shownBar, t.getX() + 62, t.getY(), 42, t.getHeight(), juce::Justification::centredRight);
+        auto p = playRect();
+        g.setColour (running ? col::red : juce::Colour (0xff3c8f56));
+        g.fillRoundedRectangle (p, 7.0f);
+        g.setColour (juce::Colour (0xfff1e7d1));
+        auto c = p.getCentre();
+        if (running)
+            g.fillRoundedRectangle (c.x - 6, c.y - 6, 12, 12, 2.0f);
+        else
+        {
+            juce::Path tri;
+            tri.addTriangle (c.x - 5, c.y - 7, c.x - 5, c.y + 7, c.x + 7, c.y);
+            g.fillPath (tri);
+        }
+    }
 
     g.setColour (dark ? juce::Colour (0xff3a332c) : col::rule);
     g.fillRect (0, top + 60, getWidth(), 2);
@@ -1081,6 +1223,7 @@ void PocketApp::resized()
     dim->setBounds (0, 0, w, h);
     layoutSheet (sheetOpen);
     padSheet.setBounds (padSheetOpen ? padSheetBounds() : padSheetBounds().withY (h));
+    tempoSheet.setBounds (tempoOpen ? tempoBounds() : tempoBounds().withY (h));
     toastBox->setBounds (24, h - tabH - 62, w - 48, 48);
 }
 
@@ -1218,6 +1361,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     loopsScreen.showDemo();
     showTab (2);
     savePng (folder.getChildFile ("07-loops.png"));
+    openTempo();
+    savePng (folder.getChildFile ("07c-tempo.png"));
+    closeTempo();
 
     // Vocoder: the Robot pedal open, A-flat picked, five pedals on
     vocoderScreen.showDemo();

@@ -47,7 +47,7 @@ bool LoopsEngine::arm (int layer, LoopSource source, int bars)
     const double tempo = juce::jmax (40.0, beats.getBpm());
     const int lat = latency.load();
     const int room = bars > 0 ? (int) (bars * 4.0 * 60.0 / tempo * sampleRate * 1.6) + lat + 8192
-                              : (int) (64.0 * sampleRate) + lat;
+                              : (int) (600.0 * sampleRate) + lat;   // FREE: up to 10 minutes
     auto take = makeTake (room, sampleRate);
     take->source = (int) source;
     if (takes[(size_t) layer] != nullptr)

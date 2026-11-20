@@ -40,7 +40,7 @@ public:
 private:
     struct Undo { struct One { int layer; pocket::SharedTake before; bool mute; }; std::vector<One> items; };
     struct Row { pocket::LoopState st = pocket::LoopState::empty; bool muted = false; int version = -1; std::vector<float> peaks; };
-    enum Id { rec = 1, srcBase = 10, lenBase = 20, lcd = 30, undoId = 31, clearId = 32, clearAllId = 33, toMacId = 34,
+    enum Id { playId = 35, rec = 1, srcBase = 10, lenBase = 20, lcd = 30, undoId = 31, clearId = 32, clearAllId = 33, toMacId = 34,
               rowSelect = 100, rowAct = 200, rowMute = 300 };
 
     void timerCallback() override;
@@ -64,6 +64,7 @@ private:
     juce::Rectangle<float> lengthCell (int i) const;
     juce::Rectangle<float> lcdRect() const { return { 102, 12, (float) getWidth() - 117, 76 }; }
     juce::Rectangle<float> recRect() const { return { 16, 12, 76, 76 }; }
+    juce::Rectangle<float> playRect() const { auto l = lcdRect(); return { l.getRight() - 64, l.getY() + 9, 54, 46 }; }
     juce::Rectangle<float> undoRect() const { return { 16, 584, 59, 43 }; }
     juce::Rectangle<float> clearRect() const { return { 84, 584, 67, 43 }; }
     juce::Rectangle<float> clearAllRect() const { return { 160, 584, 96, 43 }; }
