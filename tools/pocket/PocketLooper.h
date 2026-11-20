@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "BeatsEngine.h"
+#include "PocketLoopFx.h"
 #include "PocketAudio.h"
 
 #include <array>
@@ -83,6 +84,27 @@ public:
     bool countingIn() const { for (auto& l : layers) if (l.uiCounting.load()) return true; return false; }
     // Message thread, often: lets go of sounds the audio thread no longer uses.
     void maintain();
+    //==========================================================================
+    // Effects on each layer (the loop editor) and their recorded moves. Message thread.
+    void setKnob (int layer, int knob, float v);
+    float knob (int layer, int knob) const { return fx[(size_t) layer].knob[(size_t) knob].load(); }
+    float shownKnob (int layer, int knob) const { return fx[(size_t) layer].shown[(size_t) knob].load(); }   // with its moves playing
+    // A finger on the knob: it plays the knob, not its moves, and with REC MOVES on it writes them.
+    void touchKnob (int layer, int knob, bool down);
+    void setRecMoves (int layer, bool on);
+    bool recMoves (int layer) const { return fx[(size_t) layer].rec.load(); }
+    bool hasMoves (int layer, int knob) const { return fx[(size_t) layer].has[(size_t) knob].load(); }
+    bool hasAnyMoves (int layer) const { for (int k = 0; k < kFxKnobs; ++k) if (hasMoves (layer, k)) return true; return false; }
+    std::vector<float> moves (int layer, int knob) const;
+    void clearMoves (int layer);
+    LayerFxState fxOf (int layer) const;
+    void setFx (int layer, const LayerFxState&);
+    void resetFx (int layer) { setFx (layer, {}); }
+    // Writes the touched knobs into their moves at the loop's place. Call it often (the screen's timer).
+    void recordMoves();
+    // The layer's loop printed with its effects (stereo), or nullptr.
+    std::unique_ptr<juce::AudioBuffer<float>> printed (int layer) const;
+
     // The longest-running layer's length in beats (0 = nothing recorded), for FREE and the display.
     double masterBeats() const;
     // The layer's loudness in `count` slices, for drawing it (also while it records).
@@ -124,9 +146,21 @@ private:
         double armBeat = -1, startBeat = 0, lenBeats = 0, endBeat = -1, dubBeat = 0;
         bool fresh = false, withCountIn = false;   // armed while the clock was stopped
         float gain = 0.0f;
+        FxDsp dsp;
+    };
+
+    struct FxCtl
+    {
+        std::array<std::atomic<float>, kFxKnobs> knob, shown;
+        std::array<std::atomic<bool>, kFxKnobs> touched, has;
+        std::array<std::array<std::atomic<float>, kMoveBins>, kFxKnobs> lane;
+        std::atomic<bool> rec { false };
+        std::array<int, kFxKnobs> lastBin {};   // message thread: where the last write ended
+        std::array<float, kFxKnobs> before {};  // message thread: the knob when the finger went down
     };
 
     void push (const Cmd&);
+    float fxValue (int layer, int knob, double frac) const;
     void handle (const Cmd&);
     void setState (Layer&, LoopState);
     void chunk (float* left, float* right, int n);
@@ -141,6 +175,8 @@ private:
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;
     std::array<Layer, kLoopLayers> layers;
+    std::array<FxCtl, kLoopLayers> fx;
+    FxBus bus;
     std::array<SharedTake, kLoopLayers> takes;                          // the message thread's
     std::vector<std::pair<SharedTake, juce::uint32>> retired;           // kept a while after the audio thread lets go
     bool countIn = true;
@@ -161,6 +197,7 @@ private:
     double nextBeat = 0;
     int chunkOffset = 0;
     std::array<std::vector<float>, kLoopLayers> layerOut;
+    std::vector<float> busDelay, busReverb, busL, busR;
     std::vector<float> srcMic, srcDrums, srcVoc, srcMix, vocL, vocR;
 };
 }

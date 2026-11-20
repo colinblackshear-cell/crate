@@ -44,6 +44,8 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketLibrary.cpp
     PocketIdeas.cpp
     PocketFactory.cpp
+    PocketLoopFx.cpp
+    LoopEditSheet.cpp
     SoundBankSheet.cpp
     TempoSheet.cpp
     IdeasScreen.cpp

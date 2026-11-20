@@ -12,6 +12,19 @@ LoopsEngine::LoopsEngine (BeatsEngine& b) : beats (b)
 {
     for (auto& c : cmds)
         c = {};
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        auto& f = fx[(size_t) l];
+        for (int k = 0; k < kFxKnobs; ++k)
+        {
+            f.knob[(size_t) k] = fxDefault (k);
+            f.shown[(size_t) k] = fxDefault (k);
+            f.touched[(size_t) k] = false;
+            f.has[(size_t) k] = false;
+            for (auto& v : f.lane[(size_t) k])
+                v = fxDefault (k);
+        }
+    }
     prepare (sampleRate);
 }
 
@@ -50,6 +63,7 @@ bool LoopsEngine::arm (int layer, LoopSource source, int bars)
                               : (int) (600.0 * sampleRate) + lat;   // FREE: up to 10 minutes
     auto take = makeTake (room, sampleRate);
     take->source = (int) source;
+    resetFx (layer);   // a new recording starts with its effects off
     if (takes[(size_t) layer] != nullptr)
         retired.push_back ({ takes[(size_t) layer], juce::Time::getMillisecondCounter() });
     takes[(size_t) layer] = take;
@@ -89,6 +103,7 @@ void LoopsEngine::setMute (int layer, bool m) { layers[(size_t) layer].mute = m;
 
 void LoopsEngine::clear (int layer)
 {
+    resetFx (layer);
     Cmd c;
     c.kind = Cmd::clear;
     c.layer = layer;
@@ -101,6 +116,8 @@ void LoopsEngine::setLayer (int layer, SharedTake take, bool mute)
         retired.push_back ({ takes[(size_t) layer], juce::Time::getMillisecondCounter() });
     takes[(size_t) layer] = take;
     layers[(size_t) layer].mute = mute;
+    if (take == nullptr)
+        resetFx (layer);
     Cmd c;
     c.kind = Cmd::set;
     c.layer = layer;
@@ -120,6 +137,139 @@ SharedTake LoopsEngine::copyOf (int layer) const
     t->lengthBeats = src->lengthBeats.load();
     t->source = src->source;
     return t;
+}
+
+//==============================================================================
+// Effects and moves
+void LoopsEngine::setKnob (int layer, int k, float v)
+{
+    auto& f = fx[(size_t) layer];
+    f.knob[(size_t) k] = juce::jlimit (0.0f, 1.0f, v);
+    if (f.touched[(size_t) k].load() || ! f.has[(size_t) k].load())
+        f.shown[(size_t) k] = f.knob[(size_t) k].load();   // shown at once, even with the audio stopped
+}
+
+void LoopsEngine::touchKnob (int layer, int k, bool down)
+{
+    auto& f = fx[(size_t) layer];
+    f.lastBin[(size_t) k] = -1;
+    f.before[(size_t) k] = f.has[(size_t) k].load() ? f.shown[(size_t) k].load() : f.knob[(size_t) k].load();
+    f.touched[(size_t) k] = down;
+}
+
+void LoopsEngine::setRecMoves (int layer, bool on)
+{
+    auto& f = fx[(size_t) layer];
+    f.rec = on;
+    for (auto& b : f.lastBin)
+        b = -1;
+}
+
+std::vector<float> LoopsEngine::moves (int layer, int k) const
+{
+    auto& f = fx[(size_t) layer];
+    if (! f.has[(size_t) k].load())
+        return {};
+    std::vector<float> m ((size_t) kMoveBins);
+    for (int i = 0; i < kMoveBins; ++i)
+        m[(size_t) i] = f.lane[(size_t) k][(size_t) i].load();
+    return m;
+}
+
+void LoopsEngine::clearMoves (int layer)
+{
+    for (auto& h : fx[(size_t) layer].has)
+        h = false;
+}
+
+LayerFxState LoopsEngine::fxOf (int layer) const
+{
+    LayerFxState s;
+    for (int k = 0; k < kFxKnobs; ++k)
+    {
+        s.knob[(size_t) k] = knob (layer, k);
+        s.moves[(size_t) k] = moves (layer, k);
+    }
+    return s;
+}
+
+void LoopsEngine::setFx (int layer, const LayerFxState& s)
+{
+    auto& f = fx[(size_t) layer];
+    for (int k = 0; k < kFxKnobs; ++k)
+    {
+        f.knob[(size_t) k] = juce::jlimit (0.0f, 1.0f, s.knob[(size_t) k]);
+        const auto& m = s.moves[(size_t) k];
+        if (m.size() == (size_t) kMoveBins)
+        {
+            for (int i = 0; i < kMoveBins; ++i)
+                f.lane[(size_t) k][(size_t) i] = juce::jlimit (0.0f, 1.0f, m[(size_t) i]);
+            f.has[(size_t) k] = true;
+        }
+        else
+            f.has[(size_t) k] = false;
+        f.shown[(size_t) k] = m.size() == (size_t) kMoveBins ? f.lane[(size_t) k][0].load() : f.knob[(size_t) k].load();
+        f.touched[(size_t) k] = false;
+        f.lastBin[(size_t) k] = -1;
+    }
+    f.rec = false;
+}
+
+void LoopsEngine::recordMoves()
+{
+    if (! beats.clockRunning())
+        return;
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        auto& f = fx[(size_t) l];
+        const auto st = state (l);
+        if (! f.rec.load() || ! (st == LoopState::playing || st == LoopState::overdubWait || st == LoopState::overdubbing))
+            continue;
+        const int bin = juce::jlimit (0, kMoveBins - 1, (int) (position (l) * kMoveBins));
+        for (int k = 0; k < kFxKnobs; ++k)
+        {
+            if (! f.touched[(size_t) k].load())
+                continue;
+            auto& lane = f.lane[(size_t) k];
+            const float v = f.knob[(size_t) k].load();
+            int& last = f.lastBin[(size_t) k];
+            if (! f.has[(size_t) k].load())
+            {
+                for (auto& x : lane)
+                    x = f.before[(size_t) k];   // the rest of the loop keeps what it was
+                f.has[(size_t) k] = true;
+                last = -1;
+            }
+            const int dist = last < 0 ? 0 : (bin - last + kMoveBins) % kMoveBins;
+            if (dist == 0 || dist > kMoveBins / 2)
+                lane[(size_t) bin] = v;
+            else
+                for (int i = 1; i <= dist; ++i)
+                    lane[(size_t) ((last + i) % kMoveBins)] = v;
+            last = bin;
+        }
+    }
+}
+
+std::unique_ptr<juce::AudioBuffer<float>> LoopsEngine::printed (int layer) const
+{
+    auto take = takes[(size_t) layer];
+    if (take == nullptr || take->length.load() < 2 || take->lengthBeats.load() <= 0)
+        return nullptr;
+    return std::make_unique<juce::AudioBuffer<float>> (renderLayer (take->data.data(), take->length.load(), take->lengthBeats.load(), take->sampleRate, fxOf (layer)));
+}
+
+float LoopsEngine::fxValue (int layer, int k, double frac) const
+{
+    auto& f = fx[(size_t) layer];
+    if (f.touched[(size_t) k].load() || ! f.has[(size_t) k].load())
+        return f.knob[(size_t) k].load();
+    frac -= std::floor (frac);
+    const double p = frac * kMoveBins;
+    const int a = juce::jmin (kMoveBins - 1, (int) p), b = (a + 1) % kMoveBins;
+    const float t = (float) (p - a);
+    const float va = f.lane[(size_t) k][(size_t) a].load(), vb = f.lane[(size_t) k][(size_t) b].load();
+    return va + (vb - va) * t;
 }
 
 void LoopsEngine::setTransport (bool on)
@@ -181,8 +331,11 @@ void LoopsEngine::prepare (double rate)
     sampleRate = rate;
     for (auto& v : layerOut)
         v.assign ((size_t) kChunk, 0.0f);
-    for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &vocL, &vocR })
+    for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &vocL, &vocR, &busDelay, &busReverb, &busL, &busR })
         v->assign ((size_t) kChunk, 0.0f);
+    bus.prepare (rate);
+    for (auto& l : layers)
+        l.dsp.reset();
     beats.prepare (rate);
     if (vocoder != nullptr)
         vocoder->prepare (rate);
@@ -387,13 +540,18 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         }
     }
 
-    // play the layers
+    // play the layers, through their effects; the delay and reverb they send to
+    std::fill (busDelay.begin(), busDelay.begin() + n, 0.0f);
+    std::fill (busReverb.begin(), busReverb.begin() + n, 0.0f);
     for (int l = 0; l < kLoopLayers; ++l)
         playLayer (layers[(size_t) l], l, blockBeat, bps, n);
+    std::fill (busL.begin(), busL.begin() + n, 0.0f);
+    std::fill (busR.begin(), busR.begin() + n, 0.0f);
+    bus.process (busDelay.data(), busReverb.data(), busL.data(), busR.data(), n, bps > 0 ? 1.0 / bps : sampleRate * 0.5);
 
     for (int i = 0; i < n; ++i)
     {
-        float m = srcDrums[(size_t) i] + (vocoderHeard ? srcVoc[(size_t) i] : 0.0f);
+        float m = srcDrums[(size_t) i] + (vocoderHeard ? srcVoc[(size_t) i] : 0.0f) + 0.5f * (busL[(size_t) i] + busR[(size_t) i]);
         for (auto& o : layerOut)
             m += o[(size_t) i];
         srcMix[(size_t) i] = m;
@@ -417,6 +575,12 @@ void LoopsEngine::chunk (float* left, float* right, int n)
             if (right != nullptr)
                 right[i] += s;
         }
+    for (int i = 0; i < n; ++i)
+    {
+        left[i] += busL[(size_t) i];
+        if (right != nullptr)
+            right[i] += busR[(size_t) i];
+    }
 
     nextBeat = running ? blockBeat + n * bps : 0.0;
 }
@@ -429,6 +593,9 @@ void LoopsEngine::playLayer (Layer& l, int index, double blockBeat, double bps, 
     {
         std::fill (out.begin(), out.begin() + n, 0.0f);
         l.gain = 0.0f;
+        l.dsp.reset();
+        for (int k = 0; k < kFxKnobs; ++k)
+            fx[(size_t) index].shown[(size_t) k] = fx[(size_t) index].knob[(size_t) k].load();
         return;
     }
 
@@ -464,6 +631,16 @@ void LoopsEngine::playLayer (Layer& l, int index, double blockBeat, double bps, 
     }
     l.gain = g;
     l.uiPos = (float) (pos / (double) len);
+
+    // the layer's effects, at the knobs (or their moves) for this part of the loop
+    float values[kFxKnobs];
+    const double frac = phase / lenBeats;
+    for (int k = 0; k < kFxKnobs; ++k)
+    {
+        values[k] = fxValue (index, k, frac);
+        fx[(size_t) index].shown[(size_t) k] = values[k];
+    }
+    l.dsp.process (out.data(), busDelay.data(), busReverb.data(), n, values, sampleRate);
 }
 
 void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps, int n)

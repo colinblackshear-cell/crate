@@ -1504,6 +1504,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     openTempo();
     savePng (folder.getChildFile ("07c-tempo.png"));
     closeTempo();
+    loopsScreen.showEditorDemo();
+    savePng (folder.getChildFile ("07d-loop-editor.png"));
+    loopsScreen.leave();
 
     // Vocoder: the Robot pedal open, A-flat picked, five pedals on
     vocoderScreen.showDemo();

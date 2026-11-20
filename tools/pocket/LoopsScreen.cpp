@@ -7,7 +7,7 @@ using namespace pocket;
 namespace
 {
 constexpr float kRowTop = 205.0f, kRowPitch = 46.7f, kRowHeight = 42.0f;
-constexpr int kPeakBins = 45;
+constexpr int kPeakBins = 34;
 const int kBarChoices[4] = { 1, 2, 4, 8 };
 const char* const kSourceNames[4] = { "MIC", "DRUMS", "VOCODER", "MIX" };
 const char* const kLengthNames[5] = { "1", "2", "4", "8", "FREE" };
@@ -55,6 +55,13 @@ LoopsScreen::LoopsScreen (PocketHost& h, Library& l, BeatsEngine& b, AppSettings
 {
     loops.setCountIn (settings.countIn);
     restore();
+    addChildComponent (editor);
+    editor.onDone = [this] { closeEditor(); };
+    editor.onUndo = [this] { undo(); };
+    editor.onPlay = [this] { if (! loops.transportRunning()) host.togglePlay(); };
+    editor.onToast = [this] (const juce::String& t) { host.toast (t); };
+    editor.onEdit = [this] (int edit, double a, double b) { editLayer (editor.layer(), edit, a, b); };
+    editor.onFxChanged = [this] { repaint(); };
     startTimerHz (20);
 }
 
@@ -74,12 +81,14 @@ int LoopsScreen::layerCount() const
 
 void LoopsScreen::leave()
 {
+    closeEditor();
     loops.setTransport (false);
     beats.setPlaying (false);
 }
 
 juce::Rectangle<float> LoopsScreen::rowRect (int l) const { return { 16.0f, kRowTop + (float) l * kRowPitch, (float) getWidth() - 32.0f, kRowHeight }; }
 juce::Rectangle<float> LoopsScreen::actRect (int l) const { auto r = rowRect (l); return { r.getRight() - 106.0f, r.getY() + 3, 58, 36 }; }
+juce::Rectangle<float> LoopsScreen::editRect (int l) const { auto r = rowRect (l); return { r.getRight() - 160.0f, r.getY() + 3, 48, 36 }; }
 juce::Rectangle<float> LoopsScreen::muteRect (int l) const { auto r = rowRect (l); return { r.getRight() - 40.0f, r.getY() + 3, 34, 36 }; }
 
 juce::Rectangle<float> LoopsScreen::sourceCell (int i) const
@@ -121,6 +130,7 @@ void LoopsScreen::timerCallback()
         loops.maintain();
         return;
     }
+    loops.recordMoves();
     inputLevel = juce::jmax (inputLevel * 0.85f, loops.takeInputLevel());
     refresh();
     if ((++ticks % 10) == 0)
@@ -210,9 +220,15 @@ void LoopsScreen::undo()
         if (one.before == nullptr)
             loops.clear (one.layer);
         else
+        {
             loops.setLayer (one.layer, one.before, one.mute);
+            if (one.withFx)
+                loops.setFx (one.layer, one.fx);
+        }
         lastLayer = one.layer;
     }
+    if (editor.isVisible())
+        editor.layerChanged();
 }
 
 void LoopsScreen::clearLayer (int layer, bool withUndo)
@@ -224,7 +240,7 @@ void LoopsScreen::clearLayer (int layer, bool withUndo)
         Undo u;
         auto take = loops.takeOf (layer);
         if (hasLoop (loops.state (layer)) && take != nullptr)
-            u.items.push_back ({ layer, take, loops.isMuted (layer) });
+            u.items.push_back ({ layer, take, loops.isMuted (layer), true, loops.fxOf (layer) });
         else
             u.items.push_back ({ layer, nullptr, false });
         pushUndo (std::move (u));
@@ -243,7 +259,7 @@ void LoopsScreen::clearAll()
             continue;
         ++n;
         if (hasLoop (st) && loops.takeOf (l) != nullptr)
-            u.items.push_back ({ l, loops.takeOf (l), loops.isMuted (l) });
+            u.items.push_back ({ l, loops.takeOf (l), loops.isMuted (l), true, loops.fxOf (l) });
         loops.clear (l);
     }
     if (n == 0)
@@ -339,6 +355,17 @@ void LoopsScreen::press (int id)
             }
         }
     }
+    else if (id >= rowEdit && id < rowEdit + kLoopLayers)
+    {
+        const int l = id - rowEdit;
+        selected = lastLayer = l;
+        if (loops.state (l) == LoopState::playing)
+            openEditor (l);
+        else if (hasLoop (loops.state (l)))
+            host.toast ("Let the overdub finish, then EDIT.");
+        else
+            host.toast ("Record this layer first, then EDIT trims it and adds effects.");
+    }
     else if (id >= rowMute && id < rowMute + kLoopLayers)
     {
         const int l = id - rowMute;
@@ -365,6 +392,8 @@ int LoopsScreen::idAt (juce::Point<float> p) const
     {
         if (muteRect (l).expanded (3, 3).contains (p))
             return rowMute + l;
+        if (editRect (l).expanded (2, 3).contains (p))
+            return rowEdit + l;
         if (actRect (l).expanded (3, 3).contains (p))
             return rowAct + l;
         if (rowRect (l).contains (p))
@@ -393,7 +422,131 @@ void LoopsScreen::mouseUp (const juce::MouseEvent& e)
     repaint();
 }
 
-void LoopsScreen::resized() {}
+void LoopsScreen::resized()
+{
+    if (editor.isVisible())
+        editor.setBounds (0, 196, getWidth(), getHeight() - 196);
+}
+
+void LoopsScreen::openEditor (int layer)
+{
+    editor.open (layer);
+    const juce::Rectangle<int> to (0, 196, getWidth(), getHeight() - 196);
+    if (! editor.isVisible())
+    {
+        editor.setBounds (to.withY (getHeight()));
+        editor.setVisible (true);
+        editor.toFront (false);
+        juce::Desktop::getInstance().getAnimator().animateComponent (&editor, to, 1.0f, demo ? 0 : 220, false, 1.0, 0.0);
+    }
+    else
+        editor.setBounds (to);
+}
+
+void LoopsScreen::closeEditor()
+{
+    if (! editor.isVisible())
+        return;
+    if (editor.layer() >= 0)
+        loops.setRecMoves (editor.layer(), false);
+    juce::Desktop::getInstance().getAnimator().cancelAnimation (&editor, false);
+    editor.setVisible (false);
+    repaint();
+}
+
+void LoopsScreen::editLayer (int layer, int edit, double fromBeat, double toBeat)
+{
+    if (layer < 0 || loops.state (layer) != LoopState::playing)
+        return host.toast ("Let the layer finish recording first.");
+    auto take = loops.takeOf (layer);
+    if (take == nullptr)
+        return;
+    const int len = take->length.load();
+    const double beatsLen = take->lengthBeats.load();
+    if (len < 2 || beatsLen <= 0)
+        return;
+    const double perBeat = (double) len / beatsLen;
+    const float* d = take->data.data();
+    auto fx = loops.fxOf (layer);
+    SharedTake made;
+    juce::String said;
+
+    switch (edit)
+    {
+        case LoopEditSheet::trim:
+        {
+            fromBeat = juce::jlimit (0.0, beatsLen, fromBeat);
+            toBeat = juce::jlimit (fromBeat, beatsLen, toBeat);
+            const int a = juce::jlimit (0, len - 1, juce::roundToInt (fromBeat * perBeat));
+            const int b = juce::jlimit (a + 1, len, juce::roundToInt (toBeat * perBeat));
+            if (toBeat - fromBeat < 0.99)
+                return host.toast ("Keep at least one beat.");
+            made = LoopsEngine::makeTake (b - a, take->sampleRate);
+            std::copy (d + a, d + b, made->data.begin());
+            made->lengthBeats = toBeat - fromBeat;
+            fx.remap (fromBeat / beatsLen, toBeat / beatsLen, 1, false);
+            said = "Trimmed to " + juce::String (toBeat - fromBeat, 0) + " beats.";
+            break;
+        }
+        case LoopEditSheet::half:
+        {
+            if (beatsLen < 2.0 - 1.0e-6)
+                return host.toast ("It's one beat already.");
+            const int b = juce::jmax (1, len / 2);
+            made = LoopsEngine::makeTake (b, take->sampleRate);
+            std::copy (d, d + b, made->data.begin());
+            made->lengthBeats = beatsLen / 2.0;
+            fx.remap (0.0, 0.5, 1, false);
+            said = "Half: the first " + juce::String (beatsLen / 2.0, beatsLen / 2.0 == std::floor (beatsLen / 2.0) ? 0 : 1) + " beats.";
+            break;
+        }
+        case LoopEditSheet::twice:
+        {
+            if ((double) len * 2.0 / take->sampleRate > 600.0)
+                return host.toast ("Doubled it would pass 10 minutes.");
+            made = LoopsEngine::makeTake (len * 2, take->sampleRate);
+            std::copy (d, d + len, made->data.begin());
+            std::copy (d, d + len, made->data.begin() + len);
+            made->lengthBeats = beatsLen * 2.0;
+            fx.remap (0.0, 1.0, 2, false);
+            said = "Doubled: it plays twice, so you can dub something different over the second half.";
+            break;
+        }
+        case LoopEditSheet::reverse:
+        {
+            made = LoopsEngine::makeTake (len, take->sampleRate);
+            std::reverse_copy (d, d + len, made->data.begin());
+            made->lengthBeats = beatsLen;
+            fx.remap (0.0, 1.0, 1, true);
+            said = "Reversed. Undo turns it back.";
+            break;
+        }
+        default: return;
+    }
+    made->length = (int) made->data.size();
+    made->source = take->source;
+
+    Undo u;
+    u.items.push_back ({ layer, take, loops.isMuted (layer), true, loops.fxOf (layer) });
+    pushUndo (std::move (u));
+    loops.setLayer (layer, made, loops.isMuted (layer));
+    loops.setFx (layer, fx);
+    host.toast (said);
+}
+
+juce::uint32 LoopsScreen::fxHash (const LayerFxState& fx)
+{
+    juce::uint32 h = 2166136261u;
+    auto mix = [&h] (float v) { h = (h ^ (juce::uint32) juce::roundToInt (v * 10000.0f)) * 16777619u; };
+    for (int k = 0; k < kFxKnobs; ++k)
+    {
+        mix (fx.knob[(size_t) k]);
+        mix ((float) fx.moves[(size_t) k].size());
+        for (auto v : fx.moves[(size_t) k])
+            mix (v);
+    }
+    return h;
+}
 
 //==============================================================================
 void LoopsScreen::drawLcd (juce::Graphics& g)
@@ -513,9 +666,9 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
     g.drawText (juce::String (l + 1), juce::Rectangle<float> (r.getX() + 7, r.getY(), 22, r.getHeight()), juce::Justification::centredLeft);
     g.setColour (colour);
     g.setFont (spaced (condensedBold (14.0f), 0.08f));
-    g.drawText (stateLabel (st, row.muted), juce::Rectangle<float> (r.getX() + 30, r.getY(), 76, r.getHeight()), juce::Justification::centredLeft);
+    g.drawFittedText (stateLabel (st, row.muted), juce::Rectangle<float> (r.getX() + 28, r.getY(), 64, r.getHeight()).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
 
-    auto wave = juce::Rectangle<float> (r.getX() + 101, r.getY() + 4, r.getWidth() - 101 - 126, r.getHeight() - 8);
+    auto wave = juce::Rectangle<float> (r.getX() + 96, r.getY() + 4, r.getWidth() - 96 - 168, r.getHeight() - 8);
     if (st == LoopState::waiting)
     {
         g.setColour (kRowAmber);
@@ -558,6 +711,22 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
     }
     else
         g.drawText (text, act.withTrimmedBottom (3), juce::Justification::centred);
+
+    // EDIT: trim and effects (amber when the layer has effects on)
+    if (hasLoop (st))
+    {
+        auto ed = editRect (l);
+        const bool fxOn = ! loops.fxOf (l).isNeutral();
+        drawRaised (g, ed, fxOn ? Look::amber : Look::cream, pressed == rowEdit + l, 10.0f);
+        g.setColour (col::ink);
+        g.setFont (spaced (condensed (14.0f), 0.08f));
+        g.drawText ("EDIT", ed.withTrimmedBottom (3), juce::Justification::centred);
+        if (loops.hasAnyMoves (l))
+        {
+            g.setColour (loops.recMoves (l) ? col::red : col::ink.withAlpha (0.6f));
+            g.fillEllipse (ed.getRight() - 9, ed.getY() + 4, 5, 5);
+        }
+    }
 
     auto mute = muteRect (l);
     drawRaised (g, mute, row.muted && st != LoopState::empty ? Look::blue : Look::dark, pressed == rowMute + l, 10.0f);
@@ -636,7 +805,8 @@ void LoopsScreen::saveIfChanged()
         auto& s = saved[(size_t) l];
         const auto take = loops.takeOf (l);
         const bool present = hasLoop (st) && take != nullptr;
-        if (present != s.present || (present && (take.get() != s.take || loops.version (l) != s.version || loops.isMuted (l) != s.mute)))
+        if (present != s.present || (present && (take.get() != s.take || loops.version (l) != s.version || loops.isMuted (l) != s.mute
+                                                  || (! loops.recMoves (l) && fxHash (loops.fxOf (l)) != s.fx))))
             differs = true;
     }
     if (differs && ! busy && ! demo)
@@ -680,8 +850,23 @@ void LoopsScreen::save()
                 }
             }
         }
-        s = { take.get(), loops.version (l), true, loops.isMuted (l) };
+        const auto fx = loops.fxOf (l);
+        s = { take.get(), loops.version (l), true, loops.isMuted (l), fxHash (fx) };
         auto* o = new juce::DynamicObject();
+        if (! fx.isNeutral())
+        {
+            juce::Array<juce::var> knobs, moves;
+            for (int k = 0; k < kFxKnobs; ++k)
+            {
+                knobs.add (std::round (fx.knob[(size_t) k] * 1000.0f) / 1000.0f);
+                juce::Array<juce::var> m;
+                for (auto v : fx.moves[(size_t) k])
+                    m.add (std::round (v * 1000.0f) / 1000.0f);
+                moves.add (fx.moves[(size_t) k].empty() ? juce::var() : juce::var (m));
+            }
+            o->setProperty ("fx", knobs);
+            o->setProperty ("moves", moves);
+        }
         o->setProperty ("layer", l);
         o->setProperty ("file", file.getFileName());
         o->setProperty ("beats", take->lengthBeats.load());
@@ -708,6 +893,9 @@ void LoopsScreen::sendToMac (bool onlyPicked)
             return;
         juce::AudioBuffer<float> b (1, take->length.load());
         b.copyFrom (0, 0, take->data.data(), b.getNumSamples());
+        if (! loops.fxOf (l).isNeutral())
+            if (auto printed = loops.printed (l))
+                b = std::move (*printed);   // with its effects and moves, in stereo
         if (std::abs (take->sampleRate - crate::kSampleRate) > 1.0)
             b = crate::AudioFiles::resample (b, take->sampleRate);   // the phone records at its own rate; sounds travel at 44.1 kHz
         static const char* sources[] = { "Mic", "Drums", "Vocoder", "Mix" };
@@ -734,6 +922,7 @@ void LoopsScreen::sendToMac (bool onlyPicked)
 void LoopsScreen::reloadIdea()
 {
     leave();
+    closeEditor();
     for (int l = 0; l < kLoopLayers; ++l)
     {
         loops.setLayer (l, nullptr, false);
@@ -776,7 +965,21 @@ void LoopsScreen::restore()
             take->lengthBeats = beats_;
             take->source = (int) item.getProperty ("source", 0);
             loops.setLayer (l, take, (bool) item.getProperty ("mute", false));
-            saved[(size_t) l] = { take.get(), 0, true, (bool) item.getProperty ("mute", false) };
+            LayerFxState fx;
+            if (auto* knobs = item.getProperty ("fx", {}).getArray())
+                for (int k = 0; k < kFxKnobs && k < knobs->size(); ++k)
+                    fx.knob[(size_t) k] = (float) (double) (*knobs)[k];
+            if (auto* moves = item.getProperty ("moves", {}).getArray())
+                for (int k = 0; k < kFxKnobs && k < moves->size(); ++k)
+                    if (auto* m = (*moves)[k].getArray(); m != nullptr && m->size() == kMoveBins)
+                    {
+                        auto& lane = fx.moves[(size_t) k];
+                        lane.resize ((size_t) kMoveBins);
+                        for (int i = 0; i < kMoveBins; ++i)
+                            lane[(size_t) i] = (float) (double) (*m)[i];
+                    }
+            loops.setFx (l, fx);
+            saved[(size_t) l] = { take.get(), 0, true, (bool) item.getProperty ("mute", false), fxHash (loops.fxOf (l)) };
         }
 }
 
@@ -964,5 +1167,103 @@ juce::String LoopsScreen::selfCheck (juce::String& report)
                 problems.add ("overdub did not record on top of the layer");
         }
     }
+
+    // effects: moves play back (volume off for the first half of the loop, full for the second)
+    {
+        auto beatsEngine = std::make_unique<BeatsEngine>();
+        auto engine = std::make_unique<LoopsEngine> (*beatsEngine);
+        engine->prepare (sr);
+        engine->setLatency (0);
+        engine->setCountIn (false);
+        beatsEngine->setBpm (bpm);
+        Pump pump (*beatsEngine, *engine);
+        const int n = (int) (4.0 * 60.0 / bpm * sr);
+        auto take = LoopsEngine::makeTake (n, sr);
+        std::fill (take->data.begin(), take->data.end(), 0.5f);
+        take->length = n;
+        take->lengthBeats = 4.0;
+        engine->setLayer (0, take, false);
+        LayerFxState fx;
+        fx.moves[fxVolume].assign ((size_t) kMoveBins, 0.75f);
+        std::fill (fx.moves[fxVolume].begin(), fx.moves[fxVolume].begin() + kMoveBins / 2, 0.0f);
+        engine->setFx (0, fx);
+        engine->setTransport (true);
+        pump.run (n + 4096);
+        int silent = 0, full = 0;
+        for (int done = 0; done < n; done += 512)
+        {
+            pump.run (512);
+            for (auto v : pump.l)
+            {
+                silent += std::abs (v) < 0.01f ? 1 : 0;
+                full += std::abs (v - 0.4f) < 0.02f ? 1 : 0;
+            }
+        }
+        report << "moves: volume moves gave " << silent << " silent and " << full << " full samples of " << n << "\n";
+        if (silent < n * 2 / 5 || full < n * 2 / 5)
+            problems.add ("recorded volume moves did not play back (" + juce::String (silent) + " silent, " + juce::String (full) + " full of " + juce::String (n) + ")");
+
+        // recording moves: a finger on the filter knob while REC MOVES is on writes where the loop is
+        engine->setRecMoves (0, true);
+        engine->touchKnob (0, fxFilter, true);
+        engine->setKnob (0, fxFilter, 0.9f);
+        pump.run (2048);
+        engine->recordMoves();
+        const int bin = juce::jlimit (0, kMoveBins - 1, (int) (engine->position (0) * kMoveBins));
+        pump.run (4096);
+        engine->recordMoves();
+        engine->touchKnob (0, fxFilter, false);
+        engine->setRecMoves (0, false);
+        const auto lane = engine->moves (0, fxFilter);
+        const bool wrote = lane.size() == (size_t) kMoveBins && std::abs (lane[(size_t) bin] - 0.9f) < 1.0e-4f
+                           && std::abs (lane[(size_t) ((bin + kMoveBins / 2) % kMoveBins)] - 0.5f) < 1.0e-4f;
+        report << "moves: REC MOVES wrote the filter " << (wrote ? "where the loop was, and left the rest" : "wrongly") << "\n";
+        if (! wrote)
+            problems.add ("REC MOVES did not write the knob into its moves");
+
+        // printing: reverb leaves a tail after a click; no effects leaves the loop as it was
+        LayerFxState wet;
+        wet.knob[fxReverb] = 0.6f;
+        std::vector<float> click ((size_t) n, 0.0f);
+        click[100] = 1.0f;
+        auto printedWet = renderLayer (click.data(), n, 4.0, sr, wet);
+        auto printedDry = renderLayer (click.data(), n, 4.0, sr, LayerFxState {});
+        const float tail = printedWet.getMagnitude (0, n / 4, n / 4);
+        const bool dryExact = printedDry.getSample (0, 100) == 1.0f && printedDry.getMagnitude (0, 200, n - 200) == 0.0f;
+        report << "print: reverb tail " << juce::String (tail, 4) << ", no effects " << (dryExact ? "untouched" : "changed") << "\n";
+        if (tail < 1.0e-4f || ! dryExact)
+            problems.add ("printing a layer with its effects went wrong (tail " + juce::String (tail, 5) + ")");
+
+        // moves follow an edit: doubled, the first half plays again in the second
+        LayerFxState ramp;
+        ramp.moves[fxDelay].resize ((size_t) kMoveBins);
+        for (int i = 0; i < kMoveBins; ++i)
+            ramp.moves[fxDelay][(size_t) i] = (float) i / kMoveBins;
+        ramp.remap (0.0, 1.0, 2, false);
+        const auto& m = ramp.moves[fxDelay];
+        if (std::abs (m[10] - m[(size_t) kMoveBins / 2 + 10]) > 0.01f || std::abs (m[(size_t) kMoveBins / 2 - 1] - 1.0f) > 0.02f)
+            problems.add ("moves did not follow a doubled loop");
+    }
     return problems.joinIntoString ("\n");
+}
+
+void LoopsScreen::showEditorDemo()
+{
+    // layer 2 with a filter sweep recorded, some reverb and delay
+    LayerFxState fx;
+    fx.knob[fxReverb] = 0.35f;
+    fx.knob[fxDelay] = 0.2f;
+    fx.moves[fxFilter].resize ((size_t) kMoveBins);
+    for (int i = 0; i < kMoveBins; ++i)
+    {
+        const double t = (double) i / kMoveBins;
+        fx.moves[fxFilter][(size_t) i] = (float) (t < 0.2 ? 0.5 : (t < 0.45 ? 0.5 - (t - 0.2) * 1.4 : (t < 0.7 ? 0.15 : 0.15 + (t - 0.7) * 1.1)));
+    }
+    loops.setFx (1, fx);
+    selected = 1;
+    openEditor (1);
+    juce::Desktop::getInstance().getAnimator().cancelAllAnimations (true);
+    editor.setBounds (0, 196, getWidth(), getHeight() - 196);
+    refresh();
+    repaint();
 }

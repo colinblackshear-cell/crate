@@ -2,6 +2,7 @@
 
 #include "PocketHost.h"
 #include "PocketLibrary.h"
+#include "LoopEditSheet.h"
 #include "PocketLooper.h"
 #include "PocketSettings.h"
 #include "PocketTheme.h"
@@ -33,15 +34,17 @@ public:
 
     // Screenshot mode: layers 1-2 playing, 3 recording, 4 waiting for the next bar, 5 muted, the rest empty.
     void showDemo();
+    // Screenshot mode: the loop editor open on layer 2, with filter moves recorded and some reverb.
+    void showEditorDemo();
     // Records a made-up source into a 2-bar layer at 97 BPM and checks its length, its latency
     // compensation and that it loops with no gap. Returns what was wrong (empty = fine).
     static juce::String selfCheck (juce::String& report);
 
 private:
-    struct Undo { struct One { int layer; pocket::SharedTake before; bool mute; }; std::vector<One> items; };
+    struct Undo { struct One { int layer; pocket::SharedTake before; bool mute; bool withFx = false; pocket::LayerFxState fx {}; }; std::vector<One> items; };
     struct Row { pocket::LoopState st = pocket::LoopState::empty; bool muted = false; int version = -1; std::vector<float> peaks; };
     enum Id { playId = 35, rec = 1, srcBase = 10, lenBase = 20, lcd = 30, undoId = 31, clearId = 32, clearAllId = 33, toMacId = 34,
-              rowSelect = 100, rowAct = 200, rowMute = 300 };
+              rowSelect = 100, rowAct = 200, rowMute = 300, rowEdit = 400 };
 
     void timerCallback() override;
     void refresh();
@@ -52,6 +55,10 @@ private:
     void undo();
     void clearLayer (int layer, bool withUndo);
     void clearAll();
+    void openEditor (int layer);
+    void closeEditor();
+    void editLayer (int layer, int edit, double fromBeat, double toBeat);   // LoopEditSheet::Edit
+    static juce::uint32 fxHash (const pocket::LayerFxState&);
     void saveIfChanged();
     void save();
     void restore();
@@ -60,6 +67,7 @@ private:
     juce::Rectangle<float> rowRect (int l) const;
     juce::Rectangle<float> actRect (int l) const;
     juce::Rectangle<float> muteRect (int l) const;
+    juce::Rectangle<float> editRect (int l) const;
     juce::Rectangle<float> sourceCell (int i) const;
     juce::Rectangle<float> lengthCell (int i) const;
     juce::Rectangle<float> lcdRect() const { return { 102, 12, (float) getWidth() - 117, 76 }; }
@@ -79,6 +87,7 @@ private:
     pocket::AppSettings& settings;
     pocket::LoopsEngine loops;
 
+    LoopEditSheet editor { loops };
     std::array<Row, pocket::kLoopLayers> rows;
     std::vector<Undo> undoStack;
     int selected = -1, lastLayer = -1, vocLayer = -1;
@@ -88,7 +97,7 @@ private:
     int ticks = 0;
     bool demo = false;
 
-    struct Saved { const pocket::LoopTake* take = nullptr; int version = -1; bool present = false, mute = false; };
+    struct Saved { const pocket::LoopTake* take = nullptr; int version = -1; bool present = false, mute = false; juce::uint32 fx = 0; };
     std::array<Saved, pocket::kLoopLayers> saved;
     bool settingsDirty = false;
     float inputLevel = 0.0f;
