@@ -18,6 +18,7 @@
 #include "SoundBankSheet.h"
 #include "VocoderScreen.h"
 #include "SingScreen.h"
+#include "PocketIntro.h"
 
 // The whole phone app: a header, five tabs (Record, Beats, Loops, Vocoder, More) and the Effects + Chop sheet.
 class PocketApp : public juce::Component, private PocketHost
@@ -160,6 +161,15 @@ private:
     std::unique_ptr<SettingsScreen> settings;
     std::unique_ptr<MoreScreen> more;
     std::unique_ptr<IdeasScreen> ideasScreen;
+    std::unique_ptr<TitleScreen> title;
+    std::unique_ptr<TourOverlay> tour;
+    void showTitle (bool shown);
+    void startTour();
+    void endTour();
+    juce::Rectangle<int> tourStop (int stop);   // opens the stop's screen, returns its spotlight
+    void newSongWithBeat();
+    void newSongWithKit();
+    void playIdea (const juce::String& id);
     bool ideasShown = true;   // the Record tab shows the Ideas list (true) or the recorder
     std::unique_ptr<TabBar> tabs;
     std::unique_ptr<Toast> toastBox;

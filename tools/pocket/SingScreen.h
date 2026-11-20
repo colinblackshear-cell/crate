@@ -20,6 +20,7 @@ public:
 
     pocket::ChordPlayer& chordPlayer() { return chords; }
     void leave();   // another screen opened: let go of a momentary chord
+    juce::Rectangle<int> tourSpot() const { return padWell().toNearestInt(); }
 
     void paint (juce::Graphics&) override;
     void resized() override {}

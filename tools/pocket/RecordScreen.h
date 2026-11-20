@@ -19,6 +19,7 @@ public:
     // pads pick it up; BACK TO PADS returns. Loading another sound, or a new idea, ends it.
     void editForPad (int pad, const juce::String& id);
     void endPadMode();
+    juce::Rectangle<int> tourSpot() const { return recButton.getBounds(); }   // the tour's spotlight
     int padTarget() const { return targetPad; }
     void startRecording() { if (! audio.isRecording()) toggleRecord(); }   // NEW IDEA
     // Demo for screenshots: puts a take on the screen as if it had just been recorded.

@@ -35,7 +35,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        static const char* titles[] = { "SOUNDS", "REMOTE", "MAC LINK", "SETTINGS" };
+        static const char* titles[] = { "SOUNDS", "REMOTE", "MAC LINK", "SETTINGS", "TAKE THE TOUR" };
         const int n = (int) lib.items().size();
         const bool linked = link.isLinked();
         const auto mac = link.getMacName();
@@ -45,8 +45,9 @@ public:
             linked ? U8("Linked to ") + mac + U8(" · Kaleidobox open")
                    : link.getStatus() == LinkClient::Status::connecting ? U8("Linking to ") + mac + U8("…")
                                                                         : U8("Not linked · link to your Mac on this Wi-Fi"),
-            U8("Loop count-in · mic, tempo and click come later") };
-        for (int i = 0; i < 4; ++i)
+            U8("Loop count-in · mic, tempo and click come later"),
+            U8("Seven stops from a sound to a song · two minutes") };
+        for (int i = 0; i < 5; ++i)
         {
             auto r = rowBounds (i);
             drawRaised (g, r, Look::cream, false, 16.0f);
@@ -87,7 +88,7 @@ public:
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < 5; ++i)
             if (rowBounds (i).contains (e.position) && onOpen)
                 onOpen (i + 1);
     }
@@ -126,6 +127,16 @@ private:
         {
             g.drawRoundedRectangle (c.x - 15, c.y - 5, 17, 10, 5.0f, 2.6f);
             g.drawRoundedRectangle (c.x - 2, c.y - 5, 17, 10, 5.0f, 2.6f);
+        }
+        else if (i == 4)
+        {
+            for (int k = 0; k < 6; ++k)
+            {
+                juce::Path petal;
+                petal.addRoundedRectangle (-3.0f, -15.0f, 6.0f, 15.0f, 3.0f);
+                petal.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::twoPi * (float) k / 6.0f).translated (c));
+                g.fillPath (petal);
+            }
         }
         else
         {
@@ -353,10 +364,21 @@ PocketApp::PocketApp (Options o)
     link.onSay = [this] (const juce::String& t) { toast (t); };
     settings = std::make_unique<SettingsScreen> (appSettings, backToMore, [this] { loopsScreen.engine().setCountIn (appSettings.countIn); });
     more = std::make_unique<MoreScreen> (lib, link, [this] { return loopsScreen.layerCount(); });
-    more->onOpen = [this] (int page) { showMorePage (page); };
+    more->onOpen = [this] (int page) { if (page == 5) startTour(); else showMorePage (page); };
     ideasScreen = std::make_unique<IdeasScreen> (ideas);
     ideasScreen->onOpen = [this] (const juce::String& id) { openIdea (id); };
     ideasScreen->onNew = [this] { newIdea(); };
+    ideasScreen->onNewBeat = [this] { newSongWithBeat(); };
+    ideasScreen->onNewKit = [this] { newSongWithKit(); };
+    ideasScreen->onPlay = [this] (const juce::String& id) { playIdea (id); };
+    ideasScreen->isPlaying = [this] (const juce::String& id) { return id == ideas.current().id && beats.engine().clockRunning(); };
+    title = std::make_unique<TitleScreen>();
+    title->micLevel = [this] { return vocoderScreen.engine().takeMicLevel(); };
+    title->onStart = [this] { showTitle (false); };
+    title->onTour = [this] { showTitle (false); startTour(); };
+    tour = std::make_unique<TourOverlay>();
+    tour->show = [this] (int stop) { return tourStop (stop); };
+    tour->onFinish = [this] { endTour(); };
     ideasScreen->onRename = [this] (const juce::String& id) { renameIdea (id); };
     ideasScreen->onDelete = [this] (const juce::String& id) { deleteIdea (id); };
     tabs = std::make_unique<TabBar>();
@@ -452,10 +474,14 @@ PocketApp::PocketApp (Options o)
     addChildComponent (soundBank);
     addChildComponent (*sendSheet);
     addChildComponent (*toastBox);
+    addChildComponent (*tour);
+    addChildComponent (*title);
 
     setSize (390, 844);
     if (o.audio)
         fillEmptyIdea();   // the first launch: the pads start with the Street kit
+    if (o.audio)
+        title->setVisible (true);   // the opening title, each time the app opens
     sounds.selectFirst();
     animate = o.audio;
 
@@ -1369,6 +1395,94 @@ void PocketApp::resized()
     tempoSheet.setBounds (tempoOpen ? tempoBounds() : tempoBounds().withY (h));
     soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - 560 - insets.getBottom()) : tempoBounds().withTop (h - 560 - insets.getBottom()).withY (h));
     toastBox->setBounds (24, h - tabH - 62, w - 48, 48);
+    title->setBounds (0, 0, w, h);
+    tour->setBounds (0, 0, w, h);
+}
+
+//==============================================================================
+// The opening title, the tour, and the other ways to start a song
+void PocketApp::showTitle (bool shown)
+{
+    title->setVisible (shown);
+    if (shown)
+        title->toFront (false);
+}
+
+void PocketApp::startTour()
+{
+    showTitle (false);
+    tour->setBounds (getLocalBounds());
+    tour->setVisible (true);
+    tour->begin();
+}
+
+void PocketApp::endTour()
+{
+    tour->setVisible (false);
+    showIdeasList (true);
+    toast ("That's the tour. Start a song with a sound, a beat or a kit.");
+}
+
+juce::Rectangle<int> PocketApp::tourStop (int stop)
+{
+    switch (stop)
+    {
+        case 0:
+            ideasShown = false;
+            showTab (0);
+            return getLocalArea (&record, record.tourSpot());
+        case 1:
+            ideasShown = false;
+            showTab (0);
+            return stepRect (stepShape).toNearestInt().expanded (4, 2);
+        case 2:
+        case 3:
+            showTab (1);
+            beats.showMode (1);
+            return getLocalArea (&beats, beats.tourSpot (stop == 2 ? 0 : 1));
+        case 4:
+            showTab (3, true);
+            return getLocalArea (&singScreen, singScreen.tourSpot());
+        case 5:
+        case 6:
+            showTab (2);
+            return getLocalArea (&loopsScreen, loopsScreen.tourSpot (stop == 5 ? 0 : 1));
+        default:
+            return {};
+    }
+}
+
+void PocketApp::newSongWithBeat()
+{
+    switchIdea (ideas.create (ideas.nextName()));
+    beats.fillStarterBeat();
+    showTab (1);
+    beats.showMode (1);
+    togglePlay();
+    noteStep();
+    toast ("A ready beat on the Street kit. Play the pads over it, or REC PADS to add your own.");
+}
+
+void PocketApp::newSongWithKit()
+{
+    switchIdea (ideas.create (ideas.nextName()));
+    showTab (1);
+    beats.showMode (1);
+    openSoundBank();
+    toast ("Pick a kit to start from. The Street kit is on the pads already.");
+}
+
+void PocketApp::playIdea (const juce::String& id)
+{
+    if (id == ideas.current().id && beats.engine().clockRunning())
+    {
+        togglePlay();
+        ideasScreen->refresh();
+        return;
+    }
+    switchIdea (id);
+    togglePlay();
+    ideasScreen->refresh();
 }
 
 //==============================================================================
@@ -1588,6 +1702,18 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     showMorePage (2);
     savePng (folder.getChildFile ("12b-remote-not-linked.png"));
     link.setDemo (demoMacs, "Colin's MacBook", state);
+
+    // The opening title and two stops of the tour
+    title->setDemoAngle (0.3f);
+    showTitle (true);
+    savePng (folder.getChildFile ("00a-title.png"));
+    showTitle (false);
+    startTour();
+    tour->goTo (2);
+    savePng (folder.getChildFile ("00b-tour-pads.png"));
+    tour->goTo (4);
+    savePng (folder.getChildFile ("00c-tour-sing.png"));
+    tour->setVisible (false);
 
     // Checks for the things a picture can't show: TO PAD puts a sound on the next empty pad of the bank
     // and shows it, and an export for the MPC reads back through the MPC file code.

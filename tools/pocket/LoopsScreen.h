@@ -29,7 +29,9 @@ public:
     void leave();                           // another tab (not Beats) was opened: stop the clock and the loops
     void flush() { save(); }                // before switching ideas
     void reloadIdea();
-    void sendToMac (bool onlyPicked);       // TO MAC: the picked layer (or every layer) onto the Mac's loop layers                      // the library points at another idea: load its loops
+    void sendToMac (bool onlyPicked);
+    // The tour's spotlights: 0 = the first three layers, 1 = TO MAC.
+    juce::Rectangle<int> tourSpot (int which) const { return (which == 0 ? rowRect (0).getUnion (rowRect (2)) : toMacRect()).toNearestInt(); }       // TO MAC: the picked layer (or every layer) onto the Mac's loop layers                      // the library points at another idea: load its loops
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;

@@ -1204,6 +1204,29 @@ void BeatsScreen::fillDemoPattern()
     patternChanged();
 }
 
+void BeatsScreen::fillStarterBeat()
+{
+    setBpm (90.0);
+    auto& p = drumData.padPattern;
+    p = {};
+    p.bars = 2;
+    auto add = [&p] (int pad, double beat, float velocity = 0.9f) { PadHit h; h.pad = pad; h.beat = beat; h.velocity = velocity; p.hits.push_back (h); };
+    for (double b : { 0.0, 2.5, 4.0, 6.5, 6.75 }) add (0, b);        // kick
+    for (double b : { 1.0, 3.0, 5.0, 7.0 }) add (1, b);              // snare
+    for (double b = 0.0; b < 7.5; b += 0.5) add (4, b, std::fmod (b, 1.0) < 0.25 ? 0.8f : 0.55f);   // hats
+    add (5, 7.5);                                                     // open hat
+    for (double b : { 0.0, 4.0 }) add (12, b);                        // 808
+    patternChanged();
+}
+
+juce::Rectangle<int> BeatsScreen::tourSpot (int which) const
+{
+    if (padsView == nullptr)
+        return {};
+    const auto r = which == 0 ? padsView->padBounds (12).toNearestInt() : juce::Rectangle<int> (12, 226, padsView->getWidth() - 24, 48);
+    return getLocalArea (padsView.get(), r);
+}
+
 void BeatsScreen::fillDemoKit()
 {
     // A demo kit of 14 pads like Colin's design, built from the sounds in the library.
