@@ -40,7 +40,7 @@ juce::Colour toolColour (Tool t)
         case Tool::loops: return col::ink;
         case Tool::drums: return juce::Colour (0xfff0674f);
         case Tool::pads: return col::amber;
-        case Tool::synth: return juce::Colour (0xff56b3d6);
+        case Tool::synth: return juce::Colour (0xff5fb3c4);
         case Tool::chords: return juce::Colour (0xffb9a3dc);
         case Tool::vocoder: return juce::Colour (0xff82cf6a);
     }
@@ -99,6 +99,47 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
             break;
         }
     }
+}
+
+void showSongKeyMenu (juce::Component& target, juce::Rectangle<int> area, SongKey current, std::function<void (SongKey)> picked)
+{
+    juce::PopupMenu m;
+    m.addSectionHeader (U8("THE SONG'S KEY Â· SYNTH, CHORDS AND VOCODER"));
+    m.addItem (101, "Minor", true, current.minor);
+    m.addItem (102, "Major", true, ! current.minor);
+    m.addSeparator();
+    for (int k = 0; k < 12; ++k)
+        m.addItem (1 + k, SongKey::pitchName (k), true, k == current.root);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target).withTargetScreenArea (target.localAreaToGlobal (area)),
+                     [current, picked] (int r)
+                     {
+                         if (r == 0 || ! picked)
+                             return;
+                         auto k = current;
+                         if (r == 101 || r == 102)
+                             k.minor = r == 101;
+                         else
+                             k.root = r - 1;
+                         picked (k);
+                     });
+}
+
+void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, bool pressed, float fontHeight, juce::Colour litColour)
+{
+    if (lit && ! litColour.isTransparent())
+    {
+        const float lift = pressed ? 1.0f : 3.0f;
+        auto body = r.withTrimmedBottom (3.0f).translated (0, pressed ? 2.0f : 0.0f);
+        g.setColour (litColour.darker (0.45f));
+        g.fillRoundedRectangle (body.translated (0, lift), 10.0f);
+        g.setColour (litColour);
+        g.fillRoundedRectangle (body, 10.0f);
+    }
+    else
+        drawRaised (g, r, lit ? Look::amber : Look::cream, pressed, 10.0f);
+    g.setColour (col::ink);
+    g.setFont (spaced (condensedBold (fontHeight), 0.06f));
+    g.drawFittedText (text, r.withTrimmedBottom (3).translated (0, pressed ? 2.0f : 0.0f).reduced (4, 0).toNearestInt(), juce::Justification::centred, 2, 0.7f);
 }
 
 //==============================================================================

@@ -75,7 +75,8 @@ public:
     void setGuide (int voice, juce::uint32 stepMask);
     void tapStep (int step);                    // what a tap on a step box does (the self-checks tap with it)
     juce::Rectangle<int> stepsBounds() const;   // the 16 big step buttons, in this screen's coordinates
-    juce::String selfCheckLive();               // PLAY LIVE writes to the nearest step, the lesson hints write nothing
+    juce::String selfCheckLive();               // PLAY LIVE writes to the nearest step, the lesson hints write nothing, no double hits
+    juce::String liveReport;                    // what selfCheckLive measured for the early hit
 
     // Screenshot mode
     void setDemoStep (int step) { demoStep = step; repaint(); }

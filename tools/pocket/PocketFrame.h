@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PocketKey.h"
 #include "PocketRoute.h"
 #include "PocketTheme.h"
 
@@ -13,6 +14,12 @@ enum class Tool { loops, drums, pads, synth, chords, vocoder };
 const char* toolName (Tool);
 juce::Colour toolColour (Tool);
 void drawToolIcon (juce::Graphics&, Tool, juce::Point<float> centre, juce::Colour);
+
+// The song's KEY menu (SYNTH, CHORDS and VOCODER all show it): major / minor, then the twelve roots.
+void showSongKeyMenu (juce::Component& target, juce::Rectangle<int> area, SongKey current, std::function<void (SongKey)> picked);
+// A chip as the tools draw them: raised, cream or lit, the label fitted in.
+void drawChip (juce::Graphics&, juce::Rectangle<float>, const juce::String& text, bool lit, bool pressed, float fontHeight = 14.0f,
+               juce::Colour litColour = juce::Colour());
 
 //==============================================================================
 class ThumbBar : public juce::Component

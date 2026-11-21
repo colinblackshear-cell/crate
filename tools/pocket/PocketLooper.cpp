@@ -333,6 +333,8 @@ void LoopsEngine::prepare (double rate)
         v.assign ((size_t) kChunk, 0.0f);
     for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &srcBoth, &vocL, &vocR, &clickBuf, &busDelay, &busReverb, &busL, &busR })
         v->assign ((size_t) kChunk, 0.0f);
+    for (auto& v : srcInst)
+        v.assign ((size_t) kChunk, 0.0f);
     bus.prepare (rate);
     for (auto& l : layers)
         l.dsp.reset();
@@ -341,6 +343,9 @@ void LoopsEngine::prepare (double rate)
         vocoder->prepare (rate);
     if (chordSource != nullptr)
         chordSource->prepare (rate);
+    for (auto* i : instruments)
+        if (i != nullptr)
+            i->prepare (rate);
 }
 
 void LoopsEngine::setState (Layer& l, LoopState s)
@@ -531,6 +536,36 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         if (p > inputPeak.load())
             inputPeak = p;
     }
+
+    // the delay and reverb sends, filled by the instruments and then the layers
+    std::fill (busDelay.begin(), busDelay.begin() + n, 0.0f);
+    std::fill (busReverb.begin(), busReverb.begin() + n, 0.0f);
+
+    // SYNTH and CHORDS: heard, their own sources, and their echo into the shared delay and reverb. Before the
+    // vocoder, so a chord the CHORDS tool sends it this block is sung this block.
+    for (int k = 0; k < kInstruments; ++k)
+    {
+        auto& src = srcInst[(size_t) k];
+        std::fill (src.begin(), src.begin() + n, 0.0f);
+        auto* inst = instruments[(size_t) k];
+        if (inst == nullptr)
+            continue;
+        std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
+        std::fill (vocR.begin(), vocR.begin() + n, 0.0f);
+        inst->render (vocL.data(), vocR.data(), n);
+        const float echo = inst->echoSend();
+        const float toDelay = echo * 0.55f, toReverb = echo * 0.3f;   // pocket::echoToDelay / echoToReverb
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += vocL[(size_t) i];
+            if (right != nullptr)
+                right[i] += vocR[(size_t) i];
+            const float m = 0.5f * (vocL[(size_t) i] + vocR[(size_t) i]);
+            src[(size_t) i] = m;
+            busDelay[(size_t) i] += m * toDelay;
+            busReverb[(size_t) i] += m * toReverb;
+        }
+    }
     if (vocoder != nullptr)
     {
         std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
@@ -570,8 +605,6 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         srcBoth[(size_t) i] = srcMic[(size_t) i] + srcVoc[(size_t) i];
 
     // play the layers, through their effects; the delay and reverb they send to
-    std::fill (busDelay.begin(), busDelay.begin() + n, 0.0f);
-    std::fill (busReverb.begin(), busReverb.begin() + n, 0.0f);
     for (int l = 0; l < kLoopLayers; ++l)
         playLayer (layers[(size_t) l], l, blockBeat, bps, n);
     std::fill (busL.begin(), busL.begin() + n, 0.0f);
@@ -581,6 +614,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     for (int i = 0; i < n; ++i)
     {
         float m = srcDrums[(size_t) i] + (vocoderHeard ? srcVoc[(size_t) i] : 0.0f) + 0.5f * (busL[(size_t) i] + busR[(size_t) i]);
+        for (auto& inst : srcInst)
+            m += inst[(size_t) i];
         for (auto& o : layerOut)
             m += o[(size_t) i];
         srcMix[(size_t) i] = m;
@@ -695,6 +730,8 @@ void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps
         case LoopSource::vocoder: src = srcVoc.data(); break;
         case LoopSource::mix: src = srcMix.data(); break;
         case LoopSource::both: src = srcBoth.data(); break;
+        case LoopSource::synth: src = srcInst[0].data(); break;
+        case LoopSource::chords: src = srcInst[1].data(); break;
         default: break;
     }
     const bool takeOutSelf = l.source == LoopSource::mix;

@@ -1389,11 +1389,10 @@ int BeatsScreen::hitLive (int v)
             cellValue = 1;
             drumsChanged();
         }
-        // A hit a little before its step: the grid plays it on the step, so don't also play it now (that would
-        // flam). Only when the step is still far enough ahead for the audio to have the new pattern by then.
-        const double aheadMs = ((double) target - pos) * stepLen * 60000.0 / juce::jmax (1.0, e.getBpm());
-        if (e.isPlaying() && aheadMs >= 20.0 && aheadMs <= 45.0)
-            soundNow = false;
+        // A hit a little before its step line: it sounds now, and the grid skips that voice on that step this once,
+        // so it isn't heard again when the grid gets there (the next time round it plays as written).
+        if (e.isPlaying() && (double) target > pos)
+            e.skipStepOnce (v, drumData.slot, drumData.editB, written, ((double) target + 0.9) * stepLen);
     }
     if (soundNow)
         e.hitVoice (v);
@@ -1482,6 +1481,40 @@ juce::String BeatsScreen::selfCheckLive()
             else if (! (beatsEngine.setPlaying (false), pump(), pump(), hitLive (1) == -1 && drumData.edited().isEmpty()))
                 why = "a PLAY LIVE hit with the song stopped was written into the pattern";
         }
+    }
+
+    // A hit just before its step line sounds once: now, and not again when the grid reaches that step. The next
+    // time round the grid plays it.
+    if (why.isEmpty())
+    {
+        drumData = DrumData();
+        liveUndo.clear();
+        beatsEngine.setPlaying (false);
+        pump();
+        beatsEngine.setDrums (drumData);
+        beatsEngine.setPlaying (true);
+        const double stepLen = crate::drums::stepBeats (drumData.settings.stepRate);
+        auto aheadMs = [&]
+        {
+            const double pos = beatsEngine.clockBeat() / stepLen;
+            return (std::floor (pos + 0.5) - pos) * stepLen * 60000.0 / beatsEngine.getBpm();
+        };
+        for (int i = 0; i < 2000 && ! (beatsEngine.clockRunning() && beatsEngine.clockBeat() > 4.0 && aheadMs() > 12.0 && aheadMs() < 24.0); ++i)
+            pump();
+        const double ahead = aheadMs();
+        const int before = beatsEngine.voiceHits (0);
+        const int step = hitLive (0);
+        const double stepBeat = beatsEngine.clockBeat();
+        for (int i = 0; i < 400 && beatsEngine.clockBeat() < stepBeat + 3.0 * stepLen; ++i)
+            pump();
+        const int thisPass = beatsEngine.voiceHits (0) - before;
+        for (int i = 0; i < 800 && beatsEngine.clockBeat() < stepBeat + 3.0 * stepLen + drumData.edited().length * stepLen; ++i)
+            pump();
+        const int nextPass = beatsEngine.voiceHits (0) - before - thisPass;
+        liveReport = "a hit " + juce::String (ahead, 1) + " ms before step " + juce::String (step + 1) + " sounded " + juce::String (thisPass)
+                     + (thisPass == 1 ? " time" : " times") + " on that pass, and " + juce::String (nextPass) + " the next time round";
+        if (step < 0 || thisPass != 1 || nextPass != 1)
+            why = "PLAY LIVE double hit: " + liveReport;
     }
 
     beatsEngine.setPlaying (false);

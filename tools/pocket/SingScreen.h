@@ -19,6 +19,7 @@ public:
     ~SingScreen() override;
 
     pocket::ChordPlayer& chordPlayer() { return chords; }
+    std::function<void (juce::Component&, juce::Rectangle<int>)> onKeyMenu;   // the song's KEY menu (PocketApp)
     void leave();   // another screen opened: let go of a momentary chord
     juce::Rectangle<int> tourSpot() const { return padWell().toNearestInt(); }
     juce::Rectangle<int> bannerSpot() const { return bannerRect().toNearestInt(); }

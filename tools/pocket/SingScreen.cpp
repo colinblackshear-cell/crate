@@ -230,6 +230,8 @@ int SingScreen::recordTake (int bars)
 
 void SingScreen::showKeyMenu()
 {
+    if (onKeyMenu)
+        return onKeyMenu (*this, keyRect().toNearestInt());   // the song's one key
     juce::PopupMenu m;
     m.addItem (101, "Minor", true, voc.minor());
     m.addItem (102, "Major", true, ! voc.minor());

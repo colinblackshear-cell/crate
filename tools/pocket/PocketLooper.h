@@ -23,7 +23,15 @@ namespace pocket
 {
 constexpr int kLoopLayers = 8;
 
-enum class LoopSource { mic, drums, vocoder, mix, both, count };   // both = your voice and the vocoder (Sing)
+enum class LoopSource { mic, drums, vocoder, mix, both, synth, chords, count };   // both = your voice and the vocoder (Sing)
+constexpr int kInstruments = 2;   // the SYNTH and CHORDS tools' sound, each its own source
+
+// A tool that plays notes inside the looper (SYNTH, CHORDS): always heard, recorded as its own source, and
+// sending echoSend() of itself to the shared delay and reverb.
+struct Instrument : public PocketAudio::Renderer
+{
+    virtual float echoSend() const { return 0.0f; }
+};
 enum class LoopState { empty, waiting, recording, playing, overdubWait, overdubbing };
 
 // One layer's recorded sound. The audio thread writes `data` while the layer records or overdubs.
@@ -51,6 +59,8 @@ public:
     bool hasVocoder() const { return vocoder != nullptr; }
     // Sing's chord pads in your own sound: always heard, and part of the VOCODER and BOTH sources. Not owned.
     void setChordSource (PocketAudio::Renderer* r) { chordSource = r; }
+    // The SYNTH (0) and CHORDS (1) tools: heard, and the SYNTH / CHORDS sources. Not owned. Set before the sound starts.
+    void setInstrument (int slot, Instrument* i) { if (juce::isPositiveAndBelow (slot, kInstruments)) instruments[(size_t) slot] = i; }
     // The count-in, in bars (0, 1 or 2), for a recording that starts the clock. The click plays through it.
     void setCountInBars (int bars) { countInBars = juce::jlimit (0, 2, bars); }
 
@@ -189,6 +199,7 @@ private:
     BeatsEngine& beats;
     PocketAudio::Renderer* vocoder = nullptr;
     PocketAudio::Renderer* chordSource = nullptr;
+    std::array<Instrument*, kInstruments> instruments {};
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;
     std::array<Layer, kLoopLayers> layers;
@@ -218,5 +229,6 @@ private:
     std::array<std::vector<float>, kLoopLayers> layerOut;
     std::vector<float> busDelay, busReverb, busL, busR;
     std::vector<float> srcMic, srcDrums, srcVoc, srcMix, srcBoth, vocL, vocR, clickBuf;
+    std::array<std::vector<float>, kInstruments> srcInst;
 };
 }

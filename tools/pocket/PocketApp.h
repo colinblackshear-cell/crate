@@ -19,12 +19,14 @@
 #include "SoundBankSheet.h"
 #include "VocoderScreen.h"
 #include "SingScreen.h"
+#include "SynthScreen.h"
+#include "PocketKey.h"
 #include "PocketIntro.h"
 #include "PocketLesson.h"
 
 // The whole phone app, tool first: a slim header (the song, the bar and where the next take goes, the Mac
 // link, ···), the tool on screen, the thumb bar (BPM, CLICK, REC, PLAY, UNDO) and the tool row (LOOPS,
-// DRUMS, PADS, VOCODER). REC records whatever tool is on screen onto the next empty loop layer, in time.
+// DRUMS, PADS, SYNTH, VOCODER). REC records whatever tool is on screen onto the next empty loop layer, in time.
 // Your songs, the sound recorder, every vocoder setting and the More pages are pages without the thumb bar.
 class PocketApp : public juce::Component, private PocketHost
 {
@@ -151,6 +153,9 @@ private:
     void recDrums();
     void recPads();
     void recVocoder();
+    void recSynth();
+    void finishSynthTake();   // a SYNTH REC pass is over or called off: what was played stays in the pattern
+    void startClockForRec();  // the song starts (the loops if there are any, else the drum machine)
     void applyClick();   // the click follows CLICK (and is always on while pads are recorded)
     // LOCK: waits for the pad pattern's start, arms a layer with the drums source, then waits for it to
     // play; the live pattern (or drum machine) then stops, so the layer doesn't double it.
@@ -158,9 +163,17 @@ private:
     juce::TimedCallback lockWatch { [this] { lockWatchTick(); } };
     // pads / drumsLive: hits you play go into the pattern for a pass, then the pattern is locked onto a layer
     // (the live machine stops once the layer plays). drums: STEPS, the drum machine's pattern is recorded as it is.
-    enum class LockKind { none, pads, drums, drumsLive };
+    // synthLive: what you play on the SYNTH keys (or the arp) goes into its pattern for a pass, then the pattern
+    // is locked onto a layer; synthPattern: SYNTH's pattern is locked as it is. Either way, once the layer plays
+    // the pattern is cleared (UNDO brings it back with the layer off), so the synth is free for a new part.
+    enum class LockKind { none, pads, drums, drumsLive, synthLive, synthPattern };
     LockKind lockKind = LockKind::none;
-    bool playingIn() const { return (lockKind == LockKind::pads || lockKind == LockKind::drumsLive) && ! lockArmed; }
+    bool playingIn() const
+    {
+        return (lockKind == LockKind::pads || lockKind == LockKind::drumsLive || lockKind == LockKind::synthLive || lockKind == LockKind::synthPattern) && ! lockArmed;
+    }
+    bool synthLock() const { return lockKind == LockKind::synthLive || lockKind == LockKind::synthPattern; }
+    int synthUndoLayer = -1;   // the layer the last SYNTH part went on (UNDO takes it off and gives the part back)
     int lockLayer = -1, lockBars = 0;
     double lockStart = 0, lockLen = 8, padsFrom = 0;
     bool lockArmed = false;
@@ -225,6 +238,8 @@ private:
     LoopsScreen loopsScreen;   // owns the one renderer the sound card plays (Beats inside it)
     VocoderScreen vocoderScreen;   // plays inside that renderer, so it stops after the sound card does
     SingScreen singScreen;         // its chord player too
+    pocket::SynthPart synthPart;   // the SYNTH tool's sound and pattern, also inside the renderer
+    SynthScreen synthScreen;
     PocketAudio audio;
     EffectsSheet sheet;
     PadSheet padSheet;
@@ -269,6 +284,13 @@ private:
         if (safeInsets() != insets) { resized(); repaint(); }
         if (pocket::currentRoute() != route) routeChanged();
     } };
+
+    // The song: its one key (SYNTH, CHORDS and the vocoder follow it) and the SYNTH part, in the idea's song.json.
+    pocket::SongKey songKey;
+    void setSongKey (pocket::SongKey);
+    void openKeyMenu (juce::Component&, juce::Rectangle<int>);
+    void loadSong();
+    void saveSong();
 
     Page page = Page::songs;
     Tool tool = Tool::pads;

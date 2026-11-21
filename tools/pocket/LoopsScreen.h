@@ -36,6 +36,13 @@ public:
     void stopTake (int layer);
     // UNDO: the last take or edit. Says "Nothing to undo" when there's none.
     void undo();
+    // The layer UNDO would take off when the last step is a new take on it, else -1.
+    int lastTakeUndoLayer() const
+    {
+        if (undoStack.empty() || undoStack.back().items.size() != 1 || undoStack.back().items[0].before != nullptr)
+            return -1;
+        return undoStack.back().items[0].layer;
+    }
     std::function<void()> onSourceChanged;
     // The layer a vocoder take is waiting or recording on (-1 = none). stopVocoder() ends it at the bar.
     int vocoderLayer() const;

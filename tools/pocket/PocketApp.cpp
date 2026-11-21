@@ -282,6 +282,8 @@ PocketApp::PocketApp (Options o)
       loopsScreen (static_cast<PocketHost&> (*this), lib, beats.engine(), appSettings),
       vocoderScreen (static_cast<PocketHost&> (*this), lib, audio, loopsScreen, beats.engine()),
       singScreen (static_cast<PocketHost&> (*this), loopsScreen, vocoderScreen.engine(), beats, appSettings),
+      synthPart (beats.engine()),
+      synthScreen (synthPart, beats.engine()),
       padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
       sounds (static_cast<PocketHost&> (*this), audio, lib)
@@ -333,7 +335,7 @@ PocketApp::PocketApp (Options o)
     dim->onTap = [this] { closeAllSheets(); };
 
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
-    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::vocoder };
+    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::synth, Tool::vocoder };
     toolRow.onSelect = [this] (Tool t) { showTool (t); };
     thumb.state = [this]
     {
@@ -422,6 +424,15 @@ PocketApp::PocketApp (Options o)
     lesson->recSpot = [this] { return getLocalArea (&thumb, thumb.buttonRect (ThumbBar::rec).toNearestInt()); };
     lesson->nextLayerNumber = [this] { return loopsScreen.nextLayer() + 1; };
     loopsScreen.onSourceChanged = [this] { applyMic(); };
+    synthScreen.songKey = [this] { return songKey; };
+    synthScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
+    synthScreen.toast = [this] (const juce::String& t) { toast (t); };
+    synthScreen.onChanged = [this] { saveSong(); };
+    synthScreen.nextLayer = [this] { return loopsScreen.nextLayer(); };
+    synthScreen.recBusy = [this] { return synthLock() && ! lockArmed; };
+    singScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
+    loopsScreen.engine().setInstrument (0, &synthPart.engine());
+    loadSong();
     loopsScreen.engine().setCountInBars (appSettings.countInBars);
     headerTick.startTimerHz (15);
 
@@ -455,7 +466,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
     addChildComponent (countPanel);
     addChildComponent (thumb);
@@ -539,6 +550,7 @@ void PocketApp::showPage (Page p, int morePage)
     beats.setVisible (onTool && (tool == Tool::drums || tool == Tool::pads));
     loopsScreen.setVisible (onTool && tool == Tool::loops);
     singScreen.setVisible (onTool && tool == Tool::vocoder);
+    synthScreen.setVisible (onTool && tool == Tool::synth);
     vocoderScreen.setVisible (p == Page::vocoderSettings);
     showMorePage (p == Page::more ? morePage : -1);
 
@@ -598,7 +610,7 @@ void PocketApp::noteStep()
     if (page == Page::recorder)
         s = sheetOpen ? stepShape : stepRecord;
     else if (page == Page::tool)
-        s = tool == Tool::loops ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
+        s = tool == Tool::loops || tool == Tool::synth ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
           : beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
     if (s >= 0)
         ideas.reachedStep (s);
@@ -608,6 +620,8 @@ void PocketApp::stopEverything()
 {
     lockWatch.stopTimer();
     lockKind = LockKind::none;
+    finishSynthTake();
+    synthScreen.leave();
     beats.leave();
     loopsScreen.leave();
 }
@@ -948,6 +962,8 @@ void PocketApp::switchIdea (const juce::String& id)
         return;
     lockWatch.stopTimer();
     lockKind = LockKind::none;
+    finishSynthTake();
+    synthScreen.leave();
     if (sheetOpen)
         closeSheet();
     closePadSheet();
@@ -957,11 +973,13 @@ void PocketApp::switchIdea (const juce::String& id)
     loopsScreen.leave();
     beats.flush();
     loopsScreen.flush();
+    saveSong();
     ideas.setSummary (beats.summary() + (loopsScreen.layerCount() > 0 ? U8(" · ") + juce::String (loopsScreen.layerCount()) + (loopsScreen.layerCount() == 1 ? " loop" : " loops") : juce::String()));
     record.endPadMode();
     ideas.open (id);
     beats.reloadIdea (ideas.current().name);
     loopsScreen.reloadIdea();
+    loadSong();
     fillEmptyIdea();
 }
 
@@ -1071,6 +1089,7 @@ void PocketApp::togglePlay()
     {
         lockWatch.stopTimer();
         lockKind = LockKind::none;
+        finishSynthTake();
         beats.setRecordingPads (false);
         beats.setRecordingDrums (false);
         l.setTransport (false);
@@ -1097,7 +1116,7 @@ void PocketApp::togglePlay()
 
 void PocketApp::applyClick()
 {
-    beats.engine().setClick (appSettings.click || beats.recordingPads() || beats.recordingDrums() || lessonClick);
+    beats.engine().setClick (appSettings.click || beats.recordingPads() || beats.recordingDrums() || lessonClick || (synthLock() && ! lockArmed));
 }
 
 //==============================================================================
@@ -1331,7 +1350,21 @@ void PocketApp::thumbPressed (int button)
             break;
         case ThumbBar::rec: recPressed(); break;
         case ThumbBar::play: togglePlay(); break;
-        case ThumbBar::undo: loopsScreen.undo(); break;
+        case ThumbBar::undo:
+        {
+            // the last take; a SYNTH part comes back into the pattern with its layer taken off
+            const int top = loopsScreen.lastTakeUndoLayer();
+            loopsScreen.undo();
+            if (top >= 0 && top == synthUndoLayer && synthPart.hasStash())
+            {
+                synthPart.restoreStash();
+                synthUndoLayer = -1;
+                synthScreen.partChanged();
+                saveSong();
+                toast ("Layer " + juce::String (top + 1) + U8(" is off. The synth part is back in its pattern: REC puts it on again."));
+            }
+            break;
+        }
         default: break;
     }
     thumb.repaint();
@@ -1359,6 +1392,7 @@ void PocketApp::recPressed()
         case Tool::drums: recDrums(); break;
         case Tool::pads: recPads(); break;
         case Tool::vocoder: recVocoder(); break;
+        case Tool::synth: recSynth(); break;
         default: break;
     }
     applyClick();
@@ -1370,8 +1404,18 @@ void PocketApp::stopRec()
     if (playingIn())
     {
         // Still playing hits into the pattern: stop there. What's in the pattern stays.
+        const bool synth = synthLock();
         lockWatch.stopTimer();
         lockKind = LockKind::none;
+        finishSynthTake();
+        if (synth)
+        {
+            applyClick();
+            synthScreen.partChanged();
+            saveSong();
+            toast ("Stopped. What you played stays in the SYNTH pattern; REC in PATTERN puts it on a layer.");
+            return;
+        }
         beats.setRecordingPads (false);
         beats.setRecordingDrums (false);
         applyClick();
@@ -1476,6 +1520,70 @@ void PocketApp::recPads()
         toast ("The pattern goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + U8(" from its next start. Hits you play before then go in too."));
 }
 
+void PocketApp::startClockForRec()
+{
+    if (beats.engine().clockRunning())
+        return;
+    if (loopsScreen.layerCount() > 0)
+        loopsScreen.engine().setTransport (true);
+    else
+        beats.engine().setPlaying (true);
+}
+
+void PocketApp::finishSynthTake()
+{
+    if (synthPart.taking())
+        synthPart.endTake();
+    synthPart.engine().setPlayFrom (-1.0e9);
+}
+
+// SYNTH: in KEYS or ARP, a count-in (from stopped), then what you play goes into the synth's pattern for the
+// take's length, snapped by REC SNAP; it loops, and from its next start it is locked onto the next layer. In
+// PATTERN, the pattern is locked as it is from its next start. Once the layer plays the pattern is cleared.
+void PocketApp::recSynth()
+{
+    auto& b = beats.engine();
+    const int layer = loopsScreen.nextLayer();
+    if (layer < 0)
+        return toast ("All 8 layers are used. Clear one in LOOPS to record.");
+    const bool running = b.clockRunning();
+    const double now = running ? b.clockBeat() : 0.0;
+    padsFrom = running ? now : appSettings.countInBars * 4.0;   // the clock starts at 0: the count-in comes first
+    synthScreen.leave();
+
+    if (synthPart.mode == SynthPart::patternMode)
+    {
+        if (synthPart.pattern.empty())
+            return toast ("The pattern is empty. Tap a step, then a key. Or switch to KEYS and press REC to play it in.");
+        lockLen = synthPart.pattern.lengthBeats();
+        const int patBars = synthPart.pattern.bars, want = appSettings.recBars();
+        lockBars = want > patBars ? (int) std::ceil ((double) want / patBars - 1.0e-9) * patBars : patBars;
+        lockStart = std::ceil (juce::jmax (now + 0.3, padsFrom) / lockLen - 1.0e-9) * lockLen;
+        synthPart.engine().setPlayFrom (-1.0e9);
+        lockKind = LockKind::synthPattern;
+        toast ("The pattern goes on layer " + juce::String (layer + 1) + U8(" from its next start (") + lengthLabel (lockBars).toLowerCase() + ").");
+    }
+    else
+    {
+        int bars = appSettings.recBars();
+        if (bars <= 0)
+            bars = synthPart.pattern.bars;   // FREE: the pattern's own length
+        bars = bars <= 1 ? 1 : bars <= 2 ? 2 : bars <= 4 ? 4 : 8;
+        lockLen = bars * 4.0;
+        lockBars = bars;
+        lockStart = std::ceil ((padsFrom + lockLen) / lockLen - 1.0e-9) * lockLen;
+        synthPart.startTake (bars, padsFrom, padsFrom + lockLen);
+        lockKind = LockKind::synthLive;
+        toast ("Play " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (bars).toLowerCase()
+               + U8(". It loops, then goes on layer ") + juce::String (layer + 1) + ".");
+    }
+    startClockForRec();
+    lockArmed = false;
+    lockLayer = -1;
+    lockWatch.startTimer (20);
+    synthScreen.partChanged();
+}
+
 void PocketApp::lockWatchTick()
 {
     auto& b = beats.engine();
@@ -1484,6 +1592,7 @@ void PocketApp::lockWatchTick()
     {
         lockWatch.stopTimer();
         lockKind = LockKind::none;
+        finishSynthTake();
         beats.setRecordingPads (false);
         beats.setRecordingDrums (false);
         applyClick();
@@ -1492,6 +1601,43 @@ void PocketApp::lockWatchTick()
     };
     if (lockKind == LockKind::none)
         return cancel ({});
+
+    // SYNTH: what's played goes into the pattern until the pass ends (also after the layer is armed)
+    if (synthPart.taking())
+    {
+        synthPart.serviceTake();
+        if (b.clockRunning() && b.clockBeat() >= padsFrom + lockLen)
+            finishSynthTake();
+        synthScreen.repaint();
+    }
+    if (! lockArmed && synthLock())
+    {
+        if (! b.clockRunning())
+            return;
+        const double beat = b.clockBeat();
+        const bool live = lockKind == LockKind::synthLive;
+        if (beat >= lockStart - 0.3)
+            lockStart += lockLen;   // too close to arm in time: the start after
+        else if (live ? beat >= lockStart - 1.0 : beat > lockStart - 3.95)
+        {
+            // the beat (or bar) before the pattern's start: arm, so the layer starts on the pattern's start
+            if (synthPart.pattern.empty())
+            {
+                if (live && synthPart.taking() && beat < padsFrom + lockLen - 1.0e-3)
+                    return;   // still in the pass: wait for the start after
+                return cancel (live ? "No notes went in. Press REC and play the SYNTH keys after the count-in." : "The pattern is empty.");
+            }
+            const int layer = loopsScreen.nextLayer();
+            if (layer < 0)
+                return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
+            if (! loopsScreen.armLayer (layer, (int) LoopSource::synth, lockBars))
+                return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            lockLayer = layer;
+            lockArmed = true;
+            applyClick();
+        }
+        return;
+    }
 
     if (! lockArmed && lockKind == LockKind::drumsLive)
     {
@@ -1549,6 +1695,27 @@ void PocketApp::lockWatchTick()
     if (lockLayer < 0 || loops.settling (lockLayer))
         return;
     const auto st = loops.state (lockLayer);
+    if (st == pocket::LoopState::playing && synthLock())
+    {
+        // The SYNTH part is on its layer: the pattern is cleared (kept for UNDO) so nothing plays twice, and the
+        // layer gets the synth's echo as its own delay and reverb.
+        lockWatch.stopTimer();
+        lockKind = LockKind::none;
+        finishSynthTake();
+        loops.setTransport (true);
+        synthPart.clearKeepingUndo();
+        synthUndoLayer = lockLayer;
+        if (synthPart.knobs.echo > 0.0f)
+        {
+            loops.setKnob (lockLayer, fxDelay, echoToDelay (synthPart.knobs.echo));
+            loops.setKnob (lockLayer, fxReverb, echoToReverb (synthPart.knobs.echo));
+        }
+        applyClick();
+        synthScreen.partChanged();
+        saveSong();
+        toast ("Synth on layer " + juce::String (lockLayer + 1) + U8(". It keeps looping; the synth is free for a new part. UNDO gives this one back."));
+        return;
+    }
     if (st == pocket::LoopState::playing)
     {
         lockWatch.stopTimer();
@@ -1594,6 +1761,16 @@ PocketApp::RecView PocketApp::recView() const
         bars = loops.recordingBars (busy);
     else if (page == Page::tool && tool == Tool::pads)
         bars = beats.drums().padPattern.hits.empty() && appSettings.recBars() > 0 ? appSettings.recBars() : beats.drums().padPattern.bars;
+    else if (synthLock())
+        bars = lockBars;
+    else if (page == Page::tool && tool == Tool::synth)
+    {
+        const int patBars = synthPart.pattern.bars, want = appSettings.recBars();
+        if (synthPart.mode == SynthPart::patternMode)
+            bars = want > patBars ? (int) std::ceil ((double) want / patBars - 1.0e-9) * patBars : patBars;
+        else
+            bars = want <= 0 ? patBars : want <= 1 ? 1 : want <= 2 ? 2 : want <= 4 ? 4 : 8;
+    }
     v.right = layer >= 0 ? "LAYER " + juce::String (layer + 1) + U8(" \xc2\xb7 ") + lengthLabel (bars) : juce::String ("LAYERS FULL");
 
     const double engineCount = loops.countInEnd();
@@ -1605,7 +1782,11 @@ PocketApp::RecView PocketApp::recView() const
         v.countBar = (int) std::floor (beat / 4.0);
         v.countBars = juce::jmax (1, (int) std::ceil (countEnd / 4.0 - 1.0e-6));
         v.left = "COUNT " + juce::String (v.countBeat + 1);
-        if (padsPass)
+        if (padsPass && lockKind == LockKind::synthPattern)
+            v.after = U8("THEN THE PATTERN \xc2\xb7 ") + lengthLabel (lockBars) + U8(" ON LAYER ") + juce::String (layer + 1);
+        else if (padsPass && lockKind == LockKind::synthLive)
+            v.after = U8("THEN PLAY THE SYNTH \xc2\xb7 ") + lengthLabel (lockBars) + U8(" \xc2\xb7 THEN LAYER ") + juce::String (layer + 1);
+        else if (padsPass)
             v.after = (lockKind == LockKind::drumsLive ? U8("THEN HIT THE PADS \xc2\xb7 ") : U8("THEN PLAY THE PADS \xc2\xb7 ")) + lengthLabel (lockBars) + U8(" \xc2\xb7 THEN LAYER ") + juce::String (layer + 1);
         else
             v.after = bars > 0 ? "THEN " + lengthLabel (bars) + " ON LAYER " + juce::String (layer + 1) + U8(" \xc2\xb7 STOPS BY ITSELF")
@@ -1619,7 +1800,8 @@ PocketApp::RecView PocketApp::recView() const
     else if (padsPass)
     {
         v.kind = RecView::padsPass;
-        v.left = (lockKind == LockKind::drumsLive ? juce::String ("DRUMS ") : juce::String ("PADS ")) + barText (std::fmod (juce::jmax (0.0, beat), lockLen));
+        v.left = (lockKind == LockKind::drumsLive ? juce::String ("DRUMS ") : synthLock() ? juce::String ("SYNTH ") : juce::String ("PADS "))
+                 + barText (std::fmod (juce::jmax (0.0, beat), lockLen));
     }
     else if (busy >= 0)
     {
@@ -1631,8 +1813,65 @@ PocketApp::RecView PocketApp::recView() const
     return v;
 }
 
+void PocketApp::setSongKey (SongKey k)
+{
+    const bool changed = k != songKey;
+    songKey = k;
+    auto& voc = vocoderScreen.engine();
+    if (voc.key() != k.root || voc.minor() != k.minor)
+        voc.setKey (k.root, k.minor);
+    saveSong();
+    synthScreen.leave();
+    synthScreen.repaint();
+    singScreen.repaint();
+    if (changed)
+        toast ("The song is in " + k.label() + ". SYNTH and the vocoder follow it.");
+}
+
+void PocketApp::openKeyMenu (juce::Component& c, juce::Rectangle<int> r)
+{
+    showSongKeyMenu (c, r, songKey, [safe = juce::Component::SafePointer<PocketApp> (this)] (SongKey k)
+    {
+        if (safe != nullptr)
+            safe->setSongKey (k);
+    });
+}
+
+void PocketApp::loadSong()
+{
+    auto v = juce::JSON::parse (lib.ideaRoot().getChildFile ("song.json"));
+    auto& voc = vocoderScreen.engine();
+    songKey = SongKey::fromVar (v.getProperty ("key", {}), SongKey { voc.key(), voc.minor() });   // older songs: the vocoder's key
+    synthPart.fromVar (v.getProperty ("synth", {}));
+    synthUndoLayer = -1;
+    if (voc.key() != songKey.root || voc.minor() != songKey.minor)
+        voc.setKey (songKey.root, songKey.minor);
+    synthScreen.partChanged();
+}
+
+void PocketApp::saveSong()
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("key", songKey.toVar());
+    o->setProperty ("synth", synthPart.toVar());
+    auto file = lib.ideaRoot().getChildFile ("song.json");
+    file.getParentDirectory().createDirectory();
+    file.replaceWithText (juce::JSON::toString (juce::var (o)));
+}
+
 void PocketApp::headerTickNow()
 {
+    // the vocoder's own settings can change the key too: the song follows
+    {
+        auto& voc = vocoderScreen.engine();
+        if (voc.key() != songKey.root || voc.minor() != songKey.minor)
+        {
+            songKey = { voc.key(), voc.minor() };
+            saveSong();
+            synthScreen.repaint();
+        }
+    }
+
     const auto v = recView();
     const auto text = v.left + "|" + v.right + "|" + juce::String ((int) v.kind);
     if (text != shownHeader)
@@ -1849,7 +2088,7 @@ void PocketApp::resized()
     thumb.setVisible (thumbShown());
 
     const auto content = contentBounds();
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
     countPanel.setBounds (16, content.getY() + 8, w - 32, 136);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
@@ -2171,6 +2410,42 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("05e-pad-sample-page.png"));
     record.endPadMode();
 
+    // SYNTH: KEYS (Rubber Funk with C held, as in the design), PATTERN (a line, step 5 picked), ARP, CHROMATIC
+    {
+        setSongKey ({ 9, true });
+        synthPart.reset();
+        synthPart.setPreset (synthPresetIndex ("Rubber Funk"));
+        synthPart.knobs.tone = 0.62f;
+        synthPart.knobs.echo = 0.15f;
+        synthPart.apply();
+        synthPart.pattern.setBars (1);
+        const int line[8][2] = { { 0, 57 }, { 3, 57 }, { 4, 60 }, { 6, 64 }, { 8, 62 }, { 10, 60 }, { 12, 55 }, { 14, 57 } };
+        for (auto& n : line)
+            synthPart.pattern.setStep (n[0], n[1]);
+        synthPart.pattern.tieStep (12);
+        synthPart.patternChanged();
+        showTool (Tool::synth);
+        synthScreen.setDemoHeld ({ 2 });
+        savePng (folder.getChildFile ("14-tool-synth-keys.png"));
+        synthScreen.setDemoHeld ({});
+        synthScreen.setMode (SynthPart::patternMode);
+        synthScreen.selectStep (4);
+        savePng (folder.getChildFile ("14b-synth-pattern.png"));
+        synthScreen.selectStep (-1);
+        synthPart.setPreset (synthPresetIndex ("Bell Pluck"));
+        synthPart.arpHold = true;
+        synthScreen.setMode (SynthPart::arpMode);
+        synthScreen.setDemoHeld ({ 0, 2, 4 });
+        savePng (folder.getChildFile ("14c-synth-arp.png"));
+        synthScreen.setDemoHeld ({ 4, 9 });
+        synthPart.chromatic = true;
+        synthScreen.setMode (SynthPart::keysMode);
+        savePng (folder.getChildFile ("14d-synth-chromatic.png"));
+        synthScreen.setDemoHeld ({});
+        synthPart.reset();
+        synthScreen.partChanged();
+    }
+
     // VOCODER: the mic off, the headphones sheet (wired, Bluetooth, none), then the banner
     singScreen.showDemo();
     micOn = micHear = false;
@@ -2255,6 +2530,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         problems.add ("Pad pattern: " + why);
     if (const auto why = beats.selfCheckLive(); why.isNotEmpty())
         problems.add ("Drums: " + why);
+    juce::String synthReport;
+    if (const auto why = synthSelfCheck (synthReport); why.isNotEmpty())
+        problems.add ("Synth: " + why);
 
     // Ideas: each keeps its own pads and beat
     {
@@ -2377,8 +2655,10 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     }
 
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
+                          + "\nPLAY LIVE early hit: " + beats.liveReport + "\n"
+                          + "\nSynth self-check (120 BPM, 44.1 kHz):\n" + synthReport
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport
                           + "\nREC, count-in and mic checks (97 BPM, 44.1 kHz):\n" + recReport);
@@ -2635,6 +2915,98 @@ juce::String PocketApp::runRecChecks (juce::String& report)
         }
     }
     beats.setDrumMode (0);
+    togglePlay();
+    pump (2048);
+
+    // SYNTH in KEYS: REC from a stopped song counts in, what's played goes into the pattern (snapped to 1/16), it
+    // lands on layer 1 for the take's length, and the live synth then plays nothing (no doubling). UNDO takes the
+    // layer off and gives the part back. Then PATTERN: the pattern is locked as it is.
+    switchIdea (ideas.create ("Synth check"));
+    appSettings.countInBars = 1;
+    appSettings.recLength = 0;   // 1 bar
+    L.setCountInBars (1);
+    appSettings.click = false;
+    applyClick();
+    silentInput = true;
+    pump (2048);
+    showTool (Tool::synth, false);
+    {
+        synthPart.reset();
+        synthPart.setPreset (synthPresetIndex ("Pluck"));
+        synthPart.mode = SynthPart::keysMode;
+        synthPart.quantize = 0;
+        synthPart.apply();
+        recPressed();
+        pump (barSamples / 2);
+        const bool counting = recView().kind == RecView::counting;
+        auto waitBeat = [&] (double beat) { for (int g = 0; g < 2000 && ! (b.clockRunning() && b.clockBeat() >= beat); ++g) pump (512); };
+        auto playKey = [&] (double at, int key, double hold)
+        {
+            waitBeat (at);
+            synthScreen.pressKey (key, true);
+            waitBeat (at + hold);
+            synthScreen.pressKey (key, false);
+        };
+        playKey (3.97, 0, 0.4);    // just before the pass: snaps onto its first step
+        playKey (5.02, 2, 0.3);
+        playKey (6.45, 4, 0.5);    // snaps to beat 2.5 of the bar
+        const bool landed = waitPlaying (0, 12);
+        juce::String steps;
+        const auto& kept = synthPart.stash;
+        for (auto& n : kept.notes)
+            steps << (steps.isEmpty() ? "" : ", ") << SongKey::noteName (n.note) << "@" << juce::String (n.beat, 2);
+        report << "synth keys: count-in " << (counting ? "yes" : "no") << ", the take's notes " << steps << ", layer 1 " << (landed ? "playing" : "NOT playing") << "\n";
+        if (! counting)
+            problems.add ("REC on SYNTH: no count-in from a stopped song");
+        if (! landed)
+            problems.add ("REC on SYNTH: no take landed on layer 1");
+        else
+        {
+            checkTake ("SYNTH (keys)", 0, 4.0, 4.0);
+            if (takePeak (0) < 0.02f)
+                problems.add ("REC on SYNTH: the layer is silent (peak " + juce::String (takePeak (0), 4) + ")");
+            bool where = kept.notes.size() == 3;
+            const double wantBeats[3] = { 0.0, 1.0, 2.5 };
+            for (size_t i = 0; where && i < 3; ++i)
+                where = std::abs (kept.notes[i].beat - wantBeats[i]) < 1.0e-6;
+            if (! where)
+                problems.add ("REC on SYNTH: the pattern got " + steps + " (A, C, E on beats 0, 1 and 2.5 expected)");
+            if (! synthPart.pattern.empty())
+                problems.add ("REC on SYNTH: the pattern wasn't cleared after the lock (it would double the layer)");
+            pump (barSamples);
+            synthPart.engine().takePeak();
+            pump (barSamples * 2);
+            const float livePeak = synthPart.engine().takePeak();
+            report << "synth after the lock: live synth peak " << juce::String (livePeak, 6) << ", layer peak " << juce::String (takePeak (0), 3) << "\n";
+            if (livePeak > 1.0e-4f)
+                problems.add ("REC on SYNTH: the live synth kept playing over its layer (peak " + juce::String (livePeak, 5) + ")");
+            thumbPressed (ThumbBar::undo);
+            pump (2048);
+            if (L.state (0) != pocket::LoopState::empty || synthPart.pattern.notes.size() != 3)
+                problems.add ("UNDO after a SYNTH take: the layer is " + juce::String (L.state (0) == pocket::LoopState::empty ? "off" : "still on")
+                              + " and the pattern has " + juce::String ((int) synthPart.pattern.notes.size()) + " notes (3 expected back)");
+            else
+                report << "synth UNDO: layer 1 off, the 3 notes back in the pattern\n";
+        }
+
+        // PATTERN: locked as it is (1 bar of pattern, 2-bar take), from its next start
+        appSettings.recLength = 1;   // 2 bars
+        synthPart.mode = SynthPart::patternMode;
+        synthPart.apply();
+        want = loopsScreen.nextLayer();
+        recPressed();
+        const bool done = waitPlaying (want, 12);
+        if (! done)
+            problems.add ("REC on SYNTH (PATTERN): no take landed on layer " + juce::String (want + 1));
+        else
+        {
+            checkTake ("SYNTH (pattern)", want, 8.0, 4.0);
+            if (takePeak (want) < 0.02f)
+                problems.add ("REC on SYNTH (PATTERN): the layer is silent");
+            if (! synthPart.pattern.empty())
+                problems.add ("REC on SYNTH (PATTERN): the pattern wasn't cleared after the lock");
+        }
+    }
     togglePlay();
     pump (2048);
 

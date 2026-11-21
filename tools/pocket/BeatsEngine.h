@@ -83,6 +83,11 @@ public:
     int currentStep() const { return step.load(); }            // -1 when stopped
     int playingVariation() const { return playingB.load(); }   // 0 A, 1 B
     void hitVoice (int voice, float velocity = 0.85f, bool accent = false);
+    // A hit played by hand just before its step line, already written into the pattern: the grid skips that
+    // voice on that step once (until `untilBeat` on the clock), so the hit isn't heard twice. `slot` and `b`
+    // say which pattern holds it, `cell` the step in it.
+    void skipStepOnce (int voice, int slot, bool b, int cell, double untilBeat);
+    int voiceHits (int voice) const { return drums.hitCounts[(size_t) juce::jlimit (0, crate::drums::kVoices - 1, voice)].load(); }
 
     // The shared clock. It runs while the drum machine plays or while something else (the looper)
     // holds it; the drums only sound while they are playing. Any thread.
@@ -117,7 +122,11 @@ public:
     void renderWithClick (float* left, float* right, int numSamples, float* clickOut);
 
 private:
-    struct Event { enum Kind { drum, padOn, padOff, stopPads } kind = drum; int index = 0; float velocity = 0; bool accent = false; };
+    struct Event { enum Kind { drum, padOn, padOff, stopPads, skip } kind = drum; int index = 0; float velocity = 0; bool accent = false;
+                   int slot = 0, cell = 0; double until = 0; };
+    struct Skip { int voice = 0, slot = 0, cell = 0; bool b = false; double until = -1; std::uint8_t kept = 0; };
+    std::array<Skip, 8> skips {};
+    int numSkips = 0;
 
     struct Slot
     {

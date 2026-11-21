@@ -783,8 +783,8 @@ void LoopsScreen::sendToMac (bool onlyPicked)
                 b = std::move (*printed);   // with its effects and moves, in stereo
         if (std::abs (take->sampleRate - crate::kSampleRate) > 1.0)
             b = crate::AudioFiles::resample (b, take->sampleRate);   // the phone records at its own rate; sounds travel at 44.1 kHz
-        static const char* sources[] = { "Mic", "Drums", "Vocoder", "Mix", "Voice and vocoder" };
-        send.items.push_back ({ "Pocket loop " + juce::String (l + 1) + " " + sources[juce::jlimit (0, 4, take->source)],
+        static const char* sources[] = { "Mic", "Drums", "Vocoder", "Mix", "Voice and vocoder", "Synth", "Chords" };
+        send.items.push_back ({ "Pocket loop " + juce::String (l + 1) + " " + sources[juce::jlimit (0, 6, take->source)],
                                 crate::share (std::move (b)), take->lengthBeats.load() });
     };
     if (onlyPicked && selected >= 0 && loops.state (selected) != LoopState::empty)
