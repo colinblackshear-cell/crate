@@ -246,6 +246,7 @@ LoopEditor::LoopEditor (RigEngine& e, int l) : engine (e), layer (l)
     const auto& trim = looper.getTrim (layer);
     start = trim.start;
     end = trim.end;
+    shape = trim.shape;
 
     wave = std::make_unique<Wave> (*this);
     addAndMakeVisible (*wave);
@@ -256,6 +257,7 @@ LoopEditor::LoopEditor (RigEngine& e, int l) : engine (e), layer (l)
     info.setFont (juce::FontOptions (14.0f));
     info.setColour (juce::Label::textColourId, Theme::text);
     hint.setText ("Drag the green START and red END handles, or drag the middle to slide. "
+                  "Slip moves the sound inside the loop, Nudge fixes timing 5 ms at a time. "
                   "You hear it as you let go. It always stays in time with Kaleidobox.",
                   juce::dontSendNotification);
     hint.setFont (juce::FontOptions (13.0f));
@@ -322,6 +324,74 @@ LoopEditor::LoopEditor (RigEngine& e, int l) : engine (e), layer (l)
     for (auto* c : std::initializer_list<juce::Component*> { &startLabel, &startLeft, &startRight, &endLabel, &endLeft, &endRight })
         addAndMakeVisible (c);
 
+    // The second row: shape the sound itself.
+    shapeLabel.setText ("Shape", juce::dontSendNotification);
+    slipLabel.setText ("Slip", juce::dontSendNotification);
+    nudgeLabel.setText ("Nudge", juce::dontSendNotification);
+    levelLabel.setText ("Level", juce::dontSendNotification);
+    fadeInLabel.setText ("Fade in", juce::dontSendNotification);
+    fadeOutLabel.setText ("Fade out", juce::dontSendNotification);
+    for (auto* l : { &shapeLabel, &slipLabel, &nudgeLabel, &levelLabel, &fadeInLabel, &fadeOutLabel })
+    {
+        l->setColour (juce::Label::textColourId, l == &shapeLabel ? Theme::accent : Theme::text);
+        l->setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (*l);
+    }
+    shapeInfo.setFont (juce::FontOptions (13.0f));
+    shapeInfo.setColour (juce::Label::textColourId, Theme::textDim);
+    addAndMakeVisible (shapeInfo);
+
+    slipLeft.onClick = [this] { slip (-1); };
+    slipRight.onClick = [this] { slip (1); };
+    nudgeLeft.onClick = [this] { nudgeAudio (-1); };
+    nudgeRight.onClick = [this] { nudgeAudio (1); };
+    for (auto* b : { &slipLeft, &slipRight })
+        b->setTooltip ("Moves the sound inside the loop by one snap step (a 64th of a beat in Free). "
+                       "The loop keeps its length and place; what falls off the end comes in at the start.");
+    for (auto* b : { &nudgeLeft, &nudgeRight })
+        b->setTooltip ("Moves the sound earlier or later by 5 ms a click, to fix timing (wraps round).");
+
+    const auto setupSlider = [this] (juce::Slider& s, double lo, double hi, double step, const juce::String& tip)
+    {
+        s.setSliderStyle (juce::Slider::LinearHorizontal);
+        s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        s.setRange (lo, hi, step);
+        s.setColour (juce::Slider::thumbColourId, Theme::accent);
+        s.setTooltip (tip);
+        s.onValueChange = [this, &s]
+        {
+            shape.gainDb = (float) levelSlider.getValue();
+            shape.fadeInBeats = fadeInSlider.getValue();
+            shape.fadeOutBeats = fadeOutSlider.getValue();
+            updateText();
+            if (! s.isMouseButtonDown())
+                applyShape();
+        };
+        s.onDragEnd = [this] { applyShape(); };
+        addAndMakeVisible (s);
+    };
+    setupSlider (levelSlider, -24.0, 12.0, 0.1, "How loud the loop is, in dB. Double-click for 0.");
+    setupSlider (fadeInSlider, 0.0, 4.0, 0.05, "Fades the loop in over this many beats.");
+    setupSlider (fadeOutSlider, 0.0, 4.0, 0.05, "Fades the loop out over this many beats.");
+    levelSlider.setDoubleClickReturnValue (true, 0.0);
+    fadeInSlider.setDoubleClickReturnValue (true, 0.0);
+    fadeOutSlider.setDoubleClickReturnValue (true, 0.0);
+
+    reverse.setClickingTogglesState (true);
+    reverse.setColour (juce::TextButton::buttonOnColourId, Theme::accent);
+    reverse.setColour (juce::TextButton::textColourOnId, Theme::background);
+    reverse.setTooltip ("Plays the loop backwards.");
+    reverse.onClick = [this] { shape.reversed = reverse.getToggleState(); updateText(); applyShape(); };
+    resetShapeButton.setTooltip ("Puts slip, nudge, level, fades and reverse back to normal. The start and end stay.");
+    resetShapeButton.onClick = [this] { resetShape(); };
+    addAndMakeVisible (slipLeft);
+    addAndMakeVisible (slipRight);
+    addAndMakeVisible (nudgeLeft);
+    addAndMakeVisible (nudgeRight);
+    addAndMakeVisible (reverse);
+    addAndMakeVisible (resetShapeButton);
+
+    syncShapeControls();
     updateText();
 }
 
@@ -341,6 +411,68 @@ void LoopEditor::setRange (double s, double e)
     start = juce::jlimit (0.0, beats, juce::jmin (s, e));
     end = juce::jlimit (0.0, beats, juce::jmax (s, e));
     apply();
+}
+
+void LoopEditor::syncShapeControls()
+{
+    levelSlider.setValue (shape.gainDb, juce::dontSendNotification);
+    fadeInSlider.setValue (shape.fadeInBeats, juce::dontSendNotification);
+    fadeOutSlider.setValue (shape.fadeOutBeats, juce::dontSendNotification);
+    reverse.setToggleState (shape.reversed, juce::dontSendNotification);
+}
+
+void LoopEditor::setShape (const RigLooper::Shape& s)
+{
+    shape = s;
+    shape.gainDb = juce::jlimit (-24.0f, 12.0f, shape.gainDb);
+    shape.fadeInBeats = juce::jlimit (0.0, 4.0, shape.fadeInBeats);
+    shape.fadeOutBeats = juce::jlimit (0.0, 4.0, shape.fadeOutBeats);
+    syncShapeControls();
+    applyShape();
+}
+
+void LoopEditor::slip (int direction)
+{
+    const double beats = engine.getLooper().getTrim (layer).wholeBeats;
+    if (beats <= 0)
+        return;
+    const double unit = snapUnit (lastSnap, engine.getTransport().getBeatsPerBar());
+    shape.slipBeats = std::fmod (shape.slipBeats + (unit > 0 ? unit : 1.0 / 64.0) * direction, beats);
+    applyShape();
+}
+
+void LoopEditor::nudgeAudio (int direction)
+{
+    shape.nudgeMs += 5.0 * direction;
+    applyShape();
+}
+
+void LoopEditor::resetShape()
+{
+    shape = {};
+    syncShapeControls();
+    applyShape();
+}
+
+void LoopEditor::applyShape()
+{
+    engine.getLooper().setShape (layer, shape);
+    updateText();
+    wave->repaint();
+}
+
+juce::String LoopEditor::slipText (double beats)
+{
+    const double a = std::abs (beats);
+    juce::String s (beats > 0 ? "+" : beats < 0 ? "-" : "");
+    s << (std::abs (a - std::round (a)) < 1.0e-9 ? juce::String ((int) std::round (a)) : juce::String (a, 2).trimCharactersAtEnd ("0"));
+    return "Slip " + s + (std::abs (a - 1.0) < 1.0e-9 ? " beat" : " beats");
+}
+
+juce::String LoopEditor::nudgeText (double ms)
+{
+    return "Nudge " + juce::String (ms > 0 ? "+" : "") + juce::String (juce::roundToInt (ms)) + " ms"
+           + (ms < 0 ? " (earlier)" : ms > 0 ? " (later)" : "");
 }
 
 void LoopEditor::apply()
@@ -385,6 +517,14 @@ void LoopEditor::updateText()
     if (std::abs (len - plays) > 1.0e-6)
         text << " (stretched a touch from " << juce::String (len, 2) << " beats to stay in time)";
     info.setText (text, juce::dontSendNotification);
+
+    juce::StringArray bits { slipText (shape.slipBeats), nudgeText (shape.nudgeMs),
+                             "Level " + juce::String (shape.gainDb, 1) + " dB",
+                             "Fade in " + juce::String (shape.fadeInBeats, 2) + " beats",
+                             "Fade out " + juce::String (shape.fadeOutBeats, 2) + " beats" };
+    if (shape.reversed)
+        bits.add ("Reversed");
+    shapeInfo.setText (bits.joinIntoString ("   |   "), juce::dontSendNotification);
 }
 
 void LoopEditor::paint (juce::Graphics& g)
@@ -414,6 +554,36 @@ void LoopEditor::resized()
     info.setBounds (area.removeFromTop (24));
     hint.setBounds (area.removeFromBottom (22));
     area.removeFromBottom (4);
+    auto shapeInfoRow = area.removeFromBottom (20);
+    auto shapeRow = area.removeFromBottom (30);
+    area.removeFromBottom (4);
+    shapeInfo.setBounds (shapeInfoRow);
+    {
+        auto r = shapeRow;
+        shapeLabel.setBounds (r.removeFromLeft (44));
+        r.removeFromLeft (4);
+        slipLabel.setBounds (r.removeFromLeft (34));
+        slipLeft.setBounds (r.removeFromLeft (32).reduced (0, 0));
+        r.removeFromLeft (2);
+        slipRight.setBounds (r.removeFromLeft (32));
+        r.removeFromLeft (8);
+        nudgeLabel.setBounds (r.removeFromLeft (48));
+        nudgeLeft.setBounds (r.removeFromLeft (32));
+        r.removeFromLeft (2);
+        nudgeRight.setBounds (r.removeFromLeft (32));
+        r.removeFromLeft (8);
+        resetShapeButton.setBounds (r.removeFromRight (100));
+        r.removeFromRight (6);
+        reverse.setBounds (r.removeFromRight (80));
+        r.removeFromRight (8);
+        const int w = r.getWidth() / 3;
+        levelLabel.setBounds (r.removeFromLeft (44));
+        levelSlider.setBounds (r.removeFromLeft (w - 44));
+        fadeInLabel.setBounds (r.removeFromLeft (52));
+        fadeInSlider.setBounds (r.removeFromLeft (w - 52));
+        fadeOutLabel.setBounds (r.removeFromLeft (58));
+        fadeOutSlider.setBounds (r);
+    }
     auto nudges = area.removeFromBottom (30);
     startLabel.setBounds (nudges.removeFromLeft (44));
     nudges.removeFromLeft (4);

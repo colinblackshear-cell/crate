@@ -1275,7 +1275,7 @@ void LooperView::resized()
             bounds = bounds.withTrimmedBottom (136);
         const auto* row = rows[editor->getLayer()];
         const int below = row->getBottom() + 6;
-        const int height = juce::jmin (bounds.getHeight(), 320);
+        const int height = juce::jmin (bounds.getHeight(), 370);
         if (bounds.getBottom() - below >= height)
             bounds = bounds.withTop (below).withHeight (height);
         else

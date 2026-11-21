@@ -152,15 +152,31 @@ public:
     // keeps the copy it has, if the loop hasn't changed since the last trim), and setTrim plays
     // the part between two of its beats, stretched to `playBeats` so it stays on the beat.
     // Recording, overdubbing, clearing or loading a new sound on the layer starts afresh.
+    // The shape is applied to the whole loop each time (reverse, then slip and nudge round the
+    // loop, then the crop, then level and fades), so every step can be changed or undone.
+    struct Shape
+    {
+        double slipBeats = 0;                 // moves the audio later inside the loop (wraps)
+        double nudgeMs = 0;                   // the same, in milliseconds, for timing fixes
+        float gainDb = 0;
+        double fadeInBeats = 0, fadeOutBeats = 0;   // in beats of the part that plays
+        bool reversed = false;
+
+        bool isDefault() const { return slipBeats == 0 && nudgeMs == 0 && gainDb == 0 && fadeInBeats == 0 && fadeOutBeats == 0 && ! reversed; }
+    };
     struct Trim
     {
         juce::AudioBuffer<float> whole;   // the loop before trimming
         double wholeBeats = 0;
         double start = 0, end = 0;        // the part that plays, in beats of `whole`
+        double playBeats = 0;             // how many beats that part plays for
+        Shape shape;
     };
     bool openTrim (int layer);            // false if the layer has no loop
     const Trim& getTrim (int layer) const { return trims[(size_t) layer]; }
     void setTrim (int layer, double startBeat, double endBeat, double playBeats);
+    // Changes the shape and plays it with the current start, end and length.
+    void setShape (int layer, const Shape& shape);
     // The part of `audio` (which is `beats` long) between two beats, with short fades at the cuts.
     static juce::AudioBuffer<float> cropBeats (const juce::AudioBuffer<float>& audio, double beats, double from, double to);
 
