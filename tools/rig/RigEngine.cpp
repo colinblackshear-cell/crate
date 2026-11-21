@@ -155,6 +155,9 @@ RigEngine::RigEngine()
     };
     automation.numParameters = [this] (int tool) { return juce::isPositiveAndBelow (tool, (int) numTools) ? getTool (tool).getParameters().size() : 0; };
     automation.toolName = [] (int tool) { return toolName (tool); };
+    macros.getParameter = automation.getParameter;
+    macros.numParameters = automation.numParameters;
+    macros.toolName = automation.toolName;
     arrangeFrom.fill (1.0f);
     arrangeTo.fill (1.0f);
     arrangeRestart.fill (-1.0);
@@ -668,6 +671,9 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     }
     arrange (n);
 
+    // The show's macro knobs move their settings (before automation, so Rec moves records them).
+    macros.process();
+
     // Automation: the knob moves recorded, and what you move now (after the learned knobs
     // above, so their moves are caught), before the tools play.
     {
@@ -982,6 +988,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
 
     processReturns (mix, n);
     fx[masterStrip].processBlock (mix, noMidi);
+    performFx.beatsPerBar = transport.getBeatsPerBar();
     performFx.process (mix, transport.getBlockPosition(), transport.getBpm(), transport.isPlayingThisBlock());
 
     auto& master = strips[masterStrip];
@@ -1398,6 +1405,7 @@ juce::ValueTree RigEngine::saveShow() const
     show.appendChild (quantizer.toTree(), nullptr);
     show.appendChild (chords.toTree(), nullptr);
     show.appendChild (automation.toTree(), nullptr);
+    show.appendChild (macros.toTree(), nullptr);
 
     for (int s = 0; s < numStrips; ++s)
     {
@@ -1619,6 +1627,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     quantizer.fromTree (show.getChildWithName ("Quantize"));
     chords.fromTree (show.getChildWithName (RigChords::kTreeType));
     automation.fromTree (show.getChildWithName (RigAutomation::kTreeType));
+    macros.fromTree (show.getChildWithName (RigMacros::kTreeType));
     screens = show.getChildWithName ("Screens").isValid() ? show.getChildWithName ("Screens").createCopy() : juce::ValueTree ("Screens");
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {

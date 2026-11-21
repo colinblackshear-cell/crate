@@ -111,6 +111,26 @@ public:
         }
     }
 
+    // Just listens (fills the history, no grains): so a Freeze pressed later has the moment
+    // before it to hold. In place, unchanged.
+    void listen (const juce::AudioBuffer<float>& buffer)
+    {
+        const int size = history.getNumSamples();
+        if (size < 2)
+            return;
+        const int n = buffer.getNumSamples();
+        const int channels = juce::jmin (2, buffer.getNumChannels());
+        for (int i = 0; i < n; ++i)
+        {
+            const float l = buffer.getSample (0, i);
+            history.setSample (0, write, l);
+            history.setSample (1, write, channels > 1 ? buffer.getSample (1, i) : l);
+            write = (write + 1) % size;
+        }
+        filled = juce::jmin (size, filled + n);
+        frozenAt = write;
+    }
+
     bool hasSound() const { return filled > 0; }
 
 private:

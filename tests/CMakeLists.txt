@@ -12,6 +12,7 @@ target_sources(CrateTests PRIVATE
     RigLooperTests.cpp
     LoopShapeTests.cpp
     SoundBendingTests.cpp
+    ShowMovesTests.cpp
     RigSceneTests.cpp
     RigTimelineTests.cpp
     RigSongTests.cpp

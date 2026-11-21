@@ -163,6 +163,67 @@ struct RigPerformFxTests : juce::UnitTest
             expectEquals (r.fx.getRise(), 0.0f);
         }
 
+        beginTest ("drop: the lows go while held, and come back on the next bar, not when you let go");
+        {
+            Runner r;
+            r.fx.mode = PerformFx::drop;
+            r.fx.x = 0.5f;
+            r.fx.y = 1.0f;
+            r.fx.engaged = true;
+            auto out = r.run (60, [] (long long t) { return tone (t, 60); });   // 1.2 beats
+            expect (rms (out, 12000, 28800) < 0.08f, "60 Hz is mostly gone: " + juce::String (rms (out, 12000, 28800)));
+            r.fx.engaged = false;   // let go at beat 1.2: back at beat 4 (the next bar)
+            out = r.run (150, [] (long long t) { return tone (t, 60); });   // to beat 4.2
+            const size_t bar = (size_t) (4.0 * 24000 - 1.2 * 24000);
+            expect (rms (out, 2400, bar - 2400) < 0.08f, "still dropped until the bar");
+            expect (rms (out, bar + 1200, bar + 4000) > 0.3f, "slams back in on the bar");
+        }
+
+        beginTest ("freeze: holds the moment you touch, ringing on after the sound stops");
+        {
+            Runner r;
+            r.fx.mode = PerformFx::freeze;
+            r.fx.x = 0.6f;
+            r.fx.y = 0.0f;   // nothing of the live mix under it
+            r.run (100, [] (long long t) { return tone (t, 330); });   // a second of a note, heard before touching
+            r.fx.engaged = true;
+            auto out = r.run (200, [] (long long) { return 0.0f; });   // the note stops as you touch
+            expect (rms (out, 24000, 96000) > 0.08f, "it rings on in silence: " + juce::String (rms (out, 24000, 96000)));
+            r.fx.engaged = false;
+            out = r.run (50, [] (long long) { return 0.0f; });
+            expect (rms (out, 4800, 24000) < 0.01f, "let go and it's gone");
+        }
+
+        beginTest ("grain: the mix as a live cloud; reverse: the beat just played, backwards");
+        {
+            Runner g;
+            g.fx.mode = PerformFx::grain;
+            g.fx.x = 0.5f;
+            g.fx.y = 0.6f;
+            g.fx.engaged = true;
+            auto out = g.run (150, [] (long long t) { return tone (t, 330); });
+            const float level = rms (out, 24000, 72000);
+            expect (level > 0.1f && level < 0.8f, "a cloud about as loud as the mix: " + juce::String (level));
+            double diff = 0;
+            for (size_t i = 24000; i < 72000; ++i)
+                diff += std::abs (out[i] - tone ((long long) i, 330));
+            expect (diff / 48000.0 > 0.05, "and not the mix itself");
+
+            // A rising ramp played in; reversed, it falls.
+            Runner r;
+            r.run (100, [] (long long t) { return (float) (t % 48000) / 48000.0f; });
+            r.fx.mode = PerformFx::reverse;
+            r.fx.x = 0.5f;   // a beat
+            r.fx.y = 1.0f;
+            r.fx.engaged = true;
+            out = r.run (40, [] (long long t) { return (float) (t % 48000) / 48000.0f; });
+            int falling = 0, rising = 0;
+            for (size_t i = 2000; i < 20000; i += 100)
+                (out[i + 100] < out[i] ? falling : rising)++;
+            expect (falling > rising * 4, "it plays backwards");
+            expectEquals (PerformFx::modeName (PerformFx::reverse), juce::String ("Reverse"));
+        }
+
         beginTest ("the pad: touch plays, let go stops, Hold keeps it; on the Mixer");
         {
             PerformFx fx;

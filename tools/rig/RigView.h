@@ -257,6 +257,8 @@ private:
     void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
     void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails&) override {}
     void audioProcessorParameterChangeGestureBegin (juce::AudioProcessor*, int parameterIndex) override;
+    // (and Macros' Assign, for where a setting was let go of)
+    void audioProcessorParameterChangeGestureEnd (juce::AudioProcessor*, int parameterIndex) override;
 
     RigEngine& engine;
     juce::AudioDeviceManager* devices;
@@ -287,6 +289,11 @@ private:
     // What's recording now, and the screen it's on ({} when nothing is).
     std::pair<juce::String, juce::String> whatsRecording() const;
     void nudgeTempo (double);
+public:
+    // A click on the tempo: Ramp to... (a glide over some bars while it plays), or stop one.
+    void showTempoMenu();
+    void startTempoRamp (double target, int bars);
+private:
     void pageChanged();
     bool stageShown = false;
     RigNavigation navigation;

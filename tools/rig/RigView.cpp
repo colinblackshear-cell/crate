@@ -370,6 +370,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
             sayMicOn();
     };
     header.onKeyboard = [this] { showControllers(); };
+    header.onTempo = [this] { showTempoMenu(); };
     header.tap.onClick = [this]
     {
         const auto now = juce::Time::getMillisecondCounterHiRes();
@@ -2607,6 +2608,7 @@ void RigView::timerCallback()
     {
         rigpanels::Header::Shown shown;
         shown.bpm = transport.getBpm();
+        shown.rampTo = transport.isHosted() ? 0.0 : transport.getRampTarget();
         const int beatsPerBar = transport.getBeatsPerBar();
         const double beats = transport.getPositionInBeats();
         const int bar = (int) std::floor (beats / beatsPerBar) + 1;
@@ -2840,6 +2842,8 @@ void RigView::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor* t
                 {
                     // (Only settings that turn smoothly: a switch or a pattern choice can't Move.)
                     const auto& list = safe->engine.getTool (t).getParameters();
+                    if (juce::isPositiveAndBelow (parameterIndex, list.size()) && safe->engine.getMacros().getAssigning() >= 0)
+                        safe->engine.getMacros().touchBegan (t, parameterIndex, list[parameterIndex]->getValue());
                     if (juce::isPositiveAndBelow (parameterIndex, list.size()) && ! list[parameterIndex]->isDiscrete() && ! list[parameterIndex]->isBoolean())
                     {
                         safe->engine.lastTouchedTool = t;
@@ -2853,6 +2857,26 @@ void RigView::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor* t
                 }
             });
         }
+}
+
+void RigView::audioProcessorParameterChangeGestureEnd (juce::AudioProcessor* tool, int parameterIndex)
+{
+    for (int t = 0; t < RigEngine::numTools; ++t)
+        if (&engine.getTool (t) == tool)
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this), t, parameterIndex]
+            {
+                if (safe == nullptr)
+                    return;
+                auto& macros = safe->engine.getMacros();
+                const int m = macros.getAssigning();
+                const auto& list = safe->engine.getTool (t).getParameters();
+                if (m < 0 || ! juce::isPositiveAndBelow (parameterIndex, list.size()))
+                    return;
+                if (macros.touchEnded (t, parameterIndex, list[parameterIndex]->getValue()))
+                    safe->say (macros.getName (m) + " now turns " + RigEngine::toolName (t) + " " + list[parameterIndex]->getName (40)
+                               + " (" + juce::String (macros.getNumTargets (m)) + (macros.getNumTargets (m) == 1 ? " setting" : " settings")
+                               + "). Move more, or press Done.");
+            });
 }
 
 void RigView::finishKnobLearn()
@@ -3640,6 +3664,53 @@ void RigView::nudgeTempo (double amount)
         return;
     }
     transport.setBpm (std::round ((transport.getBpm() + amount) * 10.0) / 10.0);
+}
+
+void RigView::showTempoMenu()
+{
+    auto& transport = engine.getTransport();
+    if (transport.isHosted())
+    {
+        say ("In Logic, Logic sets the tempo (draw a tempo change in Logic's tempo track).");
+        return;
+    }
+    const double now = transport.getBpm();
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Ramp the tempo: a glide, in time, while it plays");
+    const auto targets = { 5.0, 10.0, 20.0, -5.0, -10.0, -20.0 };
+    auto lengths = [this] (double target)
+    {
+        juce::PopupMenu sub;
+        for (int bars : { 1, 2, 4, 8, 16 })
+            sub.addItem ("Over " + juce::String (bars) + (bars == 1 ? " bar" : " bars"), [this, target, bars] { startTempoRamp (target, bars); });
+        return sub;
+    };
+    for (double d : targets)
+    {
+        const double target = juce::jlimit (RigTransport::kMinBpm, RigTransport::kMaxBpm, now + d);
+        menu.addSubMenu ((d > 0 ? "Up to " : "Down to ") + juce::String (target, 0) + " BPM", lengths (target));
+    }
+    menu.addSubMenu ("Double time (" + juce::String (juce::jmin (RigTransport::kMaxBpm, now * 2.0), 0) + " BPM)", lengths (now * 2.0));
+    menu.addSubMenu ("Half time (" + juce::String (juce::jmax (RigTransport::kMinBpm, now * 0.5), 0) + " BPM)", lengths (now * 0.5));
+    if (transport.getRampTarget() > 0)
+    {
+        menu.addSeparator();
+        menu.addItem ("Stop the ramp (stay at " + juce::String (now, 1) + " BPM)", [this]
+        {
+            engine.getTransport().cancelRamp();
+            say ("Ramp stopped: the tempo stays where it is.");
+        });
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&header).withMousePosition());
+}
+
+void RigView::startTempoRamp (double target, int bars)
+{
+    auto& transport = engine.getTransport();
+    target = juce::jlimit (RigTransport::kMinBpm, RigTransport::kMaxBpm, target);
+    transport.rampTo (target, bars * (double) transport.getBeatsPerBar());
+    say ("The tempo glides to " + juce::String (target, 0) + " BPM over " + juce::String (bars) + (bars == 1 ? " bar" : " bars")
+         + (transport.isPlaying() ? "." : ", from when you press Play.") + " Click the tempo to stop it.");
 }
 
 void RigView::setDarkPanel (bool dark)

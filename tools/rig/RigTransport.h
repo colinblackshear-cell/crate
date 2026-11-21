@@ -20,8 +20,14 @@ public:
     // Moves the clock to `beat` at the next block (playing or not), so Play starts there.
     void setPosition (double beat) { seekRequest = juce::jmax (0.0, beat); }
 
-    void setBpm (double);
+    void setBpm (double);   // (calls off a ramp)
     double getBpm() const { return bpm.load(); }
+    // A tempo ramp: glides from the tempo now to `target` over `beats`, starting with the next
+    // block while the clock plays (it waits if stopped). Setting the tempo by hand calls it off.
+    // Not in Logic (Logic's tempo wins there).
+    void rampTo (double target, double beats);
+    void cancelRamp() { rampTarget = 0.0; rampPending = false; }
+    double getRampTarget() const { return rampTarget.load(); }   // 0: no ramp
     void setBeatsPerBar (int);
     int getBeatsPerBar() const { return beatsPerBar.load(); }
 
@@ -62,6 +68,9 @@ private:
     std::atomic<int> beatsPerBar { 4 };
     std::atomic<int> request { 0 };     // 0 none, 1 play, 2 stop
     std::atomic<double> seekRequest { -1.0 };
+    std::atomic<double> rampTarget { 0.0 }, rampBeats { 16.0 };
+    std::atomic<bool> rampPending { false };
+    double rampFrom = 0, rampStart = 0;
 
     // Audio thread.
     bool playing = false;

@@ -13,6 +13,7 @@
 #include "RigTransport.h"
 #include "StripFx.h"
 #include "PerformFx.h"
+#include "RigMacros.h"
 #include "RigLooper.h"
 #include "RigScenes.h"
 #include "RigTimeline.h"
@@ -73,6 +74,7 @@ public:
     // (saved with the show; New song clears it). Rec moves arms it from the next bar, starting
     // the clock if it's stopped (over the song, its lanes play Once along the song).
     RigAutomation& getAutomation() { return automation; }
+    RigMacros& getMacros() { return macros; }
     void pressRecMoves();
     // The setting you last touched on screen (a tool's id and its index, as knob Learn names
     // them), for Move in the Automation panel. Message thread; -1 for none yet.
@@ -539,6 +541,7 @@ private:
     crate::SafetyLimiter masterLimiter, outputLimiter;
     std::array<crate::SafetyLimiter, numStems> stemLimiters;
     PerformFx performFx;
+    RigMacros macros;
     juce::MidiBuffer bassTap, synthTap;
     juce::MidiBuffer noMidi;
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;

@@ -555,7 +555,7 @@ void MixerView::Channel::resized()
 }
 
 //==============================================================================
-MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage::LookAndFeel>()), pad (e.getPerformFx())
+MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage::LookAndFeel>()), pad (e.getPerformFx()), macroStrip (e)
 {
     setOpaque (true);
     setLookAndFeel (look.get());
@@ -589,9 +589,11 @@ MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage
     toolsBank.setTooltip ("A strip for each tool: the MPC, drum machine, bass, synth, vocoder, sampler, your audio input and the loops.");
     layersBank.setTooltip ("A strip for each of the looper's layers: record, effects, mute and level, into the Loops strip.");
     clearSolo.setTooltip ("Turns every Solo off, so you hear everything again.");
-    padBank.setTooltip ("The FX pad on the whole mix: filter sweeps, beat repeat, tape stop, gate and riser. Touch to play it, Hold keeps it.");
+    padBank.setTooltip ("The FX pad on the whole mix: filter, repeat, tape stop, gate, riser, drop, freeze, grain and reverse. Touch to play it, Hold keeps it. The show's macro knobs are under it.");
     padBank.onClick = [this] { showPad (! padShown); };
     addChildComponent (pad);
+    addChildComponent (macroStrip);
+    macroStrip.onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
     toolsBank.onClick = [this] { showLayers (false); };
     layersBank.onClick = [this] { showLayers (true); };
     clearSolo.setEnabled (false);
@@ -650,6 +652,7 @@ void MixerView::showLayers (bool show)
     }
     padShown = false;
     pad.setVisible (false);
+    macroStrip.setVisible (false);
     for (auto* c : tools)
         c->setVisible (! show || c->index == RigEngine::loopsStrip);
     for (auto* c : layers)
@@ -673,6 +676,7 @@ void MixerView::showPad (bool show)
     for (auto* c : layers)
         c->setVisible (false);
     pad.setVisible (true);
+    macroStrip.setVisible (true);
     toolsBank.lit = layersBank.lit = Lit::none;
     padBank.lit = Lit::current;
     for (auto* b : { &toolsBank, &layersBank, &padBank })
@@ -832,7 +836,13 @@ void MixerView::layoutStrips (juce::Rectangle<int> area)
         const int gap = 6, groupGap = 18;
         const int w = juce::jlimit (70, 110, area.getWidth() / 12);
         auto right = area.removeFromRight (w * returnsAndMaster.size() + gap + groupGap);
-        pad.setBounds (area.withTrimmedRight (groupGap));
+        {
+            // The pad, and the show's macro knobs under it.
+            auto left = area.withTrimmedRight (groupGap);
+            macroStrip.setBounds (left.removeFromBottom (juce::jlimit (130, 170, left.getHeight() / 4)));
+            left.removeFromBottom (10);
+            pad.setBounds (left);
+        }
         right.removeFromLeft (groupGap - gap);
         for (int i = 0; i < returnsAndMaster.size(); ++i)
         {
