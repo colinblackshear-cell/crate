@@ -39,6 +39,29 @@ public:
     void exportForMpc();
     void renameKit();
 
+    // Press and hold a pad (PADS): SOUND PAGE, SWAP SOUND, RECORD A NEW SOUND, VOLUME · PAN · TUNE, 16 LEVELS,
+    // COPY TO ANOTHER PAD, REMOVE SOUND. A touch still sounds the pad at once; the menu comes after the hold.
+    pocket::HoldSpec padMenuSpec (int pad);
+    pocket::HoldSpec swapMenuSpec (int pad);
+    void swapSound (int pad, const juce::String& soundId);   // SWAP SOUND: the pad keeps its volume, pan, tune and mode
+    void removePad (int pad);                                // REMOVE SOUND: UNDO (the note's button) puts it back
+    void undoRemovePad();
+    bool canUndoRemovePad() const { return haveRemoved; }
+    // 16 LEVELS: the bank's 16 pads play one pad's sound from quiet (the first pad) to loud (the last).
+    void startLevels (int pad);
+    int levelsPad() const { return levelsOf; }
+    // COPY TO ANOTHER PAD: tap the pad it goes to (the pad there is kept for UNDO).
+    void startCopy (int pad);
+    void copyPadTo (int target);
+    void undoCopy();
+    int copySource() const { return copyFrom; }
+    void endPadMode();                                       // leaves 16 LEVELS or COPY
+    void holdPad (int pad);                                  // what a long press on a pad does (also for the self-checks)
+    // The self-checks: a finger lands on a pad of the bank, the hold time passes, the finger lifts.
+    void testTouchPad (int pad);
+    void testHoldElapsed();
+    void testLiftPad();
+
     // The pad pattern. While recording, pads played from `fromBeat` on go into the pattern, snapped to the
     // grid (REC on PADS turns it on, with the pattern playing; PocketApp then locks it onto a layer).
     void setRecordingPads (bool on, double fromBeat = 0.0);
@@ -120,6 +143,9 @@ private:
     double recFrom = 0.0;
     std::vector<pocket::PadPattern> patternUndo;
     bool drumsDirty = false, kitDirty = false;
+    int levelsOf = -1, copyFrom = -1, removedPad = -1, copiedTo = -1;
+    pocket::KitPad removed, copiedWas;
+    bool haveRemoved = false, haveCopied = false;
    #if JUCE_IOS || JUCE_ANDROID
     juce::ScopedMessageBox sharing;
    #endif

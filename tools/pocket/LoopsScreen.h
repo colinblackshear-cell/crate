@@ -30,12 +30,19 @@ public:
     int recordVocoder();
     // REC: records `source` (a pocket::LoopSource) on the next empty layer from the next bar, for
     // `bars` bars (0 = FREE: until stopped, or the first layer's length). -1 when it can't (it says why).
-    int recordFrom (int source, int bars, int tool = -1);
+    int recordFrom (int source, int bars, int tool = -1, int tap = 0);   // tap: the layer a LoopSource::layerTap take records
     // REC on the LOOPS tool: the source picked here, for `bars` bars.
     int recordTake (int bars) { return recordFrom (sourceChoice, bars); }
     int source() const { return sourceChoice; }   // pocket::LoopSource
     // Arms `layer` with an undo step (LOCK BEAT and REC on DRUMS use it). False when it couldn't. tool: a LayerTool.
     bool armLayer (int layer, int source, int bars, int tool = -1) { return startRecording (layer, source, bars, tool); }
+    // The layer picked on the panel (-1 = none), so EFFECTS opens on its board.
+    int selectedLayer() const { return selected >= 0 && hasLayer (selected) ? selected : -1; }
+    bool hasLayer (int l) const;
+    // EFFECTS' FULL BOARD on the loop editor's effects page.
+    std::function<void (int layer)> onFullBoard;
+    // A layer's board changed (EFFECTS): saved with the layers.
+    void boardsChanged() { saveIfChanged(); }
     // The notes a layer was printed from (PADS, SYNTH), so QUANTIZE can render it again. Kept with the layer.
     void attachPart (int layer, std::shared_ptr<const pocket::NotePart>);
     // The pads' sounds, for rendering a PADS layer's notes again after the song is opened.
@@ -73,6 +80,7 @@ public:
     void openEditor (int layer, int page = LoopEditSheet::shapePage, int focus = LoopEditSheet::noFocus);
     void closeEditor();
     LoopEditSheet& editorSheet() { return editor; }
+    const LoopEditSheet& editorSheet() const { return editor; }
     void trimLayer (int layer, double fromBeat, double toBeat) { editLayer (layer, LoopEditSheet::trim, fromBeat, toBeat); }
     void fitLayer (int layer, int bars, double fromBeat, double toBeat);
     void quantizeLayer (int layer, const pocket::LoopQuantize&);
@@ -83,11 +91,20 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+
+    // Press and hold a filled layer: the hold menu (the same actions as the panel's buttons, one press away). Picks the
+    // layer first, so the panel shows it too.
+    void openLayerMenu (int layer);
+    pocket::HoldSpec layerMenuSpec (int layer);
+    void holdLayer (int layer) { openLayerMenu (layer); }   // the self-checks
 
     // Screenshot mode: a drums layer, a synth part (selected), a vocoder take 4.2 bars long, a pads pattern,
     // a muted mic take, then the row the next take lands on.
     void showDemo();
+    bool demoMode() const { return demo; }
+    void setDemoMode (bool d) { demo = d; }   // the checks: saving on again after the screenshots' demo
     // Screenshot mode: the loop editor on the vocoder take (SHAPE), the synth part (SHAPE, quantized), or EFFECTS.
     void showEditorDemo (int which);
     // Records a made-up source into a 2-bar layer at 97 BPM and checks its length, its latency
@@ -95,7 +112,7 @@ public:
     static juce::String selfCheck (juce::String& report);
 
 private:
-    struct Undo { struct One { int layer; pocket::SharedTake before; bool mute; bool withFx = false; pocket::LayerFxState fx {}; double start = 0.0; }; std::vector<One> items; };
+    struct Undo { struct One { int layer; pocket::SharedTake before; bool mute; bool withFx = false; pocket::LayerFxState fx {}; double start = 0.0; juce::var board {}; }; std::vector<One> items; };
     struct Row { pocket::LoopState st = pocket::LoopState::empty; bool muted = false; int version = -1; std::vector<float> peaks; };
     enum Id { srcBase = 10, rowSelect = 100, rowMute = 300 };
     enum PanelButton { pQuant, pInOut, pFx, pDub, pTool, pClear, pToMac, pClearAll, kPanelButtons };
@@ -105,7 +122,7 @@ private:
     int idAt (juce::Point<float>) const;
     void press (int id);
     void pressPanel (int which);
-    bool startRecording (int layer, int source = -1, int bars = -1, int tool = -1);
+    bool startRecording (int layer, int source = -1, int bars = -1, int tool = -1, int tap = 0);
     void pushUndo (Undo);
     void clearLayer (int layer, bool withUndo);
     void clearAll();
@@ -143,7 +160,8 @@ private:
     std::array<pocket::PButton, kPanelButtons> panel;
     std::array<Row, pocket::kLoopLayers> rows;
     std::vector<Undo> undoStack;
-    int selected = -1, lastLayer = -1, vocLayer = -1;
+    int selected = -1, lastLayer = -1, vocLayer = -1, holdRow = -1;
+    pocket::HoldDetector hold { [this] { if (holdRow >= 0) { const int l = holdRow; pressed = 0; openLayerMenu (l); } } };
     int sourceChoice = 0;   // pocket::LoopSource
     int pressed = 0;
     int ticks = 0;
@@ -157,7 +175,7 @@ private:
     double shownBpm = 0.0;
     juce::uint32 bpmChangedAt = 0;
 
-    struct Saved { const pocket::LoopTake* take = nullptr; int version = -1; bool present = false, mute = false; juce::uint32 fx = 0; };
+    struct Saved { const pocket::LoopTake* take = nullptr; int version = -1; bool present = false, mute = false; juce::uint32 fx = 0, board = 0; };
     std::array<Saved, pocket::kLoopLayers> saved;
     bool settingsDirty = false;
     float inputLevel = 0.0f;

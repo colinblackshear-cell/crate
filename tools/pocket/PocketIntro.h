@@ -8,7 +8,7 @@
 // two ways in: TAKE THE 2-MINUTE TOUR or START MAKING. Shown each time the app opens.
 //
 // TourOverlay: seven coach marks on the real controls (the tool row, REC, BPM and CLICK, the pads, the loop
-// layers, the vocoder's headphones, TO MAC). Each stop opens the real screen,
+// layers, the vocoder's headphones, the menu icon that opens the song drawer). Each stop opens the real screen,
 // dims everything but one spotlit control (which still works, so you can hit the pad it points at) and
 // says what it does, with NEXT and Skip tour.
 class TitleScreen : public juce::Component, private juce::Timer

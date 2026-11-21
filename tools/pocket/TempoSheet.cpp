@@ -74,8 +74,7 @@ void TempoSheet::paint (juce::Graphics& g)
 {
     g.setColour (col::cream);
     g.fillRoundedRectangle (getLocalBounds().toFloat().withTrimmedBottom (-20.0f), 22.0f);
-    g.setColour (col::rule);
-    g.fillRoundedRectangle ((float) getWidth() / 2 - 20, 8, 40, 5, 2.5f);
+    pocket::drawGrabber (g, getWidth());
     g.setColour (col::ink);
     g.setFont (condensedBold (26.0f));
     g.drawText ("Tempo", 28, 16, 200, 36, juce::Justification::centredLeft);

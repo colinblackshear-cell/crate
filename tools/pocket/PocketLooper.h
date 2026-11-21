@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "BeatsEngine.h"
+#include "PocketBoards.h"
 #include "PocketLoopFx.h"
 #include "PocketAudio.h"
 
@@ -23,7 +24,9 @@ namespace pocket
 {
 constexpr int kLoopLayers = 8;
 
-enum class LoopSource { mic, drums, vocoder, mix, both, synth, chords, count };   // both = your voice and the vocoder (Sing)
+// both = your voice and the vocoder (Sing). loops = every layer (after the ALL board), master = the whole mix (after the
+// MASTER board), layerTap = one layer after its board: the EFFECTS tool's resample takes.
+enum class LoopSource { mic, drums, vocoder, mix, both, synth, chords, loops, master, layerTap, count };
 constexpr int kInstruments = 2;   // the SYNTH and CHORDS tools' sound, each its own source
 
 // A tool that plays notes inside the looper (SYNTH, CHORDS): always heard, recorded as its own source, and
@@ -102,7 +105,8 @@ public:
 
     // Arms an empty layer: it starts at the next bar (or after the count-in when the clock is stopped
     // and the count-in is on) and runs `bars` bars (0 = until stop()).
-    bool arm (int layer, LoopSource, int bars, int tool = -1);   // tool: a LayerTool, -1 = the source's usual one
+    bool arm (int layer, LoopSource, int bars, int tool = -1, int tap = 0);   // tool: a LayerTool, -1 = the source's usual one;
+                                                                              // tap: the layer a layerTap take records
     // Recording: ends at the end of the bar. Waiting for the next bar: cancels.
     void stop (int layer);
     // A playing layer records on top of itself from the next loop.
@@ -157,8 +161,19 @@ public:
     void resetFx (int layer) { setFx (layer, {}); }
     // Writes the touched knobs into their moves at the loop's place. Call it often (the screen's timer).
     void recordMoves();
-    // The layer's loop printed with its effects (stereo), or nullptr.
+    // The layer's loop printed with its effects and its board (stereo), or nullptr.
     std::unique_ptr<juce::AudioBuffer<float>> printed (int layer) const;
+
+    //==========================================================================
+    // The EFFECTS tool's pedalboards (PocketBoards.h), one per sound, run live in render(): DRUMS and PADS after the
+    // drum machine and the pads, SYNTH and CHORDS after their instruments, VOICE on the mic (what you hear of
+    // yourself and what the mic source records), VOCODER after the vocoder, each layer after its five knobs, ALL on
+    // the layers together, MASTER on the whole mix (not the click). A board nothing is on is skipped. Message thread
+    // (the settings are the racks' atomic parameters).
+    Board& board (int id) { return boards[(size_t) juce::jlimit (0, kBoards - 1, id)]; }
+    const Board& board (int id) const { return boards[(size_t) juce::jlimit (0, kBoards - 1, id)]; }
+    // A new take or a cleared layer starts with its board neutral.
+    void resetBoard (int layer) { auto& b = board (layerBoardId (layer)); b.reset(); b.setName ({}); }
 
     // The longest-running layer's length in beats (0 = nothing recorded), for FREE and the display.
     double masterBeats() const;
@@ -179,7 +194,7 @@ public:
 private:
     static constexpr int kChunk = 256;
 
-    struct Cmd { enum Kind { arm, stop, dub, clear, set } kind = arm; int layer = 0, a = 0, b = 0, c = 0; double beat = 0; LoopTake* take = nullptr; };
+    struct Cmd { enum Kind { arm, stop, dub, clear, set } kind = arm; int layer = 0, a = 0, b = 0, c = 0, d = 0; double beat = 0; LoopTake* take = nullptr; };
 
     struct Layer
     {
@@ -198,6 +213,7 @@ private:
         LoopTake* take = nullptr;
         LoopState st = LoopState::empty;
         LoopSource source = LoopSource::mic;
+        int tap = 0;          // layerTap: the layer it records
         int bars = 0, writeIdx = 0;
         double armBeat = -1, startBeat = 0, lenBeats = 0, endBeat = -1, dubBeat = 0;
         bool fresh = false;   // armed while the clock was stopped
@@ -236,6 +252,8 @@ private:
     std::array<Layer, kLoopLayers> layers;
     std::array<FxCtl, kLoopLayers> fx;
     FxBus bus;
+    std::array<Board, kBoards> boards;
+    BoardClock boardClock;
     std::array<SharedTake, kLoopLayers> takes;                          // the message thread's
     std::vector<std::pair<SharedTake, juce::uint32>> retired;           // kept a while after the audio thread lets go
     int countInBars = 1;
@@ -261,5 +279,9 @@ private:
     std::vector<float> busDelay, busReverb, busL, busR;
     std::vector<float> srcMic, srcDrums, srcVoc, srcMix, srcBoth, vocL, vocR, clickBuf;
     std::array<std::vector<float>, kInstruments> srcInst;
+    // the boards' stereo buses
+    std::vector<float> padsL, padsR, voiceL, voiceR, allL, allR, srcLoops, srcMaster;
+    std::array<std::vector<float>, kLoopLayers> layerL, layerR;
+    std::array<bool, kLoopLayers> layerWet {};
 };
 }

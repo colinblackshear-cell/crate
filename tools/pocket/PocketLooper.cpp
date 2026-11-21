@@ -18,6 +18,9 @@ int pocket::toolForSource (int source)
         case LoopSource::mix: return (int) LayerTool::mix;
         case LoopSource::synth: return (int) LayerTool::synth;
         case LoopSource::chords: return (int) LayerTool::chords;
+        case LoopSource::loops:
+        case LoopSource::master:
+        case LoopSource::layerTap: return (int) LayerTool::mix;
         default: return (int) LayerTool::mic;
     }
 }
@@ -39,6 +42,8 @@ LoopsEngine::LoopsEngine (BeatsEngine& b) : beats (b)
                 v = fxDefault (k);
         }
     }
+    for (auto& b : boards)
+        b.attach (&boardClock);
     prepare (sampleRate);
 }
 
@@ -65,7 +70,7 @@ void LoopsEngine::push (const Cmd& c)
     fifo.finishedWrite (n1 + n2);
 }
 
-bool LoopsEngine::arm (int layer, LoopSource source, int bars, int tool)
+bool LoopsEngine::arm (int layer, LoopSource source, int bars, int tool, int tap)
 {
     if (layer < 0 || layer >= kLoopLayers || state (layer) != LoopState::empty
         || layers[(size_t) layer].pending.load() > 0)
@@ -80,6 +85,7 @@ bool LoopsEngine::arm (int layer, LoopSource source, int bars, int tool)
     take->tool = tool >= 0 ? tool : toolForSource ((int) source);
     setRegion (layer, 0, 0);
     resetFx (layer);   // a new recording starts with its effects off
+    resetBoard (layer);   // and its board neutral: what the take went through is in its sound already
     if (takes[(size_t) layer] != nullptr)
         retired.push_back ({ takes[(size_t) layer], juce::Time::getMillisecondCounter() });
     takes[(size_t) layer] = take;
@@ -90,6 +96,7 @@ bool LoopsEngine::arm (int layer, LoopSource source, int bars, int tool)
     c.a = (int) source;
     c.b = bars;
     c.c = countInBars;
+    c.d = juce::jlimit (0, kLoopLayers - 1, tap);
     c.take = take.get();
     push (c);
     return true;
@@ -120,6 +127,7 @@ void LoopsEngine::setMute (int layer, bool m) { layers[(size_t) layer].mute = m;
 void LoopsEngine::clear (int layer)
 {
     resetFx (layer);
+    resetBoard (layer);
     Cmd c;
     c.kind = Cmd::clear;
     c.layer = layer;
@@ -134,7 +142,10 @@ void LoopsEngine::setLayer (int layer, SharedTake take, bool mute, double startB
     takes[(size_t) layer] = take;
     layers[(size_t) layer].mute = mute;
     if (take == nullptr)
+    {
         resetFx (layer);
+        resetBoard (layer);
+    }
     Cmd c;
     c.kind = Cmd::set;
     c.layer = layer;
@@ -279,7 +290,11 @@ std::unique_ptr<juce::AudioBuffer<float>> LoopsEngine::printed (int layer) const
     auto take = takes[(size_t) layer];
     if (take == nullptr || take->length.load() < 2 || take->lengthBeats.load() <= 0)
         return nullptr;
-    return std::make_unique<juce::AudioBuffer<float>> (renderLayer (take->data.data(), take->length.load(), take->lengthBeats.load(), take->sampleRate, fxOf (layer)));
+    auto out = std::make_unique<juce::AudioBuffer<float>> (renderLayer (take->data.data(), take->length.load(), take->lengthBeats.load(), take->sampleRate, fxOf (layer)));
+    // and its board, at the loop's own tempo, with the echoes of its end wrapped round into its start
+    const double loopBpm = take->lengthBeats.load() * 60.0 * take->sampleRate / (double) take->length.load();
+    applyBoardToLoop (*out, board (layerBoardId (layer)).settings(), take->sampleRate, loopBpm);
+    return out;
 }
 
 float LoopsEngine::fxValue (int layer, int k, double frac) const
@@ -358,6 +373,15 @@ void LoopsEngine::prepare (double rate)
         v->assign ((size_t) kChunk, 0.0f);
     for (auto& v : srcInst)
         v.assign ((size_t) kChunk, 0.0f);
+    for (auto* v : { &padsL, &padsR, &voiceL, &voiceR, &allL, &allR, &srcLoops, &srcMaster })
+        v->assign ((size_t) kChunk, 0.0f);
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        layerL[(size_t) l].assign ((size_t) kChunk, 0.0f);
+        layerR[(size_t) l].assign ((size_t) kChunk, 0.0f);
+    }
+    for (auto& b : boards)
+        b.prepare (rate);
     bus.prepare (rate);
     for (auto& l : layers)
         l.dsp.reset();
@@ -388,6 +412,7 @@ void LoopsEngine::handle (const Cmd& c)
             l.take = c.take;
             l.take->length = 0;
             l.source = (LoopSource) juce::jlimit (0, (int) LoopSource::count - 1, c.a);
+            l.tap = juce::jlimit (0, kLoopLayers - 1, c.d);
             l.bars = c.b;
             l.uiBars = c.b;
             l.withCountIn = juce::jlimit (0, 2, c.c);
@@ -500,11 +525,37 @@ void LoopsEngine::chunk (float* left, float* right, int n)
             countEnd = juce::jmax (countEnd, l.armBeat >= 0 ? l.armBeat : l.withCountIn * 4.0);
     beats.setCountInClick (countEnd);
     std::fill (clickBuf.begin(), clickBuf.begin() + n, 0.0f);
-    beats.renderWithClick (left, right, n, clickBuf.data());
+    // The drum machine and the pads: summed as before, unless one of their boards is in use, then each on its own
+    // bus through its board.
+    const bool stereo = right != nullptr;
+    auto& drumBoard = boards[(size_t) boardDrums];
+    auto& padBoard = boards[(size_t) boardPads];
+    const bool splitPads = stereo && (drumBoard.willRun() || padBoard.willRun());
+    if (splitPads)
+    {
+        std::fill (padsL.begin(), padsL.begin() + n, 0.0f);
+        std::fill (padsR.begin(), padsR.begin() + n, 0.0f);
+        beats.renderWithClick (left, right, n, clickBuf.data(), padsL.data(), padsR.data());
+    }
+    else
+        beats.renderWithClick (left, right, n, clickBuf.data());
 
     const bool running = beats.clockRunning();
     const double blockBeat = beats.clockBeat();
     const double bps = beats.getBpm() / (60.0 * sampleRate);
+    boardClock.bpm = beats.getBpm();
+    boardClock.ppq = blockBeat;
+    boardClock.playing = running;
+    if (splitPads)
+    {
+        drumBoard.process (left, right, n);
+        padBoard.process (padsL.data(), padsR.data(), n);
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += padsL[(size_t) i];
+            right[i] += padsR[(size_t) i];
+        }
+    }
 
     if (running != wasRunning)
     {
@@ -559,6 +610,18 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         if (p > inputPeak.load())
             inputPeak = p;
     }
+    // VOICE: the mic through its board, for what you hear of yourself and what the mic source records (the vocoder
+    // hears the mic as it is: it has its own pedals, and the VOCODER board after it)
+    auto& voiceBoard = boards[(size_t) boardVoice];
+    const bool voiceWet = stereo && voiceBoard.willRun();
+    if (voiceWet)
+    {
+        std::copy (srcMic.begin(), srcMic.begin() + n, voiceL.begin());
+        std::copy (srcMic.begin(), srcMic.begin() + n, voiceR.begin());
+        voiceBoard.process (voiceL.data(), voiceR.data(), n);
+        for (int i = 0; i < n; ++i)
+            srcMic[(size_t) i] = 0.5f * (voiceL[(size_t) i] + voiceR[(size_t) i]);
+    }
 
     // the delay and reverb sends, filled by the instruments and then the layers
     std::fill (busDelay.begin(), busDelay.begin() + n, 0.0f);
@@ -576,6 +639,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
         std::fill (vocR.begin(), vocR.begin() + n, 0.0f);
         inst->render (vocL.data(), vocR.data(), n);
+        if (stereo)
+            boards[(size_t) (boardSynth + k)].process (vocL.data(), vocR.data(), n);   // SYNTH, CHORDS
         const float echo = inst->echoSend();
         const float toDelay = echo * 0.55f, toReverb = echo * 0.3f;   // pocket::echoToDelay / echoToReverb
         for (int i = 0; i < n; ++i)
@@ -597,6 +662,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
                                     mic && inChannels > 1 && inPtr != nullptr ? inPtr[1] + chunkOffset : nullptr };
         vocoder->setInput (shifted, mic ? juce::jmin (2, inChannels) : 0);
         vocoder->render (vocL.data(), vocR.data(), n);
+        if (stereo)
+            boards[(size_t) boardVocoder].process (vocL.data(), vocR.data(), n);
         vocoderHeard = heard && (vocoderMonitor == nullptr || vocoderMonitor->load());
         for (int i = 0; i < n; ++i)
         {
@@ -630,6 +697,60 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     // play the layers, through their effects; the delay and reverb they send to
     for (int l = 0; l < kLoopLayers; ++l)
         playLayer (layers[(size_t) l], l, blockBeat, bps, n);
+    // each layer's board after its knobs (in stereo from there on), then ALL on the layers together
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        auto& b = boards[(size_t) layerBoardId (l)];
+        layerWet[(size_t) l] = stereo && b.willRun();
+        if (! layerWet[(size_t) l])
+            continue;
+        auto& o = layerOut[(size_t) l];
+        auto& lL = layerL[(size_t) l];
+        auto& lR = layerR[(size_t) l];
+        std::copy (o.begin(), o.begin() + n, lL.begin());
+        std::copy (o.begin(), o.begin() + n, lR.begin());
+        b.process (lL.data(), lR.data(), n);
+        for (int i = 0; i < n; ++i)
+            o[(size_t) i] = 0.5f * (lL[(size_t) i] + lR[(size_t) i]);   // what the mix and the resample sources hear
+    }
+    auto& allBoard = boards[(size_t) boardAll];
+    const bool allWet = stereo && allBoard.willRun();
+    if (allWet)
+    {
+        std::fill (allL.begin(), allL.begin() + n, 0.0f);
+        std::fill (allR.begin(), allR.begin() + n, 0.0f);
+        for (int l = 0; l < kLoopLayers; ++l)
+        {
+            const bool wet = layerWet[(size_t) l];
+            const auto& sl = wet ? layerL[(size_t) l] : layerOut[(size_t) l];
+            const auto& sr = wet ? layerR[(size_t) l] : layerOut[(size_t) l];
+            for (int i = 0; i < n; ++i)
+            {
+                allL[(size_t) i] += sl[(size_t) i];
+                allR[(size_t) i] += sr[(size_t) i];
+            }
+        }
+        allBoard.process (allL.data(), allR.data(), n);
+    }
+    // the resample sources, only while a take records them
+    bool needLoops = false, needMaster = false;
+    for (auto& l : layers)
+        if (l.st != LoopState::empty && l.st != LoopState::playing)
+        {
+            needLoops = needLoops || l.source == LoopSource::loops;
+            needMaster = needMaster || l.source == LoopSource::master;
+        }
+    if (needLoops)
+        for (int i = 0; i < n; ++i)
+        {
+            float m = 0.0f;
+            if (allWet)
+                m = 0.5f * (allL[(size_t) i] + allR[(size_t) i]);
+            else
+                for (auto& o : layerOut)
+                    m += o[(size_t) i];
+            srcLoops[(size_t) i] = m;
+        }
     std::fill (busL.begin(), busL.begin() + n, 0.0f);
     std::fill (busR.begin(), busR.begin() + n, 0.0f);
     bus.process (busDelay.data(), busReverb.data(), busL.data(), busR.data(), n, bps > 0 ? 1.0 / bps : sampleRate * 0.5);
@@ -639,12 +760,85 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         float m = srcDrums[(size_t) i] + (vocoderHeard ? srcVoc[(size_t) i] : 0.0f) + 0.5f * (busL[(size_t) i] + busR[(size_t) i]);
         for (auto& inst : srcInst)
             m += inst[(size_t) i];
-        for (auto& o : layerOut)
-            m += o[(size_t) i];
+        if (allWet)
+            m += 0.5f * (allL[(size_t) i] + allR[(size_t) i]);
+        else
+            for (auto& o : layerOut)
+                m += o[(size_t) i];
         srcMix[(size_t) i] = m;
     }
 
-    // record
+    if (allWet)
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += allL[(size_t) i];
+            right[i] += allR[(size_t) i];
+        }
+    else
+        for (int l = 0; l < kLoopLayers; ++l)
+        {
+            if (layerWet[(size_t) l])
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    left[i] += layerL[(size_t) l][(size_t) i];
+                    right[i] += layerR[(size_t) l][(size_t) i];
+                }
+                continue;
+            }
+            for (int i = 0; i < n; ++i)
+            {
+                const float s = layerOut[(size_t) l][(size_t) i];
+                left[i] += s;
+                if (right != nullptr)
+                    right[i] += s;
+            }
+        }
+    // the click, and your dry voice while you hear yourself: heard, never recorded. MASTER goes on the mix before
+    // the click.
+    const bool dry = heard && dryWanted.load();
+    auto& masterBoard = boards[(size_t) boardMaster];
+    const bool masterWet = stereo && masterBoard.willRun();
+    if (masterWet)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += busL[(size_t) i] + (dry ? (voiceWet ? voiceL[(size_t) i] : srcMic[(size_t) i]) : 0.0f);
+            right[i] += busR[(size_t) i] + (dry ? (voiceWet ? voiceR[(size_t) i] : srcMic[(size_t) i]) : 0.0f);
+        }
+        masterBoard.process (left, right, n);
+        if (needMaster)
+            for (int i = 0; i < n; ++i)
+                srcMaster[(size_t) i] = 0.5f * (left[i] + right[i]);
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += clickBuf[(size_t) i];
+            right[i] += clickBuf[(size_t) i];
+        }
+    }
+    else if (voiceWet)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += busL[(size_t) i] + (clickBuf[(size_t) i] + (dry ? voiceL[(size_t) i] : 0.0f));
+            right[i] += busR[(size_t) i] + (clickBuf[(size_t) i] + (dry ? voiceR[(size_t) i] : 0.0f));
+        }
+    }
+    else
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const float extra = clickBuf[(size_t) i] + (dry ? srcMic[(size_t) i] : 0.0f);
+            left[i] += busL[(size_t) i] + extra;
+            if (right != nullptr)
+                right[i] += busR[(size_t) i] + extra;
+        }
+    }
+    if (needMaster && ! masterWet)
+        for (int i = 0; i < n; ++i)
+            srcMaster[(size_t) i] = (right != nullptr ? 0.5f * (left[i] + right[i]) : left[i]) - clickBuf[(size_t) i];
+
+    // record (after the mix, so MASTER can be resampled)
     for (int l = 0; l < kLoopLayers; ++l)
         recordLayer (layers[(size_t) l], l, blockBeat, bps, n);
 
@@ -654,24 +848,6 @@ void LoopsEngine::chunk (float* left, float* right, int n)
 
     for (auto& l : layers)
         l.uiStart = l.startBeat;
-
-    for (int l = 0; l < kLoopLayers; ++l)
-        for (int i = 0; i < n; ++i)
-        {
-            const float s = layerOut[(size_t) l][(size_t) i];
-            left[i] += s;
-            if (right != nullptr)
-                right[i] += s;
-        }
-    // the click, and your dry voice while you hear yourself: heard, never recorded
-    const bool dry = heard && dryWanted.load();
-    for (int i = 0; i < n; ++i)
-    {
-        const float extra = clickBuf[(size_t) i] + (dry ? srcMic[(size_t) i] : 0.0f);
-        left[i] += busL[(size_t) i] + extra;
-        if (right != nullptr)
-            right[i] += busR[(size_t) i] + extra;
-    }
 
     nextBeat = running ? blockBeat + n * bps : 0.0;
 }
@@ -761,9 +937,12 @@ void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps
         case LoopSource::both: src = srcBoth.data(); break;
         case LoopSource::synth: src = srcInst[0].data(); break;
         case LoopSource::chords: src = srcInst[1].data(); break;
+        case LoopSource::loops: src = srcLoops.data(); break;
+        case LoopSource::master: src = srcMaster.data(); break;
+        case LoopSource::layerTap: src = layerOut[(size_t) l.tap].data(); break;
         default: break;
     }
-    const bool takeOutSelf = l.source == LoopSource::mix;
+    const bool takeOutSelf = l.source == LoopSource::mix || l.source == LoopSource::loops || l.source == LoopSource::master;
     const auto& own = layerOut[(size_t) index];
     const int capacity = l.take != nullptr ? (int) l.take->data.size() : 0;
     bool wrote = false;

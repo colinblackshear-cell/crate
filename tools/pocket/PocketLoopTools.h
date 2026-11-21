@@ -43,6 +43,10 @@ struct NotePart
     int preset = 0, octave = 0;
     SynthKnobs knobs;
 
+    // The boards the take was recorded through (PocketBoards settings, {} = none): SYNTH's, or for PADS the drum
+    // machine's (`board`) and the pads' (`padsBoard`). A re-render goes through them again, so it sounds as recorded.
+    juce::var board, padsBoard;
+
     double patternBeats() const { return kind == pads ? pattern.lengthBeats() : notes.lengthBeats(); }
     juce::String describe() const;   // "PADS" / "SYNTH"
     juce::var toVar() const;

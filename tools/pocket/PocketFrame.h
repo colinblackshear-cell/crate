@@ -2,6 +2,7 @@
 
 #include "PocketKey.h"
 #include "PocketRoute.h"
+#include "PocketSheet.h"
 #include "PocketTheme.h"
 
 // The frame around the tools: the thumb bar (BPM, CLICK, REC, PLAY, UNDO), the tool row, the count-in
@@ -10,7 +11,7 @@ namespace pocket
 {
 // Every tool the row can show, in the row's order. Stage 1 shows the ones that exist (PocketApp's
 // tools list); SYNTH and CHORDS slot in between PADS and VOCODER when they come.
-enum class Tool { loops, drums, pads, synth, chords, vocoder };
+enum class Tool { loops, drums, pads, synth, chords, vocoder, effects };
 const char* toolName (Tool);
 juce::Colour toolColour (Tool);
 void drawToolIcon (juce::Graphics&, Tool, juce::Point<float> centre, juce::Colour);
@@ -53,14 +54,26 @@ public:
     int selected = -1;       // index into tools, -1 = none lit
     int bottomInset = 0;
     std::function<void (Tool)> onSelect;
-    void flash();   // outline the tools in amber for a moment ("pick another tool")
+    void flash();   // outline the tools in amber for a moment ("pick another tool"); it ends by the clock, whatever else happens
+    bool flashing() const { return juce::Time::getMillisecondCounter() < glowUntil; }
+    void stopFlash() { glowUntil = 0; repaint(); }
+
+    // Slide a finger along the row: the tool under it lights up, and it is picked when the finger lifts.
+    int cellAt (float x) const;   // the tool under x (the row's ends take the first and last), -1 with no tools
+    int slidingTo() const { return sliding; }
+    void slideStart (float x);
+    void slideTo (float x);
+    void slideEnd (float x, float y);   // lifts: picks the tool under x (y well above the row calls it off)
 
     juce::Rectangle<float> cellRect (int index) const;
     void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
-    bool glow = false;
+    juce::uint32 glowUntil = 0;
+    int sliding = -1;
 };
 
 //==============================================================================
@@ -78,7 +91,7 @@ private:
 
 //==============================================================================
 // Rec setup (tap the header's display): COUNT-IN and LENGTH, the same for every tool.
-class RecSetupSheet : public juce::Component
+class RecSetupSheet : public DragSheet
 {
 public:
     RecSetupSheet();
@@ -96,7 +109,7 @@ private:
 
 //==============================================================================
 // Headphones on first: the mic stays off until you say what you're listening on.
-class HeadphonesSheet : public juce::Component
+class HeadphonesSheet : public DragSheet
 {
 public:
     HeadphonesSheet();

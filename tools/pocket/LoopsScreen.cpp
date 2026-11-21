@@ -52,6 +52,7 @@ LoopsScreen::LoopsScreen (PocketHost& h, Library& l, BeatsEngine& b, AppSettings
     }
     addChildComponent (editor);
     editor.onDone = [this] { closeEditor(); };
+    editor.onDismiss = [this] { closeEditor(); };
     editor.onUndo = [this] { undo(); };
     editor.onPlay = [this] { if (! loops.transportRunning()) host.togglePlay(); };
     editor.onToast = [this] (const juce::String& t) { host.toast (t); };
@@ -59,6 +60,7 @@ LoopsScreen::LoopsScreen (PocketHost& h, Library& l, BeatsEngine& b, AppSettings
     editor.onFit = [this] (int bars, double a, double b) { fitLayer (editor.layer(), bars, a, b); };
     editor.onQuantize = [this] (const LoopQuantize& q) { quantizeLayer (editor.layer(), q); };
     editor.onFxChanged = [this] { repaint(); };
+    editor.onFullBoard = [this] { if (onFullBoard && editor.layer() >= 0) onFullBoard (editor.layer()); };
     editor.isBusy = [this] { return jobLayer >= 0 && jobUndo; };
     editor.onHeightChanged = [this] { if (editor.isVisible()) editor.setBounds (0, editorTop(), getWidth(), getHeight() - editorTop()); };
     shownBpm = loops.bpm();
@@ -289,7 +291,7 @@ void LoopsScreen::timerCallback()
     repaint();
 }
 
-bool LoopsScreen::startRecording (int layer, int source, int bars, int tool)
+bool LoopsScreen::startRecording (int layer, int source, int bars, int tool, int tap)
 {
     const auto src = (LoopSource) (source >= 0 ? source : sourceChoice);
     if (src == LoopSource::vocoder && ! loops.hasVocoder())
@@ -305,7 +307,7 @@ bool LoopsScreen::startRecording (int layer, int source, int bars, int tool)
         bars = settings.recBars();
     if (bars == 0)   // FREE: the first layer sets the length, later ones snap to it
         bars = loops.masterBeats() > 0 ? juce::jmax (1, juce::roundToInt (loops.masterBeats() / 4.0)) : 0;
-    if (! loops.arm (layer, src, bars, tool))
+    if (! loops.arm (layer, src, bars, tool, tap))
     {
         host.toast ("That layer is busy. Try again in a moment.");
         return false;
@@ -333,7 +335,15 @@ int LoopsScreen::recordVocoder()
     return layer;
 }
 
-int LoopsScreen::recordFrom (int source, int bars, int tool)
+bool LoopsScreen::hasLayer (int l) const
+{
+    if (! juce::isPositiveAndBelow (l, kLoopLayers))
+        return false;
+    const auto st = const_cast<LoopsEngine&> (loops).state (l);
+    return st == LoopState::playing || st == LoopState::overdubWait || st == LoopState::overdubbing;
+}
+
+int LoopsScreen::recordFrom (int source, int bars, int tool, int tap)
 {
     const int layer = nextLayer();
     if (layer < 0)
@@ -341,7 +351,7 @@ int LoopsScreen::recordFrom (int source, int bars, int tool)
         host.toast ("All 8 layers are used. Clear one in Loops to record.");
         return -1;
     }
-    return startRecording (layer, source, bars, tool) ? layer : -1;
+    return startRecording (layer, source, bars, tool, tap) ? layer : -1;
 }
 
 int LoopsScreen::vocoderLayer() const
@@ -379,7 +389,10 @@ void LoopsScreen::undo()
         {
             loops.setLayer (one.layer, one.before, one.mute, one.start);
             if (one.withFx)
+            {
                 loops.setFx (one.layer, one.fx);
+                loops.board (layerBoardId (one.layer)).fromVar (one.board);
+            }
         }
         lastLayer = one.layer;
     }
@@ -397,7 +410,7 @@ void LoopsScreen::clearLayer (int layer, bool withUndo)
         Undo u;
         auto take = loops.takeOf (layer);
         if (hasLoop (loops.state (layer)) && take != nullptr)
-            u.items.push_back ({ layer, take, loops.isMuted (layer), true, loops.fxOf (layer), loops.startBeat (layer) });
+            u.items.push_back ({ layer, take, loops.isMuted (layer), true, loops.fxOf (layer), loops.startBeat (layer), loops.board (layerBoardId (layer)).toVar() });
         else
             u.items.push_back ({ layer, nullptr, false });
         pushUndo (std::move (u));
@@ -416,7 +429,7 @@ void LoopsScreen::clearAll()
             continue;
         ++n;
         if (hasLoop (st) && loops.takeOf (l) != nullptr)
-            u.items.push_back ({ l, loops.takeOf (l), loops.isMuted (l), true, loops.fxOf (l), loops.startBeat (l) });
+            u.items.push_back ({ l, loops.takeOf (l), loops.isMuted (l), true, loops.fxOf (l), loops.startBeat (l), loops.board (layerBoardId (l)).toVar() });
         loops.clear (l);
     }
     if (n == 0)
@@ -538,17 +551,77 @@ int LoopsScreen::idAt (juce::Point<float> p) const
 void LoopsScreen::mouseDown (const juce::MouseEvent& e)
 {
     pressed = idAt (e.position);
+    holdRow = -1;
+    hold.release();
+    if (pressed >= rowSelect && pressed < rowSelect + kLoopLayers && hasLoop (loops.state (pressed - rowSelect)))
+    {
+        holdRow = pressed - rowSelect;
+        hold.press (e.position);
+    }
     repaint();
+}
+
+void LoopsScreen::mouseDrag (const juce::MouseEvent& e)
+{
+    hold.move (e.position);
 }
 
 void LoopsScreen::mouseUp (const juce::MouseEvent& e)
 {
+    const bool held = hold.fired();
+    hold.release();
+    holdRow = -1;
     const int id = idAt (e.position);
     const int was = pressed;
     pressed = 0;
-    if (id != 0 && id == was)
+    if (! held && id != 0 && id == was)
         press (id);
     repaint();
+}
+
+// The hold menu for a filled layer: each row runs what the panel's button of the same name runs.
+HoldSpec LoopsScreen::layerMenuSpec (int l)
+{
+    HoldSpec s;
+    auto take = loops.takeOf (l);
+    if (take == nullptr || ! hasLoop (loops.state (l)))
+        return s;
+    const bool notes = take->part != nullptr;
+    const bool dubbing = loops.state (l) == LoopState::overdubbing || loops.state (l) == LoopState::overdubWait;
+    bool hasTool = false;
+    const auto openTool = openToolFor (take->tool, hasTool);
+    static const char* grids[] = { "off", "1/4", "1/8", "1/16" };
+    const bool boardOn = loops.board (layerBoardId (l)).audible() || ! loops.fxOf (l).isNeutral();
+    auto run = [this, l] (int which)
+    {
+        return [this, l, which]
+        {
+            selected = lastLayer = l;
+            layoutPanel();
+            pressPanel (which);
+            repaint();
+        };
+    };
+    s.title = "LAYER " + juce::String (l + 1) + U8(" \xc2\xb7 ") + layerToolName (take->tool);
+    s.items.push_back ({ U8("IN / OUT \xc2\xb7 TRIM"), {}, false, true, run (pInOut) });
+    s.items.push_back ({ notes ? "QUANTIZE" : "FIT", notes ? juce::String (grids[juce::jlimit (0, 3, take->quant.grid)]) : barsText (take->lengthBeats.load()),
+                         false, true, run (pQuant) });
+    s.items.push_back ({ "EFFECTS", boardOn ? "board on" : "board off", false, true, run (pFx) });
+    s.items.push_back ({ dubbing ? "STOP DUB" : "DUB OVER IT", {}, false, true, run (pDub) });
+    s.items.push_back ({ hasTool ? juce::String ("OPEN ") + toolName (openTool) : juce::String ("DOUBLE"), {}, false, true, run (pTool) });
+    s.items.push_back ({ "SEND TO MAC", {}, false, true, run (pToMac) });
+    s.items.push_back ({ "CLEAR", "undo brings it back", true, true, run (pClear) });
+    return s;
+}
+
+void LoopsScreen::openLayerMenu (int l)
+{
+    if (! hasLoop (loops.state (l)))
+        return;
+    selected = lastLayer = l;
+    layoutPanel();
+    repaint();
+    host.holdMenu (layerMenuSpec (l), *this, rowRect (l).getCentre(), rowRect (l));
 }
 
 void LoopsScreen::openEditor (int layer, int page, int focus)
@@ -592,7 +665,7 @@ void LoopsScreen::applyEdited (int layer, const LoopTake* was, Edited e)
         return;
     const double start = loops.startBeat (layer);
     Undo u;
-    u.items.push_back ({ layer, take, loops.isMuted (layer), true, loops.fxOf (layer), start });
+    u.items.push_back ({ layer, take, loops.isMuted (layer), true, loops.fxOf (layer), start, loops.board (layerBoardId (layer)).toVar() });
     pushUndo (std::move (u));
     const double len = e.take->lengthBeats.load();
     double newStart = start + e.shift;
@@ -1080,7 +1153,8 @@ void LoopsScreen::saveIfChanged()
         const auto take = loops.takeOf (l);
         const bool present = hasLoop (st) && take != nullptr;
         if (present != s.present || (present && (take.get() != s.take || loops.version (l) != s.version || loops.isMuted (l) != s.mute
-                                                  || (! loops.recMoves (l) && fxHash (loops.fxOf (l)) != s.fx))))
+                                                  || (! loops.recMoves (l) && fxHash (loops.fxOf (l)) != s.fx)
+                                                  || loops.board (layerBoardId (l)).hash() != s.board)))
             differs = true;
     }
     if (differs && ! busy && ! demo)
@@ -1125,7 +1199,7 @@ void LoopsScreen::save()
             }
         }
         const auto fx = loops.fxOf (l);
-        s = { take.get(), loops.version (l), true, loops.isMuted (l), fxHash (fx) };
+        s = { take.get(), loops.version (l), true, loops.isMuted (l), fxHash (fx), loops.board (layerBoardId (l)).hash() };
         auto* o = new juce::DynamicObject();
         if (! fx.isNeutral())
         {
@@ -1141,6 +1215,9 @@ void LoopsScreen::save()
             o->setProperty ("fx", knobs);
             o->setProperty ("moves", moves);
         }
+        // the layer's EFFECTS board (after the knobs), when it has one
+        if (const auto b = loops.board (layerBoardId (l)).toVar(); ! b.isVoid())
+            o->setProperty ("board", b);
         o->setProperty ("layer", l);
         o->setProperty ("file", file.getFileName());
         o->setProperty ("beats", take->lengthBeats.load());
@@ -1179,9 +1256,9 @@ void LoopsScreen::sendToMac (bool onlyPicked)
             return;
         juce::AudioBuffer<float> b (1, take->length.load());
         b.copyFrom (0, 0, take->data.data(), b.getNumSamples());
-        if (! loops.fxOf (l).isNeutral())
+        if (! loops.fxOf (l).isNeutral() || ! loops.board (layerBoardId (l)).isNeutral())
             if (auto printed = loops.printed (l))
-                b = std::move (*printed);   // with its effects and moves, in stereo
+                b = std::move (*printed);   // with its effects and moves and its board, in stereo
         if (std::abs (take->sampleRate - crate::kSampleRate) > 1.0)
             b = crate::AudioFiles::resample (b, take->sampleRate);   // the phone records at its own rate; sounds travel at 44.1 kHz
         send.items.push_back ({ "Pocket loop " + juce::String (l + 1) + " " + titleCase (layerToolName (take->tool)),
@@ -1277,7 +1354,8 @@ void LoopsScreen::restore()
                             lane[(size_t) i] = (float) (double) (*m)[i];
                     }
             loops.setFx (l, fx);
-            saved[(size_t) l] = { take.get(), 0, true, (bool) item.getProperty ("mute", false), fxHash (loops.fxOf (l)) };
+            loops.board (layerBoardId (l)).fromVar (item.getProperty ("board", {}));   // older songs: none, neutral
+            saved[(size_t) l] = { take.get(), 0, true, (bool) item.getProperty ("mute", false), fxHash (loops.fxOf (l)), loops.board (layerBoardId (l)).hash() };
         }
 }
 

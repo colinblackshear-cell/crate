@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PocketHold.h"
 #include "PocketIdeas.h"
 #include "PocketTheme.h"
 
@@ -7,7 +8,7 @@
 
 // Home: HOW IT WORKS (pick a tool, press REC, it loops), + NEW SONG (an empty song, opened on LOOPS), SHOW ME: MAKE A
 // BEAT (the lesson) and WATCH THE TOUR, then YOUR SONGS: each with its date, tempo, how many layers and the tools on
-// them, and a play button for what it has so far. Tap one to carry on; ··· (or hold it) to rename or delete. The
+// them, and a play button for what it has so far. Tap one to carry on; ··· (or hold it) for RENAME and DELETE. The
 // small sort chip cycles RECENT, A-Z and MOST LAYERS.
 class IdeasScreen : public juce::Component
 {
@@ -19,7 +20,8 @@ public:
     std::function<void()> onNew, onNewBeat, onTour;
     std::function<void (const juce::String& id)> onPlay;        // play (or stop) what the song has so far
     std::function<bool (const juce::String& id)> isPlaying;
-    std::function<void (const juce::String& id)> onRename, onDelete;
+    // Hold a song (or tap its ···): the app opens the hold menu (RENAME, DELETE) at `at`, keeping `highlight` (the card) bright.
+    std::function<void (const juce::String& id, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight)> onHoldSong;
 
     void refresh();
     void paint (juce::Graphics&) override;
@@ -29,7 +31,9 @@ public:
     // What the list shows of a song, read from its folder (Loops/loops.json, Beats/drums.json).
     struct Facts { double bpm = 0.0; int layers = 0; std::vector<int> tools; };   // tools: pocket::LayerTool, one per layer
     static Facts factsOf (const juce::File& songFolder);
+    static juce::String whenText (juce::Time);   // "Today 3:20 PM", "Yesterday", "Mon", "Oct 12"
     juce::Rectangle<int> tourSpot() const { return newButton.getBounds(); }
+    void holdRow (int row);   // what a long press on that row does (the self-checks and screenshots)
 
 private:
     struct List;

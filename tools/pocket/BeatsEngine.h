@@ -118,8 +118,9 @@ public:
     void prepare (double sampleRate) override;
     void render (float* left, float* right, int numSamples) override { renderWithClick (left, right, numSamples, nullptr); }
     // The same, with the click added into `clickOut` (mono, numSamples long) instead of left and right, so
-    // whoever records the drums leaves it out. nullptr = in left and right.
-    void renderWithClick (float* left, float* right, int numSamples, float* clickOut);
+    // whoever records the drums leaves it out. nullptr = in left and right. With `padsLeft` / `padsRight` the pads
+    // are added there instead of into left and right (the drum machine and the pads each through its own board).
+    void renderWithClick (float* left, float* right, int numSamples, float* clickOut, float* padsLeft = nullptr, float* padsRight = nullptr);
 
 private:
     struct Event { enum Kind { drum, padOn, padOff, stopPads, skip } kind = drum; int index = 0; float velocity = 0; bool accent = false;

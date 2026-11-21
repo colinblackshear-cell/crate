@@ -75,6 +75,10 @@ juce::var NotePart::toVar() const
         o->setProperty ("decay", knobs.decay);
         o->setProperty ("echo", knobs.echo);
     }
+    if (! settingsAreNeutral (board))
+        o->setProperty ("board", board);
+    if (! settingsAreNeutral (padsBoard))
+        o->setProperty ("padsBoard", padsBoard);
     return juce::var (o);
 }
 
@@ -107,6 +111,8 @@ std::shared_ptr<NotePart> NotePart::fromVar (const juce::var& v)
         if (p->notes.empty())
             return nullptr;
     }
+    p->board = v.getProperty ("board", {});      // older songs: none
+    p->padsBoard = v.getProperty ("padsBoard", {});
     return p;
 }
 
@@ -145,7 +151,12 @@ std::vector<float> renderPart (const NotePart& part, const LoopQuantize& q, doub
     const double samplesPerBeat = 60.0 / bpm * sampleRate;
     const int preSamples = (int) std::llround (pre * samplesPerBeat);
     const int total = preSamples + lengthSamples;
-    std::vector<float> l (512), r (512), click (512);
+    std::vector<float> l (512), r (512), click (512), pl (512), pr (512);
+    // the boards it went through, on the clock it played on (the pass before the layer's top included)
+    const double clockStart = part.startBeat - pre;
+    OfflineBoard board (part.board, sampleRate, bpm, clockStart);
+    OfflineBoard padsBoard (part.kind == NotePart::pads ? part.padsBoard : juce::var(), sampleRate, bpm, clockStart);
+    const bool split = board.active() || padsBoard.active();
 
     auto take = [&] (int done, int n)
     {
@@ -186,7 +197,21 @@ std::vector<float> renderPart (const NotePart& part, const LoopQuantize& q, doub
             std::fill (l.begin(), l.end(), 0.0f);
             std::fill (r.begin(), r.end(), 0.0f);
             std::fill (click.begin(), click.end(), 0.0f);
-            eng->renderWithClick (l.data(), r.data(), n, click.data());
+            if (split)
+            {
+                std::fill (pl.begin(), pl.end(), 0.0f);
+                std::fill (pr.begin(), pr.end(), 0.0f);
+                eng->renderWithClick (l.data(), r.data(), n, click.data(), pl.data(), pr.data());
+                board.process (l.data(), r.data(), n);
+                padsBoard.process (pl.data(), pr.data(), n);
+                for (int i = 0; i < n; ++i)
+                {
+                    l[(size_t) i] += pl[(size_t) i];
+                    r[(size_t) i] += pr[(size_t) i];
+                }
+            }
+            else
+                eng->renderWithClick (l.data(), r.data(), n, click.data());
             take (done, n);
         }
     }
@@ -212,6 +237,7 @@ std::vector<float> renderPart (const NotePart& part, const LoopQuantize& q, doub
             std::fill (l.begin(), l.end(), 0.0f);
             std::fill (r.begin(), r.end(), 0.0f);
             eng->renderAt (l.data(), r.data(), n, true, beat, bpm);
+            board.process (l.data(), r.data(), n);
             beat += n * perSample;
             take (done, n);
         }

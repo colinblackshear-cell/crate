@@ -350,8 +350,7 @@ void SendToMacSheet::paint (juce::Graphics& g)
     const auto w = (float) getWidth();
     g.setColour (col::cream);
     g.fillRoundedRectangle (getLocalBounds().toFloat().withTrimmedBottom (-30), 24.0f);
-    g.setColour (col::rule);
-    g.fillRoundedRectangle (w * 0.5f - 24, 8, 48, 5, 2.5f);
+    pocket::drawGrabber (g, getWidth());
 
     g.setColour (col::ink);
     g.setFont (fraunces (30.0f));
@@ -434,6 +433,8 @@ void SendToMacSheet::paint (juce::Graphics& g)
 
 void SendToMacSheet::mouseUp (const juce::MouseEvent& e)
 {
+    if (isDragging())
+        return;   // the sheet is being flicked away, not tapped
     const auto p = e.position;
     if (cancelRect().contains (p))
         return onClose ? onClose() : void();

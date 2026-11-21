@@ -2,6 +2,7 @@
 
 #include "PocketChords.h"
 #include "PocketFrame.h"
+#include "PocketHold.h"
 #include "PocketTheme.h"
 
 // The CHORDS tool: the song's KEY and the SOUND up top, then COLOUR (PLAIN, 7TH, 9TH, SUS, POWER), PLAY (HOLD,
@@ -22,6 +23,10 @@ public:
     std::function<juce::Array<int>()> padSoundPads;
     std::function<bool (int pad)> onPadSound;              // false: that pad has no sound
     std::function<juce::String()> lockedText;              // "PROGRESSION ON LAYER 3": what's on a layer, or empty
+    pocket::HoldShow showHold;                             // press and hold a chord pad: PUT IN PROGRESSION BOX 1..n
+    pocket::HoldSpec padMenuSpec (int pad);
+    void putInBox (int pad, int box);                      // what that menu row does
+    void holdPad (int pad);                                // a long press on a chord pad (also for the self-checks)
 
     void leave();                                          // another tool opened (a held chord keeps ringing)
     void toolChanged();                                    // the settings were replaced (a song opened)
@@ -34,6 +39,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override { layout(); }
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void visibilityChanged() override;
 
@@ -62,5 +68,6 @@ private:
     std::array<juce::Rectangle<float>, pocket::kChordPads> padR;
     std::array<juce::Rectangle<float>, pocket::kProgressionMax> boxR;
     int pressed = 0, shownPad = -2, shownStep = -2, demoPad = -2, demoStep = -2;
+    pocket::HoldDetector hold { [this] { if (pressed >= padBase && pressed < padBase + pocket::kChordPads) holdPad (pressed - padBase); } };
     bool shownMuted = false;
 };

@@ -111,6 +111,7 @@ int SingScreen::idAt (juce::Point<float> p) const
             return padBase + i;
     if (settingsRect().contains (p)) return settingsId;
     if (layersRect().contains (p)) return layersId;
+    if (fxRect().contains (p)) return fxId;
     return 0;
 }
 
@@ -164,6 +165,8 @@ void SingScreen::press (int id)
         host.showVocoder();
     else if (id == layersId)
         host.showLoops();
+    else if (id == fxId && onEffects)
+        onEffects();
     else if (id == keyId)
         showKeyMenu();
     else if (id == chordsId)
@@ -387,6 +390,7 @@ void SingScreen::paint (juce::Graphics& g)
 
     smallButton (settingsRect(), "VOCODER SETTINGS", false, settingsId);
     smallButton (layersRect(), U8("LOOP LAYERS \xe2\x80\xba"), false, layersId);
+    smallButton (fxRect(), "FX", fxActive && fxActive(), fxId);   // lit: its board is in use
 }
 
 //==============================================================================

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PocketLinkClient.h"
+#include "PocketSheet.h"
 #include "PocketTheme.h"
 
 // The three Mac screens of Colin's design: Link to your Mac (More > Mac link), the Send to Mac sheet
@@ -39,7 +40,7 @@ private:
 };
 
 // Send to Mac: where a sound (or loops, or a kit) goes on the Mac.
-class SendToMacSheet : public juce::Component
+class SendToMacSheet : public pocket::DragSheet
 {
 public:
     explicit SendToMacSheet (pocket::LinkClient&);

@@ -8,7 +8,9 @@ namespace
 {
 constexpr int kCardH = 90, kGap = 10, kTop = 312;
 
-juce::String whenText (juce::Time t)
+}
+
+juce::String IdeasScreen::whenText (juce::Time t)
 {
     const auto now = juce::Time::getCurrentTime();
     const auto time = t.formatted ("%I:%M %p").trimCharactersAtStart ("0");
@@ -20,6 +22,8 @@ juce::String whenText (juce::Time t)
     return t.formatted ("%b %d");
 }
 
+namespace
+{
 const juce::Colour kNumberColours[3] = { juce::Colour (0xff5fb3c4), juce::Colour (0xfff0674f), juce::Colour (0xff82cf6a) };
 }
 
@@ -41,14 +45,15 @@ IdeasScreen::Facts IdeasScreen::factsOf (const juce::File& song)
 }
 
 //==============================================================================
-struct IdeasScreen::List : public juce::Component, private juce::Timer
+struct IdeasScreen::List : public juce::Component
 {
     explicit List (IdeasScreen& o) : owner (o) {}
 
     IdeasScreen& owner;
     int pressed = -1, pressedPlay = -1, pressedMore = -1;
-    bool held = false, moved = false;
+    bool moved = false;
     juce::Point<float> downAt;
+    pocket::HoldDetector hold { [this] { holdFired(); } };
 
     juce::Rectangle<float> card (int row) const { return { 16.0f, (float) (row * (kCardH + kGap)) + 2.0f, (float) getWidth() - 32.0f, (float) kCardH }; }
     juce::Rectangle<float> playButton (int row) const { auto c = card (row); return { c.getRight() - 62, c.getCentreY() - 24, 48, 48 }; }
@@ -147,19 +152,20 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
         pressed = rowAt (e.position);
         pressedPlay = pressed >= 0 && playButton (pressed).expanded (4).contains (e.position) ? pressed : -1;
         pressedMore = pressed >= 0 && pressedPlay < 0 && moreButton (pressed).contains (e.position) ? pressed : -1;
-        held = moved = false;
+        moved = false;
         downAt = e.position;
         if (pressed >= 0 && pressedPlay < 0 && pressedMore < 0)
-            startTimer (550);
+            hold.press (e.position);
         repaint();
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        hold.move (e.position);
         if (! moved && e.getDistanceFromDragStart() > 8)
         {
             moved = true;
-            stopTimer();
+            hold.cancel();
             pressed = pressedPlay = pressedMore = -1;
             repaint();
         }
@@ -167,11 +173,11 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        stopTimer();
+        hold.release();
         const int row = pressed, playRow = pressedPlay, moreRow = pressedMore;
         pressed = pressedPlay = pressedMore = -1;
         repaint();
-        if (row < 0 || moved || held || rowAt (e.position) != row)
+        if (row < 0 || moved || hold.fired() || rowAt (e.position) != row)
             return;
         const auto id = ideaAt (row).id;
         if (playRow == row && playButton (row).expanded (4).contains (e.position))
@@ -188,21 +194,14 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
 
     void showMenu (int row, juce::Point<float> at)
     {
-        const auto id = ideaAt (row).id;
-        const bool isCurrent = id == owner.ideas.current().id;
-        juce::PopupMenu m;
-        m.addItem ("Open", [this, id] { if (owner.onOpen) owner.onOpen (id); });
-        m.addItem ("Rename", [this, id] { if (owner.onRename) owner.onRename (id); });
-        m.addItem (isCurrent ? "Delete (open another song first)" : "Delete", ! isCurrent, false, [this, id] { if (owner.onDelete) owner.onDelete (id); });
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (juce::Rectangle<int> ((int) at.x, (int) at.y, 1, 1))));
+        if (owner.onHoldSong)
+            owner.onHoldSong (ideaAt (row).id, *this, at, card (row));
     }
 
-    void timerCallback() override
+    void holdFired()
     {
-        stopTimer();
         if (pressed < 0 || pressed >= (int) owner.ideas.list().size())
             return;
-        held = true;
         const int row = pressed;
         pressed = -1;
         repaint();
@@ -245,6 +244,12 @@ std::vector<int> IdeasScreen::order() const
             return (fa != facts.end() ? fa->second.layers : 0) > (fb != facts.end() ? fb->second.layers : 0);
         });
     return o;
+}
+
+void IdeasScreen::holdRow (int row)
+{
+    if (juce::isPositiveAndBelow (row, (int) ideas.list().size()))
+        list->showMenu (row, list->card (row).getCentre());
 }
 
 void IdeasScreen::refresh()

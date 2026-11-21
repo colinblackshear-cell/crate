@@ -97,7 +97,7 @@ void TitleScreen::paint (juce::Graphics& g)
     g.setFont (lcdFont (17.0f));
     g.drawText ("The mandala turns with the mic: make a noise.", juce::Rectangle<float> (0, m.getBottom() + 140, (float) getWidth(), 22), juce::Justification::centred);
     g.setFont (small (13.0f));
-    g.drawText ("Shown when the app opens. Take the tour again any time from More.", juce::Rectangle<int> (0, getHeight() - 84, getWidth(), 20), juce::Justification::centred);
+    g.drawText ("Shown when the app opens. Take the tour again any time from the menu.", juce::Rectangle<int> (0, getHeight() - 84, getWidth(), 20), juce::Justification::centred);
 }
 
 //==============================================================================
@@ -120,13 +120,13 @@ TourOverlay::TourOverlay()
 const std::vector<TourOverlay::Stop>& TourOverlay::stops()
 {
     static const std::vector<Stop> all {
-        { "TOOLS", col::ink, "Pick a tool", "LOOPS, DRUMS, PADS, SYNTH, CHORDS and VOCODER live down here. Switch any time: the song keeps playing.", "Next" },
+        { "TOOLS", col::ink, "Pick a tool", "LOOPS, DRUMS, PADS, SYNTH, CHORDS and VOCODER live down here, and EFFECTS puts a pedalboard on any of them. Tap one, or slide a finger along the row. The song keeps playing.", "Next" },
         { "REC", juce::Colour (0xffd8452f), "One button records", U8("REC records the tool on screen onto the next empty loop layer, in time. Tap it again to stop. Tap the display up top for count-in and length; BPM sets the tempo, CLICK the metronome."), "Got it" },
         { "CHORDS", juce::Colour (0xffb9a3dc), "Chords in the song's key", "Eight chords of the song's key: tap one, or fill the PROGRESSION for one chord a bar. They set the vocoder's notes, and SYNTH plays in the same key.", "Next" },
         { "PADS", col::amber, "Hit it!", "Every pad holds a sound, and a factory kit is already loaded. Tap one. Press REC to play a pattern in, then it locks onto a layer.", "I hit it" },
-        { "LOOPS", col::ink, "Build it up", "Every take lands on its own layer, marked with the tool that made it. Tap a layer: IN / OUT trims it, FIT or QUANTIZE puts it in time, EFFECTS adds knob moves.", "Next" },
+        { "LOOPS", col::ink, "Build it up", "Every take lands on its own layer, marked with the tool that made it. Tap a layer for IN / OUT, FIT or QUANTIZE, EFFECTS and TO MAC, or hold one for the same in a quick menu.", "Next" },
         { "VOCODER", juce::Colour (0xff82cf6a), "Headphones first", "The mic stays off until you say what you're listening on. With headphones on, you hear yourself; without, it still records.", "Next" },
-        { "TO MAC", juce::Colour (0xff56b3d6), "Send it home", "TO MAC puts the picked layer (or every layer) on your Mac's Kaleidobox, in time.", "Let's make one" } };
+        { "MENU", juce::Colour (0xff56b3d6), "Your songs, and the rest", "Tap the menu icon, or swipe in from the left edge: your songs, Sounds, the sound recorder, Mac link, Remote, Settings, and this tour. Hold a song to rename it or delete it.", "Let's make one" } };
     return all;
 }
 
