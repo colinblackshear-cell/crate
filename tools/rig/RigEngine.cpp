@@ -892,6 +892,12 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         transport.play();
         controlsMoved = true;
     }
+    {
+        // A take for the song (Rec into), from the same sources.
+        const int source = takes.getSource();
+        takes.process (juce::isPositiveAndBelow (source, (int) RigLooper::numSources) ? sources[(size_t) source] : nullptr,
+                       n, clock.beat, clock.bpm, clock.playing, sampleRate);
+    }
     applyStrip (loopsStrip, loopsBlock);
     if (outs[loopsStem] == nullptr)
         for (int ch = 0; ch < 2; ++ch)
@@ -1456,6 +1462,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     scenes.clear();
     scenes.songMode = (bool) show.getProperty ("songMode", false);
     timeline.fromTree (show.getChildWithName (RigTimeline::kTreeType));
+    takes.clear();
     {
         // Older shows only had what the Sampler records.
         const int older = (int) show.getProperty ("sampleSource", 0);
@@ -1906,10 +1913,15 @@ void RigEngine::arrange (int n)
     const double beat0 = transport.getBlockPosition();
     const double beat1 = beat0 + n * transport.getBpm() / (60.0 * sampleRate);
     const auto& lanes = RigTimeline::lanes();
+    // Recording a take: you hear what you're playing all through the song, and not the older
+    // take on its layer.
+    const int takeLayer = takes.getLayer(), takeStrip = takeLayer >= 0 ? stripForSource (takes.getSource()) : -1;
     for (int lane = 0; lane < RigTimeline::kLanes; ++lane)
     {
         const auto& info = lanes[(size_t) lane];
-        const float from = timeline.liveGain (lane, beat0 / bpb), to = timeline.liveGain (lane, beat1 / bpb);
+        float from = timeline.liveGain (lane, beat0 / bpb), to = timeline.liveGain (lane, beat1 / bpb);
+        if (info.isLoop ? info.index == takeLayer : info.index == takeStrip)
+            from = to = info.isLoop ? 0.0f : 1.0f;
         if (! info.isLoop)
         {
             arrangeFrom[(size_t) info.index] = from;
@@ -1973,6 +1985,117 @@ void RigEngine::launchSection (int i)
     if (! juce::isPositiveAndBelow (i, (int) list.size()))
         return;
     playTimeline (list[(size_t) i].start);
+}
+
+int RigEngine::stripForSource (int source)
+{
+    switch (source)
+    {
+        case RigLooper::vocoder: return vocoderStrip;
+        case RigLooper::bass:    return bassStrip;
+        case RigLooper::synth:   return synthStrip;
+        case RigLooper::mpc:     return mpcStrip;
+        case RigLooper::sampler: return samplerStrip;
+        case RigLooper::line:    return inputStrip;
+        case RigLooper::drums:   return drumsStrip;
+        default:                 return -1;
+    }
+}
+
+int RigEngine::freeLayerForSong() const
+{
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+        if (looper.getState (l) == RigLooper::State::empty && ! timeline.laneUsed (RigTimeline::laneForLoop (l))
+            && takes.setFor (l) == nullptr && takes.getLayer() != l)
+            return l;
+    return -1;
+}
+
+void RigEngine::cycleSection (int section, bool on)
+{
+    const auto list = rigsong::sections (timeline);
+    if (on && juce::isPositiveAndBelow (section, (int) list.size()))
+    {
+        timeline.cycleStart = list[(size_t) section].start;
+        timeline.cycleEnd = list[(size_t) section].end();
+        timeline.cycle = true;
+    }
+    else
+        timeline.cycle = false;
+    takes.setCycle (on);
+    controlsMoved = true;
+}
+
+bool RigEngine::recordInto (int section, int layer, int source, bool cycle, juce::String* why)
+{
+    const auto list = rigsong::sections (timeline);
+    if (! juce::isPositiveAndBelow (section, (int) list.size()))
+    {
+        if (why != nullptr)
+            *why = "There's no such section in the song.";
+        return false;
+    }
+    const auto& sec = list[(size_t) section];
+    const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+    const double rate = sampleRate > 0 ? sampleRate : 44100.0;
+    if (! takes.start (layer, source, sec.start, sec.bars, cycle, rate, transport.getBpm(), bpb, why))
+        return false;
+    // A loop holding something else (not in the song, or it would be busy) makes way.
+    if (const auto* set = takes.setFor (layer); set != nullptr && set->takes.empty() && looper.getState (layer) != RigLooper::State::empty)
+    {
+        looper.reset (layer);
+        setLoopName (layer, {});
+    }
+    cycleSection (section, cycle);
+    const bool songOn = timeline.on.load() && transport.isPlaying();
+    const bool inSection = songOn && rigsong::sectionAt (timeline, transport.getPositionInBeats() / bpb) == section;
+    if (! (cycle && inSection))
+        playTimeline (sec.start);
+    controlsMoved = true;
+    return true;
+}
+
+bool RigEngine::useTake (int layer, int index)
+{
+    auto* set = takes.setFor (layer);
+    if (set == nullptr || ! juce::isPositiveAndBelow (index, (int) set->takes.size()))
+        return false;
+    const auto& take = set->takes[(size_t) index];
+    looper.setLayerAudio (layer, take.audio, take.beats);
+    looper.getLayer (layer).mute = false;
+    set->playing = index;
+    set->fresh = false;
+    const auto source = set->source == RigLooper::drums ? juce::String ("Drums") : RigLooper::sourceName (set->source);
+    setLoopName (layer, source + " take " + juce::String (take.number));
+    const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+    looper.restartAt (layer, set->startBar * bpb);
+    // In the song, over its section (unless something's put it there already).
+    const int lane = RigTimeline::laneForLoop (layer);
+    const auto list = rigsong::sections (timeline);
+    for (int i = 0; i < (int) list.size(); ++i)
+        if (std::abs (list[(size_t) i].start - set->startBar) < 1.0e-6)
+        {
+            if (rigsong::boxBlock (timeline, i, lane) < 0)
+                rigsong::setBox (timeline, i, lane, -1);
+            break;
+        }
+    controlsMoved = true;
+    return true;
+}
+
+int RigEngine::serviceTakes()
+{
+    const int made = takes.collect();
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+        if (auto* set = takes.setFor (l))
+        {
+            if (set->fresh)
+                useTake (l, set->playing);
+            // Cleared since (or recorded over some other way): its takes go with it.
+            else if (looper.getState (l) == RigLooper::State::empty && takes.getLayer() != l)
+                takes.forget (l);
+        }
+    return made;
 }
 
 void RigEngine::playOrStop()

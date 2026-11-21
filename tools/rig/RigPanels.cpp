@@ -512,10 +512,34 @@ Footer::Footer (RigEngine& e) : engine (e)
             if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
                 showPartMenu (i);
             else
+            {
+                const bool has = i < sectionCount;
                 pressPart (engine, i);
+                if (has && onPickSection)
+                    onPickSection (i);
+            }
         };
         addAndMakeVisible (b);
     }
+    for (auto* b : { &recButton, &changeButton, &cycleButton, &takesButton, &songButton })
+    {
+        b->fontSize = 13.0f;
+        addChildComponent (b);
+    }
+    recButton.icon = PanelButton::Icon::none;
+    recButton.redRing = false;
+    recButton.onClick = [this] { if (onRecInto) onRecInto(); };
+    changeButton.onClick = [this] { if (onChange) onChange (changeButton); };
+    cycleButton.onClick = [this] { if (onCycle) onCycle(); };
+    takesButton.onClick = [this] { if (onTakes) onTakes (takesButton); };
+    songButton.onClick = [this] { if (onSong) onSong(); };
+    recButton.setTooltip ("Records the picked track into the song, where the red box on the strip shows: from the top of that section to its end. "
+                          "With Cycle on, the section plays over and over and every time round is a new take, so keep going until it's right. "
+                          "Press again to stop (a take cut short is kept too).");
+    changeButton.setTooltip ("Where the next take goes: another section, a new layer or one you already have. Or a free take, the old way.");
+    cycleButton.setTooltip ("The section plays over and over: practise over it, and while recording every time round is a new take.");
+    takesButton.setTooltip ("Every take on this layer: pick the one that plays, or delete the ones you don't want.");
+    songButton.setTooltip ("The Song screen (F3), to see the whole song and add the next layer. Back (Cmd+[) brings you here again.");
     message.setJustificationType (juce::Justification::centred);
     message.setFont (barlow (14.0f));
     message.setMinimumHorizontalScale (0.7f);
@@ -568,6 +592,18 @@ void Footer::tick()
             onSlimChanged();
     }
     sectionCount = count;
+    {
+        int hash = count;
+        for (auto& sec : list)
+            hash = hash * 31 + (int) (sec.start * 64.0) * 7 + (int) (sec.bars * 64.0);
+        if (hash != sectionsHash)
+        {
+            sectionsHash = hash;
+            resized();
+        }
+    }
+    if (! lanesArea.isEmpty())
+        repaint (lanesArea.expanded (2));
     auto& clock = engine.getTransport();
     const bool songOn = tl.on.load() && clock.isPlaying();
     const int bpb = juce::jmax (1, clock.getBeatsPerBar());
@@ -589,9 +625,10 @@ void Footer::tick()
         else if (has)
             sub = list[(size_t) i].name;
         else
-            sub = i == count ? (count == 0 ? juce::String() : juce::String ("+ Save")) : juce::String ("Empty");
-        // No song yet: A is one plain button that says what it does.
-        const auto text = count == 0 && i == 0 ? juce::String ("+ Keep what's playing as A") : letter;
+            sub = i == count ? (count == 0 ? juce::String() : juce::String ("Save")) : juce::String ("Empty");
+        // No song yet: A is one plain button that says what it does. After the sections, + keeps
+        // what's playing as the next one.
+        const auto text = count == 0 && i == 0 ? juce::String ("+ Keep what's playing as A") : i == count ? juce::String ("+") : letter;
         if (b->text != text)
         {
             b->text = text;
@@ -645,30 +682,283 @@ void Footer::resized()
         message.setFont (barlow (14.0f));
         return;
     }
-    parts[0]->fontSize = 30.0f;
-    partsLabel = content.removeFromTop (22);
-    const int gap = 10;
-    // Each key is wide enough for its section's name; messages go beside them when there's room.
-    const int w = juce::jlimit (60, 132, (content.getWidth() - 7 * gap - 280) / 8);
-    partsArea = content.withWidth (8 * w + 7 * gap);
-    auto row = partsArea;
-    for (auto* b : parts)
+    // The song strip: the Rec into bar, the sections as keys as wide as their bars, and the
+    // layers under them. Messages on the right when there's room.
+    for (auto* b : { &recButton, &changeButton, &cycleButton, &takesButton, &songButton })
+        b->setVisible (true);
+    partsLabel = {};
+    content = r.reduced (0, 6);
+    juce::Rectangle<int> messages;
+    if (content.getWidth() >= 1040)
     {
-        b->setBounds (row.removeFromLeft (w).withHeight (64));
-        row.removeFromLeft (gap);
+        messages = content.removeFromRight (juce::jlimit (240, 360, content.getWidth() / 4));
+        content.removeFromRight (14);
     }
-    content.removeFromLeft (partsArea.getWidth() + 16);
-    if (content.getWidth() >= 200)
+    recRow = content.removeFromTop (28);
+    content.removeFromTop (4);
+    keysRow = content.removeFromTop (juce::jlimit (32, 42, content.getHeight() * 55 / 100));
+    content.removeFromTop (3);
+    lanesArea = content;
     {
-        message.setBounds (content.withTrimmedBottom (4));
+        auto row = recRow;
+        recButton.setBounds (row.removeFromLeft (116));
+        row.removeFromLeft (10);
+        songButton.setBounds (row.removeFromRight (78));
+        row.removeFromRight (6);
+        takesButton.setBounds (row.removeFromRight (92));
+        row.removeFromRight (6);
+        cycleButton.setBounds (row.removeFromRight (70));
+        row.removeFromRight (6);
+        changeButton.setBounds (row.removeFromRight (96));
+        row.removeFromRight (10);
+        recText = row;
+    }
+
+    // The keys: each as wide as its section's bars (at least kMin), + after them.
+    const auto list = rigsong::sections (engine.getTimeline());
+    const int count = (int) list.size();
+    const int gap = 4, kMin = 46, plusW = count < parts.size() ? 50 : 0;
+    auto keys = keysRow.withTrimmedRight (plusW > 0 ? plusW + gap : 0);
+    sectionBoxes.clear();
+    sectionBars.clear();
+    double total = 0;
+    for (auto& sec : list)
+        total += juce::jmax (0.25, sec.bars);
+    const int usable = keys.getWidth() - gap * juce::jmax (0, count - 1);
+    // Widths by bars, with the short ones held at kMin and the rest sharing what's left.
+    std::vector<int> widths ((size_t) count, kMin);
+    if (count > 0)
+    {
+        std::vector<bool> fixed ((size_t) count, false);
+        for (int pass = 0; pass < 4; ++pass)
+        {
+            double free = usable, bars = 0;
+            for (int i = 0; i < count; ++i)
+                if (fixed[(size_t) i])
+                    free -= kMin;
+                else
+                    bars += juce::jmax (0.25, list[(size_t) i].bars);
+            bool changed = false;
+            for (int i = 0; i < count; ++i)
+                if (! fixed[(size_t) i])
+                {
+                    const int w = bars > 0 ? (int) (free * juce::jmax (0.25, list[(size_t) i].bars) / bars) : kMin;
+                    if (w < kMin)
+                    {
+                        fixed[(size_t) i] = true;
+                        changed = true;
+                    }
+                    widths[(size_t) i] = juce::jmax (kMin, w);
+                }
+            if (! changed)
+                break;
+        }
+    }
+    int x = keys.getX();
+    for (int i = 0; i < count; ++i)
+    {
+        const int w = i == count - 1 ? juce::jmax (kMin, keys.getRight() - x) : widths[(size_t) i];
+        sectionBoxes.push_back ({ x, keys.getY(), w, keys.getHeight() });
+        sectionBars.push_back ({ list[(size_t) i].start, list[(size_t) i].bars });
+        x += w + gap;
+    }
+    partsArea = keysRow;
+    for (int i = 0; i < parts.size(); ++i)
+    {
+        auto* b = parts[i];
+        b->fontSize = 17.0f;
+        b->subSize = 11.0f;
+        if (i < count)
+            b->setBounds (sectionBoxes[(size_t) i]);
+        else if (i == count)
+            b->setBounds (keysRow.removeFromRight (plusW));
+        b->setVisible (i <= count);
+    }
+    if (! messages.isEmpty())
+    {
+        message.setBounds (messages);
         message.setJustificationType (juce::Justification::centred);
         message.setFont (barlow (14.0f));
     }
     else
     {
-        message.setBounds (juce::Rectangle<int>::leftTopRightBottom (partsLabel.getX() + 350, partsLabel.getY(), partsArea.getRight(), partsLabel.getBottom()));
+        message.setBounds (recText);
         message.setJustificationType (juce::Justification::centredLeft);
         message.setFont (barlow (13.0f));
+    }
+    juce::ignoreUnused (total);
+}
+
+float Footer::xForBar (double bar) const
+{
+    if (sectionBoxes.empty())
+        return (float) lanesArea.getX();
+    for (size_t i = 0; i < sectionBoxes.size(); ++i)
+    {
+        const auto [start, bars] = sectionBars[i];
+        const auto& box = sectionBoxes[i];
+        if (bar < start + bars || i + 1 == sectionBoxes.size())
+        {
+            const double t = juce::jlimit (0.0, 1.0, (bar - start) / juce::jmax (1.0e-6, bars));
+            return (float) (box.getX() + t * box.getWidth());
+        }
+    }
+    return (float) sectionBoxes.back().getRight();
+}
+
+int Footer::sectionAtX (int x) const
+{
+    for (size_t i = 0; i < sectionBoxes.size(); ++i)
+        if (x >= sectionBoxes[i].getX() - 2 && x < sectionBoxes[i].getRight() + 2)
+            return (int) i;
+    return -1;
+}
+
+bool Footer::RecInto::operator== (const RecInto& o) const
+{
+    return text == o.text && section == o.section && layer == o.layer && colourStrip == o.colourStrip && waiting == o.waiting
+           && recording == o.recording && cycle == o.cycle && std::abs (progress - o.progress) < 0.002 && takes == o.takes;
+}
+
+void Footer::setRecInto (const RecInto& r)
+{
+    if (r == recInto)
+        return;
+    recInto = r;
+    const auto lit = r.recording || r.waiting ? Lit::arm : Lit::none;
+    const juce::String text = r.recording || r.waiting ? "Stop take" : "Rec into";
+    if (recButton.text != text || recButton.lit != lit)
+    {
+        recButton.text = text;
+        recButton.lit = lit;
+        recButton.repaint();
+    }
+    const auto cycleLit = r.cycle ? Lit::current : Lit::none;
+    if (cycleButton.lit != cycleLit)
+    {
+        cycleButton.lit = cycleLit;
+        cycleButton.repaint();
+    }
+    const auto takesText = r.takes > 0 ? "Takes " + juce::String (r.takes) + juce::String::fromUTF8 (" \xe2\x96\xbe")
+                                       : juce::String::fromUTF8 ("Takes \xe2\x96\xbe");
+    if (takesButton.text != takesText)
+    {
+        takesButton.text = takesText;
+        takesButton.repaint();
+    }
+    takesButton.setEnabled (r.takes > 0);
+    repaint (recText);
+    repaint (lanesArea.expanded (4));
+}
+
+void Footer::mouseUp (const juce::MouseEvent& e)
+{
+    if (! lanesArea.contains (e.getPosition()) || e.mods.isPopupMenu())
+        return;
+    if (const int i = sectionAtX (e.x); i >= 0 && onPickSection)
+        onPickSection (i);
+}
+
+void Footer::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (lanesArea.contains (e.getPosition()) && onEditParts)
+        onEditParts();
+}
+
+void Footer::paintStrip (juce::Graphics& g)
+{
+    const auto& p = pal();
+    auto& tl = engine.getTimeline();
+    auto& looper = engine.getLooper();
+
+    // Rec into: where the next take goes.
+    {
+        auto t = recText;
+        const bool live = recInto.recording || recInto.waiting;
+        if (message.getText().isEmpty() || ! message.getBounds().intersects (recText))
+        {
+            g.setColour (live ? colours::arm : p.ink2);
+            g.setFont (cond (14.0f, Weight::bold, 0.03f));
+            g.drawFittedText (recInto.text.isEmpty() ? juce::String ("Rec into: pick a section on the strip") : recInto.text,
+                              t, juce::Justification::centredLeft, 1, 0.75f);
+        }
+    }
+
+    if (lanesArea.isEmpty())
+        return;
+    // The well the lanes sit in.
+    auto well = lanesArea.toFloat();
+    g.setColour (p.well);
+    g.fillRoundedRectangle (well, 5.0f);
+
+    // The lanes used by the song (and the one being recorded onto).
+    std::vector<int> lanes;
+    const int targetLane = recInto.layer >= 0 ? RigTimeline::laneForLoop (recInto.layer) : -1;
+    for (int lane = 0; lane < RigTimeline::kLanes; ++lane)
+        if (tl.laneUsed (lane) || lane == targetLane)
+            lanes.push_back (lane);
+    const auto inner = lanesArea.reduced (0, 3);
+    const int n = juce::jmax (1, (int) lanes.size());
+    const float laneH = juce::jlimit (2.0f, 9.0f, (inner.getHeight() - (n - 1)) / (float) n);
+    const auto colourOf = [&] (int lane) -> juce::Colour
+    {
+        const auto& info = RigTimeline::lanes()[(size_t) lane];
+        if (! info.isLoop)
+            return RigColours::forStrip (info.index);
+        if (lane == targetLane && recInto.colourStrip >= 0)
+            return RigColours::forStrip (recInto.colourStrip);
+        const int strip = RigEngine::stripForSource (looper.getLayer (info.index).source.load());
+        return strip >= 0 ? RigColours::forStrip (strip) : RigColours::loops;
+    };
+    // (A few lanes sit in the middle of the well.)
+    float y = (float) inner.getY() + juce::jmax (0.0f, (inner.getHeight() - n * (laneH + 1.0f)) * 0.5f);
+    float targetY = -1;
+    for (int lane : lanes)
+    {
+        const auto c = colourOf (lane);
+        for (auto& b : tl.getBlocks())
+            if (b.lane == lane)
+            {
+                const float x0 = xForBar (b.start), x1 = xForBar (b.end());
+                g.setColour (c.withAlpha (0.9f));
+                g.fillRoundedRectangle ({ x0, y, juce::jmax (2.0f, x1 - x0 - 1.0f), laneH }, juce::jmin (2.0f, laneH * 0.5f));
+            }
+        if (lane == targetLane)
+            targetY = y;
+        y += laneH + 1.0f;
+    }
+
+    // The red box: where the next take goes.
+    if (juce::isPositiveAndBelow (recInto.section, (int) sectionBoxes.size()))
+    {
+        const auto box = sectionBoxes[(size_t) recInto.section];
+        const float bandY = targetY >= 0 ? targetY - 1.0f : (float) inner.getY();
+        const float bandH = targetY >= 0 ? laneH + 2.0f : (float) inner.getHeight();
+        juce::Rectangle<float> r ((float) box.getX(), bandY, (float) box.getWidth(), bandH);
+        if (recInto.recording)
+        {
+            g.setColour (colours::arm.withAlpha (0.35f));
+            g.fillRect (r.withWidth ((float) (r.getWidth() * recInto.progress)));
+        }
+        g.setColour (colours::arm.withAlpha (recInto.recording || recInto.waiting ? 1.0f : 0.8f));
+        g.drawRoundedRectangle (r.expanded (1.0f, 1.0f), 2.0f, 1.6f);
+        // The section's whole height, faintly, so it shows even with many lanes.
+        g.setColour (colours::arm.withAlpha (0.18f));
+        g.drawRect (juce::Rectangle<float> ((float) box.getX(), (float) lanesArea.getY(), (float) box.getWidth(), (float) lanesArea.getHeight()), 1.0f);
+    }
+
+    // The play head.
+    auto& clock = engine.getTransport();
+    if (clock.isPlaying() && ! sectionBoxes.empty())
+    {
+        const double bar = clock.getPositionInBeats() / juce::jmax (1, clock.getBeatsPerBar());
+        const auto last = sectionBars.back();
+        if (bar >= sectionBars.front().first && bar <= last.first + last.second)
+        {
+            const float x = xForBar (bar);
+            g.setColour (juce::Colours::white.withAlpha (0.9f));
+            g.fillRect (juce::Rectangle<float> (x - 1.0f, (float) lanesArea.getY(), 2.0f, (float) lanesArea.getHeight()));
+        }
     }
 }
 
@@ -680,9 +970,9 @@ void Footer::paint (juce::Graphics& g)
     g.setColour (p.line);
     g.fillRect (getLocalBounds().removeFromTop (2));
     message.setColour (juce::Label::textColourId, p.ink2);
-    if (partsShown)
-        engraved (g, isSlim() ? juce::String ("Song sections: none yet (optional)")
-                              : juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1\xe2\x80\x93" "8 \xc2\xb7 right-click to edit"),
-                  partsLabel.withWidth (500));
+    if (partsShown && isSlim())
+        engraved (g, juce::String ("Song sections: none yet (optional)"), partsLabel.withWidth (500));
+    else if (partsShown)
+        paintStrip (g);
 }
 }

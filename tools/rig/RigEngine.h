@@ -20,6 +20,7 @@
 #include "RigCapture.h"
 #include "RigQuantize.h"
 #include "RigChords.h"
+#include "RigTakes.h"
 #include "RigAutomation.h"
 #include "core/control/Controllers.h"
 
@@ -91,6 +92,25 @@ public:
     // the song waits, and whatever you switch on plays (message thread).
     bool songInCharge() const { return timeline.on.load() && ! timeline.isEmpty(); }
     void jam() { timeline.on = false; timeline.cycle = false; controlsMoved = true; }
+
+    // Recording into the song (Rec into): `source` (a RigLooper::Source) onto loop `layer`, over
+    // section `section`, from its top; with `cycle` the section plays over and over and every
+    // pass is a take (RigTakes). Gets the song there: from the section's top (starting the clock
+    // if it's stopped), or, cycling inside that section already, from its next time round.
+    // Message thread. False (with why) when it can't.
+    RigTakes& getTakes() { return takes; }
+    bool recordInto (int section, int layer, int source, bool cycle, juce::String* why = nullptr);
+    // The section plays over and over (Cycle on the Rec into bar), or not.
+    void cycleSection (int section, bool on);
+    // The timer's part: new takes onto their layer (and into their section of the song).
+    // Returns how many came in.
+    int serviceTakes();
+    // Puts take `take` of a layer's takes on the layer (and in the song). False if there's none.
+    bool useTake (int layer, int take);
+    // The strip a looper source records from (RigLooper::Source to StripId), -1 for none.
+    static int stripForSource (int source);
+    // The first loop that's free for a new layer: empty, and not in the song. -1 when all are used.
+    int freeLayerForSong() const;
 
     // Record the set (message thread): every strip and the mix as WAVs, and what's played on
     // the keys and pads as MIDI, into `folder`; it starts at the next bar. Call stopRecording()
@@ -421,12 +441,13 @@ private:
     struct LoopRoom : juce::Timer
     {
         explicit LoopRoom (RigEngine& e) : engine (e) {}
-        void timerCallback() override { engine.looper.maintain(); engine.serviceLoopBanks(); engine.quantizer.service(); engine.automation.service(); }
+        void timerCallback() override { engine.looper.maintain(); engine.serviceLoopBanks(); engine.quantizer.service(); engine.automation.service(); engine.serviceTakes(); }
         RigEngine& engine;
     } loopRoom { *this };
     RigQuantizer quantizer { *this };
     RigChords chords;
     RigAutomation automation;
+    RigTakes takes;
     std::vector<LoopBank> loopBanks;
     int currentLoopBank = -1;
     // A switch waiting for its bar: each layer's effects, put on when its loop comes in.

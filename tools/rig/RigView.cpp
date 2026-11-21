@@ -426,6 +426,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
     // The song's sections.
     footer.onEditParts = [this] { showTab ("Song"); };
+    footer.onRecInto = [this] { pressRecInto(); };
+    footer.onChange = [this] (juce::Component& from) { showRecTargetMenu (from); };
+    footer.onCycle = [this] { toggleCycle(); };
+    footer.onTakes = [this] (juce::Component& from) { showTakesMenu (from); };
+    footer.onSong = [this] { showView ("Song"); };
+    footer.onPickSection = [this] (int section) { pickRecSection (section); };
     footer.onSlimChanged = [this] { resized(); };
 
     // The Setup page's parts.
@@ -685,6 +691,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     songView->onImportFromLogic = [this] { askImportFromLogic(); };
     songView->onGoTo = [this] (const juce::String& page) { showTab (page); };
     songView->onOpenBox = [this] (int lane, int clip, bool edit) { openSongBox (lane, clip, edit); };
+    songView->onAddLayer = [this] (int track) { addLayerWith (track); };
     song = songView;
     addPage ("Song", RigColours::song, songView);
     auto* soundsView = new SoundsView (engine);
@@ -1162,6 +1169,12 @@ int takeSourceFor (int track)
 int RigView::pressRecTake()
 {
     auto& looper = engine.getLooper();
+    // With a song, Rec take records into it (Rec into, the bar along the bottom), unless a free
+    // take was asked for (Change > Free take) or it's the Loops track (its loops are its own).
+    if (takeLayer < 0 && (engine.getTakes().isActive()
+                          || (! recFree && getTrack() != GrooveView::loops && ! rigsong::sections (engine.getTimeline()).empty())))
+        return pressRecInto();
+    recFree = false;
     if (takeLayer >= 0)
     {
         const auto st = looper.getState (takeLayer);
@@ -1307,6 +1320,18 @@ void RigView::updateCaptureButtons()
     }
     if (takeLayer < 0)
         takeSub = t == GrooveView::loops ? "next empty loop" : name + " to a loop";
+    if (takeLayer < 0 && engine.getTakes().isActive())
+    {
+        takeText = "Stop take";
+        takeSub = "take " + juce::String (engine.getTakes().passNumber());
+        takeLit = vintage::Lit::arm;
+    }
+    else if (takeLayer < 0 && ! recFree && t != GrooveView::loops)
+    {
+        const auto list = rigsong::sections (engine.getTimeline());
+        if (const int sec = recTargetSection(); juce::isPositiveAndBelow (sec, (int) list.size()))
+            takeSub = "into " + rigsong::letterFor (sec) + " " + list[(size_t) sec].name;
+    }
     auto& rec = rail.recTake;
     if (rec.text != takeText || rec.sub != takeSub || rec.lit != takeLit)
     {
@@ -1426,6 +1451,328 @@ int RigView::toSong (int section, bool take)
     footer.repaint();
     updateCaptureButtons();
     return shown;
+}
+
+//==============================================================================
+// Rec into.
+int RigView::recTargetSection() const
+{
+    auto& tl = engine.getTimeline();
+    const auto list = rigsong::sections (tl);
+    if (list.empty())
+        return -1;
+    auto& takes = engine.getTakes();
+    if (takes.isActive())
+        for (int i = 0; i < (int) list.size(); ++i)
+            if (std::abs (list[(size_t) i].start - takes.getStartBar()) < 1.0e-6)
+                return i;
+    if (juce::isPositiveAndBelow (recSection, (int) list.size()))
+        return recSection;
+    if (song != nullptr && juce::isPositiveAndBelow (song->getSelectedSection(), (int) list.size()))
+        return song->getSelectedSection();
+    auto& clock = engine.getTransport();
+    if (tl.on.load() && clock.isPlaying())
+        if (const int at = rigsong::sectionAt (tl, clock.getPositionInBeats() / juce::jmax (1, clock.getBeatsPerBar())); at >= 0)
+            return at;
+    return 0;
+}
+
+int RigView::recTargetLayer() const
+{
+    auto& takes = engine.getTakes();
+    if (takes.isActive())
+        return takes.getLayer();
+    const int t = getTrack();
+    if (t == GrooveView::loops)
+        return groove != nullptr ? groove->getPickedLayer() : -1;
+    if (juce::isPositiveAndBelow (recLayer, RigLooper::kLayers))
+        return recLayer;
+    const auto list = rigsong::sections (engine.getTimeline());
+    const int sec = recTargetSection();
+    if (juce::isPositiveAndBelow (sec, (int) list.size()))
+        if (const int l = takes.layerFor (takeSourceFor (t), list[(size_t) sec].start, list[(size_t) sec].bars); l >= 0)
+            return l;
+    return engine.freeLayerForSong();
+}
+
+void RigView::pickRecSection (int section)
+{
+    if (engine.getTakes().isActive())
+        return;   // (a take is going: it stays where it is)
+    recSection = section;
+    recLayer = -1;
+    // Cycling: round the newly picked section instead.
+    if (engine.getTimeline().cycle.load() && recCycle)
+        engine.cycleSection (section, true);
+    updateRecInto();
+    updateCaptureButtons();
+}
+
+void RigView::setRecTarget (int section, int layer)
+{
+    if (engine.getTakes().isActive())
+        return;
+    recSection = section;
+    recLayer = layer;
+    recFree = false;
+    updateRecInto();
+    updateCaptureButtons();
+}
+
+int RigView::pressRecInto()
+{
+    auto& takes = engine.getTakes();
+    const auto list = rigsong::sections (engine.getTimeline());
+    if (takes.isActive())
+    {
+        const bool recording = takes.getState() == RigTakes::State::recording;
+        const int layer = takes.getLayer();
+        takes.stop();
+        engine.serviceTakes();
+        if (recording)
+            say ("Stopped. Your takes are on loop " + juce::String (layer + 1) + ": the newest plays in the song (a take cut short too, if it had a bar in it). "
+                 "Takes picks another.");
+        else
+            say ("Rec into called off: nothing was recorded.");
+        updateRecInto();
+        updateCaptureButtons();
+        return -1;
+    }
+    const int sec = recTargetSection();
+    if (! juce::isPositiveAndBelow (sec, (int) list.size()))
+    {
+        say ("Rec into records into a section of the song: make one first (the + key at the bottom keeps what's playing as a section, "
+             "or + Section on the Song screen). Or use Rec take on the rail for a free take.");
+        return -1;
+    }
+    const int t = getTrack();
+    const int layer = recTargetLayer();
+    if (layer < 0)
+    {
+        say ("All 8 loops are in use. Clear one you don't need (Loops on the rail, then Edit), or record over one: Change > a loop.");
+        return -1;
+    }
+    const int source = t == GrooveView::loops ? engine.getLooper().getLayer (layer).source.load() : takeSourceFor (t);
+    juce::String why;
+    if (! engine.recordInto (sec, layer, source, recCycle, &why))
+    {
+        say (why);
+        return -1;
+    }
+    recSection = sec;
+    juce::String note;
+    if (t == GrooveView::vocoder && ! engine.micOn.load())
+        note = " Your mic is off: switch it on (Mic, top right) to be heard.";
+    else if (t == GrooveView::vocoder && ! engine.vocoderOn.load())
+        note = " The vocoder is off: switch it on to be heard.";
+    const auto& s = list[(size_t) sec];
+    say ("Rec into " + rigsong::letterFor (sec) + " " + s.name + ": " + GrooveView::trackName (t) + " onto loop " + juce::String (layer + 1)
+         + " from the top of the section. "
+         + (recCycle ? juce::String ("It plays round: every time round is a new take. Stop take when it's right.") : juce::String ("One time through.")) + note);
+    updateRecInto();
+    updateCaptureButtons();
+    return layer;
+}
+
+void RigView::toggleCycle()
+{
+    recCycle = ! recCycle;
+    const int sec = recTargetSection();
+    engine.cycleSection (sec, recCycle);
+    const auto list = rigsong::sections (engine.getTimeline());
+    if (recCycle && juce::isPositiveAndBelow (sec, (int) list.size()))
+        say ("Cycle: " + rigsong::letterFor (sec) + " " + list[(size_t) sec].name + " plays round, and every time round is a new take.");
+    else
+        say ("Cycle off: the song plays on, and a take is one time through its section.");
+    updateRecInto();
+}
+
+void RigView::showRecTargetMenu (juce::Component& from)
+{
+    if (engine.getTakes().isActive())
+    {
+        say ("A take is recording: stop it first to record somewhere else.");
+        return;
+    }
+    const auto list = rigsong::sections (engine.getTimeline());
+    const int sec = recTargetSection(), layer = recTargetLayer();
+    auto& looper = engine.getLooper();
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Record into");
+    for (int i = 0; i < (int) list.size(); ++i)
+        menu.addItem (rigsong::letterFor (i) + juce::String::fromUTF8 (" \xc2\xb7 ") + list[(size_t) i].name + "  (" + rigsong::barsText (list[(size_t) i].bars) + ")",
+                      true, i == sec && ! recFree,
+                      [safe = juce::Component::SafePointer<RigView> (this), i] { if (safe != nullptr) safe->setRecTarget (i, -1); });
+    menu.addSeparator();
+    menu.addSectionHeader ("Onto");
+    const int free = engine.freeLayerForSong();
+    menu.addItem (free >= 0 ? "A new layer (loop " + juce::String (free + 1) + ")" : juce::String ("A new layer (no loop free)"), free >= 0,
+                  recLayer < 0 && layer == free,
+                  [safe = juce::Component::SafePointer<RigView> (this), sec] { if (safe != nullptr) safe->setRecTarget (sec, -1); });
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+    {
+        const bool has = looper.getState (l) != RigLooper::State::empty || engine.getTimeline().laneUsed (RigTimeline::laneForLoop (l));
+        if (! has)
+            continue;
+        auto name = engine.getLoopName (l);
+        if (name.isEmpty())
+            name = RigLooper::sourceName (looper.getLayer (l).source.load());
+        const auto* set = engine.getTakes().setFor (l);
+        menu.addItem ("Loop " + juce::String (l + 1) + ": " + name + (set != nullptr ? juce::String (" (more takes)") : juce::String (" (records over it)")),
+                      true, layer == l && (recLayer == l || set != nullptr),
+                      [safe = juce::Component::SafePointer<RigView> (this), sec, l] { if (safe != nullptr) safe->setRecTarget (sec, l); });
+    }
+    menu.addSeparator();
+    menu.addItem ("Free take: onto the next empty loop until you press again (the old way)", true, recFree,
+                  [safe = juce::Component::SafePointer<RigView> (this)]
+                  {
+                      if (safe == nullptr)
+                          return;
+                      safe->recFree = true;
+                      safe->say ("The next Rec take is a free one: onto the next empty loop from the next bar, until you press again. To Song puts it in the song.");
+                      safe->updateCaptureButtons();
+                  });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (from));
+}
+
+void RigView::showTakesMenu (juce::Component& from)
+{
+    const int layer = recTargetLayer();
+    const auto* set = engine.getTakes().setFor (layer);
+    if (set == nullptr || set->takes.empty())
+    {
+        say ("No takes on this layer yet: Rec into records some.");
+        return;
+    }
+    juce::PopupMenu menu, del;
+    menu.addSectionHeader ("Loop " + juce::String (layer + 1) + juce::String::fromUTF8 (" \xc2\xb7 pick the take that plays"));
+    for (int i = (int) set->takes.size(); --i >= 0;)
+    {
+        const auto& take = set->takes[(size_t) i];
+        const auto name = "Take " + juce::String (take.number) + (take.partial ? " (cut short)" : "");
+        menu.addItem (name + (i == set->playing ? "  - playing" : ""), true, i == set->playing,
+                      [safe = juce::Component::SafePointer<RigView> (this), layer, i, name]
+                      {
+                          if (safe == nullptr)
+                              return;
+                          if (safe->engine.getTakes().isActive())
+                          {
+                              safe->say ("Stop the take first, then pick one.");
+                              return;
+                          }
+                          safe->engine.useTake (layer, i);
+                          safe->say (name + " plays on loop " + juce::String (layer + 1) + " now.");
+                      });
+        if (i != set->playing)
+            del.addItem (name, [safe = juce::Component::SafePointer<RigView> (this), layer, i, name]
+                         {
+                             if (safe != nullptr && safe->engine.getTakes().deleteTake (layer, i))
+                                 safe->say (name + " deleted.");
+                         });
+    }
+    menu.addSeparator();
+    menu.addSubMenu ("Delete a take", del, del.getNumItems() > 0);
+    menu.addItem ("Keep only the one playing", set->takes.size() > 1, false,
+                  [safe = juce::Component::SafePointer<RigView> (this), layer]
+                  {
+                      if (safe == nullptr)
+                          return;
+                      safe->engine.getTakes().keepOnlyPlaying (layer);
+                      safe->say ("Kept the take that plays; the others are gone.");
+                  });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (from));
+}
+
+void RigView::addLayerWith (int track)
+{
+    const auto list = rigsong::sections (engine.getTimeline());
+    if (list.empty())
+    {
+        say ("Make the song's first section first (+ First section), then add layers to it.");
+        return;
+    }
+    if (engine.getTakes().isActive())
+    {
+        say ("A take is recording: stop it first (Stop take, bottom left).");
+        return;
+    }
+    int sec = song != nullptr ? song->getSelectedSection() : -1;
+    if (! juce::isPositiveAndBelow (sec, (int) list.size()))
+        sec = recTargetSection();
+    recSection = sec;
+    recLayer = -1;
+    recFree = false;
+    pickTrack (track);
+    showView ("Edit");
+    // The song plays round that section, so you can find your part before recording it.
+    engine.cycleSection (sec, recCycle);
+    auto& tl = engine.getTimeline();
+    auto& clock = engine.getTransport();
+    const bool there = tl.on.load() && clock.isPlaying()
+                       && rigsong::sectionAt (tl, clock.getPositionInBeats() / juce::jmax (1, clock.getBeatsPerBar())) == sec;
+    if (! there)
+        engine.launchSection (sec);
+    say (GrooveView::trackName (track) + " is ready for " + rigsong::letterFor (sec) + " " + list[(size_t) sec].name
+         + (recCycle ? ", playing round. " : ". ") + "Play along, then Rec into (bottom left) records a take.");
+    updateRecInto();
+    updateCaptureButtons();
+}
+
+void RigView::updateRecInto()
+{
+    if (toolMode())
+        return;
+    auto& takes = engine.getTakes();
+    const auto list = rigsong::sections (engine.getTimeline());
+    rigpanels::Footer::RecInto r;
+    const int t = getTrack();
+    r.section = recTargetSection();
+    r.layer = recTargetLayer();
+    r.colourStrip = takes.isActive() ? RigEngine::stripForSource (takes.getSource()) : GrooveView::stripFor (t);
+    r.waiting = takes.getState() == RigTakes::State::waiting;
+    r.recording = takes.getState() == RigTakes::State::recording;
+    r.progress = takes.passProgress();
+    const auto& tl = engine.getTimeline();
+    if (juce::isPositiveAndBelow (r.section, (int) list.size()))
+    {
+        const auto& s = list[(size_t) r.section];
+        r.cycle = tl.cycle.load() && std::abs (tl.cycleStart.load() - s.start) < 1.0e-6 && std::abs (tl.cycleEnd.load() - s.end()) < 1.0e-6;
+        const auto where = rigsong::letterFor (r.section) + " " + s.name;
+        const auto loop = r.layer >= 0 ? "loop " + juce::String (r.layer + 1) : juce::String ("no loop free");
+        const auto* set = takes.setFor (r.layer);
+        r.takes = set != nullptr ? (int) set->takes.size() : 0;
+        const auto dot = juce::String::fromUTF8 (" \xc2\xb7 ");
+        if (r.recording)
+        {
+            const int bar = juce::jlimit (1, juce::jmax (1, (int) s.bars), 1 + (int) (r.progress * s.bars));
+            r.text = "Take " + juce::String (takes.passNumber()) + dot + where + dot + "bar " + juce::String (bar) + " of " + rigsong::barsText (s.bars)
+                     + juce::String::fromUTF8 (" \xe2\x86\x92 ") + loop;
+        }
+        else if (r.waiting)
+            r.text = "Take " + juce::String (takes.nextPassNumber()) + " starts at the top of " + where + juce::String::fromUTF8 (" \xe2\x86\x92 ") + loop;
+        else if (recFree)
+            r.text = "Next: a free take (Rec take on the rail)";
+        else
+        {
+            const auto bars = "bars " + juce::String ((int) s.start + 1) + juce::String::fromUTF8 ("\xe2\x80\x93") + juce::String ((int) std::ceil (s.end() - 1.0e-6));
+            const auto onto = set != nullptr && ! set->takes.empty() ? "more takes on " + loop
+                              : r.layer >= 0 && engine.getLooper().getState (r.layer) != RigLooper::State::empty ? "over " + loop
+                              : "new layer on " + loop;
+            r.text = "Rec into " + where + dot + bars + dot + GrooveView::trackName (t) + juce::String::fromUTF8 (" \xe2\x86\x92 ") + onto;
+        }
+    }
+    footer.setRecInto (r);
+    if (const int made = takes.getTakesMade(); made != takesSeen)
+    {
+        takesSeen = made;
+        const int layer = recTargetLayer();
+        if (const auto* set = takes.setFor (layer); set != nullptr && juce::isPositiveAndBelow (set->playing, (int) set->takes.size()))
+        {
+            const auto& take = set->takes[(size_t) set->playing];
+            say ("Take " + juce::String (take.number) + (take.partial ? " (cut short)" : "") + " is in, on loop " + juce::String (layer + 1)
+                 + (takes.isActive() ? ". Keep going for another, or Stop take." : ". Takes picks another."));
+        }
+    }
 }
 
 void RigView::showToSongMenu()
@@ -2207,6 +2554,7 @@ void RigView::timerCallback()
         header.update (shown);
     }
     footer.tick();
+    updateRecInto();
     {
         // Your show's name, and whether it has been saved yet. A one-tool plugin's is its tool, and
         // its menu gets the sound from a box or sends it back.
@@ -2842,6 +3190,19 @@ bool RigView::undoLast()
 std::pair<juce::String, juce::String> RigView::whatsRecording() const
 {
     auto& looper = engine.getLooper();
+    {
+        auto& takes = engine.getTakes();
+        const auto list = rigsong::sections (engine.getTimeline());
+        int sec = -1;
+        for (int i = 0; i < (int) list.size(); ++i)
+            if (std::abs (list[(size_t) i].start - takes.getStartBar()) < 1.0e-6)
+                sec = i;
+        const auto where = sec >= 0 ? rigsong::letterFor (sec) + " " + list[(size_t) sec].name : juce::String ("the song");
+        if (takes.getState() == RigTakes::State::recording)
+            return { "Take " + juce::String (takes.passNumber()) + " into " + where, {} };
+        if (takes.getState() == RigTakes::State::waiting)
+            return { "Take " + juce::String (takes.nextPassNumber()) + " at the top of " + where, {} };
+    }
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
         const auto n = juce::String (i + 1);
@@ -3260,7 +3621,7 @@ void RigView::resized()
         header.setBounds (area.removeFromTop (compact ? 88 : 100));
     screenBar.setBounds (area.removeFromTop (compact ? 56 : 62));
     if (! stageShown)
-        footer.setBounds (area.removeFromBottom (footer.isSlim() ? (compact ? 72 : 78) : (compact ? 92 : 104)));
+        footer.setBounds (area.removeFromBottom (footer.isSlim() ? (compact ? 72 : 78) : (compact ? 112 : 128)));
     if (railShown())
     {
         auto railArea = area.removeFromLeft (rigpanels::TrackRail::kWidth + 22).withTrimmedLeft (22).reduced (0, 8);

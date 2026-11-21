@@ -51,6 +51,12 @@ public:
     // Double-click on a box (or its Edit / Open in Play): its track, opened on the pattern the box
     // plays (clip, -1 for "as it is"), in Edit (true) or Play.
     std::function<void (int lane, int clip, bool edit)> onOpenBox;
+    // Add a layer with (a button per instrument, under the song): that instrument opens, ready to
+    // record into the picked section (Rec into), with the song playing round it. `track` is a
+    // GrooveView::Track.
+    std::function<void (int track)> onAddLayer;
+    juce::OwnedArray<rigpanels::PanelButton> layerButtons;
+    static const std::array<int, 7>& layerTracks();
     void openBox (int section, int lane, bool edit);
 
     //==========================================================================
@@ -127,7 +133,7 @@ private:
     std::unique_ptr<Inspector> inspector;
     std::unique_ptr<TimelineView> bars;
     juce::Viewport viewport;
-    juce::Rectangle<int> titleArea, stepsArea, boardArea, moreLanesArea, emptyArea;
+    juce::Rectangle<int> titleArea, stepsArea, boardArea, moreLanesArea, emptyArea, addLayerArea;
     int selSection = -1, selLane = -1;
     bool barsShown = false, recordingSong = false, seenPlaying = false;
     int lastHash = 0;

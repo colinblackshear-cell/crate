@@ -119,8 +119,10 @@ public:
             view.keepAsSongPart();
             footer->tick();
             expect (! footer->isSlim());
-            expect (footer->getHeight() > thin, "the full bar, A to H");
-            expect (footer->parts[7]->isVisible());
+            expect (footer->getHeight() > thin, "the song strip");
+            expect (footer->parts[0]->isVisible() && footer->parts[1]->isVisible(), "A, and + for the next section");
+            expect (! footer->parts[7]->isVisible(), "no empty keys: the sections are as wide as their bars");
+            expect (footer->recButton.isVisible(), "Rec into");
         }
     }
 };

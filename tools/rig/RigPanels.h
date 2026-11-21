@@ -128,12 +128,42 @@ private:
 };
 
 //==============================================================================
-class Footer : public juce::Component
+class Footer : public juce::Component,
+               public juce::SettableTooltipClient
 {
 public:
     explicit Footer (RigEngine&);
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    // The song strip (once the song has sections): the sections as keys as wide as their bars,
+    // under them the song's layers as thin lanes with the play head, and over them the Rec into
+    // bar: where the next take goes (a red box on the strip), with Rec, Change, Cycle, Takes and
+    // Song. RigView fills in recInto on its timer.
+    struct RecInto
+    {
+        juce::String text;              // "B Drop · bars 9-16 · new layer on loop 3"
+        int section = -1;               // the section it records into (-1: none)
+        int layer = -1;                 // the loop it records onto (-1: none free)
+        int colourStrip = -1;           // whose colour the new layer is (a StripId)
+        bool waiting = false, recording = false, cycle = false;
+        double progress = 0;            // through the section, while recording
+        int takes = 0;                  // takes on that layer so far
+        bool operator== (const RecInto&) const;
+    };
+    void setRecInto (const RecInto&);
+    const RecInto& getRecInto() const { return recInto; }
+    PanelButton recButton { "Rec into" }, changeButton { juce::String::fromUTF8 ("Change \xe2\x96\xbe") }, cycleButton { "Cycle" },
+        takesButton { juce::String::fromUTF8 ("Takes \xe2\x96\xbe") }, songButton { juce::String::fromUTF8 ("Song \xe2\x80\xba") };
+    std::function<void()> onRecInto, onCycle, onSong;
+    std::function<void (juce::Component&)> onChange, onTakes;
+    // A section picked as where the next take goes (a click on its stretch of the strip, or its key).
+    std::function<void (int section)> onPickSection;
+    // Where a bar of the song is across the strip (piecewise, as the keys are laid out).
+    float xForBar (double bar) const;
+    juce::Rectangle<int> getLanesArea() const { return lanesArea; }
 
     // Re-reads the song's sections (RigView calls it on its timer).
     void tick();
@@ -157,8 +187,15 @@ public:
 private:
     void showPartMenu (int part);
     int sectionCount = 0;
+    int sectionsHash = 0;
+    void paintStrip (juce::Graphics&);
+    int sectionAtX (int x) const;
 
     RigEngine& engine;
-    juce::Rectangle<int> partsArea, partsLabel;
+    juce::Rectangle<int> partsArea, partsLabel, recRow, recText, keysRow, lanesArea;
+    // Each section's stretch across the strip (all of them, also past the 8 keys).
+    std::vector<juce::Rectangle<int>> sectionBoxes;
+    std::vector<std::pair<double, double>> sectionBars;   // start, bars
+    RecInto recInto;
 };
 }
