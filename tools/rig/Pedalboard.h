@@ -34,7 +34,7 @@ struct Pedal
     std::vector<Setting> rack;
 };
 
-enum PedalId { mic, gate, comp, wah, filter, dirt, amp, eq, chorus, phaser, tremolo, delay, reverb, repeat, numPedals };
+enum PedalId { mic, gate, comp, wah, filter, dirt, amp, eq, chorus, phaser, tremolo, delay, reverb, repeat, grain, numPedals };
 const std::vector<Pedal>& pedals();
 
 // On and off, the way a footswitch does it. Turning an amount pedal off remembers its amount in

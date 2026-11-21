@@ -74,6 +74,9 @@ public:
     // the clock if it's stopped (over the song, its lanes play Once along the song).
     RigAutomation& getAutomation() { return automation; }
     void pressRecMoves();
+    // The setting you last touched on screen (a tool's id and its index, as knob Learn names
+    // them), for Move in the Automation panel. Message thread; -1 for none yet.
+    int lastTouchedTool = -1, lastTouchedParameter = -1;
     // The song on a timeline (lanes of blocks over the bar ruler). While it's on and the clock
     // plays, it brings loops and tools in and out, with their fades.
     RigTimeline& getTimeline() { return timeline; }

@@ -186,6 +186,27 @@ AutomationPanel::AutomationPanel (RigEngine& e) : engine (e), list (std::make_un
     vintage::setLit (readButton, vintage::Lit::play);
     for (auto* b : { &recButton, &readButton, &clearAllButton, &undoButton })
         addAndMakeVisible (b);
+
+    // Move.
+    for (int m = 0; m < RigAutomation::numMoveShapes; ++m)
+        moveShape.addItem (RigAutomation::moveShapeName (m), m + 1);
+    for (const auto* speed : { "Every beat", "Every 2 beats", "Every bar", "Every 2 bars", "Every 4 bars", "Every 8 bars" })
+        moveSpeed.addItem (speed, moveSpeed.getNumItems() + 1);
+    for (const auto* depth : { "A little", "Some", "A lot", "All the way" })
+        moveDepth.addItem (depth, moveDepth.getNumItems() + 1);
+    moveShape.setSelectedItemIndex (0, juce::dontSendNotification);
+    moveSpeed.setSelectedItemIndex (3, juce::dontSendNotification);
+    moveDepth.setSelectedItemIndex (1, juce::dontSendNotification);
+    moveShape.setTooltip ("How it moves");
+    moveSpeed.setTooltip ("How long it takes to go round once, in time with the beat");
+    moveDepth.setTooltip ("How far it swings either side of where the setting is now");
+    moveButton.setTooltip ("Makes the setting you last touched move by itself in time: a looping lane, round and round. "
+                           "Touch any knob on a tool or its effects first (a bass's Cutoff, a delay's Mix)");
+    moveButton.onClick = [this] { pressMove(); };
+    vintage::setLit (moveButton, vintage::Lit::play);
+    for (auto* c : { (juce::Component*) &moveShape, (juce::Component*) &moveSpeed, (juce::Component*) &moveDepth, (juce::Component*) &moveButton })
+        addAndMakeVisible (c);
+
     viewport.setViewedComponent (list.get(), false);
     viewport.setScrollBarsShown (true, false);
     addAndMakeVisible (viewport);
@@ -318,6 +339,81 @@ void AutomationPanel::drawOnLane (int lane, float x0, float y0, float x1, float 
     update();
 }
 
+juce::String AutomationPanel::moveTarget() const
+{
+    if (engine.lastTouchedTool < 0 || engine.lastTouchedParameter < 0)
+        return {};
+    RigAutomation::Lane lane;
+    lane.tool = engine.lastTouchedTool;
+    lane.parameter = engine.lastTouchedParameter;
+    return engine.getAutomation().laneName (lane);
+}
+
+double AutomationPanel::moveBeats() const
+{
+    const int bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
+    switch (moveSpeed.getSelectedItemIndex())
+    {
+        case 0:  return 1.0;
+        case 1:  return 2.0;
+        case 2:  return bpb;
+        case 4:  return bpb * 4.0;
+        case 5:  return bpb * 8.0;
+        default: return bpb * 2.0;
+    }
+}
+
+float AutomationPanel::moveAmount() const
+{
+    switch (moveDepth.getSelectedItemIndex())
+    {
+        case 0:  return 0.1f;
+        case 2:  return 0.4f;
+        case 3:  return 0.5f;
+        default: return 0.25f;
+    }
+}
+
+void AutomationPanel::setMoveChoices (int shape, int speedIndex, int depthIndex)
+{
+    moveShape.setSelectedItemIndex (shape, juce::dontSendNotification);
+    moveSpeed.setSelectedItemIndex (speedIndex, juce::dontSendNotification);
+    moveDepth.setSelectedItemIndex (depthIndex, juce::dontSendNotification);
+}
+
+void AutomationPanel::pressMove()
+{
+    if (engine.lastTouchedTool < 0 || engine.lastTouchedParameter < 0)
+    {
+        say ("Touch a knob first (on any tool or its effects), then come back and press Move it.");
+        return;
+    }
+    moveSetting (engine.lastTouchedTool, engine.lastTouchedParameter, juce::jmax (0, moveShape.getSelectedItemIndex()), moveBeats(), moveAmount());
+}
+
+void AutomationPanel::moveSetting (int tool, int parameter, int shape, double beats, float depth)
+{
+    auto& a = engine.getAutomation();
+    auto* param = a.getParameter != nullptr ? a.getParameter (tool, parameter) : nullptr;
+    if (param == nullptr || param->isDiscrete() || param->isBoolean())
+    {
+        say ("That's a switch, so it can't move smoothly: touch a knob (a cutoff, a mix) instead.");
+        return;
+    }
+    const float centre = param->getValue();
+    const int index = a.addLane (RigAutomation::makeMove (tool, parameter, shape, beats, centre, depth, juce::Random::getSystemRandom().nextInt (1 << 20) + 1));
+    if (index < 0)
+    {
+        say ("There are too many lanes: clear one first.");
+        return;
+    }
+    if (! a.reading.load())
+        a.reading = true;
+    say (a.laneName (index) + " moves by itself now (" + RigAutomation::moveShapeName (shape).toLowerCase() + ", "
+         + barsText (beats, engine.getTransport().getBeatsPerBar()) + " round). Draw on it, or Clear to stop it.");
+    update();
+}
+
 void AutomationPanel::timerCallback()
 {
     update();
@@ -366,6 +462,12 @@ void AutomationPanel::update()
         }
         recButton.setToggleState (rec != RigAutomation::RecState::off, juce::dontSendNotification);
     }
+    if (const auto target = moveTarget(); target != shownMoveTarget)
+    {
+        shownMoveTarget = target;
+        moveButton.setEnabled (target.isNotEmpty());
+        repaint (moveLabelArea);
+    }
     readButton.setToggleState (a.reading.load(), juce::dontSendNotification);
     readButton.setButtonText (a.reading.load() ? "Read on" : "Read off");
     undoButton.setEnabled (a.canUndo());
@@ -386,6 +488,15 @@ void AutomationPanel::paint (juce::Graphics& g)
         g.setFont (vintage::cond (17.0f, vintage::Weight::semi));
         g.drawFittedText ("No moves yet. Press Rec moves, play, and sweep the bass's Cutoff (or any effect's knob):\n"
                           "it plays back on the beat, in the song, and in what you record for Logic.", emptyArea, juce::Justification::centred, 3);
+    }
+    {
+        auto m = moveLabelArea;
+        vintage::engraved (g, "MOVE", m.removeFromLeft (64), juce::Justification::centredLeft, 17.0f);
+        g.setColour (shownMoveTarget.isEmpty() ? vintage::pal().ink2 : vintage::pal().ink);
+        g.setFont (shownMoveTarget.isEmpty() ? vintage::barlow (13.0f) : vintage::cond (16.0f, vintage::Weight::bold));
+        g.drawFittedText (shownMoveTarget.isEmpty() ? juce::String ("Touch a knob on any tool, then come back: it can move by itself.")
+                                                    : shownMoveTarget,
+                          m, juce::Justification::centredLeft, 2);
     }
     auto box = statusArea.toFloat();
     vintage::drawLcd (g, box);
@@ -408,6 +519,19 @@ void AutomationPanel::resized()
         recButton.setBounds (row.removeFromRight (170).reduced (0, 3));
     }
     hintArea = r.removeFromTop (36);
+    {
+        auto row = r.removeFromTop (40).reduced (0, 4);
+        moveButton.setBounds (row.removeFromRight (110));
+        row.removeFromRight (6);
+        moveDepth.setBounds (row.removeFromRight (120));
+        row.removeFromRight (6);
+        moveSpeed.setBounds (row.removeFromRight (140));
+        row.removeFromRight (6);
+        moveShape.setBounds (row.removeFromRight (140));
+        row.removeFromRight (10);
+        moveLabelArea = row;
+        r.removeFromTop (6);
+    }
     statusArea = r.removeFromBottom (38);
     r.removeFromBottom (10);
     viewport.setBounds (r);

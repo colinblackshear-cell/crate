@@ -701,3 +701,96 @@ void RigAutomation::process (const Clock& c)
     if (c.playing)
         lastPlayingBeat = c.beat;
 }
+
+//==============================================================================
+juce::String RigAutomation::moveShapeName (int shape)
+{
+    switch (shape)
+    {
+        case moveSine:     return "Smooth wave";
+        case moveTriangle: return "Triangle";
+        case moveRampUp:   return "Rise";
+        case moveRampDown: return "Fall";
+        case moveSquare:   return "On and off";
+        case moveRandom:   return "Random steps";
+        default:           return {};
+    }
+}
+
+RigAutomation::Lane RigAutomation::makeMove (int tool, int parameter, int shape, double beats, float centre, float depth, int seed)
+{
+    Lane lane;
+    lane.tool = tool;
+    lane.parameter = parameter;
+    lane.startBeat = 0;   // on the bar grid
+    lane.lengthBeats = juce::jmax (0.25, beats);
+    lane.loop = true;
+    lane.on = true;
+    depth = juce::jlimit (0.0f, 0.5f, depth);
+    float lo = centre - depth, hi = centre + depth;
+    if (lo < 0.0f) { hi -= lo; lo = 0.0f; }
+    if (hi > 1.0f) { lo -= hi - 1.0f; hi = 1.0f; }
+    lo = juce::jlimit (0.0f, 1.0f, lo);
+    hi = juce::jlimit (0.0f, 1.0f, hi);
+    const double len = lane.lengthBeats;
+    const double edge = juce::jmin (0.01, len / 200.0);   // how quick a jump is
+    auto add = [&lane, len] (double beat, float v) { lane.points.push_back ({ juce::jlimit (0.0, len, beat), juce::jlimit (0.0f, 1.0f, v) }); };
+    switch (shape)
+    {
+        case moveSquare:
+            add (0, hi);
+            add (len * 0.5 - edge, hi);
+            add (len * 0.5, lo);
+            add (len - edge, lo);
+            add (len, hi);
+            break;
+        case moveRampUp:
+            add (0, lo);
+            add (len - edge, hi);
+            add (len, lo);
+            break;
+        case moveRampDown:
+            add (0, hi);
+            add (len - edge, lo);
+            add (len, hi);
+            break;
+        case moveRandom:
+        {
+            juce::Random random (seed);
+            const int steps = juce::jlimit (4, 32, (int) std::round (len * 2.0));   // 8th notes
+            float v = lo + (hi - lo) * random.nextFloat();
+            const float first = v;
+            for (int i = 0; i < steps; ++i)
+            {
+                const double at = len * i / steps;
+                if (i > 0)
+                {
+                    add (at - edge, v);
+                    v = lo + (hi - lo) * random.nextFloat();
+                }
+                add (at, v);
+            }
+            add (len - edge, v);
+            add (len, first);
+            break;
+        }
+        case moveTriangle:
+        {
+            const float mid = (lo + hi) * 0.5f;
+            add (0, mid);
+            add (len * 0.25, hi);
+            add (len * 0.75, lo);
+            add (len, mid);
+            break;
+        }
+        default:   // a smooth wave, from the middle, up first
+        {
+            const float mid = (lo + hi) * 0.5f, swing = (hi - lo) * 0.5f;
+            constexpr int kPoints = 48;
+            for (int i = 0; i <= kPoints; ++i)
+                add (len * i / kPoints, mid + swing * (float) std::sin (juce::MathConstants<double>::twoPi * i / kPoints));
+            break;
+        }
+    }
+    return lane;
+}

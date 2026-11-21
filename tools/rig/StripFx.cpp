@@ -132,6 +132,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout StripFx::createLayout()
     amount ("micAir", "Mic air", 0.0f, 1.0f, 0.5f, worded (MicText::air));
     amount ("micPolish", "Mic polish", 0.0f, 1.0f, 0.6f, worded (MicText::percent));
     amount ("micAmount", "Mic amount", 0.0f, 1.0f, 1.0f, worded (MicText::percent));
+
+    // Grain (added after the Mic, for the same reason).
+    const auto msAttributes = AudioParameterFloatAttributes().withLabel ("ms").withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v)) + " ms"; });
+    const auto stAttributes = AudioParameterFloatAttributes().withLabel ("st").withStringFromValueFunction ([] (float v, int)
+                                                                                           { const int s = juce::roundToInt (v); return s == 0 ? juce::String ("0 st") : (s > 0 ? "+" : "") + juce::String (s) + " st"; });
+    onOff ("grainOn", "Grain");
+    amount ("grainMix", "Grain mix", 0.0f, 1.0f, 0.7f, percentAttributes());
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "grainSize", 1 }, "Grain size", NormalisableRange<float> (20.0f, 600.0f, 0.0f, 0.5f), 120.0f, msAttributes));
+    amount ("grainDensity", "Grain density", 0.0f, 1.0f, 0.5f, percentAttributes());
+    amount ("grainSpray", "Grain spray", 0.0f, 1.0f, 0.25f, percentAttributes());
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "grainPitch", 1 }, "Grain pitch", NormalisableRange<float> (-24.0f, 24.0f, 1.0f), 0.0f, stAttributes));
+    amount ("grainSpread", "Grain pitch spread", 0.0f, 1.0f, 0.0f, percentAttributes());
+    amount ("grainReverse", "Grain reverse", 0.0f, 1.0f, 0.0f, percentAttributes());
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "grainFreeze", 1 }, "Freeze", juce::StringArray { "Listening", "Frozen" }, 0));
     return layout;
 }
 
@@ -193,6 +207,15 @@ StripFx::StripFx()
     micAir = raw ("micAir");
     micPolish = raw ("micPolish");
     micAmount = raw ("micAmount");
+    grainOn = raw ("grainOn");
+    grainMix = raw ("grainMix");
+    grainSize = raw ("grainSize");
+    grainDensity = raw ("grainDensity");
+    grainSpray = raw ("grainSpray");
+    grainPitch = raw ("grainPitch");
+    grainSpread = raw ("grainSpread");
+    grainReverse = raw ("grainReverse");
+    grainFreeze = raw ("grainFreeze");
 }
 
 void StripFx::readTuner (float* dest, int count) const
@@ -217,7 +240,7 @@ bool StripFx::isActive() const
         || delayMix->load() > 0.01f || reverbMix->load() > 0.01f || repeat->load() > 0.5f
         || std::abs (inputGain->load()) > 0.05f || gateOn->load() > 0.5f || compOn->load() > 0.5f || wahOn->load() > 0.5f
         || ampOn->load() > 0.5f || eqOn->load() > 0.5f || chorusOn->load() > 0.5f || phaserOn->load() > 0.5f || tremOn->load() > 0.5f
-        || micOn->load() > 0.5f;
+        || micOn->load() > 0.5f || grainOn->load() > 0.5f;
 }
 
 void StripFx::reset()
@@ -266,6 +289,11 @@ void StripFx::prepareToPlay (double sampleRate, int samplesPerBlock)
     reverb.setSampleRate (rate);
     reverb.reset();
     wet.setSize (2, juce::jmax (1, samplesPerBlock));
+
+    grains.prepare (rate);
+    grainWet.setSize (2, juce::jmax (1, samplesPerBlock));
+    grainAmount.reset (rate, 0.03);
+    grainAmount.setCurrentAndTargetValue (0.0f);
 
     mic.prepare (rate);
     micMix.reset (rate, 0.03);
@@ -801,8 +829,49 @@ void StripFx::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
     // Repeat, on everything before it (echoes and all).
     processRepeat (left, right, n, bpm);
 
+    // Grain, on everything so far (so a frozen moment keeps its echoes and room).
+    processGrain (buffer, n);
+
     // Your own plugin last.
     plugin.process (buffer, noPluginMidi);
+}
+
+void StripFx::processGrain (juce::AudioBuffer<float>& buffer, int n)
+{
+    const bool on = grainOn->load() > 0.5f;
+    grainAmount.setTargetValue (on ? grainMix->load() : 0.0f);
+    if (! on && ! grainAmount.isSmoothing())
+    {
+        // Off: nothing to hear, and the cloud starts fresh next time.
+        if (grains.hasSound())
+            grains.reset();
+        return;
+    }
+    if (grainWet.getNumSamples() < n)
+        grainWet.setSize (2, n, false, false, true);
+    for (int ch = 0; ch < 2; ++ch)
+        grainWet.copyFrom (ch, 0, buffer, ch, 0, n);
+    GrainCloud::Settings s;
+    s.mix = 1.0f;
+    s.sizeMs = grainSize->load();
+    s.density = grainDensity->load();
+    s.spray = grainSpray->load();
+    s.pitch = grainPitch->load();
+    s.pitchSpread = grainSpread->load();
+    s.reverse = grainReverse->load();
+    s.freeze = grainFreeze->load() > 0.5f;
+    juce::AudioBuffer<float> wetBlock (grainWet.getArrayOfWritePointers(), 2, n);
+    grains.process (wetBlock, s);
+    auto* left = buffer.getWritePointer (0);
+    auto* right = buffer.getWritePointer (1);
+    const auto* wl = grainWet.getReadPointer (0);
+    const auto* wr = grainWet.getReadPointer (1);
+    for (int i = 0; i < n; ++i)
+    {
+        const float a = grainAmount.getNextValue();
+        left[i] += (wl[i] - left[i]) * a;
+        right[i] += (wr[i] - right[i]) * a;
+    }
 }
 
 void StripFx::processRepeat (float* left, float* right, int n, double bpm)
