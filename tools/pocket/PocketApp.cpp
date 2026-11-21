@@ -26,154 +26,13 @@ PocketApp::PocketLook::PocketLook()
 juce::Font PocketApp::PocketLook::getPopupMenuFont() { return small (18.0f); }
 juce::Font PocketApp::PocketLook::getTextButtonFont (juce::TextButton&, int) { return condensed (17.0f); }
 
-//==============================================================================
-// More (the header's ···): the sound recorder, Sounds, the Remote, the Mac link, Settings and the tour.
-class PocketApp::MoreScreen : public juce::Component
-{
-public:
-    static constexpr int kRows = 7;
-    MoreScreen (Library& l, LinkClient& c, std::function<int()> loopLayerCount) : lib (l), link (c), loopLayers (std::move (loopLayerCount)) {}
-    std::function<void (int)> onOpen;   // the row: 0 record a sound, 1 sounds, 2 remote, 3 mac link, 4 settings, 5 the tour
-
-    void paint (juce::Graphics& g) override
-    {
-        static const char* titles[kRows] = { "RECORD A SOUND", "SOUNDS", "REMOTE", "MAC LINK", "SETTINGS", "TAKE THE TOUR", "SHOW ME: MAKE A BEAT" };
-        const int n = (int) lib.items().size();
-        const bool linked = link.isLinked();
-        const auto mac = link.getMacName();
-        const juce::String blurbs[kRows] = {
-            U8("The sound recorder: catch a sample, trim it, add effects, chop it onto the pads"),
-            U8("Everything you've recorded, imported or got from the Mac · ") + juce::String (n) + (n == 1 ? " sound" : " sounds"),
-            linked ? "Run Kaleidobox on " + mac + U8(": play, sections, mutes, loops") : U8("Run the Rig on the Mac: play, sections, mutes, loops · link first"),
-            linked ? U8("Linked to ") + mac + U8(" · Kaleidobox open")
-                   : link.getStatus() == LinkClient::Status::connecting ? U8("Linking to ") + mac + U8("…")
-                                                                        : U8("Not linked · link to your Mac on this Wi-Fi"),
-            U8("Rec setup (count-in, take length) and the click"),
-            U8("Seven stops round the tools · two minutes"),
-            U8("Four steps: kick, snare, hats, REC. You tap every hit yourself; nothing is pre-made") };
-        for (int i = 0; i < kRows; ++i)
-        {
-            auto r = rowBounds (i);
-            drawRaised (g, r, Look::cream, false, 16.0f);
-            auto icon = juce::Rectangle<float> (16, r.getY() + (r.getHeight() - 3 - 50) * 0.5f, 50, 50);
-            g.setColour (col::well);
-            g.fillRoundedRectangle (icon, 12.0f);
-            drawIcon (g, i, icon.getCentre());
-            g.setColour (col::ink);
-            g.setFont (spaced (condensed (20.0f), 0.08f));
-            g.drawText (titles[i], juce::Rectangle<float> (80, r.getY() + 8, r.getWidth() - 130, 24), juce::Justification::centredLeft);
-            g.setColour (col::inkDim);
-            g.setFont (small (13.5f));
-            g.drawFittedText (blurbs[i], juce::Rectangle<int> (80, (int) r.getY() + 32, (int) r.getWidth() - 130, 38), juce::Justification::topLeft, 2, 0.9f);
-            if (i == 3)
-            {
-                g.setColour (linked ? col::green : link.getStatus() == LinkClient::Status::connecting ? col::amber : col::grey);
-                g.fillEllipse (r.getRight() - 52, r.getCentreY() - 5, 10, 10);
-            }
-            g.setColour (col::ink);
-            g.setFont (condensed (22.0f));
-            g.drawText (">", juce::Rectangle<float> (r.getRight() - 32, r.getY(), 24, r.getHeight() - 3), juce::Justification::centred);
-        }
-
-        // what's on the phone
-        auto box = summaryBounds();
-        g.setColour (col::well);
-        g.fillRoundedRectangle (box, 16.0f);
-        g.setColour (col::inkFaint);
-        g.setFont (spaced (condensedBold (12.0f), 0.14f));
-        g.drawText ("ON THIS IPHONE", box.withTrimmedLeft (16).withHeight (28), juce::Justification::bottomLeft);
-        g.setColour (juce::Colour (0xfff1e7d6));
-        g.setFont (small (16.0f));
-        g.drawFittedText (juce::String ((int) lib.items().size()) + U8(" sounds · ") + juce::String (loopLayers()) + (loopLayers() == 1 ? " loop layer" : " loop layers") + U8(" in this song · ") + megabytes(),
-                          box.reduced (16, 0).withTrimmedTop (30).toNearestInt(), juce::Justification::topLeft, 2);
-    }
-
-    void resized() override {}
-
-    void mouseUp (const juce::MouseEvent& e) override
-    {
-        for (int i = 0; i < kRows; ++i)
-            if (rowBounds (i).contains (e.position) && onOpen)
-                onOpen (i);
-    }
-
-private:
-    float pitch() const { return juce::jlimit (70.0f, 96.0f, ((float) getHeight() - 96.0f - 8.0f) / (float) kRows); }
-    juce::Rectangle<float> rowBounds (int i) const { return juce::Rectangle<float> (16, 8 + (float) i * pitch(), (float) getWidth() - 32, pitch() - 8); }
-    juce::Rectangle<float> summaryBounds() const { return juce::Rectangle<float> (16, (float) getHeight() - 88, (float) getWidth() - 32, 80); }
-
-    juce::String megabytes() const
-    {
-        juce::int64 bytes = 0;
-        for (auto* folder : { "Sounds", "Ideas" })   // every sound, and every idea's loops
-            for (auto& f : lib.getRoot().getChildFile (folder).findChildFiles (juce::File::findFiles, true))
-                bytes += f.getSize();
-        return juce::String (juce::roundToInt ((double) bytes / 1048576.0)) + " MB";
-    }
-
-    static void drawIcon (juce::Graphics& g, int i, juce::Point<float> c)
-    {
-        g.setColour (col::amber);
-        if (i == 0)
-        {
-            g.setColour (col::red);
-            g.fillEllipse (c.x - 9, c.y - 9, 18, 18);
-            g.setColour (col::amber);
-            g.drawEllipse (c.x - 13, c.y - 13, 26, 26, 2.2f);
-        }
-        else if (i == 1)
-        {
-            const float hs[] = { 8, 18, 28, 16, 22, 10 };
-            for (int k = 0; k < 6; ++k)
-                g.fillRoundedRectangle (c.x - 13 + (float) k * 5.0f, c.y - hs[k] * 0.5f, 3.0f, hs[k], 1.4f);
-        }
-        else if (i == 2)
-        {
-            g.drawRoundedRectangle (c.x - 14, c.y - 12, 28, 19, 3.0f, 2.4f);
-            g.drawLine (c.x - 7, c.y + 13, c.x + 7, c.y + 13, 2.4f);
-            juce::Path p;
-            p.addTriangle (c.x - 3, c.y - 7, c.x - 3, c.y + 3, c.x + 5, c.y - 2);
-            g.fillPath (p);
-        }
-        else if (i == 3)
-        {
-            g.drawRoundedRectangle (c.x - 15, c.y - 5, 17, 10, 5.0f, 2.6f);
-            g.drawRoundedRectangle (c.x - 2, c.y - 5, 17, 10, 5.0f, 2.6f);
-        }
-        else if (i == 6)
-            drawToolIcon (g, Tool::drums, c, col::amber);
-        else if (i == 5)
-        {
-            for (int k = 0; k < 6; ++k)
-            {
-                juce::Path petal;
-                petal.addRoundedRectangle (-3.0f, -15.0f, 6.0f, 15.0f, 3.0f);
-                petal.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::twoPi * (float) k / 6.0f).translated (c));
-                g.fillPath (petal);
-            }
-        }
-        else
-        {
-            g.drawEllipse (c.x - 7, c.y - 7, 14, 14, 2.6f);
-            for (int k = 0; k < 8; ++k)
-            {
-                const float a = juce::MathConstants<float>::twoPi * (float) k / 8.0f;
-                g.drawLine (c.x + std::sin (a) * 10, c.y - std::cos (a) * 10, c.x + std::sin (a) * 14, c.y - std::cos (a) * 14, 2.6f);
-            }
-        }
-    }
-
-    Library& lib;
-    LinkClient& link;
-    std::function<int()> loopLayers;
-};
-
 // Settings: the Rec setup (the same sheet as the header's display) and the click.
 class PocketApp::SettingsScreen : public juce::Component
 {
 public:
-    SettingsScreen (AppSettings& s, std::function<void()> back, std::function<void()> recSetup, std::function<void()> clickChanged)
-        : settings (s), onRecSetup (std::move (recSetup)), onClick (std::move (clickChanged))
+    SettingsScreen (AppSettings& s, std::function<void()> back, std::function<void()> recSetup, std::function<void()> clickChanged,
+                    std::function<juce::String()> phoneSummary)
+        : settings (s), onRecSetup (std::move (recSetup)), onClick (std::move (clickChanged)), summary (std::move (phoneSummary))
     {
         backButton.setFontHeight (16.0f);
         backButton.onClick = std::move (back);
@@ -209,6 +68,17 @@ public:
         drawWell (g, sw, 15.0f);
         g.setColour (settings.click ? col::amber : col::inkDim);
         g.fillEllipse (settings.click ? sw.getRight() - 29 : sw.getX() + 3, sw.getY() + 3, 24, 24);
+
+        // what's on the phone
+        auto box = juce::Rectangle<float> (16, (float) getHeight() - 88, (float) getWidth() - 32, 80);
+        g.setColour (col::well);
+        g.fillRoundedRectangle (box, 16.0f);
+        g.setColour (col::inkFaint);
+        g.setFont (spaced (condensedBold (12.0f), 0.14f));
+        g.drawText ("ON THIS IPHONE", box.withTrimmedLeft (16).withHeight (28), juce::Justification::bottomLeft);
+        g.setColour (juce::Colour (0xfff1e7d6));
+        g.setFont (small (16.0f));
+        g.drawFittedText (summary ? summary() : juce::String(), box.reduced (16, 0).withTrimmedTop (30).toNearestInt(), juce::Justification::topLeft, 2);
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -232,7 +102,8 @@ private:
 
     AppSettings& settings;
     std::function<void()> onRecSetup, onClick;
-    PButton backButton { "< More" };
+    std::function<juce::String()> summary;
+    PButton backButton { "< Back" };
 };
 
 class PocketApp::Dim : public juce::Component
@@ -251,10 +122,38 @@ public:
     void show (const juce::String& t)
     {
         text = t;
+        action = nullptr;
+        actionLabel = {};
+        setInterceptsMouseClicks (false, false);
         setVisible (true);
         toFront (false);
         repaint();
         startTimer (2600);
+    }
+
+    // A note with one button on it (UNDO): it stays a little longer, and the button runs `then` once.
+    void showAction (const juce::String& t, const juce::String& label, std::function<void()> then)
+    {
+        text = t;
+        action = std::move (then);
+        actionLabel = label;
+        setInterceptsMouseClicks (true, false);
+        setVisible (true);
+        toFront (false);
+        repaint();
+        startTimer (6500);
+    }
+
+    bool hasAction() const { return isVisible() && action != nullptr; }
+    void pressAction()   // what a tap on the button does (also for the self-checks)
+    {
+        if (auto f = std::move (action))
+        {
+            action = nullptr;
+            stopTimer();
+            setVisible (false);
+            f();
+        }
     }
 
     void paint (juce::Graphics& g) override
@@ -264,12 +163,28 @@ public:
         g.fillRoundedRectangle (r, 14.0f);
         g.setColour (juce::Colour (0xfff1e7d6));
         g.setFont (small (15.0f));
-        g.drawFittedText (text, r.reduced (14, 4).toNearestInt(), juce::Justification::centred, 2);
+        if (action == nullptr)
+            return g.drawFittedText (text, r.reduced (14, 4).toNearestInt(), juce::Justification::centred, 2);
+        g.drawFittedText (text, r.withTrimmedRight (92).reduced (14, 4).toNearestInt(), juce::Justification::centredLeft, 2);
+        auto b = buttonRect();
+        g.setColour (col::amber);
+        g.fillRoundedRectangle (b, 10.0f);
+        g.setColour (col::ink);
+        g.setFont (spaced (condensedBold (16.0f), 0.08f));
+        g.drawText (actionLabel, b, juce::Justification::centred);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (action != nullptr && buttonRect().expanded (6).contains (e.position))
+            pressAction();
     }
 
 private:
-    void timerCallback() override { stopTimer(); setVisible (false); }
-    juce::String text;
+    juce::Rectangle<float> buttonRect() const { return { (float) getWidth() - 88.0f, 8.0f, 78.0f, (float) getHeight() - 16.0f }; }
+    void timerCallback() override { stopTimer(); setVisible (false); action = nullptr; }
+    juce::String text, actionLabel;
+    std::function<void()> action;
 };
 
 //==============================================================================
@@ -292,13 +207,13 @@ PocketApp::PocketApp (Options o)
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&look);
     juce::Desktop::getInstance().addGlobalMouseListener (&keyboardDismisser);
+    juce::Desktop::getInstance().addGlobalMouseListener (&edgeWatcher);
 
-    auto backToMore = [this] { showPage (Page::more, 0); };
     remote = std::make_unique<RemoteScreen> (link);
     remote->onLink = [this] { openMacLink(); };
     remote->onSay = [this] (const juce::String& t) { toast (t); };
     macLink = std::make_unique<MacLinkScreen> (link);
-    macLink->onClose = backToMore;
+    macLink->onClose = [this] { goBack(); };
     macLink->onRemote = [this] { showPage (Page::more, 2); };
     macLink->onSay = [this] (const juce::String& t) { toast (t); };
     sendSheet = std::make_unique<SendToMacSheet> (link);
@@ -307,15 +222,8 @@ PocketApp::PocketApp (Options o)
     sendSheet->onSay = [this] (const juce::String& t) { toast (t); };
     link.onChange = [this] { linkChanged(); };
     link.onSay = [this] (const juce::String& t) { toast (t); };
-    settings = std::make_unique<SettingsScreen> (appSettings, backToMore, [this] { openRecSetup(); }, [this] { applyClick(); thumb.repaint(); });
-    more = std::make_unique<MoreScreen> (lib, link, [this] { return loopsScreen.layerCount(); });
-    more->onOpen = [this] (int row)
-    {
-        if (row == 0) openRecorder();
-        else if (row == 5) startTour();
-        else if (row == 6) lessonFromMore();
-        else showPage (Page::more, row);
-    };
+    settings = std::make_unique<SettingsScreen> (appSettings, [this] { goBack(); }, [this] { openRecSetup(); }, [this] { applyClick(); thumb.repaint(); },
+                                                 [this] { return phoneSummary(); });
     ideasScreen = std::make_unique<IdeasScreen> (ideas);
     ideasScreen->onOpen = [this] (const juce::String& id) { openIdea (id); };
     ideasScreen->onNew = [this] { newIdea(); };
@@ -323,8 +231,23 @@ PocketApp::PocketApp (Options o)
     ideasScreen->onTour = [this] { startTour(); };
     ideasScreen->onPlay = [this] (const juce::String& id) { playIdea (id); };
     ideasScreen->isPlaying = [this] (const juce::String& id) { return id == ideas.current().id && beats.engine().clockRunning(); };
-    ideasScreen->onRename = [this] (const juce::String& id) { renameIdea (id); };
-    ideasScreen->onDelete = [this] (const juce::String& id) { deleteIdea (id); };
+    ideasScreen->onHoldSong = [this] (const juce::String& id, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight)
+    {
+        holdMenu (songHoldSpec (id), source, at, highlight);
+    };
+    // The song drawer
+    drawer.onNew = [this] { closeDrawer(); newIdea(); };
+    drawer.onPick = [this] (const juce::String& id) { pickSong (id); };
+    drawer.onPlay = [this] (const juce::String& id) { playFromDrawer (id); };
+    drawer.isPlaying = [this] (const juce::String& id) { return id == ideas.current().id && beats.engine().clockRunning(); };
+    drawer.onHoldSong = [this] (const juce::String& id, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight)
+    {
+        holdMenu (songHoldSpec (id), source, at, highlight);
+    };
+    drawer.onTile = [this] (int tile) { drawerTile (tile); };
+    drawer.currentLayers = [this] { return loopsScreen.layerCount(); };
+    drawer.currentBpm = [this] { return beats.drums().bpm; };
+    holdCard.onClosed = [this] { repaint(); };
     title = std::make_unique<TitleScreen>();
     title->micLevel = [this] { return audio.takeLevel(); };   // a meter only: the mic is never heard here
     title->onStart = [this] { showTitle (false); };
@@ -393,7 +316,7 @@ PocketApp::PocketApp (Options o)
                     error = e;
             }
             if (ok > 0)
-                toast ("Imported " + juce::String (ok) + (ok == 1 ? " sound" : " sounds") + U8(". They're in ··· › Sounds: TO PAD puts one on a pad."));
+                toast ("Imported " + juce::String (ok) + (ok == 1 ? " sound" : " sounds") + U8(". They're in the menu › Sounds: TO PAD puts one on a pad."));
             else if (error.isNotEmpty())
                 toast (error);
         });
@@ -449,6 +372,7 @@ PocketApp::PocketApp (Options o)
     singScreen.fxActive = [this] { const int b = boardForTool (Tool::vocoder); return b >= 0 && loopsScreen.engine().board (b).audible(); };
     chordsScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
     chordsScreen.toast = [this] (const juce::String& t) { toast (t); };
+    chordsScreen.showHold = [this] (const HoldSpec& spec, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight) { holdMenu (spec, source, at, highlight); };
     chordsScreen.onChanged = [this] { saveSong(); singScreen.repaint(); };
     chordsScreen.padSounds = [this]
     {
@@ -495,19 +419,19 @@ PocketApp::PocketApp (Options o)
     loopsScreen.engine().setCountInBars (appSettings.countInBars);
     headerTick.startTimerHz (15);
 
+    // Every bottom sheet closes with a downward flick or drag as well as its DONE button and a tap on the dim
+    sheet.onDismiss = [this] { closeSheet(); };
+    padSheet.onDismiss = [this] { closePadSheet(); };
+    tempoSheet.onDismiss = [this] { closeTempo(); };
+    recSetup.onDismiss = [this] { closeRecSetup(); };
+    headphones.onDismiss = [this] { closeHeadphones(); };   // closed without a choice: the mic stays off
+    soundBank.onDismiss = [this] { closeSoundBank(); };
+    sendSheet->onDismiss = [this] { closeSendSheet(); };
     padSheet.onChanged = [this] (int pad) { beats.padChanged (pad); };
     padSheet.onDone = [this] { closePadSheet(); };
     padSheet.onClear = [this] (int) { beats.padsChanged(); };
     padSheet.onUndoClear = [this] (int) { beats.padsChanged(); };
-    padSheet.onTrim = [this] (int pad)
-    {
-        auto id = beats.kit().pads[(size_t) pad].soundId;
-        if (lib.find (id) == nullptr)
-            return toast ("That sound is gone from Sounds");
-        closePadSheet();
-        showPage (Page::recorder);
-        record.editForPad (pad, id);
-    };
+    padSheet.onTrim = [this] (int pad) { openSamplePage (pad); };
     padSheet.onChop = [this] (int pad)
     {
         const auto id = beats.kit().pads[(size_t) pad].soundId;
@@ -525,13 +449,14 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, effects.get(), remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, effects.get(), remote.get(), macLink.get(), settings.get() })
         addChildComponent (c);
     addChildComponent (countPanel);
     addChildComponent (thumb);
     addChildComponent (toolRow);
     addChildComponent (*lesson);
     addChildComponent (*dim);
+    addChildComponent (drawer);
     addChildComponent (sheet);
     addChildComponent (padSheet);
     addChildComponent (tempoSheet);
@@ -539,6 +464,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (headphones);
     addChildComponent (soundBank);
     addChildComponent (*sendSheet);
+    addChildComponent (holdCard);
     addChildComponent (*toastBox);
     addChildComponent (*tour);
     addChildComponent (*title);
@@ -550,6 +476,7 @@ PocketApp::PocketApp (Options o)
         title->setVisible (true);   // the opening title, each time the app opens
     sounds.selectFirst();
     animate = o.audio;
+    applyAnimate();
 
     // The mic starts off and unheard, every launch.
     route = pocket::currentRoute();
@@ -572,6 +499,7 @@ PocketApp::~PocketApp()
 {
     pocket::watchRoute ({});
     juce::Desktop::getInstance().removeGlobalMouseListener (&keyboardDismisser);
+    juce::Desktop::getInstance().removeGlobalMouseListener (&edgeWatcher);
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
 
@@ -580,12 +508,238 @@ void PocketApp::toast (const juce::String& t)
     toastBox->show (t);
 }
 
+void PocketApp::toastAction (const juce::String& text, const juce::String& button, std::function<void()> then)
+{
+    toastBox->showAction (text, button, std::move (then));
+}
+
+void PocketApp::applyAnimate()
+{
+    drawer.animated = animate;
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &soundBank, &recSetup, &headphones, sendSheet.get() })
+        s->animated = animate;
+    loopsScreen.editorSheet().animated = animate;
+}
+
+//==============================================================================
+// The song drawer and the hold menus
+void PocketApp::openDrawer()
+{
+    if (title->isVisible() || tour->isVisible() || drawer.isVisible())
+        return;
+    closeAllSheets();
+    drawer.insets = insets;
+    drawer.animateTo (true);
+}
+
+void PocketApp::closeDrawer()
+{
+    if (drawer.isVisible())
+        drawer.animateTo (false);
+}
+
+// A song in the drawer: switch to it and stay on the tool you are on (from anywhere else it opens like Home's tap does).
+void PocketApp::pickSong (const juce::String& id)
+{
+    closeDrawer();
+    const bool onTool = page == Page::tool;
+    if (id == ideas.current().id)
+    {
+        if (! onTool)
+            openIdea (id);
+        return;
+    }
+    if (lessonOn)
+        endLesson();
+    if (onTool)
+    {
+        switchIdea (id);
+        showTool (tool, false);
+    }
+    else
+        openIdea (id);
+}
+
+void PocketApp::playFromDrawer (const juce::String& id)
+{
+    const bool switching = id != ideas.current().id;
+    if (switching && lessonOn)
+        endLesson();
+    playIdea (id);
+    if (switching && page == Page::tool)
+        showTool (tool, false);
+    drawer.refresh();
+    drawer.repaint();
+}
+
+void PocketApp::drawerTile (int t)
+{
+    switch (t)
+    {
+        case SongDrawer::sounds: closeDrawer(); showPage (Page::more, 1); break;
+        case SongDrawer::record: closeDrawer(); openRecorder(); break;
+        case SongDrawer::macLink: closeDrawer(); showPage (Page::more, 3); break;
+        case SongDrawer::remote: closeDrawer(); showPage (Page::more, 2); break;
+        case SongDrawer::settings: closeDrawer(); showPage (Page::more, 4); break;
+        case SongDrawer::tourLesson:
+        {
+            HoldSpec s;
+            s.title = U8("TOUR \xc2\xb7 LESSON");
+            s.spotlight = false;
+            s.items.push_back ({ "TAKE THE TOUR", "7 stops", false, true, [this] { closeDrawer(); startTour(); } });
+            s.items.push_back ({ "SHOW ME: MAKE A BEAT", {}, false, true, [this] { closeDrawer(); lessonFromMenu(); } });
+            holdMenu (s, *this, {}, drawer.tileBounds (t).toFloat());
+            break;
+        }
+        default: break;
+    }
+}
+
+HoldSpec PocketApp::songHoldSpec (const juce::String& id)
+{
+    HoldSpec s;
+    const auto* info = ideas.find (id);
+    s.title = info != nullptr ? info->name.toUpperCase() : juce::String ("SONG");
+    const bool current = id == ideas.current().id;
+    s.items.push_back ({ "RENAME", {}, false, true, [this, id] { renameIdea (id); } });
+    s.items.push_back ({ "DELETE", current ? juce::String ("open another song first") : juce::String ("asks first"), true, ! current, [this, id] { deleteIdea (id); } });
+    return s;
+}
+
+void PocketApp::holdMenu (const HoldSpec& spec, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight)
+{
+    auto target = juce::Rectangle<int>();
+    if (! highlight.isEmpty())
+        target = (&source == this ? highlight.toNearestInt() : getLocalArea (&source, highlight.toNearestInt())).getIntersection (getLocalBounds());
+    if (target.isEmpty())
+    {
+        const auto p = (&source == this ? at : getLocalPoint (&source, at)).toInt();
+        target = juce::Rectangle<int> (p.x, p.y, 1, 1).expanded (14);
+    }
+    holdCard.setBounds (getLocalBounds());
+    holdCard.open (spec, target, insets.getTop() + 6, insets.getBottom() + 6);
+}
+
+void PocketApp::openSamplePage (int pad)
+{
+    auto id = beats.kit().pads[(size_t) pad].soundId;
+    if (lib.find (id) == nullptr)
+        return toast ("That sound is gone from Sounds");
+    closePadSheet();
+    showPage (Page::recorder);
+    record.editForPad (pad, id);
+}
+
+//==============================================================================
+// A finger on the very left edge, pulling right: the drawer follows it
+void PocketApp::EdgeWatcher::mouseDown (const juce::MouseEvent& e)
+{
+    begin (app.getLocalPoint (nullptr, e.getScreenPosition()).toFloat(), e.source.getIndex());
+}
+
+void PocketApp::EdgeWatcher::mouseDrag (const juce::MouseEvent& e)
+{
+    move (app.getLocalPoint (nullptr, e.getScreenPosition()).toFloat(), e.source.getIndex());
+}
+
+void PocketApp::EdgeWatcher::mouseUp (const juce::MouseEvent& e)
+{
+    end (e.source.getIndex());
+}
+
+void PocketApp::EdgeWatcher::begin (juce::Point<float> p, int sourceIndex)
+{
+    if (tracking)
+        return;
+    dragging = false;
+    if (! app.edgeSwipeAllowed (p))
+        return;
+    tracking = true;
+    source = sourceIndex;
+    start = p;
+    lastX = prevX = p.x;
+    lastT = prevT = juce::Time::getMillisecondCounter();
+}
+
+void PocketApp::EdgeWatcher::move (juce::Point<float> p, int sourceIndex)
+{
+    if (! tracking || sourceIndex != source)
+        return;
+    const float dx = p.x - start.x, dy = p.y - start.y;
+    if (! dragging)
+    {
+        if (dx > 14.0f && dx > std::abs (dy) * 1.4f)
+        {
+            dragging = true;
+            app.closeAllSheets();
+            app.drawer.insets = app.insets;
+        }
+        else
+        {
+            if (std::abs (dy) > 18.0f || dx < -8.0f)
+                tracking = false;   // it is a vertical drag (a scroll, a knob): not ours
+            return;
+        }
+    }
+    prevX = lastX;
+    prevT = lastT;
+    lastX = p.x;
+    lastT = juce::Time::getMillisecondCounter();
+    app.drawer.setProgress (dx / (float) app.drawer.panelWidth());
+}
+
+void PocketApp::EdgeWatcher::end (int sourceIndex)
+{
+    if (! tracking || sourceIndex != source)
+        return;
+    tracking = false;
+    if (! dragging)
+        return;
+    dragging = false;
+    const float v = juce::Time::getMillisecondCounter() - lastT > 90 ? 0.0f : (lastX - prevX) / (float) juce::jmax<juce::uint32> (1, lastT - prevT);
+    app.drawer.animateTo (app.drawer.progress() > 0.35f || v > 0.5f);
+}
+
+// Where a swipe from the left edge may start: within 22 px of it, on the tool or page itself. Not on the thumb bar or the
+// tool row (they have their own touches), not on the SYNTH keys or the loop editor, and not while a sheet, a menu, the
+// title or the tour is up.
+bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
+{
+    if (p.x > 22.0f || p.x < 0.0f || p.y < (float) insets.getTop())
+        return false;
+    if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
+        return false;
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen)
+        return false;
+    if (page == Page::recorder)
+        return false;   // (the sound's wave has handles to drag)
+    const int bottom = thumbShown() ? thumb.getY() : toolRowShown() ? toolRow.getY() : getHeight();
+    if (p.y >= (float) bottom)
+        return false;
+    const auto pi = p.toInt();
+    if (page == Page::tool && tool == Tool::synth && getLocalArea (&synthScreen, synthScreen.keysBounds()).expanded (0, 6).contains (pi))
+        return false;
+    if (page == Page::tool && tool == Tool::loops && loopsScreen.editorSheet().isVisible()
+        && getLocalArea (&loopsScreen, loopsScreen.editorSheet().getBounds()).contains (pi))
+        return false;
+    return true;
+}
+
 //==============================================================================
 // Pages and tools
 void PocketApp::showPage (Page p, int morePage)
 {
     if (lessonOn && ! (p == Page::tool && tool == Tool::drums))
         endLesson();   // leaving DRUMS ends the lesson
+    // Sounds, Remote, Mac link, Settings and the recorder remember where they were opened from
+    if ((p == Page::more || p == Page::recorder) && page != Page::more && page != Page::recorder)
+    {
+        backPage = page;
+        backTool = tool;
+    }
+    holdCard.close();
+    if (drawer.isVisible())
+        drawer.animateTo (false);
     if (sheetOpen)
         closeSheet();
     closePadSheet();
@@ -613,7 +767,7 @@ void PocketApp::showPage (Page p, int morePage)
     chordsScreen.setVisible (onTool && tool == Tool::chords);
     effects->setVisible (onTool && tool == Tool::effects);
     vocoderScreen.setVisible (p == Page::vocoderSettings);
-    showMorePage (p == Page::more ? morePage : -1);
+    showMorePage (p == Page::more ? juce::jlimit (1, 4, morePage) : -1);
 
     thumb.setVisible (thumbShown());
     toolRow.setVisible (toolRowShown());
@@ -638,6 +792,34 @@ void PocketApp::openRecorder()
     showPage (Page::recorder);
 }
 
+// The way back from Sounds, Remote, Mac link, Settings and the recorder: the tool (or Home) you opened them from.
+void PocketApp::hideToast() { toastBox->setVisible (false); }
+bool PocketApp::toastHasAction() const { return toastBox->hasAction(); }
+void PocketApp::pressToastAction() { toastBox->pressAction(); }
+
+void PocketApp::goBack()
+{
+    if (page == Page::recorder)
+        record.endPadMode();
+    if (backPage == Page::tool)
+        showTool (backTool, false);
+    else if (backPage == Page::vocoderSettings)
+        showPage (Page::vocoderSettings);
+    else
+        showPage (Page::songs);
+}
+
+juce::String PocketApp::phoneSummary() const
+{
+    juce::int64 bytes = 0;
+    for (auto* folder : { "Sounds", "Ideas" })   // every sound, and every idea's loops
+        for (auto& f : lib.getRoot().getChildFile (folder).findChildFiles (juce::File::findFiles, true))
+            bytes += f.getSize();
+    const int n = (int) lib.items().size(), layers = loopsScreen.layerCount();
+    return juce::String (n) + (n == 1 ? " sound" : " sounds") + U8(" Â· ") + juce::String (layers) + (layers == 1 ? " loop layer" : " loop layers")
+           + U8(" in this song Â· ") + juce::String (juce::roundToInt ((double) bytes / 1048576.0)) + " MB";
+}
+
 void PocketApp::refreshToolRow()
 {
     toolRow.selected = -1;
@@ -648,11 +830,10 @@ void PocketApp::refreshToolRow()
     toolRow.repaint();
 }
 
-// page: -1 = not on a More page
+// page: -1 = not on one of them. 1 Sounds, 2 Remote, 3 Mac link, 4 Settings
 void PocketApp::showMorePage (int p)
 {
     morePageShown = p;
-    more->setVisible (p == 0);
     sounds.setVisible (p == 1);
     remote->setVisible (p == 2);
     macLink->setVisible (p == 3);
@@ -707,6 +888,7 @@ void PocketApp::editSound (const juce::String& id)
 
 void PocketApp::closeAllSheets()
 {
+    holdCard.close();
     closeSheet();
     closePadSheet();
     closeSendSheet();
@@ -920,7 +1102,7 @@ void PocketApp::openSoundBank()
     if (bankOpen)
         return;
     if (const int n = lib.importDropFolder(); n > 0)
-        toast (juce::String (n) + (n == 1 ? " sound" : " sounds") + U8(" came in from Drop Sounds Here. They're in More › Sounds."));
+        toast (juce::String (n) + (n == 1 ? " sound" : " sounds") + U8(" came in from Drop Sounds Here. They're in the menu › Sounds."));
     closeSheet();
     closePadSheet();
     closeSendSheet();
@@ -1061,7 +1243,8 @@ void PocketApp::newIdea()
 {
     switchIdea (ideas.create (ideas.nextName()));
     showTool (Tool::loops, false);
-    toolRow.flash();
+    if (animate)
+        toolRow.flash();   // (an outline for a moment: only in the running app)
     toast ("Pick a tool down here, then press REC: it lands on layer 1, in time.");
 }
 
@@ -1070,7 +1253,7 @@ void PocketApp::renameIdea (const juce::String& id)
     auto* info = ideas.find (id);
     if (info == nullptr)
         return;
-    auto* w = new juce::AlertWindow ("Name this idea", {}, juce::MessageBoxIconType::NoIcon, this);
+    auto* w = new juce::AlertWindow ("Name this song", {}, juce::MessageBoxIconType::NoIcon, this);
     w->addTextEditor ("name", info->name);
     w->addButton ("Rename", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -1080,6 +1263,7 @@ void PocketApp::renameIdea (const juce::String& id)
             return;
         ideas.rename (id, w->getTextEditorContents ("name").substring (0, 60));
         ideasScreen->refresh();
+        drawer.refresh();
         repaint();
     }), true);
 }
@@ -1099,7 +1283,8 @@ void PocketApp::deleteIdea (const juce::String& id)
         if (! ideas.remove (id))
             return toast ("Open another idea before deleting this one");
         ideasScreen->refresh();
-        toast ("Idea deleted");
+        drawer.refresh();
+        toast ("Song deleted");
     }), true);
 }
 
@@ -1110,9 +1295,9 @@ void PocketApp::makeABeat()
     startLesson();
 }
 
-// More > Show me: make a beat. A song that is still empty is used as it is; a song with a beat or layers
-// stays safe, and the lesson starts a new one.
-void PocketApp::lessonFromMore()
+// The drawer's TOUR · LESSON > Show me: make a beat. A song that is still empty is used as it is; a song with a beat or
+// layers stays safe, and the lesson starts a new one.
+void PocketApp::lessonFromMenu()
 {
     auto& data = beats.drums();
     bool hasDrums = false;
@@ -2112,7 +2297,7 @@ void PocketApp::headerTickNow()
 void PocketApp::linkChanged()
 {
     repaint();
-    more->repaint();
+    drawer.repaint();
     macLink->refresh();
     remote->refresh();
     sendSheet->refresh();
@@ -2123,18 +2308,18 @@ bool PocketApp::remoteShowing() const
     return remote != nullptr && remote->isVisible();
 }
 
-// The header, 44 high: ‹ the song · the display (bar › layer · length) · the Mac link dot · ···
-juce::Rectangle<float> PocketApp::moreRect() const
+// The header, 44 high: the menu icon and the song · the display (bar › layer · length) · the Mac link dot.
+// On Sounds, Remote, Mac link, Settings and the recorder the left side is a back arrow and the page's name.
+juce::Rectangle<float> PocketApp::menuRect() const
 {
-    return { (float) getWidth() - 50.0f, (float) insets.getTop() + 1.0f, 44.0f, 42.0f };
+    return { 6.0f, (float) insets.getTop() + 1.0f, 44.0f, 42.0f };
 }
 
 juce::Rectangle<float> PocketApp::chipRect() const
 {
-    const auto m = moreRect();
     if (page == Page::songs)
-        return { m.getX() - 144.0f, (float) insets.getTop() + 4.0f, 140.0f, 36.0f };   // with the Mac's name
-    return { m.getX() - 30.0f, (float) insets.getTop() + 1.0f, 30.0f, 42.0f };         // just the dot
+        return { (float) getWidth() - 146.0f, (float) insets.getTop() + 4.0f, 140.0f, 36.0f };   // with the Mac's name
+    return { (float) getWidth() - 50.0f, (float) insets.getTop() + 1.0f, 44.0f, 42.0f };         // just the dot
 }
 
 juce::Rectangle<float> PocketApp::lcdRect() const
@@ -2149,20 +2334,63 @@ juce::Rectangle<float> PocketApp::backRect() const
     return { 6.0f, (float) insets.getTop() + 1.0f, right - 12.0f, 42.0f };
 }
 
+void PocketApp::mouseDown (const juce::MouseEvent& e)
+{
+    headerDown = e.position.y <= (float) insets.getTop() + 46.0f;
+    headerSwiped = false;
+    headerStart = e.position;
+}
+
+// A slide along the header bar goes to the previous or next tool (not from the left edge: that pulls the drawer out).
+void PocketApp::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! headerDown || headerSwiped || page != Page::tool || headerStart.x <= 24.0f)
+        return;
+    const auto d = e.position - headerStart;
+    if (std::abs (d.x) > 48.0f && std::abs (d.x) > std::abs (d.y) * 2.0f)
+    {
+        headerSwiped = true;
+        swipeTool (d.x < 0 ? 1 : -1);
+    }
+}
+
+void PocketApp::swipeTool (int direction)
+{
+    if (page != Page::tool)
+        return;
+    int at = -1;
+    for (int i = 0; i < (int) toolRow.tools.size(); ++i)
+        if (toolRow.tools[(size_t) i] == tool)
+            at = i;
+    const int to = at + direction;
+    if (at < 0 || to < 0 || to >= (int) toolRow.tools.size() || ! toolRow.onSelect)
+        return;
+    toolRow.onSelect (toolRow.tools[(size_t) to]);
+}
+
 void PocketApp::mouseUp (const juce::MouseEvent& e)
 {
-    if (e.position.y > (float) insets.getTop() + 46.0f)
+    const bool wasHeader = headerDown, swiped = headerSwiped;
+    headerDown = headerSwiped = false;
+    if (! wasHeader || swiped || e.getDistanceFromDragStart() > 12 || e.position.y > (float) insets.getTop() + 46.0f)
         return;
-    if (moreRect().contains (e.position))
-        return showPage (Page::more, 0);
     if (chipRect().expanded (2).contains (e.position))
         return openMacLink();
     if (page == Page::songs)
+    {
+        if (backRect().contains (e.position))
+            openDrawer();
         return;
+    }
     if (thumbShown() && lcdRect().expanded (2).contains (e.position))
         return openRecSetup();
     if (backRect().contains (e.position))
-        return showIdeasList();
+    {
+        if (page == Page::more || page == Page::recorder)
+            goBack();
+        else
+            openDrawer();   // the menu icon, or the song's name
+    }
 }
 
 void PocketApp::paint (juce::Graphics& g)
@@ -2174,24 +2402,40 @@ void PocketApp::paint (juce::Graphics& g)
     const auto paper = juce::Colour (0xfff1e7d6);
     if (dark)
         g.fillAll (juce::Colour (0xff1f1b17));
-    if (page != Page::songs)
+    const bool subPage = page == Page::more || page == Page::recorder;
     {
-        // the song's name (tap it, or the arrow, for Your songs)
         auto back = backRect();
         g.setColour (dark ? paper : col::ink);
-        juce::Path arrow;
-        arrow.startNewSubPath (back.getX() + 15, back.getCentreY() - 8);
-        arrow.lineTo (back.getX() + 8, back.getCentreY());
-        arrow.lineTo (back.getX() + 15, back.getCentreY() + 8);
-        g.strokePath (arrow, juce::PathStrokeType (2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        g.setFont (condensedBold (22.0f));
-        g.drawFittedText (ideas.current().name, back.withTrimmedLeft (24).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
-    }
-    else
-    {
-        g.setColour (dark ? paper : col::ink);
-        g.setFont (fraunces (30.0f));
-        g.drawText ("Kaleidobox", 16, top + 2, 200, 40, juce::Justification::centredLeft);
+        if (subPage)
+        {
+            // ‹ and the page's name: tap for the way back to where you were
+            juce::Path arrow;
+            arrow.startNewSubPath (back.getX() + 15, back.getCentreY() - 8);
+            arrow.lineTo (back.getX() + 8, back.getCentreY());
+            arrow.lineTo (back.getX() + 15, back.getCentreY() + 8);
+            g.strokePath (arrow, juce::PathStrokeType (2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            static const char* titles[] = { "", "Sounds", "Remote", "Mac link", "Settings" };
+            g.setFont (condensedBold (22.0f));
+            g.drawFittedText (page == Page::recorder ? juce::String ("Record a sound") : juce::String (titles[juce::jlimit (0, 4, morePageShown)]),
+                              back.withTrimmedLeft (26).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+        }
+        else
+        {
+            // the menu icon (the song drawer), then the song's name (Home: the wordmark)
+            auto icon = menuRect();
+            for (int k = -1; k <= 1; ++k)
+                g.fillRoundedRectangle (icon.getCentreX() - 11.0f, icon.getCentreY() + (float) k * 7.0f - 1.5f, 22.0f, 3.0f, 1.5f);
+            if (page == Page::songs)
+            {
+                g.setFont (fraunces (30.0f));
+                g.drawText ("Kaleidobox", 54, top + 2, 200, 40, juce::Justification::centredLeft);
+            }
+            else
+            {
+                g.setFont (condensedBold (22.0f));
+                g.drawFittedText (ideas.current().name, back.withTrimmedLeft (48).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+            }
+        }
     }
 
     // the display: where the song is, then the layer the next take lands on and how long it is
@@ -2252,19 +2496,6 @@ void PocketApp::paint (juce::Graphics& g)
         g.drawFittedText (text, chip.withTrimmedLeft (30).withTrimmedRight (4).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
     }
 
-    // ···: More (the sound recorder, Sounds, the Remote, the Mac link, Settings, the tour)
-    {
-        auto m = moreRect().reduced (2, 4);
-        if (page == Page::more && morePageShown == 0)
-        {
-            g.setColour (dark ? juce::Colour (0xff332c26) : col::creamDeep);
-            g.fillRoundedRectangle (m, 10.0f);
-        }
-        g.setColour (dark ? paper : col::ink);
-        for (int k = -1; k <= 1; ++k)
-            g.fillEllipse (m.getCentreX() + (float) k * 9.0f - 2.8f, m.getCentreY() - 2.8f, 5.6f, 5.6f);
-    }
-
     g.setColour (dark ? juce::Colour (0xff3a332c) : col::rule);
     g.fillRect (0, top + 44, getWidth(), 2);
 }
@@ -2283,7 +2514,7 @@ juce::BorderSize<int> PocketApp::safeInsets()
 
 void PocketApp::resized()
 {
-    if (more == nullptr || toastBox == nullptr || dim == nullptr)
+    if (toastBox == nullptr || dim == nullptr)
         return;   // still being built
     insets = safeInsets();
     insetWatch.startTimer (500);
@@ -2297,12 +2528,15 @@ void PocketApp::resized()
     thumb.setVisible (thumbShown());
 
     const auto content = contentBounds();
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, effects.get(), remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, effects.get(), remote.get(), macLink.get(), settings.get() })
         c->setBounds (content);
     countPanel.setBounds (16, content.getY() + 8, w - 32, 136);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
 
     dim->setBounds (0, 0, w, h);
+    drawer.insets = insets;
+    drawer.setBounds (0, 0, w, h);
+    holdCard.setBounds (0, 0, w, h);
     layoutSheet (sheetOpen);
     padSheet.setBounds (padSheetOpen ? padSheetBounds() : padSheetBounds().withY (h));
     tempoSheet.setBounds (tempoOpen ? tempoBounds() : tempoBounds().withY (h));
@@ -2427,7 +2661,7 @@ juce::Rectangle<int> PocketApp::tourStop (int stop)
             return getLocalArea (&singScreen, singScreen.bannerSpot());
         case 6:
             showTool (Tool::loops, false);
-            return getLocalArea (&loopsScreen, loopsScreen.tourSpot (1));
+            return { 4, insets.getTop() + 1, 150, 42 };   // the menu icon and the song's name: the drawer
         default:
             return {};
     }
@@ -2504,6 +2738,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
 {
     folder.createDirectory();
     animate = false;
+    applyAnimate();
 
     // Linked to a Mac (made up), so the header shows it as in the design.
     crate::link::Message state ("state");
@@ -2567,7 +2802,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     showIdeasList();
     savePng (folder.getChildFile ("00-songs.png"));
 
-    // The sound recorder (from PADS > RECORD A SOUND, or ··· > Record a sound) and its Effects + Chop sheet
+    // The sound recorder (from PADS > RECORD A SOUND, or the drawer's RECORD A SOUND) and its Effects + Chop sheet
     showPage (Page::recorder);
     record.showDemoTake (take, "Porch rain", false);
     savePng (folder.getChildFile ("01-recorder.png"));
@@ -2594,6 +2829,38 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     loopsScreen.showDemo();
     showTool (Tool::loops);
     savePng (folder.getChildFile ("03-tool-loops.png"));
+
+    // The song drawer (over LOOPS and over Home), a hold on a layer, a hold on a song, and a slide along the tool row
+    openDrawer();
+    savePng (folder.getChildFile ("20-drawer-on-tool.png"));
+    drawer.holdRow (1);
+    savePng (folder.getChildFile ("24b-hold-song-in-drawer.png"));
+    holdCard.close();
+    closeDrawer();
+    loopsScreen.holdLayer (1);
+    savePng (folder.getChildFile ("21-hold-layer.png"));
+    holdCard.close();
+    {
+        auto cellX = [this] (Tool t)
+        {
+            for (int i = 0; i < (int) toolRow.tools.size(); ++i)
+                if (toolRow.tools[(size_t) i] == t)
+                    return toolRow.cellRect (i).getCentreX();
+            return 0.0f;
+        };
+        toolRow.slideStart (cellX (Tool::loops));
+        toolRow.slideTo (cellX (Tool::chords));
+        savePng (folder.getChildFile ("25-toolrow-slide.png"));
+        toolRow.slideEnd (cellX (Tool::chords), -200.0f);   // (called off: it stays on LOOPS)
+    }
+    showIdeasList();
+    openDrawer();
+    savePng (folder.getChildFile ("20b-drawer-on-home.png"));
+    closeDrawer();
+    ideasScreen->holdRow (1);
+    savePng (folder.getChildFile ("24-hold-song-on-home.png"));
+    holdCard.close();
+    showTool (Tool::loops);
     loopsScreen.selectLayer (2);
     savePng (folder.getChildFile ("03a-loops-audio-picked.png"));
     openTempo();
@@ -2638,6 +2905,18 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     beats.fillDemoKit();
     showTool (Tool::pads);
     savePng (folder.getChildFile ("05-tool-pads.png"));
+    beats.holdPad (9);
+    savePng (folder.getChildFile ("22-hold-pad.png"));
+    holdCard.close();
+    beats.startLevels (9);
+    toastBox->setVisible (false);
+    savePng (folder.getChildFile ("22b-pads-16-levels.png"));
+    beats.endPadMode();
+    beats.startCopy (9);
+    toastBox->setVisible (false);
+    savePng (folder.getChildFile ("22c-pads-copy.png"));
+    beats.endPadMode();
+    beats.selectPad (-1);
     beats.fillDemoPattern();
     savePng (folder.getChildFile ("05b-pads-pattern.png"));
     openPadSheet (4);
@@ -2703,6 +2982,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         chordsRender (false, 0.0);
         toastBox->setVisible (false);
         savePng (folder.getChildFile ("15-tool-chords.png"));
+        chordsScreen.holdPad (3);
+        savePng (folder.getChildFile ("23-hold-chord.png"));
+        holdCard.close();
         chordsTool.releaseAll();
         chordsTool.progression = { 0, 3, 5, 6, -1, -1, -1, -1 };
         chordsTool.progressionOn = true;
@@ -2771,9 +3053,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     showPage (Page::vocoderSettings);
     savePng (folder.getChildFile ("06g-vocoder-settings.png"));
 
-    // More (···) and its pages
-    showPage (Page::more, 0);
-    savePng (folder.getChildFile ("08-more.png"));
+    // The pages the drawer opens (it replaced the old More list)
     showPage (Page::more, 4);
     savePng (folder.getChildFile ("10-settings.png"));
     showPage (Page::more, 1);
@@ -2909,6 +3189,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         problems.add (why);
     writeEffectsSnapshots (folder);
 
+    // The drawer, the hold menus, sliding between tools and the sheets' drag, through the app
+    juce::String navReport;
+    if (const auto why = runNavigationChecks (navReport, folder); why.isNotEmpty())
+        problems.add ("Navigation: " + why);
+
     // The count-in as it looks: REC on VOCODER with the song stopped, at beat 3 of the count
     {
         switchIdea (ideas.create ("Train horn song"));
@@ -2968,7 +3253,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     }
 
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: + NEW SONG makes an empty song open on LOOPS, SET IN / SET OUT at the playhead and TRIM give a loop of the snapped length that plays gap-free in time (a 7-beat trim pads to 2 bars), FIT TO n BARS is exact and keeps the pitch, QUANTIZE moves loosely played pad hits and synth notes onto the grid in the re-rendered layer and UNDO brings the original back, effects and moves survive trim, fit and quantize, a BPM change keeps every layer's pitch, each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, the mic is silent in the speaker until it's allowed, an untouched song renders bit for bit as before the effect boards, each pedal changes the sound when on and is bit-transparent when off, a SYNTH board changes only the synth, REC on EFFECTS records through the board with the layer's own board left empty, QUANTIZE keeps the board, boards come back with the song, and the tempo-synced delay follows the BPM\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: + NEW SONG makes an empty song open on LOOPS, SET IN / SET OUT at the playhead and TRIM give a loop of the snapped length that plays gap-free in time (a 7-beat trim pads to 2 bars), FIT TO n BARS is exact and keeps the pitch, QUANTIZE moves loosely played pad hits and synth notes onto the grid in the re-rendered layer and UNDO brings the original back, effects and moves survive trim, fit and quantize, a BPM change keeps every layer's pitch, each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, the mic is silent in the speaker until it's allowed, an untouched song renders bit for bit as before the effect boards, each pedal changes the sound when on and is bit-transparent when off, a SYNTH board changes only the synth, REC on EFFECTS records through the board with the layer's own board left empty, QUANTIZE keeps the board, boards come back with the song, and the tempo-synced delay follows the BPM, the song drawer opens from the menu icon, the song name and the left edge (not over the SYNTH keys, the thumb bar or the tool row) and closes on a swipe left or a tap on the dim, picking a song there switches to it on the same tool with its own layers, the drawer reaches Sounds, the sound recorder, Mac link, Remote, Settings, the tour and the lesson, a hold on a layer, a pad, a chord pad or a song opens its menu and each row runs its action (CLEAR, REMOVE SOUND and COPY undo), a touch on a pad or chord sounds before and during the hold, sliding along the tool row or swiping the header changes tool, every bottom sheet closes on a downward drag or flick, and the tool row's amber outline can't stay on\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nPLAY LIVE early hit: " + beats.liveReport + "\n"
                           + "\nSynth self-check (120 BPM, 44.1 kHz):\n" + synthReport
@@ -2979,7 +3264,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport
                           + "\nREC, count-in and mic checks (97 BPM, 44.1 kHz):\n" + recReport
                           + "\nEffect pedals (44.1 kHz):\n" + boardsReport
-                          + "\nEffects in the app (97 BPM, 44.1 kHz):\n" + effectsReport);
+                          + "\nEffects in the app (97 BPM, 44.1 kHz):\n" + effectsReport
+                          + "\nNavigation (drawer, hold menus, tool slide, sheets):\n" + navReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }

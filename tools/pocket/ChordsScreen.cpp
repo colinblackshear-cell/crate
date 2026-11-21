@@ -167,15 +167,57 @@ int ChordsScreen::idAt (juce::Point<float> p) const
 void ChordsScreen::mouseDown (const juce::MouseEvent& e)
 {
     pressed = idAt (e.position);
+    hold.release();
     if (pressed >= padBase && pressed < padBase + kChordPads)
-        pressPad (pressed - padBase, true);   // a pad sounds on the touch, not the lift
+    {
+        pressPad (pressed - padBase, true);   // a pad sounds on the touch, not the lift; the hold only adds a menu later
+        hold.press (e.position);
+    }
     repaint();
+}
+
+void ChordsScreen::mouseDrag (const juce::MouseEvent& e)
+{
+    hold.move (e.position);
+}
+
+// The hold menu: which progression box the chord goes in. The chord keeps sounding under the finger.
+HoldSpec ChordsScreen::padMenuSpec (int pad)
+{
+    HoldSpec s;
+    s.title = "CHORD " + tool.padName (pad) + U8(" \xc2\xb7 PROGRESSION");
+    for (int box = 0; box < tool.progLength; ++box)
+    {
+        const int now = tool.progression[(size_t) box];
+        s.items.push_back ({ "PUT IN PROGRESSION BOX " + juce::String (box + 1), now >= 0 ? "now " + tool.padName (now) : juce::String ("empty"),
+                             false, true, [this, pad, box] { putInBox (pad, box); } });
+    }
+    return s;
+}
+
+void ChordsScreen::putInBox (int pad, int box)
+{
+    if (! juce::isPositiveAndBelow (box, tool.progLength) || ! juce::isPositiveAndBelow (pad, kChordPads))
+        return;
+    tool.progression[(size_t) box] = pad;
+    tool.editingBox = box + 1 < tool.progLength ? box + 1 : -1;
+    tool.progressionEdited();
+    changed();
+    if (toast)
+        toast (tool.padName (pad) + " is in box " + juce::String (box + 1) + (tool.progressionOn ? "." : ". Turn the progression ON to hear them play a bar each."));
+}
+
+void ChordsScreen::holdPad (int pad)
+{
+    if (showHold && juce::isPositiveAndBelow (pad, kChordPads))
+        showHold (padMenuSpec (pad), *this, padR[(size_t) pad].getCentre(), padR[(size_t) pad]);
 }
 
 void ChordsScreen::mouseUp (const juce::MouseEvent& e)
 {
     const int id = idAt (e.position), was = pressed;
     pressed = 0;
+    hold.release();
     if (was >= padBase && was < padBase + kChordPads)
         pressPad (was - padBase, false);
     else if (id != 0 && id == was)

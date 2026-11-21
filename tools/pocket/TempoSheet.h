@@ -1,10 +1,11 @@
 #pragma once
 
+#include "PocketSheet.h"
 #include "PocketTheme.h"
 
 // The Tempo sheet (tap the BPM in the header): one tempo for the whole song. -/+, drag the bar,
 // TAP TEMPO, HALF, DOUBLE, the click and the count-in (the same ones as the thumb bar and Rec setup).
-class TempoSheet : public juce::Component
+class TempoSheet : public pocket::DragSheet
 {
 public:
     TempoSheet();

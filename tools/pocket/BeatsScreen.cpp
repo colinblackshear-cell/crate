@@ -571,7 +571,7 @@ public:
 };
 
 //==============================================================================
-class BeatsScreen::PadsView : public BelowSwitch, private juce::Timer
+class BeatsScreen::PadsView : public BelowSwitch
 {
 public:
     explicit PadsView (BeatsScreen& o) : owner (o)
@@ -630,6 +630,9 @@ public:
             owner.setPatternBars (b == 1 ? 2 : b == 2 ? 4 : b == 4 ? 8 : 1);
         };
         recordSound.onClick = [this] { owner.host.openRecorder(); };
+        modeExit.setFontHeight (15.0f);
+        modeExit.onClick = [this] { owner.endPadMode(); };
+        addChildComponent (modeExit);
         quantButton.onClick = [this] { owner.cycleQuantize(); };
         undoButton.onClick = [this]
         {
@@ -643,6 +646,8 @@ public:
 
     void refresh()
     {
+        modeExit.setVisible (owner.levelsOf >= 0 || owner.copyFrom >= 0);
+        modeExit.setText (owner.copyFrom >= 0 ? "Cancel" : "Exit");
         for (int i = 0; i < 4; ++i)
             banks[i].setLook (owner.bank == i ? Look::amber : Look::ghost);
         const auto& p = owner.drumData.padPattern;
@@ -742,7 +747,10 @@ public:
         g.setFont (spaced (lcdFont (26.0f), 0.04f));
         g.drawFittedText (owner.padKit.name, lcd.reduced (10, 0).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
 
-        paintPattern (g);
+        if (owner.levelsOf >= 0 || owner.copyFrom >= 0)
+            paintModeBanner (g);
+        else
+            paintPattern (g);
 
         drawWell (g, wellBounds(), 18.0f);
         const auto sounding = owner.beatsEngine.soundingPads();
@@ -751,9 +759,23 @@ public:
             const int index = owner.bank * 16 + i;
             const auto& pad = owner.padKit.pads[(size_t) index];
             auto r = padBounds (i);
-            const bool lit = index == owner.selected || (sounding >> index & 1) != 0;
+            const bool levels = owner.levelsOf >= 0, copying = owner.copyFrom >= 0;
+            const bool lit = levels ? levelDown == i : copying ? index == owner.copyFrom : (index == owner.selected || (sounding >> index & 1) != 0);
             drawRaised (g, r, lit ? Look::amber : Look::pad, false, 11.0f);
             auto inner = r.withTrimmedBottom (3.0f);
+            if (levels)
+            {
+                // 16 LEVELS: how loud each pad plays, as a bar and a number
+                auto bar = juce::Rectangle<float> (inner.getX() + 8, inner.getBottom() - 10, inner.getWidth() - 16, 4.0f);
+                g.setColour (juce::Colour (0x33f1e7d1));
+                g.fillRoundedRectangle (bar, 2.0f);
+                g.setColour (lit ? col::ink : col::amber);
+                g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) (i + 1) / 16.0f), 2.0f);
+                g.setFont (condensedBold (22.0f));
+                g.setColour (lit ? col::ink : juce::Colour (0xfff1e7d1));
+                g.drawText (juce::String (i + 1), inner.withTrimmedBottom (10), juce::Justification::centred);
+                continue;
+            }
             g.setFont (lcdFont (17.0f));
             g.setColour (lit ? col::ink.withAlpha (0.6f) : juce::Colour (0x99f1e7d1));
             g.drawText (Kit::padLabel (index), inner.reduced (9, 6).withHeight (18), juce::Justification::topLeft);
@@ -789,6 +811,7 @@ public:
         quantButton.setBounds (92, 166, 84, 44);
         undoButton.setBounds (182, 166, 60, 44);
         recordSound.setBounds (248, 166, w - 16 - 248, 44);
+        modeExit.setBounds (w - 16 - 84, 112, 84, 46);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -801,28 +824,50 @@ public:
         }
         if (stripBounds().contains (e.position))
         {
-            owner.togglePatternPlay();
+            if (owner.levelsOf < 0 && owner.copyFrom < 0)
+                owner.togglePatternPlay();   // (16 LEVELS and COPY have their own banner there)
             return;
         }
-        const int pad = padAt (e.position);
+        touchPad (padAt (e.position), e.position);
+    }
+
+    // A finger lands on a pad (the mouse, and the self-checks).
+    void touchPad (int pad, juce::Point<float> at)
+    {
         if (pad < 0)
             return;
+        if (owner.copyFrom >= 0)
+            return owner.copyPadTo (pad);   // COPY: this is the pad it goes to (it doesn't sound)
+        if (owner.levelsOf >= 0)
+        {
+            // 16 LEVELS: the picked pad's sound, quiet to loud along the bank
+            levelDown = pad % 16;
+            held = pad;
+            const float velocity = (float) (levelDown + 1) / 16.0f;
+            owner.beatsEngine.padOn (owner.levelsOf, velocity);
+            owner.recordHit (owner.levelsOf, velocity);
+            repaint();
+            return;
+        }
         owner.selected = pad;
         held = pad;
         longPress = false;
+        // the sound starts on the touch, before anything else; the hold only decides later whether a menu follows
         if (! owner.padKit.pads[(size_t) pad].empty())
         {
             owner.beatsEngine.padOn (pad);
             owner.recordHit (pad, 1.0f);
-            if (! owner.recPads)
-                startTimer (550);
         }
+        if (! owner.recPads)
+            hold.press (at);
         repaint();
     }
 
+    void mouseDrag (const juce::MouseEvent& e) override { hold.move (e.position); }
+
     void mouseUp (const juce::MouseEvent& e) override
     {
-        stopTimer();
+        hold.release();
         if (renaming)
         {
             renaming = false;
@@ -830,29 +875,63 @@ public:
                 owner.renameKit();
             return;
         }
-        if (held >= 0)
-            owner.beatsEngine.padOff (held);
-        held = -1;
+        liftPad();
     }
 
-private:
-    void timerCallback() override
+    void liftPad()
     {
-        stopTimer();
+        hold.release();
+        if (held >= 0)
+            owner.beatsEngine.padOff (owner.levelsOf >= 0 ? owner.levelsOf : held);
+        held = -1;
+        if (levelDown >= 0)
+        {
+            levelDown = -1;
+            repaint();
+        }
+    }
+
+    // The pad's hold menu. The finger is still on the pad: its sound plays on, and stops when the finger lifts.
+    void holdFired()
+    {
         if (held < 0)
             return;
         longPress = true;
-        owner.beatsEngine.padOff (held);
-        owner.host.openPadSheet (held);
-        held = -1;
+        owner.holdPad (held);
+    }
+
+    juce::Rectangle<float> padRectFor (int pad) const { return padBounds (pad % 16); }
+    void fireHoldNow() { hold.fireNow(); }
+    bool holdIsArmed() const { return hold.isArmed(); }
+
+private:
+    void paintModeBanner (juce::Graphics& g)
+    {
+        auto r = stripBounds();
+        drawWell (g, r, 12.0f);
+        auto in = r.reduced (12, 0).withTrimmedRight (92);
+        const int src = owner.levelsOf >= 0 ? owner.levelsOf : owner.copyFrom;
+        const auto& p = owner.padKit.pads[(size_t) juce::jlimit (0, kPads - 1, src)];
+        g.setColour (col::lcdAmber);
+        g.setFont (spaced (condensedBold (14.5f), 0.08f));
+        g.drawFittedText (owner.levelsOf >= 0 ? U8("16 LEVELS \xc2\xb7 ") + Kit::padLabel (src) + " " + p.name.toUpperCase()
+                                              : U8("COPY ") + Kit::padLabel (src) + " " + p.name.toUpperCase() + U8(" TO\xe2\x80\xa6"),
+                          in.withHeight (r.getHeight() * 0.5f + 4.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
+        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setFont (small (12.5f));
+        g.drawFittedText (owner.levelsOf >= 0 ? "Quiet on the first pad, loud on the last. Hits record at the level you play."
+                                              : "Tap the pad it goes to. Any bank: pick the bank first.",
+                          in.withTrimmedTop (r.getHeight() * 0.5f + 4.0f).toNearestInt(), juce::Justification::topLeft, 2, 0.75f);
     }
 
     BeatsScreen& owner;
     PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit pads" }, toMac { "To mac" };
-    PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Record a sound") };
+    PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Record a sound") },
+            modeExit { "Exit", Look::amber };
+    pocket::HoldDetector hold { [this] { holdFired(); } };
     bool wasPlaying = false;
     juce::uint64 lastMask = 0;
-    int held = -1;
+    int held = -1, levelDown = -1;
     bool longPress = false, renaming = false;
 };
 
@@ -912,6 +991,162 @@ void BeatsScreen::selectPad (int pad)
     padsView->refresh();
 }
 
+//==============================================================================
+// Press and hold a pad
+HoldSpec BeatsScreen::padMenuSpec (int pad)
+{
+    HoldSpec s;
+    const auto& p = padKit.pads[(size_t) pad];
+    s.title = "PAD " + Kit::padLabel (pad) + U8(" \xc2\xb7 ") + (p.empty() ? juce::String ("EMPTY") : p.name.toUpperCase());
+    auto swap = [this, pad] { host.holdMenu (swapMenuSpec (pad), *padsView, padsView->padRectFor (pad).getCentre(), padsView->padRectFor (pad)); };
+    if (p.empty())
+    {
+        s.items.push_back ({ U8("PUT A SOUND ON IT\xe2\x80\xa6"), {}, false, true, swap });
+        s.items.push_back ({ "RECORD A NEW SOUND", {}, false, true, [this] { host.openRecorder(); } });
+        return s;
+    }
+    s.items.push_back ({ "SOUND PAGE", U8("trim \xc2\xb7 effects \xc2\xb7 chop"), false, true, [this, pad] { host.openSamplePage (pad); } });
+    s.items.push_back ({ U8("SWAP SOUND\xe2\x80\xa6"), {}, false, true, swap });
+    s.items.push_back ({ "RECORD A NEW SOUND", {}, false, true, [this] { host.openRecorder(); } });
+    s.items.push_back ({ U8("VOLUME \xc2\xb7 PAN \xc2\xb7 TUNE"), {}, false, true, [this, pad] { host.openPadSheet (pad); } });
+    s.items.push_back ({ "16 LEVELS", {}, false, true, [this, pad] { startLevels (pad); } });
+    s.items.push_back ({ "COPY TO ANOTHER PAD", {}, false, true, [this, pad] { startCopy (pad); } });
+    s.items.push_back ({ "REMOVE SOUND", "undo brings it back", true, true, [this, pad] { removePad (pad); } });
+    return s;
+}
+
+// SWAP SOUND: your sounds, newest first, in the same card (it scrolls)
+HoldSpec BeatsScreen::swapMenuSpec (int pad)
+{
+    HoldSpec s;
+    s.title = "SOUND FOR PAD " + Kit::padLabel (pad);
+    s.spotlight = false;
+    auto items = library.items();
+    std::stable_sort (items.begin(), items.end(), [] (const SoundItem& a, const SoundItem& b) { return a.date > b.date; });
+    for (auto& item : items)
+    {
+        const auto id = item.id;
+        s.items.push_back ({ item.name.toUpperCase(), Kit::lengthText (item.seconds), false, true, [this, pad, id] { swapSound (pad, id); } });
+    }
+    if (items.empty())
+        s.items.push_back ({ "NO SOUNDS YET", "record or import one", false, false, {} });
+    return s;
+}
+
+void BeatsScreen::swapSound (int pad, const juce::String& soundId)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads))
+        return;
+    const auto old = padKit.pads[(size_t) pad];
+    if (! padKit.assign (pad, soundId))
+        return host.toast ("That sound couldn't be opened");
+    auto& now = padKit.pads[(size_t) pad];
+    if (! old.empty())
+    {
+        now.volume = old.volume;
+        now.pan = old.pan;
+        now.tune = old.tune;
+        now.mode = old.mode;
+    }
+    padsChanged();
+    selectPad (pad);
+    host.toast ("Pad " + Kit::padLabel (pad) + " has \"" + now.name + "\"");
+}
+
+void BeatsScreen::removePad (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads) || padKit.pads[(size_t) pad].empty())
+        return;
+    removed = padKit.pads[(size_t) pad];
+    removedPad = pad;
+    haveRemoved = true;
+    padKit.clear (pad);
+    beatsEngine.padOff (pad);
+    if (levelsOf == pad || copyFrom == pad)
+        endPadMode();
+    padsChanged();
+    host.toastAction ("Removed \"" + removed.name + "\" from pad " + Kit::padLabel (pad), "UNDO", [this] { undoRemovePad(); });
+}
+
+void BeatsScreen::undoRemovePad()
+{
+    if (! haveRemoved || ! juce::isPositiveAndBelow (removedPad, kPads))
+        return;
+    padKit.pads[(size_t) removedPad] = removed;
+    haveRemoved = false;
+    padsChanged();
+    selectPad (removedPad);
+    host.toast ("Pad " + Kit::padLabel (removedPad) + " has its sound back");
+}
+
+void BeatsScreen::startLevels (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads) || padKit.pads[(size_t) pad].empty())
+        return;
+    copyFrom = -1;
+    levelsOf = pad;
+    selectPad (pad);
+    host.toast ("16 LEVELS: pad " + Kit::padLabel (pad) + " on all 16 pads, quiet to loud. EXIT puts the pads back.");
+}
+
+void BeatsScreen::startCopy (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads) || padKit.pads[(size_t) pad].empty())
+        return;
+    levelsOf = -1;
+    copyFrom = pad;
+    selectPad (pad);
+    host.toast ("Tap the pad to copy " + Kit::padLabel (pad) + " to. CANCEL stops.");
+}
+
+void BeatsScreen::copyPadTo (int target)
+{
+    const int from = copyFrom;
+    if (from < 0 || ! juce::isPositiveAndBelow (target, kPads))
+        return;
+    if (target == from)
+        return endPadMode();
+    copiedWas = padKit.pads[(size_t) target];
+    copiedTo = target;
+    haveCopied = true;
+    padKit.pads[(size_t) target] = padKit.pads[(size_t) from];
+    copyFrom = -1;
+    padsChanged();
+    selectPad (target);
+    host.toastAction ("Copied " + Kit::padLabel (from) + " to " + Kit::padLabel (target), "UNDO", [this] { undoCopy(); });
+}
+
+void BeatsScreen::undoCopy()
+{
+    if (! haveCopied || ! juce::isPositiveAndBelow (copiedTo, kPads))
+        return;
+    padKit.pads[(size_t) copiedTo] = copiedWas;
+    haveCopied = false;
+    padsChanged();
+    host.toast ("Pad " + Kit::padLabel (copiedTo) + " is as it was");
+}
+
+void BeatsScreen::endPadMode()
+{
+    levelsOf = copyFrom = -1;
+    if (padsView != nullptr)
+    {
+        padsView->refresh();
+        padsView->repaint();
+    }
+}
+
+void BeatsScreen::testTouchPad (int pad) { padsView->touchPad (pad, padsView->padRectFor (pad).getCentre()); }
+void BeatsScreen::testHoldElapsed() { padsView->fireHoldNow(); }
+void BeatsScreen::testLiftPad() { padsView->liftPad(); }
+
+void BeatsScreen::holdPad (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads))
+        return;
+    host.holdMenu (padMenuSpec (pad), *padsView, padsView->padRectFor (pad).getCentre(), padsView->padRectFor (pad));
+}
+
 void BeatsScreen::selectVoice (int v)
 {
     voice = juce::jlimit (0, crate::drums::kVoices - 1, v);
@@ -960,6 +1195,7 @@ void BeatsScreen::leave()
     beatsEngine.setClick (false);
     recPads = false;
     recDrumsOn = false;
+    levelsOf = copyFrom = -1;
     beatsEngine.stopPads();
     if (padsView != nullptr)
         padsView->refresh();
@@ -974,6 +1210,7 @@ void BeatsScreen::reloadIdea (const juce::String& ideaName)
     if (! drumFile.existsAsFile())
         drumData.bpm = tempo;   // a new idea starts at the tempo you were at
     drumsDirty = kitDirty = false;
+    haveRemoved = haveCopied = false;   // (another song's pads: nothing to put back here)
     patternUndo.clear();
     liveUndo.clear();
     beatsEngine.setDrums (drumData);

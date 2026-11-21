@@ -1,10 +1,11 @@
 #pragma once
 
 #include "PocketKit.h"
+#include "PocketSheet.h"
 #include "PocketTheme.h"
 
 // The bottom sheet for one MPC pad: volume, pan and tune, how it plays, and chop, trim and clear.
-class PadSheet : public juce::Component
+class PadSheet : public pocket::DragSheet
 {
 public:
     explicit PadSheet (pocket::Kit&);

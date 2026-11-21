@@ -52,6 +52,7 @@ LoopsScreen::LoopsScreen (PocketHost& h, Library& l, BeatsEngine& b, AppSettings
     }
     addChildComponent (editor);
     editor.onDone = [this] { closeEditor(); };
+    editor.onDismiss = [this] { closeEditor(); };
     editor.onUndo = [this] { undo(); };
     editor.onPlay = [this] { if (! loops.transportRunning()) host.togglePlay(); };
     editor.onToast = [this] (const juce::String& t) { host.toast (t); };
@@ -550,17 +551,77 @@ int LoopsScreen::idAt (juce::Point<float> p) const
 void LoopsScreen::mouseDown (const juce::MouseEvent& e)
 {
     pressed = idAt (e.position);
+    holdRow = -1;
+    hold.release();
+    if (pressed >= rowSelect && pressed < rowSelect + kLoopLayers && hasLoop (loops.state (pressed - rowSelect)))
+    {
+        holdRow = pressed - rowSelect;
+        hold.press (e.position);
+    }
     repaint();
+}
+
+void LoopsScreen::mouseDrag (const juce::MouseEvent& e)
+{
+    hold.move (e.position);
 }
 
 void LoopsScreen::mouseUp (const juce::MouseEvent& e)
 {
+    const bool held = hold.fired();
+    hold.release();
+    holdRow = -1;
     const int id = idAt (e.position);
     const int was = pressed;
     pressed = 0;
-    if (id != 0 && id == was)
+    if (! held && id != 0 && id == was)
         press (id);
     repaint();
+}
+
+// The hold menu for a filled layer: each row runs what the panel's button of the same name runs.
+HoldSpec LoopsScreen::layerMenuSpec (int l)
+{
+    HoldSpec s;
+    auto take = loops.takeOf (l);
+    if (take == nullptr || ! hasLoop (loops.state (l)))
+        return s;
+    const bool notes = take->part != nullptr;
+    const bool dubbing = loops.state (l) == LoopState::overdubbing || loops.state (l) == LoopState::overdubWait;
+    bool hasTool = false;
+    const auto openTool = openToolFor (take->tool, hasTool);
+    static const char* grids[] = { "off", "1/4", "1/8", "1/16" };
+    const bool boardOn = loops.board (layerBoardId (l)).audible() || ! loops.fxOf (l).isNeutral();
+    auto run = [this, l] (int which)
+    {
+        return [this, l, which]
+        {
+            selected = lastLayer = l;
+            layoutPanel();
+            pressPanel (which);
+            repaint();
+        };
+    };
+    s.title = "LAYER " + juce::String (l + 1) + U8(" \xc2\xb7 ") + layerToolName (take->tool);
+    s.items.push_back ({ U8("IN / OUT \xc2\xb7 TRIM"), {}, false, true, run (pInOut) });
+    s.items.push_back ({ notes ? "QUANTIZE" : "FIT", notes ? juce::String (grids[juce::jlimit (0, 3, take->quant.grid)]) : barsText (take->lengthBeats.load()),
+                         false, true, run (pQuant) });
+    s.items.push_back ({ "EFFECTS", boardOn ? "board on" : "board off", false, true, run (pFx) });
+    s.items.push_back ({ dubbing ? "STOP DUB" : "DUB OVER IT", {}, false, true, run (pDub) });
+    s.items.push_back ({ hasTool ? juce::String ("OPEN ") + toolName (openTool) : juce::String ("DOUBLE"), {}, false, true, run (pTool) });
+    s.items.push_back ({ "SEND TO MAC", {}, false, true, run (pToMac) });
+    s.items.push_back ({ "CLEAR", "undo brings it back", true, true, run (pClear) });
+    return s;
+}
+
+void LoopsScreen::openLayerMenu (int l)
+{
+    if (! hasLoop (loops.state (l)))
+        return;
+    selected = lastLayer = l;
+    layoutPanel();
+    repaint();
+    host.holdMenu (layerMenuSpec (l), *this, rowRect (l).getCentre(), rowRect (l));
 }
 
 void LoopsScreen::openEditor (int layer, int page, int focus)

@@ -143,8 +143,7 @@ void EffectsSheet::paint (juce::Graphics& g)
     g.setColour (col::cream);
     g.fillPath (p);
 
-    g.setColour (juce::Colour (0xffa59a85));
-    g.fillRoundedRectangle (r.getCentreX() - 22, 9, 44, 5, 2.5f);
+    pocket::drawGrabber (g, getWidth());
 
     g.setColour (col::ink);
     g.setFont (fraunces (28.0f));

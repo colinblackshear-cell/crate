@@ -80,6 +80,7 @@ public:
     void openEditor (int layer, int page = LoopEditSheet::shapePage, int focus = LoopEditSheet::noFocus);
     void closeEditor();
     LoopEditSheet& editorSheet() { return editor; }
+    const LoopEditSheet& editorSheet() const { return editor; }
     void trimLayer (int layer, double fromBeat, double toBeat) { editLayer (layer, LoopEditSheet::trim, fromBeat, toBeat); }
     void fitLayer (int layer, int bars, double fromBeat, double toBeat);
     void quantizeLayer (int layer, const pocket::LoopQuantize&);
@@ -90,7 +91,14 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+
+    // Press and hold a filled layer: the hold menu (the same actions as the panel's buttons, one press away). Picks the
+    // layer first, so the panel shows it too.
+    void openLayerMenu (int layer);
+    pocket::HoldSpec layerMenuSpec (int layer);
+    void holdLayer (int layer) { openLayerMenu (layer); }   // the self-checks
 
     // Screenshot mode: a drums layer, a synth part (selected), a vocoder take 4.2 bars long, a pads pattern,
     // a muted mic take, then the row the next take lands on.
@@ -152,7 +160,8 @@ private:
     std::array<pocket::PButton, kPanelButtons> panel;
     std::array<Row, pocket::kLoopLayers> rows;
     std::vector<Undo> undoStack;
-    int selected = -1, lastLayer = -1, vocLayer = -1;
+    int selected = -1, lastLayer = -1, vocLayer = -1, holdRow = -1;
+    pocket::HoldDetector hold { [this] { if (holdRow >= 0) { const int l = holdRow; pressed = 0; openLayerMenu (l); } } };
     int sourceChoice = 0;   // pocket::LoopSource
     int pressed = 0;
     int ticks = 0;

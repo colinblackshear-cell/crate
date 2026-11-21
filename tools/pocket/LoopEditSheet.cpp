@@ -499,8 +499,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
 {
     g.setColour (col::cream);
     g.fillRoundedRectangle (getLocalBounds().toFloat().withTrimmedBottom (-20.0f), 22.0f);
-    g.setColour (col::rule);
-    g.fillRoundedRectangle ((float) getWidth() / 2 - 20, 4, 40, 5, 2.5f);
+    pocket::drawGrabber (g, getWidth());
     if (current < 0)
         return;
 

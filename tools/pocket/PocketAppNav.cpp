@@ -1,0 +1,529 @@
+#include "PocketApp.h"
+
+// The navigation checks: the song drawer, press and hold menus, sliding between tools, and the sheets that close with a
+// downward drag. They drive the app itself with no sound card (screenshot mode), the way a finger would.
+using namespace pocket;
+
+juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::File& folder)
+{
+    juce::StringArray problems;
+    auto expect = [&problems] (bool ok, const juce::String& what) { if (! ok) problems.add (what); };
+    auto& L = loopsScreen.engine();
+    const double sr = 44100.0, bpm = 96.0;
+    const bool wasDemo = loopsScreen.demoMode();
+    loopsScreen.setDemoMode (false);   // the layers save and come back, as in the app
+    loopsScreen.setSyncJobs (true);
+    appSettings.click = false;
+    applyClick();
+    micOn = micHear = false;
+    applyMic();
+    hideToast();
+
+    std::vector<float> in (512, 0.0f), outL (512), outR (512);
+    auto pump = [&] (int blocks)
+    {
+        for (int k = 0; k < blocks; ++k)
+        {
+            const float* ptr = in.data();
+            L.setInput (&ptr, 1);
+            std::fill (outL.begin(), outL.end(), 0.0f);
+            std::fill (outR.begin(), outR.end(), 0.0f);
+            L.render (outL.data(), outR.data(), 512);
+        }
+    };
+    auto putLoop = [&] (int layer, LayerTool t, double step)
+    {
+        const int n = (int) (8.0 * 60.0 / bpm * sr);
+        auto take = LoopsEngine::makeTake (n, sr);
+        for (int i = 0; i < n; ++i)
+            take->data[(size_t) i] = 0.3f * (float) std::sin ((double) i * step) * (float) ((i / 5000) % 2);
+        take->length = n;
+        take->lengthBeats = 8.0;
+        take->tool = (int) t;
+        L.setLayer (layer, take, false, 0.0);
+    };
+    auto fake = [] (juce::Component& c, juce::Point<float> p)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), p, juce::ModifierKeys(), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, p, now, 1, false);
+    };
+    auto tap = [&] (juce::Point<float> p)   // a tap on the header
+    {
+        mouseDown (fake (*this, p));
+        mouseUp (fake (*this, p));
+    };
+    auto settle = [&]
+    {
+        holdCard.close();
+        closeAllSheets();
+        if (drawer.isVisible())
+            drawer.animateTo (false);
+        if (tour->isVisible())
+            tour->setVisible (false);
+        endLesson();
+        loopsScreen.closeEditor();
+        hideToast();
+    };
+
+    // ------------------------------------------------------------------ two songs, A with two loop layers, B empty
+    showIdeasList();
+    switchIdea (ideas.create ("Nav A"));
+    const auto idA = ideas.current().id;
+    beats.setBpm (bpm);
+    L.prepare (sr);
+    L.setLatency (0);
+    pump (40);
+    putLoop (0, LayerTool::drums, 0.02);
+    putLoop (1, LayerTool::synth, 0.035);
+    pump (40);
+    expect (loopsScreen.layerCount() == 2, "Nav: song A didn't get its two layers");
+    const auto idB = ideas.create ("Nav B");
+
+    // ------------------------------------------------------------------ the drawer opens and closes
+    showTool (Tool::loops, false);
+    openDrawer();
+    expect (drawer.isVisible() && drawer.isOpen() && drawer.progress() > 0.99f, "Drawer: it didn't open");
+    expect (drawer.songRows() >= 2, "Drawer: YOUR SONGS is empty");
+    closeDrawer();
+    expect (! drawer.isVisible(), "Drawer: it didn't close");
+    // a swipe left closes it (past a third of its width); a short pull springs back
+    openDrawer();
+    drawer.dragStart();
+    drawer.dragTo (-40.0f);
+    drawer.dragEnd (-40.0f, 0.0f);
+    expect (drawer.isOpen(), "Drawer: a short pull left should leave it open");
+    drawer.dragStart();
+    drawer.dragTo (-250.0f);
+    drawer.dragEnd (-250.0f, 0.0f);
+    expect (! drawer.isVisible(), "Drawer: a swipe left didn't close it");
+    // a tap on the dim closes it
+    openDrawer();
+    drawer.mouseUp (fake (drawer, { (float) getWidth() - 10.0f, 400.0f }));
+    expect (! drawer.isVisible(), "Drawer: a tap on the dim didn't close it");
+    // the header: the menu icon, the song's name, and the Mac link dot (still a tap)
+    tap (menuRect().getCentre());
+    expect (drawer.isVisible(), "Drawer: the header's menu icon didn't open it");
+    closeDrawer();
+    tap ({ 110.0f, (float) insets.getTop() + 20.0f });
+    expect (drawer.isVisible(), "Drawer: a tap on the song's name didn't open it");
+    closeDrawer();
+    tap (chipRect().getCentre());
+    expect (page == Page::more && morePageShown == 3, "Header: the Mac link dot no longer opens Mac link");
+    goBack();
+    expect (page == Page::tool && tool == Tool::loops, "Mac link: no way back to the tool it was opened from");
+    tap (lcdRect().getCentre());
+    expect (recSetupOpen, "Header: the display no longer opens Rec setup");
+    closeRecSetup();
+
+    // ------------------------------------------------------------------ switching songs from the drawer keeps the tool
+    showTool (Tool::loops, false);
+    openDrawer();
+    pickSong (idB);
+    pump (40);
+    expect (ideas.current().id == idB && page == Page::tool && tool == Tool::loops && ! drawer.isVisible(), "Drawer: picking song B didn't switch to it and stay on LOOPS");
+    expect (loopsScreen.layerCount() == 0, "Drawer: song B shows layers it doesn't have (" + juce::String (loopsScreen.layerCount()) + ")");
+    showTool (Tool::pads, false);
+    openDrawer();
+    pickSong (idA);
+    pump (60);
+    expect (ideas.current().id == idA && page == Page::tool && tool == Tool::pads, "Drawer: picking song A didn't switch to it and stay on PADS");
+    expect (loopsScreen.layerCount() == 2, "Drawer: song A came back with " + juce::String (loopsScreen.layerCount()) + " layers, not 2");
+    showTool (Tool::loops, false);
+    report << "drawer: opens from the menu icon, the song name and (below) the left edge; closes on a swipe left or a tap on the dim; "
+              "song B (no layers) and song A (2 layers) switch with the tool kept\n";
+
+    // ------------------------------------------------------------------ the edge swipe
+    {
+        const float y = 300.0f;
+        edgeWatcher.begin ({ 10.0f, y }, 0);
+        edgeWatcher.move ({ 60.0f, y + 4.0f }, 0);
+        edgeWatcher.move ({ 200.0f, y + 8.0f }, 0);
+        edgeWatcher.end (0);
+        expect (drawer.isOpen(), "Edge swipe: a swipe from the left edge on LOOPS didn't open the drawer");
+        closeDrawer();
+        // a vertical drag from the edge is not ours
+        edgeWatcher.begin ({ 10.0f, y }, 0);
+        edgeWatcher.move ({ 12.0f, y + 40.0f }, 0);
+        edgeWatcher.move ({ 150.0f, y + 50.0f }, 0);
+        edgeWatcher.end (0);
+        expect (! drawer.isVisible(), "Edge swipe: a vertical drag from the edge opened the drawer");
+        // not from further in
+        edgeWatcher.begin ({ 60.0f, y }, 0);
+        edgeWatcher.move ({ 200.0f, y }, 0);
+        edgeWatcher.end (0);
+        expect (! drawer.isVisible(), "Edge swipe: a drag that started 60 px in opened the drawer");
+        // not on the thumb bar or the tool row
+        expect (! edgeSwipeAllowed ({ 10.0f, (float) thumb.getY() + 20.0f }) && ! edgeSwipeAllowed ({ 10.0f, (float) toolRow.getY() + 20.0f }),
+                "Edge swipe: allowed on the thumb bar or the tool row");
+
+        // SYNTH: not inside the keys
+        showTool (Tool::synth, false);
+        const auto keys = getLocalArea (&synthScreen, synthScreen.keysBounds());
+        const float kx = juce::jmin (20.0f, (float) keys.getX() + 2.0f), ky = (float) keys.getCentreY();
+        expect (! edgeSwipeAllowed ({ kx, ky }), "Edge swipe: allowed inside the SYNTH keys");
+        edgeWatcher.begin ({ kx, ky }, 0);
+        edgeWatcher.move ({ kx + 60.0f, ky }, 0);
+        edgeWatcher.move ({ kx + 200.0f, ky }, 0);
+        edgeWatcher.end (0);
+        expect (! drawer.isVisible(), "Edge swipe: a drag along the SYNTH keys pulled the drawer out");
+        expect (edgeSwipeAllowed ({ 10.0f, (float) insets.getTop() + 60.0f }), "Edge swipe: not allowed at the left edge above the SYNTH keys");
+        report << "edge swipe: starts within 22 px of the left edge (not the thumb bar, the tool row, the SYNTH keys at x=" << keys.getX() << ".." << keys.getRight()
+               << ", y=" << keys.getY() << ".." << keys.getBottom() << ", sheets or menus); a vertical drag does not open it\n";
+        showTool (Tool::loops, false);
+    }
+
+    // ------------------------------------------------------------------ sliding between tools
+    {
+        auto cellX = [this] (Tool t)
+        {
+            for (int i = 0; i < (int) toolRow.tools.size(); ++i)
+                if (toolRow.tools[(size_t) i] == t)
+                    return toolRow.cellRect (i).getCentreX();
+            return 0.0f;
+        };
+        toolRow.slideStart (cellX (Tool::loops));
+        toolRow.slideTo (cellX (Tool::drums));
+        toolRow.slideTo (cellX (Tool::synth));
+        expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::synth, "Tool row: the finger on SYNTH didn't light SYNTH");
+        expect (tool == Tool::loops, "Tool row: the tool changed before the finger lifted");
+        toolRow.slideEnd (cellX (Tool::synth), 10.0f);
+        expect (page == Page::tool && tool == Tool::synth, "Tool row: lifting on SYNTH didn't pick it");
+        toolRow.slideStart (cellX (Tool::synth));
+        toolRow.slideTo (cellX (Tool::chords));
+        toolRow.slideEnd (cellX (Tool::chords), -200.0f);   // a finger that went up the screen calls it off
+        expect (tool == Tool::synth, "Tool row: a slide taken up and away still picked a tool");
+        toolRow.slideStart (cellX (Tool::chords));
+        toolRow.slideEnd (cellX (Tool::chords), 10.0f);
+        expect (tool == Tool::chords, "Tool row: a plain tap on CHORDS no longer picks it");
+        // the header bar: a swipe left is the next tool, right the previous
+        showTool (Tool::loops, false);
+        mouseDown (fake (*this, { 300.0f, (float) insets.getTop() + 20.0f }));
+        mouseDrag (fake (*this, { 240.0f, (float) insets.getTop() + 22.0f }));
+        mouseDrag (fake (*this, { 180.0f, (float) insets.getTop() + 22.0f }));
+        mouseUp (fake (*this, { 180.0f, (float) insets.getTop() + 22.0f }));
+        expect (tool == Tool::drums, "Header swipe: a swipe left on LOOPS didn't go to DRUMS");
+        mouseDown (fake (*this, { 120.0f, (float) insets.getTop() + 20.0f }));
+        mouseDrag (fake (*this, { 200.0f, (float) insets.getTop() + 22.0f }));
+        mouseUp (fake (*this, { 200.0f, (float) insets.getTop() + 22.0f }));
+        expect (tool == Tool::loops, "Header swipe: a swipe right on DRUMS didn't go back to LOOPS");
+        report << "tools: sliding a finger along the row lights the tool under it and picks it on lift (up and away calls it off); "
+                  "a swipe on the header goes to the next or previous tool\n";
+        // the amber outline: only the brief flash, and never in a demo
+        toolRow.flash();
+        expect (toolRow.flashing(), "Tool row: flash() didn't flash");
+        toolRow.slideStart (cellX (Tool::loops));
+        expect (! toolRow.flashing(), "Tool row: touching the row didn't end the flash");
+        toolRow.slideEnd (cellX (Tool::loops), 10.0f);
+    }
+
+    // ------------------------------------------------------------------ every sheet closes on a downward drag
+    {
+        auto sheetCheck = [&] (const juce::String& name, std::function<void()> open, pocket::DragSheet& sheet, std::function<bool()> isOpen)
+        {
+            open();
+            if (! isOpen())
+                return problems.add ("Sheet " + name + ": didn't open for the check");
+            const auto home = sheet.getBounds();
+            const float h = (float) sheet.getHeight();
+            sheet.dragStart();
+            sheet.dragMove (h / 6.0f);
+            const bool gone1 = sheet.dragEnd (h / 6.0f, 0.0f);
+            if (gone1 || ! isOpen() || sheet.getBounds() != home)
+                problems.add ("Sheet " + name + ": a short drag should spring back");
+            sheet.dragStart();
+            sheet.dragMove (h / 3.0f + 14.0f);
+            const bool gone2 = sheet.dragEnd (h / 3.0f + 14.0f, 0.0f);
+            if (! gone2 || isOpen())
+                problems.add ("Sheet " + name + ": a drag past a third of its height didn't close it");
+            open();
+            sheet.dragStart();
+            sheet.dragMove (50.0f);
+            const bool gone3 = sheet.dragEnd (50.0f, 1.3f);
+            if (! gone3 || isOpen())
+                problems.add ("Sheet " + name + ": a downward flick didn't close it");
+            closeAllSheets();
+        };
+        showTool (Tool::pads, false);
+        sheetCheck ("Tempo", [this] { openTempo(); }, tempoSheet, [this] { return tempoOpen; });
+        sheetCheck ("Rec setup", [this] { openRecSetup(); }, recSetup, [this] { return recSetupOpen; });
+        sheetCheck ("Sounds", [this] { openSoundBank(); }, soundBank, [this] { return bankOpen; });
+        sheetCheck ("Pad", [this] { openPadSheet (9); }, padSheet, [this] { return padSheetOpen; });
+        sheetCheck ("Send to Mac", [this] { sendSoundToMac (lib.items().front().id, "sounds"); }, *sendSheet, [this] { return sendOpen; });
+        sheetCheck ("Headphones", [this] { micOn = false; openHeadphones ({}); }, headphones, [this] { return phonesOpen; });
+        expect (! micOn, "Sheet Headphones: closing it with a drag turned the mic on");
+        {
+            auto take = lib.load (lib.items().front().id);
+            showPage (Page::recorder);
+            record.showDemoTake (take, "Nav", false);
+            sheetCheck ("Effects + Chop", [this] { openSheet(); }, sheet, [this] { return sheetOpen; });
+            showTool (Tool::loops, false);
+        }
+        sheetCheck ("Loop editor", [this] { loopsScreen.openEditor (0); }, loopsScreen.editorSheet(), [this] { return loopsScreen.editorSheet().isVisible(); });
+        loopsScreen.closeEditor();
+        showTool (Tool::loops, false);
+        report << "sheets: Tempo, Rec setup, Sounds, Pad, Send to Mac, Headphones (the mic stays off), Effects + Chop and the loop editor all spring back "
+                  "from a short drag and close on a drag past a third of their height or a flick\n";
+    }
+
+    // ------------------------------------------------------------------ the hold menu on a loop layer
+    {
+        showTool (Tool::loops, false);
+        pump (4);
+        auto run = [&] (int item, const juce::String& what)
+        {
+            loopsScreen.holdLayer (0);
+            if (! holdCard.isOpen() || holdCard.itemCount() != 7)
+                return problems.add ("Hold menu on a layer: " + what + ": the menu didn't open with its 7 rows");
+            holdCard.choose (item);
+            if (holdCard.isOpen())
+                problems.add ("Hold menu on a layer: " + what + ": the menu stayed open after a pick");
+        };
+        loopsScreen.holdLayer (0);
+        expect (holdCard.isOpen() && holdCard.current().title.startsWith ("LAYER 1"), "Hold menu on a layer: no menu, or the wrong title");
+        expect (loopsScreen.selectedLayer() == 0, "Hold menu on a layer: the layer isn't picked, so its panel doesn't show it");
+        const auto spec = holdCard.current();
+        holdCard.close();
+        expect (spec.items.size() == 7 && spec.items[0].text.startsWith ("IN / OUT") && spec.items[1].text == "FIT" && spec.items[2].text == "EFFECTS"
+                    && spec.items[3].text == "DUB OVER IT" && spec.items[4].text.startsWith ("OPEN") && spec.items[5].text == "SEND TO MAC"
+                    && spec.items[6].text == "CLEAR" && spec.items[6].danger, "Hold menu on a layer: the rows are not the agreed ones");
+        run (0, "IN / OUT");
+        expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::shapePage, "Hold menu on a layer: IN / OUT didn't open the editor");
+        loopsScreen.closeEditor();
+        run (1, "FIT");
+        expect (loopsScreen.editorSheet().isVisible(), "Hold menu on a layer: FIT didn't open the editor");
+        loopsScreen.closeEditor();
+        run (2, "EFFECTS");
+        expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::effectsPage, "Hold menu on a layer: EFFECTS didn't open the effects page");
+        loopsScreen.closeEditor();
+        run (4, "OPEN");
+        expect (page == Page::tool && tool == Tool::drums, "Hold menu on a layer: OPEN DRUMS didn't open DRUMS");
+        showTool (Tool::loops, false);
+        run (5, "SEND TO MAC");
+        expect (sendOpen, "Hold menu on a layer: SEND TO MAC didn't open the Send to Mac sheet");
+        closeSendSheet();
+        run (3, "DUB OVER IT");
+        pump (2);
+        expect (L.state (0) == LoopState::overdubWait || L.state (0) == LoopState::overdubbing, "Hold menu on a layer: DUB OVER IT didn't start a dub");
+        loopsScreen.holdLayer (0);
+        expect (holdCard.current().items[3].text == "STOP DUB", "Hold menu on a layer: the dub row doesn't turn into STOP DUB");
+        holdCard.choose (3);
+        pump (500);
+        expect (L.state (0) == LoopState::playing, "Hold menu on a layer: STOP DUB didn't end the dub");
+        run (6, "CLEAR");
+        pump (4);
+        expect (L.state (0) == LoopState::empty, "Hold menu on a layer: CLEAR didn't clear the layer");
+        loopsScreen.undo();
+        pump (40);
+        expect (L.state (0) == LoopState::playing && loopsScreen.layerCount() == 2, "Hold menu on a layer: UNDO didn't bring the cleared layer back");
+        // an empty layer has no menu
+        loopsScreen.holdLayer (5);
+        expect (! holdCard.isOpen(), "Hold menu: an empty layer opened a menu");
+        report << "hold menu on a layer: IN / OUT, FIT (QUANTIZE on note layers), EFFECTS, DUB OVER IT (then STOP DUB), OPEN, SEND TO MAC and CLEAR each run the panel's action; "
+                  "CLEAR then UNDO brings the layer back\n";
+        settle();
+    }
+
+    // ------------------------------------------------------------------ the hold menu on a pad, and the sound that never waits for it
+    {
+        showTool (Tool::pads, false);
+        auto& kit = beats.kit();
+        std::vector<float> pl (512), pr (512);
+        auto renderPads = [&] (int blocks)
+        {
+            for (int k = 0; k < blocks; ++k)
+            {
+                std::fill (pl.begin(), pl.end(), 0.0f);
+                std::fill (pr.begin(), pr.end(), 0.0f);
+                beats.engine().render (pl.data(), pr.data(), 512);
+            }
+        };
+        beats.engine().stopPads();
+        renderPads (2);
+        expect (! kit.pads[9].empty(), "Hold menu on a pad: pad A10 has no sound to hold");
+        beats.selectPad (9);
+        beats.engine().stopPads();
+        renderPads (2);
+        // a touch sounds at once, with no menu; the hold then opens the menu and the sound plays on until the finger lifts
+        beats.testTouchPad (9);
+        renderPads (1);
+        expect ((beats.engine().soundingPads() >> 9 & 1) != 0, "Pad: a touch didn't sound the pad in the first block");
+        expect (! holdCard.isOpen(), "Pad: the hold menu came before the hold time");
+        beats.testHoldElapsed();
+        expect (holdCard.isOpen() && holdCard.itemCount() == 7, "Hold menu on a pad: no menu after the hold");
+        renderPads (1);
+        expect ((beats.engine().soundingPads() >> 9 & 1) != 0, "Pad: the hold menu cut the sound");
+        beats.testLiftPad();
+        holdCard.close();
+        // the rows
+        beats.holdPad (9);
+        const auto spec = holdCard.current();
+        holdCard.close();
+        expect (spec.items.size() == 7 && spec.items[0].text == "SOUND PAGE" && spec.items[1].text.startsWith ("SWAP SOUND") && spec.items[2].text == "RECORD A NEW SOUND"
+                    && spec.items[3].text.startsWith ("VOLUME") && spec.items[4].text == "16 LEVELS" && spec.items[5].text == "COPY TO ANOTHER PAD"
+                    && spec.items[6].text == "REMOVE SOUND" && spec.items[6].danger && spec.title.startsWith ("PAD A10"), "Hold menu on a pad: the rows are not the agreed ones");
+        auto choose = [&] (int item)
+        {
+            beats.holdPad (9);
+            holdCard.choose (item);
+        };
+        choose (3);
+        expect (padSheetOpen && padSheet.pad() == 9, "Hold menu on a pad: VOLUME · PAN · TUNE didn't open the pad sheet");
+        closePadSheet();
+        choose (0);
+        expect (page == Page::recorder, "Hold menu on a pad: SOUND PAGE didn't open the sound recorder");
+        goBack();
+        expect (page == Page::tool && tool == Tool::pads, "Sound page: no way back to the pads");
+        choose (2);
+        expect (page == Page::recorder, "Hold menu on a pad: RECORD A NEW SOUND didn't open the sound recorder");
+        goBack();
+        // SWAP SOUND: your sounds in the same card; the pad keeps its volume
+        kit.pads[9].volume = 77;
+        const auto oldId = kit.pads[9].soundId;
+        choose (1);
+        expect (holdCard.isOpen() && holdCard.current().title.startsWith ("SOUND FOR PAD A10") && holdCard.itemCount() == (int) lib.items().size(), "Hold menu on a pad: SWAP SOUND didn't list the sounds");
+        {
+            auto items = lib.items();
+            std::stable_sort (items.begin(), items.end(), [] (const SoundItem& a, const SoundItem& b) { return a.date > b.date; });
+            int pick = 0;
+            while (pick + 1 < (int) items.size() && items[(size_t) pick].id == oldId)
+                ++pick;
+            const auto wanted = items[(size_t) pick].id;
+            holdCard.choose (pick);
+            expect (kit.pads[9].soundId == wanted && wanted != oldId && kit.pads[9].volume == 77, "Hold menu on a pad: SWAP SOUND didn't put the picked sound on the pad (keeping its volume)");
+        }
+        // 16 LEVELS: the bank's pads play the sound quiet to loud
+        choose (4);
+        expect (beats.levelsPad() == 9, "Hold menu on a pad: 16 LEVELS didn't start");
+        beats.engine().stopPads();
+        renderPads (2);
+        beats.testTouchPad (2);
+        renderPads (1);
+        expect ((beats.engine().soundingPads() >> 9 & 1) != 0, "16 LEVELS: a pad didn't play the picked sound");
+        beats.testLiftPad();
+        beats.endPadMode();
+        expect (beats.levelsPad() < 0, "16 LEVELS: EXIT didn't leave it");
+        // COPY TO ANOTHER PAD, then UNDO
+        const auto before = kit.pads[12].soundId, source = kit.pads[9].soundId;
+        choose (5);
+        expect (beats.copySource() == 9, "Hold menu on a pad: COPY TO ANOTHER PAD didn't start");
+        beats.copyPadTo (12);
+        expect (kit.pads[12].soundId == source && beats.copySource() < 0, "Copy: the target pad didn't get the sound");
+        expect (toastHasAction(), "Copy: no UNDO on the note");
+        pressToastAction();
+        expect (kit.pads[12].soundId == before, "Copy: UNDO didn't put the other pad's sound back");
+        // REMOVE SOUND, then UNDO
+        choose (6);
+        expect (kit.pads[9].empty(), "Hold menu on a pad: REMOVE SOUND didn't remove it");
+        expect (toastHasAction(), "Remove sound: no UNDO on the note");
+        pressToastAction();
+        expect (! kit.pads[9].empty() && kit.pads[9].soundId == source, "Remove sound: UNDO didn't bring the sound back");
+        // an empty pad's menu
+        const auto keep = kit.pads[9];
+        kit.clear (9);
+        beats.holdPad (9);
+        expect (holdCard.itemCount() == 2 && holdCard.current().items[0].text.startsWith ("PUT A SOUND"), "Hold menu on an empty pad: the rows are not the agreed ones");
+        holdCard.close();
+        kit.pads[9] = keep;
+        beats.padsChanged();
+        report << "hold menu on a pad: a touch sounds the pad in the very first block and the menu opens after the hold with the sound still playing; "
+                  "VOLUME · PAN · TUNE, SOUND PAGE, RECORD A NEW SOUND, SWAP SOUND (keeps volume), 16 LEVELS (the pads play quiet to loud), COPY (UNDO) and REMOVE SOUND (UNDO) work\n";
+        settle();
+    }
+
+    // ------------------------------------------------------------------ the hold menu on a chord pad
+    {
+        showTool (Tool::chords, false);
+        chordsTool.reset();
+        chordsTool.setKey (songKey);
+        chordsScreen.toolChanged();
+        chordsScreen.pressPad (3, true);
+        expect (chordsTool.heldPad() == 3, "Chord pad: a touch didn't play the chord at once");
+        chordsScreen.holdPad (3);
+        expect (holdCard.isOpen() && holdCard.itemCount() == chordsTool.progLength && holdCard.current().items[0].text == "PUT IN PROGRESSION BOX 1",
+                "Hold menu on a chord pad: no menu, or not one row per box");
+        expect (chordsTool.heldPad() == 3, "Chord pad: the hold menu let the chord go");
+        holdCard.choose (1);
+        expect (chordsTool.progression[1] == 3, "Hold menu on a chord pad: PUT IN PROGRESSION BOX 2 didn't put the chord there");
+        chordsScreen.pressPad (3, false);
+        chordsTool.reset();
+        chordsTool.setKey (songKey);
+        chordsScreen.toolChanged();
+        report << "hold menu on a chord pad: the chord plays on the touch and keeps playing under the menu; PUT IN PROGRESSION BOX n puts it there\n";
+        settle();
+    }
+
+    // ------------------------------------------------------------------ the hold menu on a song (the drawer and Home)
+    {
+        showTool (Tool::loops, false);
+        openDrawer();
+        int other = -1;
+        for (int i = 0; i < drawer.songRows(); ++i)
+            if (drawer.songIdAt (i) == idB)
+                other = i;
+        expect (other >= 0, "Song menu: song B isn't in the drawer");
+        drawer.holdRow (other);
+        expect (holdCard.isOpen() && holdCard.itemCount() == 2 && holdCard.current().title == "NAV B", "Song menu: holding a song in the drawer didn't open RENAME / DELETE");
+        const auto s = songHoldSpec (idB);
+        expect (s.items[0].text == "RENAME" && s.items[0].action != nullptr && s.items[1].text == "DELETE" && s.items[1].danger && s.items[1].enabled && s.items[1].action != nullptr,
+                "Song menu: RENAME and a red DELETE aren't both there for another song");
+        const auto cur = songHoldSpec (idA);
+        expect (! cur.items[1].enabled, "Song menu: the open song can be deleted");
+        holdCard.close();
+        settle();
+        showIdeasList();
+        ideasScreen->holdRow (0);
+        expect (holdCard.isOpen() && holdCard.itemCount() == 2, "Song menu: holding a song on Home didn't open RENAME / DELETE");
+        settle();
+        report << "hold menu on a song (drawer and Home): RENAME and a red DELETE (not for the open song)\n";
+    }
+
+    // ------------------------------------------------------------------ everything the old More list offered is in the drawer
+    {
+        const int tiles[5] = { SongDrawer::sounds, SongDrawer::macLink, SongDrawer::remote, SongDrawer::settings, SongDrawer::record };
+        const int pages[5] = { 1, 3, 2, 4, -1 };
+        for (int k = 0; k < 5; ++k)
+        {
+            showTool (Tool::loops, false);
+            openDrawer();
+            drawerTile (tiles[k]);
+            const bool ok = tiles[k] == SongDrawer::record ? page == Page::recorder : (page == Page::more && morePageShown == pages[k]);
+            expect (ok && ! drawer.isVisible(), "Drawer: tile " + juce::String (tiles[k]) + " didn't open its page");
+            goBack();
+            expect (page == Page::tool && tool == Tool::loops, "Drawer: tile " + juce::String (tiles[k]) + " has no way back to the tool");
+        }
+        expect (phoneSummary().contains ("sounds"), "Settings: the ON THIS IPHONE line is empty");
+        showTool (Tool::loops, false);
+        openDrawer();
+        drawerTile (SongDrawer::tourLesson);
+        expect (holdCard.isOpen() && holdCard.itemCount() == 2 && holdCard.current().items[0].text == "TAKE THE TOUR", "Drawer: TOUR · LESSON didn't open its small menu");
+        holdCard.choose (0);
+        expect (tour->isVisible(), "Drawer: TAKE THE TOUR didn't start the tour");
+        settle();
+        showTool (Tool::loops, false);
+        openDrawer();
+        drawerTile (SongDrawer::tourLesson);
+        holdCard.choose (1);
+        expect (lessonOn, "Drawer: SHOW ME: MAKE A BEAT didn't start the lesson");
+        settle();
+        report << "drawer: SOUNDS, RECORD A SOUND, MAC LINK, REMOTE, SETTINGS (each with a way back to the tool) and TOUR · LESSON (the tour, the lesson) are all reachable; "
+                  "the old ··· button and More list are gone\n";
+    }
+
+    // ------------------------------------------------------------------ the amber outline on the tool row
+    {
+        toolRow.stopFlash();
+        newIdea();
+        expect (! toolRow.flashing(), "Tool row: + NEW SONG outlined the tools in a demo run");
+        toolRow.flash();
+        expect (toolRow.flashing(), "Tool row: the flash is gone");
+        report << "tool row: the amber outline is a 2.8 second time stamp (and + NEW SONG doesn't start it in a demo run), so it can't stay on\n";
+        toolRow.stopFlash();
+    }
+
+    settle();
+    showIdeasList();
+    loopsScreen.setSyncJobs (false);
+    loopsScreen.setDemoMode (wasDemo);
+    juce::ignoreUnused (folder);
+    return problems.joinIntoString ("\n");
+}

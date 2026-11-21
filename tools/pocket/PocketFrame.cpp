@@ -277,7 +277,7 @@ void ToolRow::paint (juce::Graphics& g)
     for (int i = 0; i < (int) tools.size(); ++i)
     {
         auto cell = cellRect (i);
-        const bool on = i == selected;
+        const bool on = i == (sliding >= 0 ? sliding : selected);
         const auto t = tools[(size_t) i];
         const float wellW = juce::jmin (56.0f, cell.getWidth() - 4.0f);   // seven tools on a 375-point phone: 47 wide
         auto well = juce::Rectangle<float> (cell.getCentreX() - wellW * 0.5f, cell.getY() + 2, wellW, 40);
@@ -295,7 +295,7 @@ void ToolRow::paint (juce::Graphics& g)
         {
             g.setColour (col::creamDeep);
             g.fillRoundedRectangle (well, 13.0f);
-            if (glow)
+            if (flashing())
             {
                 g.setColour (col::amber);
                 g.drawRoundedRectangle (well.reduced (1.2f), 13.0f, 3.0f);
@@ -308,26 +308,57 @@ void ToolRow::paint (juce::Graphics& g)
     }
 }
 
+// The outline is a time stamp, not a flag a timer has to clear: it can only ever show for these 2.8 seconds.
 void ToolRow::flash()
 {
-    glow = true;
+    glowUntil = juce::Time::getMillisecondCounter() + 2800;
     repaint();
-    juce::Timer::callAfterDelay (2800, [safe = juce::Component::SafePointer<ToolRow> (this)]
+    juce::Timer::callAfterDelay (2850, [safe = juce::Component::SafePointer<ToolRow> (this)]
     {
         if (safe != nullptr)
-        {
-            safe->glow = false;
             safe->repaint();
-        }
     });
 }
 
-void ToolRow::mouseUp (const juce::MouseEvent& e)
+int ToolRow::cellAt (float x) const
 {
+    if (tools.empty())
+        return -1;
     for (int i = 0; i < (int) tools.size(); ++i)
-        if (cellRect (i).contains (e.position) && onSelect)
-            return onSelect (tools[(size_t) i]);
+        if (x < cellRect (i).getRight())
+            return i;
+    return (int) tools.size() - 1;
 }
+
+void ToolRow::slideStart (float x)
+{
+    sliding = cellAt (x);
+    stopFlash();
+    repaint();
+}
+
+void ToolRow::slideTo (float x)
+{
+    const int now = cellAt (x);
+    if (now != sliding)
+    {
+        sliding = now;
+        repaint();
+    }
+}
+
+void ToolRow::slideEnd (float x, float y)
+{
+    const int pick = cellAt (x);
+    sliding = -1;
+    repaint();
+    if (pick >= 0 && y > -40.0f && onSelect)   // (a finger that went well up the screen has called it off)
+        onSelect (tools[(size_t) pick]);
+}
+
+void ToolRow::mouseDown (const juce::MouseEvent& e) { slideStart (e.position.x); }
+void ToolRow::mouseDrag (const juce::MouseEvent& e) { slideTo (e.position.x); }
+void ToolRow::mouseUp (const juce::MouseEvent& e) { slideEnd (e.position.x, e.position.y); }
 
 //==============================================================================
 void CountInPanel::set (int beatInBar, int bar, int bars, const juce::String& after)
@@ -396,6 +427,7 @@ RecSetupSheet::RecSetupSheet()
     done.setFontHeight (17.0f);
     done.onClick = [this] { if (onDone) onDone(); };
     addAndMakeVisible (done);
+    setDragZone (50, true);
 }
 
 void RecSetupSheet::refresh()
@@ -424,8 +456,7 @@ void RecSetupSheet::paint (juce::Graphics& g)
 {
     g.setColour (col::cream);
     g.fillRoundedRectangle (getLocalBounds().toFloat().withTrimmedBottom (-20.0f), 22.0f);
-    g.setColour (col::rule);
-    g.fillRoundedRectangle ((float) getWidth() / 2 - 20, 8, 40, 5, 2.5f);
+    drawGrabber (g, getWidth());
     g.setColour (col::ink);
     g.setFont (condensedBold (26.0f));
     g.drawText ("Rec setup", 24, 18, 200, 36, juce::Justification::centredLeft);
@@ -448,6 +479,7 @@ HeadphonesSheet::HeadphonesSheet()
     without.onClick = [this] { if (onNoHeadphones) onNoHeadphones(); };
     addAndMakeVisible (wearing);
     addAndMakeVisible (without);
+    setDragZone (50, true);
 }
 
 juce::Rectangle<float> HeadphonesSheet::cardRect (int i) const
@@ -471,8 +503,7 @@ void HeadphonesSheet::paint (juce::Graphics& g)
 {
     g.setColour (col::cream);
     g.fillRoundedRectangle (getLocalBounds().toFloat().withTrimmedBottom (-20.0f), 22.0f);
-    g.setColour (col::rule);
-    g.fillRoundedRectangle ((float) getWidth() / 2 - 20, 8, 40, 5, 2.5f);
+    drawGrabber (g, getWidth());
 
     // headphones
     {

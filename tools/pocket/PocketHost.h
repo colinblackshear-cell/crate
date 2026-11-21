@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "PocketHold.h"
 #include "PocketLinkClient.h"
 #include "PocketRoute.h"
 
@@ -19,7 +20,13 @@ struct PocketHost
     // TO MAC: the Send to Mac sheet, for one saved sound (with its effects), or for anything else.
     virtual void sendSoundToMac (const juce::String& soundId, const juce::String& dest = "sounds") = 0;
     virtual void sendToMac (pocket::MacSend) = 0;
-    virtual void openMacLink() = 0;                        // More > Mac link
+    virtual void openMacLink() = 0;                        // the menu's MAC LINK
+    // Press and hold: opens the hold menu card next to the finger (`at`) over a dim that keeps `highlight` bright.
+    // Both are in `source`'s coordinates.
+    virtual void holdMenu (const pocket::HoldSpec&, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight) = 0;
+    // A note with one button on it (UNDO), for a few seconds.
+    virtual void toastAction (const juce::String& text, const juce::String& button, std::function<void()> then) = 0;
+    virtual void openSamplePage (int pad) = 0;             // the pad's sound in the sound recorder (trim, effects, chop)
     // Play/Stop for the whole song (the thumb bar's button): loops, else the pad pattern, else the drum machine.
     virtual void togglePlay() = 0;
     // The pad sample page: the Record tab edited the sound a pad plays and saved it. Every pad playing

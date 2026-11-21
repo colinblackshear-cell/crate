@@ -38,8 +38,7 @@ void SoundBankSheet::paint (juce::Graphics& g)
 {
     g.setColour (col::cream);
     g.fillRoundedRectangle (getLocalBounds().toFloat().withTrimmedBottom (-20.0f), 22.0f);
-    g.setColour (col::rule);
-    g.fillRoundedRectangle ((float) getWidth() / 2 - 20, 6, 40, 5, 2.5f);
+    pocket::drawGrabber (g, getWidth());
     g.setColour (col::ink);
     g.setFont (condensedBold (24.0f));
     g.drawText ("Factory kits", 18, 14, 200, 36, juce::Justification::centredLeft);

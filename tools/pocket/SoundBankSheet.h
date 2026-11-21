@@ -1,11 +1,12 @@
 #pragma once
 
 #include "PocketFactory.h"
+#include "PocketSheet.h"
 #include "PocketTheme.h"
 
 // SOUNDS on Beats > MPC Pads: the factory kits (LOAD puts one on the bank), and where your own sounds
 // come from (the Files app's Drop Sounds Here folder, Import from Files, or the Mac).
-class SoundBankSheet : public juce::Component
+class SoundBankSheet : public pocket::DragSheet
 {
 public:
     SoundBankSheet();

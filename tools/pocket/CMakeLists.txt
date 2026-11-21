@@ -39,6 +39,9 @@ target_sources(KaleidoboxPocket PRIVATE
     BeatsEngine.cpp
     BeatsScreen.cpp
     PadSheet.cpp
+    PocketHold.cpp
+    PocketSheet.cpp
+    PocketDrawer.cpp
     PocketAudio.cpp
     PocketKit.cpp
     PocketLibrary.cpp
@@ -74,6 +77,7 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketBoards.cpp
     EffectsScreen.cpp
     PocketAppEffects.cpp
+    PocketAppNav.cpp
     ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
     ${VOCODER_SOURCES})
 

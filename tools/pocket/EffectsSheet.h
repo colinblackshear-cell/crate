@@ -1,11 +1,12 @@
 #pragma once
 
 #include "PocketLibrary.h"
+#include "PocketSheet.h"
 #include "PocketTheme.h"
 #include "PocketWave.h"
 
 // The bottom sheet: nine effect knobs on top, chopping below.
-class EffectsSheet : public juce::Component
+class EffectsSheet : public pocket::DragSheet
 {
 public:
     EffectsSheet();

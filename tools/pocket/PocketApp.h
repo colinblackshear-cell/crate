@@ -7,6 +7,8 @@
 #include "LinkScreens.h"
 #include "LoopsScreen.h"
 #include "PadSheet.h"
+#include "PocketDrawer.h"
+#include "PocketHold.h"
 #include "PocketAudio.h"
 #include "PocketFrame.h"
 #include "PocketHost.h"
@@ -26,10 +28,12 @@
 #include "PocketIntro.h"
 #include "PocketLesson.h"
 
-// The whole phone app, tool first: a slim header (the song, the bar and where the next take goes, the Mac
-// link, ···), the tool on screen, the thumb bar (BPM, CLICK, REC, PLAY, UNDO) and the tool row (LOOPS,
+// The whole phone app, tool first: a slim header (the menu icon and the song, the bar and where the next take goes,
+// the Mac link), the tool on screen, the thumb bar (BPM, CLICK, REC, PLAY, UNDO) and the tool row (LOOPS,
 // DRUMS, PADS, SYNTH, CHORDS, VOCODER, EFFECTS). REC records whatever tool is on screen onto the next empty loop layer, in time.
-// Your songs, the sound recorder, every vocoder setting and the More pages are pages without the thumb bar.
+// Your songs, the sound recorder, every vocoder setting and the pages the drawer opens (Sounds, Remote, Mac link,
+// Settings) are pages without the thumb bar. The song drawer slides in from the left (menu icon, the song's name, or a
+// swipe from the left edge). A long press on a loop layer, a pad, a chord pad or a song opens a hold menu.
 class PocketApp : public juce::Component, private PocketHost
 {
 public:
@@ -45,6 +49,8 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
     // Screenshot mode: fills a demo library, then writes one PNG per screen into `folder`.
@@ -85,12 +91,15 @@ private:
     };
     KeyboardDismisser keyboardDismisser;
 
-    class MoreScreen;
     class SettingsScreen;
     class Toast;
+    void hideToast();
+    bool toastHasAction() const;
+    void pressToastAction();
     class Dim;
 
     // What's on screen: a tool (with the thumb bar), or one of the pages around them.
+    // (more: Sounds, Remote, Mac link or Settings, whichever morePageShown says)
     enum class Page { songs, tool, recorder, vocoderSettings, more };
     using Tool = pocket::Tool;
 
@@ -106,6 +115,9 @@ private:
     void sendSoundToMac (const juce::String& soundId, const juce::String& dest) override;
     void sendToMac (pocket::MacSend) override;
     void openMacLink() override;
+    void holdMenu (const pocket::HoldSpec&, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight) override;
+    void toastAction (const juce::String& text, const juce::String& button, std::function<void()> then) override;
+    void openSamplePage (int pad) override;
     void togglePlay() override;
     void padSoundEdited (const juce::String& soundId) override;
     void backToPads (int pad) override;
@@ -124,7 +136,8 @@ private:
 
     //==========================================================================
     // Pages and tools
-    void showPage (Page, int morePage = 0);   // morePage: 0 list, 1 sounds, 2 remote, 3 mac link, 4 settings
+    void showPage (Page, int morePage = 0);   // morePage: 1 sounds, 2 remote, 3 mac link, 4 settings
+    void goBack();                            // from Sounds, Remote, Mac link, Settings or the recorder: where you were
     void showTool (Tool, bool askMic = true);
     void showIdeasList() { showPage (Page::songs); }
     bool thumbShown() const { return page == Page::tool; }
@@ -141,7 +154,17 @@ private:
     void renameIdea (const juce::String& id);
     void deleteIdea (const juce::String& id);
     void makeABeat();        // Your songs' MAKE A BEAT: a new song with an empty grid, and the lesson
-    void lessonFromMore();   // More > Show me: make a beat
+    void lessonFromMenu();   // the drawer's TOUR · LESSON > Show me: make a beat
+    juce::String phoneSummary() const;   // "8 sounds · 3 loop layers in this song · 12 MB", on Settings
+    juce::Rectangle<float> menuRect() const;
+    void openDrawer();
+    void closeDrawer();
+    void pickSong (const juce::String& id);          // a song in the drawer: switch to it and stay on the tool
+    void playFromDrawer (const juce::String& id);
+    void drawerTile (int tile);
+    pocket::HoldSpec songHoldSpec (const juce::String& id);
+    void swipeTool (int direction);                   // the header bar: the previous (-1) or next (+1) tool
+    bool edgeSwipeAllowed (juce::Point<float> inApp) const;
     void playIdea (const juce::String& id);
 
     //==========================================================================
@@ -223,7 +246,6 @@ private:
     void closeSendSheet();
     void linkChanged();
     juce::Rectangle<float> chipRect() const;
-    juce::Rectangle<float> moreRect() const;
     juce::Rectangle<float> lcdRect() const;
     juce::Rectangle<float> backRect() const;
     bool remoteShowing() const;
@@ -242,11 +264,13 @@ private:
     juce::Rectangle<int> recSetupBounds() const;
     juce::Rectangle<int> headphonesBounds() const;
     void showMorePage (int);
+    void applyAnimate();
     void layoutSheet (bool shown);
     void closeAllSheets();
     void savePng (const juce::File&);
     juce::String runRecChecks (juce::String& report);
     juce::String runLoopEditChecks (juce::String& report);
+    juce::String runNavigationChecks (juce::String& report, const juce::File& folder);
 
     struct PocketLook : juce::LookAndFeel_V4 { PocketLook(); juce::Font getPopupMenuFont() override; juce::Font getTextButtonFont (juce::TextButton&, int) override; };
     PocketLook look;
@@ -281,8 +305,9 @@ private:
     std::unique_ptr<MacLinkScreen> macLink;
     std::unique_ptr<SendToMacSheet> sendSheet;
     std::unique_ptr<SettingsScreen> settings;
-    std::unique_ptr<MoreScreen> more;
     std::unique_ptr<IdeasScreen> ideasScreen;
+    SongDrawer drawer { ideas, link };
+    pocket::HoldMenu holdCard;
     std::unique_ptr<TitleScreen> title;
     std::unique_ptr<TourOverlay> tour;
     // The Make a beat lesson: a coach card over DRUMS (see PocketLesson.h)
@@ -317,7 +342,31 @@ private:
     void loadSong();
     void saveSong();
 
+    // A finger that starts within 22 px of the left edge and pulls right drags the drawer out (a watcher on every touch,
+    // so nothing underneath loses its drag; the SYNTH keys and the sheets are left alone).
+    struct EdgeWatcher : juce::MouseListener
+    {
+        explicit EdgeWatcher (PocketApp& a) : app (a) {}
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void begin (juce::Point<float> inApp, int sourceIndex);   // (what the three above do, and the self-checks)
+        void move (juce::Point<float> inApp, int sourceIndex);
+        void end (int sourceIndex);
+        PocketApp& app;
+        bool tracking = false, dragging = false;
+        int source = -1;
+        juce::Point<float> start;
+        float lastX = 0.0f, prevX = 0.0f;
+        juce::uint32 lastT = 0, prevT = 0;
+    };
+    EdgeWatcher edgeWatcher { *this };
+    bool headerDown = false, headerSwiped = false;
+    juce::Point<float> headerStart;
+
     Page page = Page::songs;
+    Page backPage = Page::songs;   // where Sounds, Remote, Mac link, Settings and the recorder go back to
+    Tool backTool = Tool::pads;
     Tool tool = Tool::pads;
     int morePageShown = -1;
     bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false, bankOpen = false, recSetupOpen = false, phonesOpen = false;

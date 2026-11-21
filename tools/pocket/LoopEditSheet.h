@@ -2,6 +2,7 @@
 
 #include "PocketLoopTools.h"
 #include "PocketLooper.h"
+#include "PocketSheet.h"
 #include "PocketTheme.h"
 
 // The loop editor (a layer's IN / OUT, QUANTIZE or FIT, EFFECTS): two pages under the layer's wave, which stays
@@ -13,7 +14,7 @@
 //    50% / 100% and SWING re-render it from its notes. HALF, DOUBLE, REVERSE and UNDO.
 //  EFFECTS: five knobs (volume, filter, delay, reverb, drive) and REC MOVES, which records the knobs turning as
 //    the loop plays and plays the moves back every pass.
-class LoopEditSheet : public juce::Component, private juce::Timer
+class LoopEditSheet : public pocket::DragSheet, private juce::Timer
 {
 public:
     enum Edit { trim, half, twice, reverse };
