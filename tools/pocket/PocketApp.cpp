@@ -31,13 +31,13 @@ juce::Font PocketApp::PocketLook::getTextButtonFont (juce::TextButton&, int) { r
 class PocketApp::MoreScreen : public juce::Component
 {
 public:
-    static constexpr int kRows = 6;
+    static constexpr int kRows = 7;
     MoreScreen (Library& l, LinkClient& c, std::function<int()> loopLayerCount) : lib (l), link (c), loopLayers (std::move (loopLayerCount)) {}
     std::function<void (int)> onOpen;   // the row: 0 record a sound, 1 sounds, 2 remote, 3 mac link, 4 settings, 5 the tour
 
     void paint (juce::Graphics& g) override
     {
-        static const char* titles[kRows] = { "RECORD A SOUND", "SOUNDS", "REMOTE", "MAC LINK", "SETTINGS", "TAKE THE TOUR" };
+        static const char* titles[kRows] = { "RECORD A SOUND", "SOUNDS", "REMOTE", "MAC LINK", "SETTINGS", "TAKE THE TOUR", "SHOW ME: MAKE A BEAT" };
         const int n = (int) lib.items().size();
         const bool linked = link.isLinked();
         const auto mac = link.getMacName();
@@ -49,7 +49,8 @@ public:
                    : link.getStatus() == LinkClient::Status::connecting ? U8("Linking to ") + mac + U8("…")
                                                                         : U8("Not linked · link to your Mac on this Wi-Fi"),
             U8("Rec setup (count-in, take length) and the click"),
-            U8("Seven stops round the tools · two minutes") };
+            U8("Seven stops round the tools · two minutes"),
+            U8("Four steps: kick, snare, hats, REC. You tap every hit yourself; nothing is pre-made") };
         for (int i = 0; i < kRows; ++i)
         {
             auto r = rowBounds (i);
@@ -139,6 +140,8 @@ private:
             g.drawRoundedRectangle (c.x - 15, c.y - 5, 17, 10, 5.0f, 2.6f);
             g.drawRoundedRectangle (c.x - 2, c.y - 5, 17, 10, 5.0f, 2.6f);
         }
+        else if (i == 6)
+            drawToolIcon (g, Tool::drums, c, col::amber);
         else if (i == 5)
         {
             for (int k = 0; k < 6; ++k)
@@ -306,12 +309,13 @@ PocketApp::PocketApp (Options o)
     {
         if (row == 0) openRecorder();
         else if (row == 5) startTour();
+        else if (row == 6) lessonFromMore();
         else showPage (Page::more, row);
     };
     ideasScreen = std::make_unique<IdeasScreen> (ideas);
     ideasScreen->onOpen = [this] (const juce::String& id) { openIdea (id); };
     ideasScreen->onNew = [this] { newIdea(); };
-    ideasScreen->onNewBeat = [this] { newSongWithBeat(); };
+    ideasScreen->onNewBeat = [this] { makeABeat(); };
     ideasScreen->onNewKit = [this] { newSongWithKit(); };
     ideasScreen->onPlay = [this] (const juce::String& id) { playIdea (id); };
     ideasScreen->isPlaying = [this] (const juce::String& id) { return id == ideas.current().id && beats.engine().clockRunning(); };
@@ -408,6 +412,15 @@ PocketApp::PocketApp (Options o)
     };
     tempoSheet.onDone = [this] { closeTempo(); };
     beats.clickWanted = [this] { return appSettings.click; };
+    beats.inCountIn = [this] { return recView().kind == RecView::counting; };
+    beats.onDrumModeChanged = [this] { if (lessonOn && beats.drumMode() != 0) endLesson(); };
+    lesson = std::make_unique<BeatLesson>();
+    lesson->onPhase = [this] (int phase) { applyLessonPhase (phase); };
+    lesson->onEnd = [this] { endLesson(); };
+    lesson->onAddTool = [this] { endLesson(); toolRow.flash(); toast ("Pick another tool, then press REC: it lands on the next layer."); };
+    lesson->onPressRec = [this] { recPressed(); };
+    lesson->recSpot = [this] { return getLocalArea (&thumb, thumb.buttonRect (ThumbBar::rec).toNearestInt()); };
+    lesson->nextLayerNumber = [this] { return loopsScreen.nextLayer() + 1; };
     loopsScreen.onSourceChanged = [this] { applyMic(); };
     loopsScreen.engine().setCountInBars (appSettings.countInBars);
     headerTick.startTimerHz (15);
@@ -447,6 +460,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (countPanel);
     addChildComponent (thumb);
     addChildComponent (toolRow);
+    addChildComponent (*lesson);
     addChildComponent (*dim);
     addChildComponent (sheet);
     addChildComponent (padSheet);
@@ -500,6 +514,8 @@ void PocketApp::toast (const juce::String& t)
 // Pages and tools
 void PocketApp::showPage (Page p, int morePage)
 {
+    if (lessonOn && ! (p == Page::tool && tool == Tool::drums))
+        endLesson();   // leaving DRUMS ends the lesson
     if (sheetOpen)
         closeSheet();
     closePadSheet();
@@ -1002,13 +1018,25 @@ void PocketApp::deleteIdea (const juce::String& id)
     }), true);
 }
 
-void PocketApp::newSongWithBeat()
+// MAKE A BEAT: a new song with an empty grid, DRUMS open, and the lesson walking through it.
+void PocketApp::makeABeat()
 {
     switchIdea (ideas.create (ideas.nextName()));
-    beats.fillStarterBeat();
-    showTool (Tool::pads);
-    togglePlay();
-    toast ("A ready beat on the Street kit. Play the pads over it, or press REC to add your own hits.");
+    startLesson();
+}
+
+// More > Show me: make a beat. A song that is still empty is used as it is; a song with a beat or layers
+// stays safe, and the lesson starts a new one.
+void PocketApp::lessonFromMore()
+{
+    auto& data = beats.drums();
+    bool hasDrums = false;
+    for (auto& pair : data.patterns)
+        for (auto& p : pair)
+            hasDrums = hasDrums || ! p.isEmpty();
+    if (hasDrums || loopsScreen.layerCount() > 0 || ! data.padPattern.hits.empty())
+        switchIdea (ideas.create (ideas.nextName()));
+    startLesson();
 }
 
 void PocketApp::newSongWithKit()
@@ -1044,6 +1072,7 @@ void PocketApp::togglePlay()
         lockWatch.stopTimer();
         lockKind = LockKind::none;
         beats.setRecordingPads (false);
+        beats.setRecordingDrums (false);
         l.setTransport (false);
         b.setPlaying (false);
         b.setPatternPlaying (false);
@@ -1068,7 +1097,7 @@ void PocketApp::togglePlay()
 
 void PocketApp::applyClick()
 {
-    beats.engine().setClick (appSettings.click || beats.recordingPads());
+    beats.engine().setClick (appSettings.click || beats.recordingPads() || beats.recordingDrums() || lessonClick);
 }
 
 //==============================================================================
@@ -1311,7 +1340,7 @@ void PocketApp::thumbPressed (int button)
 
 bool PocketApp::recBusy() const
 {
-    return lockKind == LockKind::pads || loopsScreen.busyLayer() >= 0 || beats.recordingPads();
+    return playingIn() || loopsScreen.busyLayer() >= 0 || beats.recordingPads();
 }
 
 void PocketApp::recPressed()
@@ -1338,12 +1367,13 @@ void PocketApp::recPressed()
 
 void PocketApp::stopRec()
 {
-    if (lockKind == LockKind::pads && ! lockArmed)
+    if (playingIn())
     {
         // Still playing hits into the pattern: stop there. What's in the pattern stays.
         lockWatch.stopTimer();
         lockKind = LockKind::none;
         beats.setRecordingPads (false);
+        beats.setRecordingDrums (false);
         applyClick();
         toast ("Stopped. The hits you played stay in the pattern; REC again puts it on a layer.");
         return;
@@ -1367,20 +1397,51 @@ void PocketApp::recVocoder()
 
 void PocketApp::recDrums()
 {
-    // What the drum machine plays, from a bar line (every bar is the drum pattern's start). Once the layer
-    // plays, the live drum machine stops so the two don't double.
     auto& b = beats.engine();
     const int layer = loopsScreen.nextLayer();
     if (layer < 0)
         return toast ("All 8 layers are used. Clear one in LOOPS to record.");
-    if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, appSettings.recBars()))
+    auto& data = beats.drums();
+    const bool live = beats.drumMode() == 1;
+
+    if (! live)
+    {
+        // STEPS: what the drum machine plays, from a bar line (every bar is the drum pattern's start). Once the
+        // layer plays, the live drum machine stops so the two don't double.
+        if (data.patterns[(size_t) data.slot][0].isEmpty() && data.patterns[(size_t) data.slot][1].isEmpty())
+            return toast ("The drum grid is empty. Tap some boxes, or switch to PLAY LIVE and press REC to drum it in.");
+        if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, appSettings.recBars()))
+            return;
+        if (! b.isPlaying())
+            b.setPlaying (true);
+        lockKind = LockKind::drums;
+        lockLayer = layer;
+        lockArmed = true;
+        lockWatch.startTimer (20);
         return;
+    }
+
+    // PLAY LIVE: like the pads. The drum machine loops its pattern; pads you hit sound at once and go into the
+    // pattern on the nearest step. After a pass the pattern is locked onto the next layer from its start (the
+    // layer records the drum machine, so it holds exactly what STEPS shows), and the live machine then stops.
+    const double stepLen = crate::drums::stepBeats (data.settings.stepRate);
+    lockLen = juce::jmax (1.0, data.edited().length * stepLen);
+    const int patBars = juce::jmax (1, (int) std::ceil (lockLen / 4.0 - 1.0e-6));
+    lockBars = appSettings.recBars() > 0 ? juce::jmax (appSettings.recBars(), patBars) : patBars;
+    const bool running = b.clockRunning();
+    const double now = running ? b.clockBeat() : 0.0;
+    padsFrom = running ? now : appSettings.countInBars * 4.0;   // the clock starts at 0: the count-in comes first
+    // a whole pass to play into, then the arming beat (the one before the layer's start)
+    lockStart = std::ceil ((padsFrom + lockLen + 1.0) / lockLen - 1.0e-9) * lockLen;
     if (! b.isPlaying())
         b.setPlaying (true);
-    lockKind = LockKind::drums;
-    lockLayer = layer;
-    lockArmed = true;
+    beats.setRecordingDrums (true, padsFrom);
+    lockKind = LockKind::drumsLive;
+    lockArmed = false;
+    lockLayer = -1;
     lockWatch.startTimer (20);
+    toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in") + ": they go in the pattern. Then it goes on layer "
+           + juce::String (layer + 1) + " and keeps looping.");
 }
 
 void PocketApp::recPads()
@@ -1424,6 +1485,7 @@ void PocketApp::lockWatchTick()
         lockWatch.stopTimer();
         lockKind = LockKind::none;
         beats.setRecordingPads (false);
+        beats.setRecordingDrums (false);
         applyClick();
         if (why.isNotEmpty())
             toast (why);
@@ -1431,6 +1493,33 @@ void PocketApp::lockWatchTick()
     if (lockKind == LockKind::none)
         return cancel ({});
 
+    if (! lockArmed && lockKind == LockKind::drumsLive)
+    {
+        if (! b.isPlaying())
+            return cancel ("Recording called off");
+        if (! b.clockRunning())
+            return;
+        const double beat = b.clockBeat();
+        if (beat >= lockStart - 0.3)
+            lockStart += lockLen;   // too close to arm in time: the start after
+        else if (beat >= lockStart - 1.0)
+        {
+            // the beat before the pattern's start: arm, so the layer starts on that bar line
+            auto& data = beats.drums();
+            if (data.patterns[(size_t) data.slot][0].isEmpty() && data.patterns[(size_t) data.slot][1].isEmpty())
+                return cancel ("No drum hits went in. Press REC and hit the pads after the count-in.");
+            const int layer = loopsScreen.nextLayer();
+            if (layer < 0)
+                return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
+            if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars))
+                return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            lockLayer = layer;
+            lockArmed = true;
+            beats.setRecordingDrums (false);
+            applyClick();
+        }
+        return;
+    }
     if (! lockArmed)
     {
         if (! b.patternPlaying())
@@ -1464,12 +1553,15 @@ void PocketApp::lockWatchTick()
     {
         lockWatch.stopTimer();
         const bool pads = lockKind == LockKind::pads;
+        const bool drumTake = lockKind == LockKind::drums || lockKind == LockKind::drumsLive;
         lockKind = LockKind::none;
         loops.setTransport (true);     // the loop keeps the clock going once the pattern stops
         b.setPatternPlaying (false);
         b.setPlaying (false);
         applyClick();
         beats.refreshPads();
+        if (lessonOn && drumTake)
+            lesson->showLanded (lockLayer + 1);
         toast ((pads ? "Beat locked on layer " : "Drums on layer ") + juce::String (lockLayer + 1) + ". It keeps looping. Next: another tool, then REC.");
     }
     else if (st == pocket::LoopState::empty)
@@ -1495,7 +1587,7 @@ PocketApp::RecView PocketApp::recView() const
     auto barText = [] (double rel) { rel = juce::jmax (0.0, rel); return juce::String ((int) std::floor (rel / 4.0) + 1) + "." + juce::String ((int) std::fmod (std::floor (rel), 4.0) + 1); };
 
     const int busy = loopsScreen.busyLayer();
-    const bool padsPass = lockKind == LockKind::pads && ! lockArmed;
+    const bool padsPass = playingIn();
     const int layer = busy >= 0 ? busy : (padsPass ? loopsScreen.nextLayer() : loopsScreen.nextLayer());
     int bars = appSettings.recBars();
     if (busy >= 0)
@@ -1514,7 +1606,7 @@ PocketApp::RecView PocketApp::recView() const
         v.countBars = juce::jmax (1, (int) std::ceil (countEnd / 4.0 - 1.0e-6));
         v.left = "COUNT " + juce::String (v.countBeat + 1);
         if (padsPass)
-            v.after = U8("THEN PLAY THE PADS \xc2\xb7 ") + lengthLabel (lockBars) + U8(" \xc2\xb7 THEN LAYER ") + juce::String (layer + 1);
+            v.after = (lockKind == LockKind::drumsLive ? U8("THEN HIT THE PADS \xc2\xb7 ") : U8("THEN PLAY THE PADS \xc2\xb7 ")) + lengthLabel (lockBars) + U8(" \xc2\xb7 THEN LAYER ") + juce::String (layer + 1);
         else
             v.after = bars > 0 ? "THEN " + lengthLabel (bars) + " ON LAYER " + juce::String (layer + 1) + U8(" \xc2\xb7 STOPS BY ITSELF")
                                : "THEN LAYER " + juce::String (layer + 1) + U8(" \xc2\xb7 STOP ENDS IT");
@@ -1527,7 +1619,7 @@ PocketApp::RecView PocketApp::recView() const
     else if (padsPass)
     {
         v.kind = RecView::padsPass;
-        v.left = "PADS " + barText (std::fmod (juce::jmax (0.0, beat), lockLen));
+        v.left = (lockKind == LockKind::drumsLive ? juce::String ("DRUMS ") : juce::String ("PADS ")) + barText (std::fmod (juce::jmax (0.0, beat), lockLen));
     }
     else if (busy >= 0)
     {
@@ -1548,6 +1640,8 @@ void PocketApp::headerTickNow()
         shownHeader = text;
         repaint (lcdRect().expanded (2).toNearestInt());
     }
+    if (lessonOn)
+        lesson->setRecBusy (recBusy());
     const bool busy = recBusy(), playing = beats.engine().clockRunning();
     if (busy != shownBusy || playing != shownPlaying)
     {
@@ -1770,6 +1864,69 @@ void PocketApp::resized()
     toastBox->setBounds (24, content.getBottom() - 60, w - 48, 52);
     title->setBounds (0, 0, w, h);
     tour->setBounds (0, 0, w, h);
+    lesson->setBounds (0, 0, w, h);
+    layoutLesson();
+}
+
+//==============================================================================
+// The Make a beat lesson
+void PocketApp::startLesson()
+{
+    showTitle (false);
+    closeAllSheets();
+    tour->setVisible (false);
+    showTool (Tool::drums, false);
+    beats.setDrumMode (0);          // STEPS: the lesson talks about the big step boxes
+    lessonOn = true;
+    beats.setLessonLayout (true, BeatLesson::kCardHeight + 6);
+    layoutLesson();
+    lesson->setVisible (true);
+    lesson->toFront (false);
+    lesson->begin();
+}
+
+void PocketApp::endLesson()
+{
+    if (! lessonOn)
+        return;
+    lessonOn = false;
+    lessonClick = false;
+    lesson->setVisible (false);
+    beats.setGuide (-1, 0);
+    beats.setLessonLayout (false);
+    applyClick();
+    headerTickNow();
+}
+
+void PocketApp::layoutLesson()
+{
+    const int h = BeatLesson::kCardHeight;
+    lesson->setCardBounds ({ 12, thumb.getY() - 6 - h, getWidth() - 24, h });
+    if (lessonOn)
+        beats.setLessonLayout (true, h + 6);
+}
+
+// What each step of the lesson sets up on the real screen. Only glows: nothing is ever written for the player.
+void PocketApp::applyLessonPhase (int phase)
+{
+    auto& b = beats.engine();
+    lessonClick = phase != BeatLesson::landed;
+    if (phase == BeatLesson::kick || phase == BeatLesson::snare || phase == BeatLesson::hats)
+    {
+        // the pattern loops with the click, so every box tapped is heard in the loop
+        if (! b.isPlaying())
+            b.setPlaying (true);
+        const int voice = phase == BeatLesson::kick ? 0 : phase == BeatLesson::snare ? 1 : 9;
+        const juce::uint32 mask = phase == BeatLesson::kick ? ((1u << 0) | (1u << 10))
+                                : phase == BeatLesson::snare ? ((1u << 4) | (1u << 12)) : 0x5555u;
+        beats.selectVoice (voice);
+        beats.setGuide (voice, mask);
+    }
+    else
+        beats.setGuide (-1, 0);
+    applyClick();
+    thumb.repaint();
+    headerTickNow();
 }
 
 //==============================================================================
@@ -1783,6 +1940,7 @@ void PocketApp::showTitle (bool shown)
 
 void PocketApp::startTour()
 {
+    endLesson();
     showTitle (false);
     closeAllSheets();
     tour->setBounds (getLocalBounds());
@@ -1973,7 +2131,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("03d-loop-editor.png"));
     loopsScreen.leave();
 
-    // DRUMS: the drum machine with a beat in it
+    // DRUMS: the drum machine with a beat in it (a new song's grid is empty: this one is filled for the picture)
+    beats.fillDemoDrums();
     beats.drums().variation = 2;
     beats.drums().bpm = 97.0;
     beats.drums().settings.swing = 0.16f;
@@ -1986,7 +2145,14 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     beats.selectVoice (0);
     beats.setDemoStep (4);
     savePng (folder.getChildFile ("04-tool-drums.png"));
+    beats.selectVoice (1);
+    beats.setDemoStep (8);
+    savePng (folder.getChildFile ("04a-drums-steps-snare.png"));   // another row picked from the overview
     beats.setDemoStep (-1);
+    beats.setDrumMode (1);
+    savePng (folder.getChildFile ("04b-drums-play-live.png"));
+    beats.setDrumMode (0);
+    beats.selectVoice (0);
 
     // PADS: a demo kit, then a pattern, the pad sheet, the sound bank and the pad's sample page
     beats.fillDemoKit();
@@ -2087,6 +2253,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         problems.add ("Sound: " + why);
     if (const auto why = beats.selfCheckPattern(); why.isNotEmpty())
         problems.add ("Pad pattern: " + why);
+    if (const auto why = beats.selfCheckLive(); why.isNotEmpty())
+        problems.add ("Drums: " + why);
 
     // Ideas: each keeps its own pads and beat
     {
@@ -2097,7 +2265,13 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         switchIdea (check);
         const int emptyPads = beats.kit().usedPads();
         const auto emptyHits = beats.drums().padPattern.hits.size();
+        bool emptyDrums = true;
+        for (auto& pair : beats.drums().patterns)
+            for (auto& p : pair)
+                emptyDrums = emptyDrums && p.isEmpty();
         switchIdea (first);
+        if (! emptyDrums)
+            problems.add ("Ideas: a new idea's drum machine was not empty (no pre-made beat)");
         if (emptyPads != 16 || emptyHits != 0)
             problems.add ("Ideas: a new idea didn't start with the Street kit (" + juce::String (emptyPads) + " of 16 pads) and an empty beat");
         if (beats.kit().usedPads() != pads || beats.drums().padPattern.hits.size() != hits)
@@ -2170,8 +2344,40 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         togglePlay();
     }
 
+    // MAKE A BEAT: a new song with an empty grid, and the lesson on DRUMS (steps 1, 2, 4 and the last card)
+    {
+        showIdeasList();
+        switchIdea (ideas.create (ideas.nextName()));   // (what MAKE A BEAT does first)
+        {
+            std::vector<float> l (512), r (512);
+            for (int i = 0; i < 40; ++i)
+                loopsScreen.engine().render (l.data(), r.data(), 512);   // the empty layers reach the engine and settle
+        }
+        startLesson();
+        toastBox->setVisible (false);
+        savePng (folder.getChildFile ("04c-lesson-1-kick.png"));
+        beats.tapStep (0);
+        beats.tapStep (10);
+        lesson->goTo (BeatLesson::snare);
+        toastBox->setVisible (false);
+        savePng (folder.getChildFile ("04d-lesson-2-snare.png"));
+        beats.tapStep (4);
+        beats.tapStep (12);
+        lesson->goTo (BeatLesson::hats);
+        toastBox->setVisible (false);
+        savePng (folder.getChildFile ("04e-lesson-3-hats.png"));
+        lesson->goTo (BeatLesson::rec);
+        toastBox->setVisible (false);
+        savePng (folder.getChildFile ("04f-lesson-4-rec.png"));
+        lesson->showLanded (1);
+        toastBox->setVisible (false);
+        savePng (folder.getChildFile ("04g-lesson-done.png"));
+        endLesson();
+        stopEverything();
+    }
+
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport
@@ -2268,17 +2474,61 @@ juce::String PocketApp::runRecChecks (juce::String& report)
             problems.add ("REC on LOOPS: the mic take is silent");
     }
 
-    // DRUMS: what the drum machine plays; afterwards the live drum machine stops (no doubling)
-    showTool (Tool::drums, false);
-    want = loopsScreen.nextLayer();
-    recPressed();
-    if (want != 1 || ! waitPlaying (1, 6))
-        problems.add ("REC on DRUMS: no take landed on layer 2");
-    else
+    // DRUMS, through the Make a beat lesson: the glowing hints write nothing, the player's own taps do, and
+    // REC puts what the drum machine plays on layer 2. Afterwards the live drum machine stops (no doubling).
     {
-        checkTake ("DRUMS", 1, 8.0, 4.0);
-        if (b.isPlaying())
-            problems.add ("REC on DRUMS: the live drum machine kept playing over its own layer");
+        auto drumHits = [this] (int voice)
+        {
+            juce::String steps;
+            for (int st = 0; st < 16; ++st)
+                if (beats.drums().patterns[(size_t) beats.drums().slot][0].hits[(size_t) voice][(size_t) st] > 0)
+                    steps << (steps.isEmpty() ? "" : ",") << (st + 1);
+            return steps;
+        };
+        auto gridEmpty = [this]
+        {
+            for (auto& pair : beats.drums().patterns)
+                for (auto& p : pair)
+                    if (! p.isEmpty())
+                        return false;
+            return true;
+        };
+        startLesson();
+        bool hintWrote = ! gridEmpty();
+        for (int ph = 0; ph < 4; ++ph)
+        {
+            lesson->goTo (ph);
+            hintWrote = hintWrote || ! gridEmpty();
+        }
+        report << "lesson: the hints alone wrote " << (hintWrote ? "steps (wrong)" : "nothing") << "\n";
+        if (hintWrote)
+            problems.add ("Lesson: suggested steps were written into the grid without a tap");
+        lesson->goTo (BeatLesson::kick);
+        beats.tapStep (0);
+        beats.tapStep (10);
+        lesson->goTo (BeatLesson::snare);
+        beats.tapStep (4);
+        beats.tapStep (12);
+        lesson->goTo (BeatLesson::rec);
+        const auto kickSteps = drumHits (0), snareSteps = drumHits (1), hatSteps = drumHits (9);
+        report << "lesson: tapped kick " << kickSteps << ", snare " << snareSteps << ", hats [" << hatSteps << "]\n";
+        if (kickSteps != "1,11" || snareSteps != "5,13" || hatSteps.isNotEmpty())
+            problems.add ("Lesson: the grid has kick " + kickSteps + ", snare " + snareSteps + ", hats " + hatSteps + " (only the 4 tapped boxes belong)");
+        want = loopsScreen.nextLayer();
+        recPressed();
+        if (want != 1 || ! waitPlaying (1, 6))
+            problems.add ("REC on DRUMS: no take landed on layer 2");
+        else
+        {
+            checkTake ("DRUMS", 1, 8.0, 4.0);
+            if (b.isPlaying())
+                problems.add ("REC on DRUMS: the live drum machine kept playing over its own layer");
+            if (lesson->phase() != BeatLesson::landed || lesson->landedLayer() != 2)
+                problems.add ("Lesson: after the take landed the card did not say layer 2 (phase " + juce::String (lesson->phase()) + ")");
+            if (takePeak (1) < 0.05f)
+                problems.add ("REC on DRUMS: the beat made by hand is silent on its layer");
+        }
+        endLesson();
     }
 
     // PADS with a pattern: it locks from the pattern's start
@@ -2330,6 +2580,62 @@ juce::String PocketApp::runRecChecks (juce::String& report)
     else
         report << "UNDO: took layer 5 off\n";
     togglePlay();   // stop
+    pump (2048);
+
+    // PLAY LIVE: REC from a stopped song counts in, hits go in the pattern on the nearest step (not during the
+    // count-in), then the pattern lands on layer 1 and the live machine stops.
+    switchIdea (ideas.create ("Live check"));
+    appSettings.countInBars = 1;
+    appSettings.recLength = 0;   // 1 bar
+    L.setCountInBars (1);
+    appSettings.click = false;
+    applyClick();
+    silentInput = true;
+    pump (2048);
+    showTool (Tool::drums, false);
+    beats.setDrumMode (1);
+    {
+        const bool emptyAtStart = beats.drums().edited().isEmpty();
+        recPressed();
+        pump (barSamples / 2);
+        const bool counting = recView().kind == RecView::counting;
+        const int duringCount = beats.hitLive (2);   // a hit in the count-in sounds but isn't written
+        for (int g = 0; g < 400 && ! (b.clockRunning() && b.clockBeat() >= 4.6); ++g)
+            pump (512);
+        const double beat1 = b.clockBeat();
+        const int want1 = (int) ((long long) std::floor (beat1 * 4.0 + 0.5) % 16);
+        const int got1 = beats.hitLive (0);
+        for (int g = 0; g < 400 && ! (b.clockBeat() >= 6.6); ++g)
+            pump (512);
+        const double beat2 = b.clockBeat();
+        const int want2 = (int) ((long long) std::floor (beat2 * 4.0 + 0.5) % 16);
+        const int got2 = beats.hitLive (1);
+        const auto& pat = beats.drums().edited();
+        const bool done = waitPlaying (0, 12);
+        report << "play live: count-in " << (counting ? "yes" : "no") << ", hit in the count-in wrote step " << duringCount << ", kick at beat " << juce::String (beat1, 2)
+               << " went to step " << (got1 + 1) << " (nearest " << (want1 + 1) << "), snare at beat " << juce::String (beat2, 2) << " to step " << (got2 + 1)
+               << " (nearest " << (want2 + 1) << "), layer 1 " << (done ? "playing" : "NOT playing") << "\n";
+        if (! emptyAtStart)
+            problems.add ("PLAY LIVE: the new song's drum grid was not empty");
+        if (! counting)
+            problems.add ("PLAY LIVE: REC from a stopped song did not count in");
+        if (duringCount != -1 || pat.hits[2][(size_t) 0] != 0)
+            problems.add ("PLAY LIVE: a hit during the count-in was written into the pattern");
+        if (got1 != want1 || pat.hits[0][(size_t) want1] == 0 || got2 != want2 || pat.hits[1][(size_t) want2] == 0)
+            problems.add ("PLAY LIVE: hits did not land on the nearest steps");
+        if (! done)
+            problems.add ("PLAY LIVE: REC did not put the pattern on layer 1");
+        else
+        {
+            checkTake ("PLAY LIVE", 0, 4.0, 4.0);
+            if (b.isPlaying())
+                problems.add ("PLAY LIVE: the live drum machine kept playing over its own layer");
+            if (takePeak (0) < 0.05f)
+                problems.add ("PLAY LIVE: the layer is silent (peak " + juce::String (takePeak (0), 4) + ")");
+        }
+    }
+    beats.setDrumMode (0);
+    togglePlay();
     pump (2048);
 
     // The count-in: REC with the song stopped and CLICK off. The click sounds through the count-in bar,

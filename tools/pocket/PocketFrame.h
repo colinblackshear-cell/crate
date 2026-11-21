@@ -46,10 +46,14 @@ public:
     int selected = -1;       // index into tools, -1 = none lit
     int bottomInset = 0;
     std::function<void (Tool)> onSelect;
+    void flash();   // outline the tools in amber for a moment ("pick another tool")
 
     juce::Rectangle<float> cellRect (int index) const;
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;
+
+private:
+    bool glow = false;
 };
 
 //==============================================================================

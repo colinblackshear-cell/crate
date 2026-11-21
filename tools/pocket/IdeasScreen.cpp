@@ -128,7 +128,7 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
         {
             g.setColour (col::inkDim);
             g.setFont (small (16.0f));
-            g.drawFittedText ("No songs yet. Start one below: record a sound, take a ready beat, or load a kit.",
+            g.drawFittedText ("No songs yet. Start one below: record a sound, make a beat, or load a kit.",
                               getLocalBounds().reduced (24, 0).withHeight (80), juce::Justification::centred, 3);
         }
     }
@@ -287,7 +287,7 @@ void IdeasScreen::paint (juce::Graphics& g)
         g.drawText (names[i], c.withTrimmedBottom (3), juce::Justification::centred);
     }
 
-    // a new song: with a sound (record), a ready beat, or a factory kit
+    // a new song: with a sound (record), a beat you make step by step, or a factory kit
     g.setColour (col::rule);
     g.fillRect (16.0f, (float) getHeight() - 146, (float) getWidth() - 32, 1.0f);
     g.setColour (col::inkDim);
@@ -299,12 +299,12 @@ void IdeasScreen::paint (juce::Graphics& g)
         drawRaised (g, r, Look::cream, false, 14.0f);
         g.setColour (col::ink);
         g.setFont (spaced (condensedBold (17.0f), 0.08f));
-        g.drawText (top, r.withHeight (r.getHeight() * 0.55f).translated (0, 3), juce::Justification::centred);
+        g.drawFittedText (top, r.withHeight (r.getHeight() * 0.55f).translated (0, 3).reduced (4, 0).toNearestInt(), juce::Justification::centred, 1, 0.8f);
         g.setColour (col::inkDim);
         g.setFont (small (12.5f));
         g.drawText (bottom, r.withTrimmedTop (r.getHeight() * 0.52f).withTrimmedBottom (4), juce::Justification::centred);
     };
-    side (beatRect(), "A BEAT", "ready to play over");
+    side (beatRect(), "MAKE A BEAT", "I'll show you how");
     side (kitRect(), "A KIT", "16 pads to jam on");
 
     auto b = newBounds().toFloat();

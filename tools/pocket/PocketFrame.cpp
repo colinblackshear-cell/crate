@@ -242,12 +242,31 @@ void ToolRow::paint (juce::Graphics& g)
         {
             g.setColour (col::creamDeep);
             g.fillRoundedRectangle (well, 13.0f);
+            if (glow)
+            {
+                g.setColour (col::amber);
+                g.drawRoundedRectangle (well.reduced (1.2f), 13.0f, 3.0f);
+            }
         }
         drawToolIcon (g, t, well.getCentre(), on ? kPaper : col::inkDim.withAlpha (0.8f));
         g.setColour (on ? col::ink : col::inkDim);
         g.setFont (spaced (condensedBold (12.0f), 0.1f));
         g.drawText (toolName (t), juce::Rectangle<float> (cell.getX(), well.getBottom() + 2, cell.getWidth(), 16), juce::Justification::centred);
     }
+}
+
+void ToolRow::flash()
+{
+    glow = true;
+    repaint();
+    juce::Timer::callAfterDelay (2800, [safe = juce::Component::SafePointer<ToolRow> (this)]
+    {
+        if (safe != nullptr)
+        {
+            safe->glow = false;
+            safe->repaint();
+        }
+    });
 }
 
 void ToolRow::mouseUp (const juce::MouseEvent& e)

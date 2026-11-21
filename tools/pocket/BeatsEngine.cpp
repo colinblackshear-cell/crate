@@ -50,7 +50,7 @@ DrumData::DrumData()
         s.snappy = defaultSnappy[v];
         s.pan = defaultPan[v];
     }
-    patterns[0][0] = demoPattern();
+    // A new song's drum grid starts empty: the beat is yours to make (demoPattern is for screenshots only).
 }
 
 drums::Pattern DrumData::demoPattern()

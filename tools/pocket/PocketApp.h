@@ -20,6 +20,7 @@
 #include "VocoderScreen.h"
 #include "SingScreen.h"
 #include "PocketIntro.h"
+#include "PocketLesson.h"
 
 // The whole phone app, tool first: a slim header (the song, the bar and where the next take goes, the Mac
 // link, ···), the tool on screen, the thumb bar (BPM, CLICK, REC, PLAY, UNDO) and the tool row (LOOPS,
@@ -135,7 +136,8 @@ private:
     void switchIdea (const juce::String& id);
     void renameIdea (const juce::String& id);
     void deleteIdea (const juce::String& id);
-    void newSongWithBeat();
+    void makeABeat();        // Your songs' MAKE A BEAT: a new song with an empty grid, and the lesson
+    void lessonFromMore();   // More > Show me: make a beat
     void newSongWithKit();
     void playIdea (const juce::String& id);
 
@@ -154,8 +156,11 @@ private:
     // play; the live pattern (or drum machine) then stops, so the layer doesn't double it.
     void lockWatchTick();
     juce::TimedCallback lockWatch { [this] { lockWatchTick(); } };
-    enum class LockKind { none, pads, drums };
+    // pads / drumsLive: hits you play go into the pattern for a pass, then the pattern is locked onto a layer
+    // (the live machine stops once the layer plays). drums: STEPS, the drum machine's pattern is recorded as it is.
+    enum class LockKind { none, pads, drums, drumsLive };
     LockKind lockKind = LockKind::none;
+    bool playingIn() const { return (lockKind == LockKind::pads || lockKind == LockKind::drumsLive) && ! lockArmed; }
     int lockLayer = -1, lockBars = 0;
     double lockStart = 0, lockLen = 8, padsFrom = 0;
     bool lockArmed = false;
@@ -241,6 +246,13 @@ private:
     std::unique_ptr<IdeasScreen> ideasScreen;
     std::unique_ptr<TitleScreen> title;
     std::unique_ptr<TourOverlay> tour;
+    // The Make a beat lesson: a coach card over DRUMS (see PocketLesson.h)
+    std::unique_ptr<BeatLesson> lesson;
+    bool lessonOn = false, lessonClick = false;
+    void startLesson();
+    void endLesson();
+    void applyLessonPhase (int phase);
+    void layoutLesson();
     void showTitle (bool shown);
     void startTour();
     void endTour();

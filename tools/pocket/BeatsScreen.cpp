@@ -21,6 +21,7 @@ public:
     std::function<crate::drums::Pattern&()> pattern;
     std::function<int()> playhead;
     std::function<void (int, bool)> onEdit;   // step, accent changed
+    std::function<juce::uint32()> guide;      // the Make a beat lesson's hints: steps to glow (drawn only, never written)
 
     juce::Rectangle<float> cell (int step) const
     {
@@ -28,15 +29,38 @@ public:
         return { (float) (step % 8) * (w + gap), (float) (step / 8) * (h + 6.0f), w, h };
     }
 
+    // What a tap does (also what the self-check taps with).
+    void toggle (int step)
+    {
+        auto& cellValue = pattern().hits[(size_t) voice()][(size_t) step];
+        cellValue = cellValue > 0 ? 0 : 1;
+        if (onEdit)
+            onEdit (step, false);
+    }
+
     void paint (juce::Graphics& g) override
     {
         const auto& p = pattern();
         const int v = voice(), now = playhead();
+        const auto hints = guide ? guide() : 0u;
         for (int s = 0; s < 16; ++s)
         {
             auto r = cell (s);
             const bool on = p.hits[(size_t) v][(size_t) s] > 0;
             drawRaised (g, r, on ? Look::amber : Look::dark, false, 11.0f);
+            if (! on && (hints >> s & 1u) != 0)
+            {
+                auto body = r.withTrimmedBottom (3);
+                g.setColour (col::amber.withAlpha (0.2f));
+                g.fillRoundedRectangle (body, 11.0f);
+                g.setColour (col::amber.withAlpha (0.35f));
+                g.drawRoundedRectangle (body.expanded (2.5f), 13.0f, 2.0f);
+                g.setColour (col::amber);
+                g.drawRoundedRectangle (body.reduced (1.5f), 10.0f, 2.6f);
+            }
+            g.setFont (condensed (10.5f));
+            g.setColour (on ? col::ink.withAlpha (0.45f) : juce::Colour (0x55f1e7d1));
+            g.drawText (juce::String (s + 1), r.withTrimmedBottom (5).reduced (7, 3), juce::Justification::bottomRight);
             if (on && p.accent[(size_t) s])
             {
                 g.setColour (col::red);
@@ -64,12 +88,7 @@ public:
     {
         stopTimer();
         if (held >= 0 && ! longPress && stepAt (e.position) == held)
-        {
-            auto& cellValue = pattern().hits[(size_t) voice()][(size_t) held];
-            cellValue = cellValue > 0 ? 0 : 1;
-            if (onEdit)
-                onEdit (held, false);
-        }
+            toggle (held);
         held = -1;
     }
 
@@ -101,7 +120,8 @@ private:
     bool longPress = false;
 };
 
-// All 12 voices by 16 steps, with the playing step outlined. Tapping a row picks that voice.
+// All 12 voices by 16 steps, with the playing step outlined. Tapping a row picks that voice; the picked row
+// is the one being edited, so it is boxed in amber.
 class StepOverview : public juce::Component
 {
 public:
@@ -114,25 +134,31 @@ public:
         auto r = getLocalBounds().toFloat();
         drawWell (g, r, 14.0f);
         const auto& p = pattern();
-        const float left = 36.0f, top = 8.0f, rowH = (r.getHeight() - 16.0f) / 12.0f;
+        const float left = 40.0f, top = 8.0f, rowH = (r.getHeight() - 16.0f) / 12.0f;
         const float colW = (r.getWidth() - left - 12.0f) / 16.0f;
         const int now = playhead(), picked = voice();
 
         for (int v = 0; v < 12; ++v)
         {
             const float y = top + (float) v * rowH;
-            if (v == picked)
+            const bool isPicked = v == picked;
+            if (isPicked)
             {
-                g.setColour (juce::Colour (0xff2a241d));
-                g.fillRoundedRectangle (6, y, r.getWidth() - 12, rowH, 2.0f);
+                g.setColour (juce::Colour (0xff3a3226));
+                g.fillRoundedRectangle (4, y - 0.5f, r.getWidth() - 8, rowH + 1.0f, 3.0f);
+                g.setColour (col::amber);
+                g.drawRoundedRectangle (4, y - 0.5f, r.getWidth() - 8, rowH + 1.0f, 3.0f, 1.4f);
+                juce::Path t;   // a pointer at the row being edited
+                t.addTriangle (6.5f, y + rowH * 0.5f - 3.0f, 6.5f, y + rowH * 0.5f + 3.0f, 10.5f, y + rowH * 0.5f);
+                g.fillPath (t);
             }
-            g.setColour (v == picked ? col::lcdAmber : col::inkFaint);
-            g.setFont (condensedBold (9.5f));
-            g.drawText (voiceTags[v], juce::Rectangle<float> (10, y, 26, rowH), juce::Justification::centredLeft);
+            g.setColour (isPicked ? col::lcdAmber : col::inkFaint);
+            g.setFont (isPicked ? condensedBold (10.5f) : condensedBold (9.5f));
+            g.drawText (voiceTags[v], juce::Rectangle<float> (13, y, 26, rowH), juce::Justification::centredLeft);
             for (int s = 0; s < 16; ++s)
             {
                 const bool on = p.hits[(size_t) v][(size_t) s] > 0;
-                g.setColour (on ? col::amber : juce::Colour (0xff3a332c));
+                g.setColour (on ? (isPicked ? col::amber : col::amber.withAlpha (0.8f)) : juce::Colour (isPicked ? 0xff4d4437 : 0xff3a332c));
                 g.fillRoundedRectangle (left + (float) s * colW + 1.5f, y + 1.6f, colW - 3.0f, rowH - 3.2f, 1.4f);
             }
         }
@@ -146,10 +172,75 @@ public:
     void mouseUp (const juce::MouseEvent& e) override
     {
         const float top = 8.0f, rowH = ((float) getHeight() - 16.0f) / 12.0f;
-        const int v = (int) ((e.position.y - top) / rowH);
+        const int v = (int) std::floor ((e.position.y - top) / rowH);
         if (v >= 0 && v < 12 && onPick)
             onPick (v);
     }
+};
+
+// PLAY LIVE: the 12 voices as big pads, three across. A hit sounds at once on touch-down.
+class LivePads : public juce::Component
+{
+public:
+    std::function<void (int)> onHit;
+    std::function<bool (int)> hasHits;
+
+    // Finger order: the pads you hit most (kick, snare, clap) are on the bottom row, under the thumbs.
+    static int voiceAt (int slot)
+    {
+        static const int order[12] = { 3, 7, 8, 4, 5, 6, 9, 10, 11, 0, 1, 2 };
+        return order[slot];
+    }
+
+    juce::Rectangle<float> padRect (int slot) const
+    {
+        const float gap = 8.0f, w = ((float) getWidth() - gap * 2.0f) / 3.0f, h = ((float) getHeight() - gap * 3.0f) / 4.0f;
+        return { (float) (slot % 3) * (w + gap), (float) (slot / 3) * (h + gap), w, h };
+    }
+
+    bool flashing() const
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        for (auto t : flashUntil)
+            if (t > now)
+                return true;
+        return false;
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        for (int slot = 0; slot < 12; ++slot)
+        {
+            const int v = voiceAt (slot);
+            const bool lit = flashUntil[(size_t) v] > now;
+            auto r = padRect (slot);
+            drawRaised (g, r, lit ? Look::amber : Look::dark, lit, 14.0f);
+            const bool used = hasHits != nullptr && hasHits (v);
+            g.setColour (lit ? col::ink : used ? col::lcdAmber : juce::Colour (0xfff1e7d1));
+            g.setFont (condensedBold (r.getHeight() > 60.0f ? 22.0f : 18.0f));
+            g.drawText (voiceLabels[v], r.withTrimmedBottom (4), juce::Justification::centred);
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        for (int slot = 0; slot < 12; ++slot)
+            if (padRect (slot).expanded (4, 4).contains (e.position))
+            {
+                const int v = voiceAt (slot);
+                flashUntil[(size_t) v] = juce::Time::getMillisecondCounter() + 140;
+                if (onHit)
+                    onHit (v);
+                repaint (padRect (slot).expanded (6).toNearestInt());
+                return;
+            }
+    }
+
+    void mouseUp (const juce::MouseEvent&) override { repaint(); }
+
+private:
+    std::array<juce::uint32, 12> flashUntil {};
 };
 
 //==============================================================================
@@ -162,19 +253,19 @@ public:
         // The drum machine on its own, live (over the loops too): the thumb bar's PLAY is the whole song.
         play.glyph = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour ink)
         {
-            auto c = juce::Point<float> (r.getX() + 24, r.getCentreY());
+            auto c = juce::Point<float> (r.getX() + 19, r.getCentreY());
             g.setColour (ink);
             const bool on = owner.beatsEngine.isPlaying();
             if (on)
-                g.fillRoundedRectangle (c.x - 7, c.y - 7, 14, 14, 2.5f);
+                g.fillRoundedRectangle (c.x - 6, c.y - 6, 12, 12, 2.5f);
             else
             {
                 juce::Path t;
-                t.addTriangle (c.x - 6, c.y - 9, c.x - 6, c.y + 9, c.x + 9, c.y);
+                t.addTriangle (c.x - 5, c.y - 8, c.x - 5, c.y + 8, c.x + 8, c.y);
                 g.fillPath (t);
             }
-            g.setFont (spaced (condensed (16.0f), 0.08f));
-            g.drawText (on ? "STOP DRUMS" : "PLAY DRUMS", r.withTrimmedLeft (40).withTrimmedRight (6), juce::Justification::centredLeft);
+            g.setFont (spaced (condensedBold (16.0f), 0.06f));
+            g.drawText (on ? "STOP" : "PLAY", r.withTrimmedLeft (32).withTrimmedRight (4), juce::Justification::centredLeft);
         };
         play.onClick = [this]
         {
@@ -184,6 +275,16 @@ public:
             play.repaint();
         };
         addAndMakeVisible (play);
+
+        for (auto* c : { &stepsChip, &liveChip })
+        {
+            c->setFontHeight (16.0f);
+            addAndMakeVisible (*c);
+        }
+        stepsChip.setText ("STEPS");
+        liveChip.setText ("PLAY LIVE");
+        stepsChip.onClick = [this] { owner.setDrumMode (0); };
+        liveChip.onClick = [this] { owner.setDrumMode (1); };
 
         for (int i = 0; i < kPatternSlots; ++i)
         {
@@ -202,10 +303,10 @@ public:
         {
             static const char* text[] = { "VAR A", "VAR B", "A THEN B" };
             g.setColour (ink);
-            g.setFont (spaced (condensed (16.0f)));
-            g.drawFittedText (text[d.variation], r.withTrimmedRight (24).withTrimmedLeft (6).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+            g.setFont (spaced (condensed (15.0f)));
+            g.drawFittedText (text[d.variation], r.withTrimmedRight (22).withTrimmedLeft (4).toNearestInt(), juce::Justification::centred, 1, 0.8f);
             juce::Path t;
-            t.addTriangle (r.getRight() - 22, r.getCentreY() - 3, r.getRight() - 13, r.getCentreY() - 3, r.getRight() - 17.5f, r.getCentreY() + 3);
+            t.addTriangle (r.getRight() - 20, r.getCentreY() - 3, r.getRight() - 11, r.getCentreY() - 3, r.getRight() - 15.5f, r.getCentreY() + 3);
             g.fillPath (t);
         };
         variation.onClick = [this]
@@ -230,8 +331,10 @@ public:
         grid.voice = [this] { return owner.voice; };
         grid.pattern = [this]() -> crate::drums::Pattern& { return d.edited(); };
         grid.playhead = [this] { return playhead(); };
+        grid.guide = [this] { return owner.guideVoice == owner.voice ? owner.guideMask : 0u; };
         grid.onEdit = [this] (int step, bool accent)
         {
+            // a box tapped on (or held for an accent) sounds, so a stopped machine still answers the finger
             const bool on = d.edited().hits[(size_t) owner.voice][(size_t) step] > 0;
             owner.drumsChanged();
             if (on)
@@ -245,6 +348,32 @@ public:
         overview.voice = [this] { return owner.voice; };
         overview.onPick = [this] (int v) { owner.selectVoice (v); };
         addAndMakeVisible (overview);
+
+        pads.hasHits = [this] (int v)
+        {
+            const auto& pat = d.edited();
+            for (int s = 0; s < 16; ++s)
+                if (pat.hits[(size_t) v][(size_t) s] > 0)
+                    return true;
+            return false;
+        };
+        pads.onHit = [this] (int v)
+        {
+            owner.voice = v;
+            owner.hitLive (v);
+            overview.repaint();
+        };
+        addChildComponent (pads);
+
+        undoHit.setText ("UNDO HIT");
+        clearPattern.setText ("CLEAR PATTERN");
+        for (auto* b : { &undoHit, &clearPattern })
+        {
+            b->setFontHeight (16.0f);
+            addChildComponent (*b);
+        }
+        undoHit.onClick = [this] { owner.undoLiveHit(); };
+        clearPattern.onClick = [this] { owner.clearDrumPattern(); };
 
         auto add = [this] (const char* name, juce::Colour arc, double lo, double hi, double start, std::function<juce::String (double)> fmt)
         {
@@ -275,8 +404,28 @@ public:
         refresh();
     }
 
+    // The mode or the lesson layout changed: show the parts that belong, and lay them out again.
+    void layoutChanged()
+    {
+        const bool live = owner.drumModeValue == 1, compact = owner.lessonLayout && ! live;
+        grid.setVisible (! live);
+        for (auto* k : knobs)
+            k->setVisible (! live && ! compact);
+        for (auto& p : patterns)
+            p.setVisible (! compact);
+        pads.setVisible (live);
+        undoHit.setVisible (live);
+        clearPattern.setVisible (live);
+        overview.setInterceptsMouseClicks (! live, false);   // (a stray touch on the strip must not hit a voice)
+        resized();
+        refresh();
+    }
+
     void refresh()
     {
+        const bool live = owner.drumModeValue == 1;
+        stepsChip.setLook (live ? Look::cream : Look::amber);
+        liveChip.setLook (live ? Look::amber : Look::cream);
         for (int i = 0; i < kPatternSlots; ++i)
             patterns[i].setLook (d.slot == i ? Look::amber : Look::cream);
         const auto& vs = d.settings.voices[(size_t) owner.voice];
@@ -312,15 +461,19 @@ public:
             playingShown = owner.beatsEngine.isPlaying();
             play.repaint();
         }
+        if (pads.isVisible() && (pads.flashing() || padsFlashed))
+        {
+            padsFlashed = pads.flashing();
+            pads.repaint();
+        }
     }
 
     void paint (juce::Graphics& g) override
     {
+        if (owner.drumModeValue == 1)
+            return;   // (the strip, the buttons and the pads draw themselves)
         auto well = juce::Rectangle<float> (16, (float) wellY, (float) getWidth() - 32, 100);
         drawWell (g, well, 16.0f);
-        g.setColour (col::inkDim);
-        g.setFont (spaced (condensed (13.0f), 0.1f));
-        g.drawFittedText ("PATTERN", juce::Rectangle<int> (play.getRight() + 8, 8, variation.getX() - play.getRight() - 16, 44), juce::Justification::centred, 1, 0.8f);
         const int v = owner.voice;
         const auto& pat = d.edited();
         for (int i = 0; i < 12; ++i)
@@ -335,11 +488,16 @@ public:
             g.drawText (voiceLabels[i], r.withTrimmedBottom (3), juce::Justification::centred);
         }
 
+        const float ly = (float) grid.getY() - 26.0f, rx = (float) getWidth() - 16.0f;
+        auto line = juce::Rectangle<float> (16, ly, rx - 16 - 74, 22);
+        const auto name = juce::String (voiceLabels[v]).toUpperCase() + (d.editB ? U8(" · B") : juce::String());
+        g.setFont (spaced (condensedBold (13.5f), 0.1f));
+        const float nameW = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), "EDITING " + name) + 6.0f;
+        g.setColour (col::amberDark);
+        g.drawText ("EDITING " + name, line.withWidth (nameW), juce::Justification::centredLeft);
         g.setColour (col::inkDim);
         g.setFont (spaced (condensed (12.5f), 0.1f));
-        const float ly = (float) grid.getY() - 26.0f, rx = (float) getWidth() - 16.0f;
-        g.drawFittedText (juce::String (juce::String (voiceLabels[v]).toUpperCase()) + (d.editB ? U8(" · B") : juce::String()) + U8(" · 16 STEPS · TAP TO SET, HOLD FOR ACCENT"),
-                          juce::Rectangle<float> (16, ly, rx - 16 - 74, 22).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        g.drawFittedText (U8("TAP A BOX \xc2\xb7 HOLD FOR ACCENT"), line.withTrimmedLeft (nameW).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
         g.setColour (col::red);
         g.fillEllipse (rx - 66, ly + 6, 9, 9);
         g.setColour (juce::Colours::black.withAlpha (0.3f));
@@ -350,17 +508,36 @@ public:
 
     void resized() override
     {
-        // Settings up top, the steps and knobs low (under the thumb).
         const int W = getWidth() - 32, H = getHeight();
-        play.setBounds (16, 8, 150, 44);
-        variation.setBounds (getWidth() - 16 - 104, 8, 104, 44);
+        const bool live = owner.drumModeValue == 1, compact = owner.lessonLayout && ! live;
+        // The mode chips and the drum machine's own PLAY on top (small, once per song), the pattern slots below.
+        stepsChip.setBounds (16, 8, 68, 44);
+        liveChip.setBounds (90, 8, 94, 44);
+        play.setBounds (getWidth() - 16 - 82, 8, 82, 44);
+        variation.setBounds (190, 8, juce::jmax (70, play.getX() - 6 - 190), 44);
         const float slotW = ((float) W - 5.0f * 6.0f) / 6.0f;
         for (int i = 0; i < kPatternSlots; ++i)
-            patterns[i].setBounds (juce::roundToInt (16.0f + (float) i * (slotW + 6.0f)), 60, juce::roundToInt (slotW), 44);
-        wellY = 112;
+            patterns[i].setBounds (juce::roundToInt (16.0f + (float) i * (slotW + 6.0f)), 58, juce::roundToInt (slotW), 44);
+
+        if (live)
+        {
+            // What it writes (the whole pattern, read-only), UNDO HIT and CLEAR PATTERN, then the pads low.
+            overview.setBounds (16, 108, W, 92);
+            const int half = (W - 8) / 2;
+            undoHit.setBounds (16, 206, half, 44);
+            clearPattern.setBounds (16 + half + 8, 206, W - half - 8, 44);
+            pads.setBounds (16, 258, W, juce::jmax (120, H - 258 - 6));
+            return;
+        }
+
+        // Settings up top, the steps and knobs low (under the thumb).
+        wellY = compact ? 58 : 108;
         const int knobY = H - 112;
         grid.setBounds (16, wellY + 136, W, 98);
-        overview.setBounds (16, grid.getBottom() + 10, W, juce::jmax (96, knobY - 8 - grid.getBottom() - 10));
+        const int overviewBottom = compact ? H - owner.lessonReserve - 8 : knobY - 8;
+        const int overviewTop = grid.getBottom() + 10;
+        overview.setVisible (! compact || overviewBottom - overviewTop >= 72);
+        overview.setBounds (16, overviewTop, W, compact ? juce::jmax (40, overviewBottom - overviewTop) : juce::jmax (96, overviewBottom - overviewTop));
         const int w = W / 5;
         for (int i = 0; i < knobs.size(); ++i)
             knobs[i]->setBounds (16 + i * w, knobY, w, 108);
@@ -368,6 +545,8 @@ public:
 
     void mouseUp (const juce::MouseEvent& e) override
     {
+        if (owner.drumModeValue == 1)
+            return;
         for (int i = 0; i < 12; ++i)
             if (voiceCell (i).contains (e.position))
                 owner.selectVoice (i);
@@ -381,13 +560,14 @@ public:
 
     BeatsScreen& owner;
     DrumData& d;
-    PButton play, patterns[kPatternSlots], variation;
-    int wellY = 112;
+    PButton play, stepsChip, liveChip, patterns[kPatternSlots], variation, undoHit, clearPattern;
+    int wellY = 108;
     StepGrid grid;
     StepOverview overview;
+    LivePads pads;
     juce::OwnedArray<KnobView> knobs;
     int lastPlayhead = -2;
-    bool playingShown = false;
+    bool playingShown = false, padsFlashed = false;
 };
 
 //==============================================================================
@@ -779,6 +959,7 @@ void BeatsScreen::leave()
     beatsEngine.setPatternPlaying (false);
     beatsEngine.setClick (false);
     recPads = false;
+    recDrumsOn = false;
     beatsEngine.stopPads();
     if (padsView != nullptr)
         padsView->refresh();
@@ -794,6 +975,7 @@ void BeatsScreen::reloadIdea (const juce::String& ideaName)
         drumData.bpm = tempo;   // a new idea starts at the tempo you were at
     drumsDirty = kitDirty = false;
     patternUndo.clear();
+    liveUndo.clear();
     beatsEngine.setDrums (drumData);
     beatsEngine.setPadPattern (drumData.padPattern);
     setBpm (drumData.bpm);
@@ -1139,19 +1321,178 @@ void BeatsScreen::fillDemoPattern()
     patternChanged();
 }
 
-void BeatsScreen::fillStarterBeat()
+void BeatsScreen::fillDemoDrums()
 {
-    setBpm (90.0);
-    auto& p = drumData.padPattern;
-    p = {};
-    p.bars = 2;
-    auto add = [&p] (int pad, double beat, float velocity = 0.9f) { PadHit h; h.pad = pad; h.beat = beat; h.velocity = velocity; p.hits.push_back (h); };
-    for (double b : { 0.0, 2.5, 4.0, 6.5, 6.75 }) add (0, b);        // kick
-    for (double b : { 1.0, 3.0, 5.0, 7.0 }) add (1, b);              // snare
-    for (double b = 0.0; b < 7.5; b += 0.5) add (4, b, std::fmod (b, 1.0) < 0.25 ? 0.8f : 0.55f);   // hats
-    add (5, 7.5);                                                     // open hat
-    for (double b : { 0.0, 4.0 }) add (12, b);                        // 808
-    patternChanged();
+    drumData.patterns[0][0] = DrumData::demoPattern();
+    drumsChanged();
+}
+
+//==============================================================================
+// DRUMS: STEPS and PLAY LIVE
+void BeatsScreen::setDrumMode (int mode)
+{
+    mode = mode == 1 ? 1 : 0;
+    if (mode == drumModeValue)
+        return;
+    drumModeValue = mode;
+    drumView->layoutChanged();
+    if (onDrumModeChanged)
+        onDrumModeChanged();
+}
+
+void BeatsScreen::setLessonLayout (bool on, int reservePx)
+{
+    lessonLayout = on;
+    lessonReserve = reservePx;
+    drumView->layoutChanged();
+}
+
+void BeatsScreen::setGuide (int v, juce::uint32 mask)
+{
+    guideVoice = v;
+    guideMask = mask;
+    drumView->repaint();
+}
+
+juce::Rectangle<int> BeatsScreen::stepsBounds() const
+{
+    return getLocalArea (drumView.get(), drumView->grid.getBounds());
+}
+
+void BeatsScreen::tapStep (int step)
+{
+    drumView->grid.toggle (juce::jlimit (0, 15, step));
+}
+
+int BeatsScreen::hitLive (int v)
+{
+    v = juce::jlimit (0, crate::drums::kVoices - 1, v);
+    voice = v;
+    int written = -1;
+    bool soundNow = true;
+    auto& e = beatsEngine;
+    const bool counting = inCountIn != nullptr && inCountIn();
+    const bool beforePass = recDrumsOn && e.clockBeat() < recDrumsFrom - 0.25;
+    if (e.clockRunning() && ! counting && ! beforePass)
+    {
+        auto& pat = drumData.edited();
+        const double stepLen = crate::drums::stepBeats (drumData.settings.stepRate);
+        const double pos = e.clockBeat() / stepLen;                      // steps since the clock started
+        const long long target = (long long) std::floor (pos + 0.5);     // the nearest step line
+        written = (int) (target % juce::jmax (1, pat.length));
+        auto& cellValue = pat.hits[(size_t) v][(size_t) written];
+        if (cellValue == 0)
+        {
+            liveUndo.push_back ({ drumData.slot, drumData.editB, pat });
+            if (liveUndo.size() > 64)
+                liveUndo.erase (liveUndo.begin());
+            cellValue = 1;
+            drumsChanged();
+        }
+        // A hit a little before its step: the grid plays it on the step, so don't also play it now (that would
+        // flam). Only when the step is still far enough ahead for the audio to have the new pattern by then.
+        const double aheadMs = ((double) target - pos) * stepLen * 60000.0 / juce::jmax (1.0, e.getBpm());
+        if (e.isPlaying() && aheadMs >= 20.0 && aheadMs <= 45.0)
+            soundNow = false;
+    }
+    if (soundNow)
+        e.hitVoice (v);
+    if (drumView != nullptr)
+        drumView->refresh();
+    return written;
+}
+
+void BeatsScreen::undoLiveHit()
+{
+    if (liveUndo.empty())
+        return host.toast ("No hit to undo");
+    auto last = liveUndo.back();
+    liveUndo.pop_back();
+    drumData.patterns[(size_t) last.slot][last.b ? 1 : 0] = last.pattern;
+    drumsChanged();
+}
+
+void BeatsScreen::clearDrumPattern()
+{
+    auto& pat = drumData.edited();
+    if (pat.isEmpty())
+        return host.toast ("The pattern is already empty");
+    liveUndo.push_back ({ drumData.slot, drumData.editB, pat });
+    pat.hits = {};
+    pat.accent = {};
+    drumsChanged();
+    host.toast ("Pattern cleared. UNDO HIT brings it back.");
+}
+
+void BeatsScreen::setRecordingDrums (bool on, double fromBeat)
+{
+    recDrumsOn = on;
+    recDrumsFrom = fromBeat;
+}
+
+juce::String BeatsScreen::selfCheckLive()
+{
+    // Runs the engine by hand (no sound card).
+    const auto savedData = drumData;
+    const auto savedUndo = liveUndo;
+    const auto savedCount = inCountIn;
+    const bool savedRec = recDrumsOn;
+    inCountIn = nullptr;
+    recDrumsOn = false;
+    juce::String why;
+    std::vector<float> l (512), r (512);
+    auto pump = [&] { std::fill (l.begin(), l.end(), 0.0f); std::fill (r.begin(), r.end(), 0.0f); beatsEngine.render (l.data(), r.data(), 512); };
+
+    // A new song's drum machine and pad pattern are empty.
+    {
+        const DrumData fresh;
+        for (auto& pair : fresh.patterns)
+            for (auto& p : pair)
+                if (! p.isEmpty())
+                    why = "a new song's drum patterns are not empty";
+        if (! fresh.padPattern.hits.empty())
+            why = "a new song's pad pattern is not empty";
+    }
+
+    if (why.isEmpty())
+    {
+        drumData = DrumData();
+        liveUndo.clear();
+        beatsEngine.prepare (44100.0);
+        beatsEngine.setBpm (drumData.bpm);
+        beatsEngine.setDrums (drumData);
+        beatsEngine.setClick (false);
+        beatsEngine.setPlaying (true);
+        for (int i = 0; i < 400 && ! (beatsEngine.clockRunning() && beatsEngine.clockBeat() >= 5.1); ++i)
+            pump();
+        const double beat = beatsEngine.clockBeat();
+        const int expected = (int) ((long long) std::floor (beat * 4.0 + 0.5) % 16);
+        const int got = hitLive (0);
+        int count = 0;
+        for (int s = 0; s < 16; ++s)
+            count += drumData.edited().hits[0][(size_t) s] > 0 ? 1 : 0;
+        if (got != expected || drumData.edited().hits[0][(size_t) expected] == 0 || count != 1)
+            why = "a PLAY LIVE hit at beat " + juce::String (beat, 2) + " should land on step " + juce::String (expected + 1) + " alone, got step "
+                  + juce::String (got + 1) + " and " + juce::String (count) + " steps set";
+        else
+        {
+            undoLiveHit();
+            if (! drumData.edited().isEmpty())
+                why = "UNDO HIT did not take the live hit off";
+            else if (! (beatsEngine.setPlaying (false), pump(), pump(), hitLive (1) == -1 && drumData.edited().isEmpty()))
+                why = "a PLAY LIVE hit with the song stopped was written into the pattern";
+        }
+    }
+
+    beatsEngine.setPlaying (false);
+    pump();
+    drumData = savedData;
+    liveUndo = savedUndo;
+    inCountIn = savedCount;
+    recDrumsOn = savedRec;
+    beatsEngine.setDrums (drumData);
+    drumView->refresh();
+    return why;
 }
 
 juce::Rectangle<int> BeatsScreen::tourSpot (int which) const

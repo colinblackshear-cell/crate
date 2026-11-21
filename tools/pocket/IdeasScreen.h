@@ -6,7 +6,7 @@
 // The Record tab's home, "Your songs", like Voice Memos: every idea (a song in the making), sorted by
 // recent, name or how far along it is, with how far along the seven steps it is, what comes next and a
 // play button for what it has so far. Tap one to carry on; hold it to rename or delete. Three ways to
-// start a new one: record a sound, a ready beat, or a factory kit.
+// start a new one: record a sound, make a beat (a walk-through, nothing pre-made), or a factory kit.
 class IdeasScreen : public juce::Component
 {
 public:
