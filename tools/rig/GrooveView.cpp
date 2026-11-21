@@ -80,6 +80,8 @@ const KnobSpec machineKnobs[] = { { "kickTune", "Kick tune" }, { "kickDecay", "B
                                   { "accent", "Accent" }, { "swing", "Swing" }, { "drive", "Drive" }, { "volume", "Level" } };
 const KnobSpec vocoderKnobs[] = { { "robotLevel", "Robot" }, { "voiceLevel", "Voice" }, { "formant", "Formant" }, { "cutoff", "Cutoff" },
                                   { "resonance", "Reso" }, { "chorusMix", "Chorus" }, { "delayMix", "Delay" }, { "reverbMix", "Reverb" } };
+const KnobSpec droneKnobs[] = { { "droneJawari", "Jawari" }, { "droneDecay", "Ring" }, { "dronePace", "Pace" }, { "droneWidth", "Width" },
+                                 { "droneStrings", "Strings" }, { "droneReeds", "Reeds" }, { "droneResonate", "Resonate" }, { "droneFine", "Fine" } };
 // The tracks without their own knobs get their mixer strip's effects.
 const KnobSpec fxKnobs[] = { { "filter", "Filter" }, { "resonance", "Reso" }, { "drive", "Drive" }, { "crush", "Crush" },
                              { "delayMix", "Delay" }, { "feedback", "Feedback" }, { "reverbMix", "Reverb" }, { "reverbSize", "Room" } };
@@ -158,6 +160,8 @@ public:
             return { "Off", Lit::none };
         if (index == lineIn && ! owner.lineInLive())
             return { "Off", Lit::none };
+        if (index == drone && ! owner.droneOn())
+            return heard > 0.05f ? std::pair<juce::String, Lit> { "Ringing", Lit::play } : std::pair<juce::String, Lit> { "Off", Lit::none };
         if (index == loops)
             for (int l = 0; l < RigLooper::kLayers; ++l)
             {
@@ -217,6 +221,17 @@ public:
             g.fillRect (r.withWidth (10.0f));
         }
 
+        if (compact())
+        {
+            // A short card (a small window): one line, its lamp and name beside its buttons (what
+            // it's doing is in its tooltip).
+            auto line = r.toNearestInt().withTrimmedLeft (22).withRight (go.getX() - 6);
+            vintage::drawLamp (g, { (float) line.getX() + 6.0f, (float) line.getCentreY() }, shownStatus.second, 11.0f);
+            g.setColour (p.wellInk);
+            g.setFont (vintage::cond (juce::jmin (18.0f, line.getHeight() * 0.55f), Weight::extra, 0.04f));
+            g.drawFittedText (trackName (index).toUpperCase(), line.withTrimmedLeft (16), juce::Justification::centredLeft, 1, 0.75f);
+            return;
+        }
         auto area = r.toNearestInt().withTrimmedLeft (22).reduced (0, 8).withTrimmedRight (12);
         auto top = area.removeFromTop (area.getHeight() / 2);
         g.setColour (p.wellInk);
@@ -238,8 +253,27 @@ public:
         vintage::engraved (g, shownStatus.first, row.withTrimmedLeft (24), juce::Justification::centredLeft, 13.0f, true);
     }
 
+    // Too short for the name over the buttons: it goes on one line.
+    bool compact() const { return getHeight() < 56; }
+
     void resized() override
     {
+        if (compact())
+        {
+            auto r = getLocalBounds().reduced (4).withTrimmedRight (12);
+            const int size = juce::jlimit (16, 30, r.getHeight() - 6);
+            mute.getProperties().set ("fontSize", 14.0f);
+            solo.getProperties().set ("fontSize", 14.0f);
+            auto row = r.withSizeKeepingCentre (r.getWidth(), size);
+            solo.setBounds (row.removeFromRight (size));
+            row.removeFromRight (6);
+            mute.setBounds (row.removeFromRight (size));
+            row.removeFromRight (6);
+            go.setBounds (row.removeFromRight (juce::jmax (size, 44)));
+            return;
+        }
+        mute.getProperties().set ("fontSize", 20.0f);
+        solo.getProperties().set ("fontSize", 20.0f);
         auto r = getLocalBounds().reduced (4).withTrimmedRight (12).withTrimmedBottom (8);
         const int size = juce::jlimit (30, 44, r.getHeight() / 2);
         auto row = r.removeFromBottom (size);
@@ -287,6 +321,7 @@ juce::String GrooveView::trackName (int t)
         case sampler: return "Sampler";
         case loops:   return "Loops";
         case lineIn:  return "Line in";
+        case drone:   return "Drone";
         default:      return {};
     }
 }
@@ -304,6 +339,7 @@ int GrooveView::stripFor (int t)
         case vocoder: return RigEngine::vocoderStrip;
         case sampler: return RigEngine::samplerStrip;
         case lineIn:  return RigEngine::inputStrip;
+        case drone:   return RigEngine::droneStrip;
         default:      return RigEngine::loopsStrip;
     }
 }
@@ -399,6 +435,8 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
             engine.vocoderOn = extraButton.getToggleState();
         else if (track == lineIn)
             setLineIn (extraButton.getToggleState());
+        else if (track == drone)
+            setDroneOn (extraButton.getToggleState());
         updateButtons();
     };
 
@@ -739,6 +777,7 @@ bool GrooveView::isGoing (int t) const
             return firstLayerIn (engine.getLooper(),
                                  { RigLooper::State::armed, RigLooper::State::recording, RigLooper::State::overdubbing }) >= 0;
         case lineIn:  return lineInLive();
+        case drone:   return droneOn();
         default:      return false;
     }
 }
@@ -749,7 +788,8 @@ juce::String GrooveView::trackButtonText (int t) const
     switch (t)
     {
         case vocoder:
-        case lineIn:  return going ? "On" : "Off";
+        case lineIn:
+        case drone:   return going ? "On" : "Off";
         case loops:   return juce::String::fromUTF8 (going ? "\xe2\x96\xa0" : "\xe2\x97\x8f") + juce::String (" Rec");
         default:      return juce::String::fromUTF8 (going ? "\xe2\x96\xa0" : "\xe2\x96\xb6");
     }
@@ -767,6 +807,7 @@ juce::String GrooveView::trackButtonTip (int t) const
         case sampler: return "Plays the Sampler's whole sound, or stops it.";
         case loops:   return "Records the next empty loop layer from the next bar (from its source); press again to close the loop.";
         case lineIn:  return "Switches Line in on or off: your guitar, keytar or second mic on your interface, through its pedals.";
+        case drone:   return "Switches the drone on or off. It doesn't wait for Play: on, it sounds straight away.";
         default:      return {};
     }
 }
@@ -845,6 +886,9 @@ void GrooveView::pressTrackButton (int t)
         case lineIn:
             setLineIn (! going);
             break;
+        case drone:
+            setDroneOn (! going);
+            break;
         default: break;
     }
     updateButtons();
@@ -867,6 +911,26 @@ void GrooveView::setLineIn (bool on)
     }
     else
         say ("Line in is off.");
+}
+
+bool GrooveView::droneOn() const
+{
+    return engine.getDrone().isOn();
+}
+
+void GrooveView::setDroneOn (bool on)
+{
+    setParam (engine.getDrone().params, "droneOn", on ? 1.0f : 0.0f);
+    say (on ? "The drone is on, on " + detailOf (drone).upToFirstOccurrenceOf (juce::String::fromUTF8 (" \xc2\xb7"), false, false)
+                  + ". It doesn't wait for Play. Its Edit screen has its tuning and its strings that ring to a track."
+            : juce::String ("The drone is off (its strings let go and ring out)."));
+}
+
+juce::String GrooveView::droneStringName (int string) const
+{
+    if (string == 0)
+        return crate::drone::firstName (juce::roundToInt (getParam (engine.getDrone().params, "droneFirst")));
+    return string == 3 ? "Low Sa" : "Sa";
 }
 
 // Records Line in onto the next empty loop layer, from the next bar.
@@ -930,6 +994,7 @@ juce::String GrooveView::trackHint() const
         case sampler: return juce::String ("Press a pad to play it; the keys play it too");
         case loops:   return juce::String ("Empty layer: press to record. With sound: press to pick it, then use the buttons");
         case lineIn:  return juce::String ("Pick the input your instrument is plugged into");
+        case drone:   return juce::String ("Click a string to pluck it; the sounds below are ready-made drones");
         default:      return juce::String();
     }
 }
@@ -988,8 +1053,9 @@ juce::AudioProcessorValueTreeState* GrooveView::paramsOf (int tool) const
         case RigEngine::synthTool_:  return &engine.getSynth().params;
         case RigEngine::vocoderTool: return &engine.getVocoder().params;
         case RigEngine::drumsTool:   return &engine.getDrums().params;
+        case RigEngine::droneTool:   return &engine.getDrone().params;
         default:
-            if (tool >= RigEngine::fxTool && tool < RigEngine::numTools)
+            if (RigEngine::isFxTool (tool))
                 return &engine.getFx (tool - RigEngine::fxTool).params;
             return nullptr;
     }
@@ -1005,6 +1071,7 @@ std::pair<int, juce::String> GrooveView::knobFor (int index) const
         case synth:   return { RigEngine::synthTool_, synthKnobs[index].id };
         case vocoder: return { RigEngine::vocoderTool, vocoderKnobs[index].id };
         case machine: return { RigEngine::drumsTool, machineKnobs[index].id };
+        case drone:   return { RigEngine::droneTool, droneKnobs[index].id };
         default:      return { RigEngine::fxTool + stripFor (track), fxKnobs[index].id };
     }
 }
@@ -1092,6 +1159,15 @@ void GrooveView::buildTrack()
             vintage::setLit (*patternButtons.getLast(), Lit::arm);
             add ("Pedals", "Line in's pedalboard and tuner, on the Effects page.");
             break;
+        case drone:
+        {
+            // Its ready-made drones (the note, On and what the strings ring to stay as they are).
+            const auto names = DroneProcessor::presetNames();
+            for (const auto& name : names)
+                add (name, "A ready-made drone: " + name + ". It sets the strings, the jawari, the pace and the reeds; "
+                           "the note and On stay as they are.");
+            break;
+        }
         default: break;
     }
 
@@ -1103,7 +1179,7 @@ void GrooveView::buildTrack()
         if (params == nullptr || params->getParameter (id) == nullptr)
             continue;
         const auto* specs = track == bass ? bassKnobs : track == synth ? synthKnobs : track == vocoder ? vocoderKnobs
-                            : track == machine ? machineKnobs : fxKnobs;
+                            : track == machine ? machineKnobs : track == drone ? droneKnobs : fxKnobs;
         auto knob = std::make_unique<vintage::Knob> (*params, id, specs[i].name, colour);
         knob->slider.setTooltip (juce::String (specs[i].name) + ". Knob " + juce::String (i + 1)
                                  + " on your keyboard turns it too. Drag up or down; double-click for the default.");
@@ -1162,7 +1238,7 @@ void GrooveView::buildTrack()
     openButton.setButtonText ("Edit " + trackName (track) + juce::String::fromUTF8 (" \xe2\x80\xba"));
     openButton.setTooltip ("Everything " + trackName (track) + " can do, in full (Edit, F2).");
     micButton.setVisible (track == vocoder && showMic);
-    extraButton.setVisible (track == bass || track == vocoder || track == machine || track == lineIn);
+    extraButton.setVisible (track == bass || track == vocoder || track == machine || track == lineIn || track == drone);
     for (auto* b : { &soundButton, &soundPrev, &soundNext })
         b->setVisible (hasKeys());
     screenKeys.setVisible (hasKeys());
@@ -1344,6 +1420,14 @@ void GrooveView::updateButtons()
             }
             break;
         }
+        case drone:
+        {
+            const bool on = droneOn();
+            extraButton.setToggleState (on, juce::dontSendNotification);
+            extraButton.setButtonText (on ? "Drone on" : "Drone off");
+            extraButton.setTooltip ("Turns the drone on or off. It doesn't wait for Play: on, it sounds straight away.");
+            break;
+        }
         default: break;
     }
 }
@@ -1431,6 +1515,15 @@ juce::String GrooveView::stateOf (int t) const
             if (! lineInLive())
                 return "Off: press On, then play your guitar or keytar";
             return "Listening on " + RigEngine::inputJackName (engine.inputJack.load()) + ": play, or Loop it";
+        case drone:
+        {
+            auto& d = engine.getDrone();
+            const auto note = DroneProcessor::rootNames()[juce::jlimit (0, 11, juce::roundToInt (getParam (d.params, "droneRoot")))];
+            if (! d.isOn())
+                return getParam (d.params, "droneResonate") > 0.001f ? "Off; its strings ring to " + DroneProcessor::feedNames()[d.getFeed()]
+                                                                    : juce::String ("Off: press On for a drone on ") + note;
+            return "Droning on " + note + (getParam (d.params, "droneSync") > 0.5f ? ", plucked in time" : juce::String());
+        }
         default: return {};
     }
 }
@@ -1485,6 +1578,15 @@ juce::String GrooveView::detailOf (int t) const
         }
         case lineIn:
             return lineInLive() ? RigEngine::inputJackName (engine.inputJack.load()) : juce::String ("Off");
+        case drone:
+        {
+            auto& d = engine.getDrone();
+            if (! d.isOn())
+                return "Off";
+            const auto dot = juce::String::fromUTF8 (" \xc2\xb7 ");
+            return DroneProcessor::rootNames()[juce::jlimit (0, 11, juce::roundToInt (getParam (d.params, "droneRoot")))] + dot
+                   + droneStringName (0) + dot + "On";
+        }
         default: return {};
     }
 }
@@ -1514,6 +1616,11 @@ juce::String GrooveView::patternText() const
             return detailOf (loops).toUpperCase();
         case lineIn:
             return detailOf (lineIn).toUpperCase();
+        case drone:
+        {
+            const auto notes = engine.getDrone().stringNotes();
+            return (droneOn() ? "SA " + notes[1] : juce::String ("OFF")).toUpperCase();
+        }
         default: return {};
     }
 }
@@ -1527,6 +1634,7 @@ int GrooveView::numSteps() const
         case vocoder: return (int) std::size (vocoderSwitches);
         case loops:   return RigLooper::kLayers;
         case lineIn:  return 3;   // both inputs, input 1, input 2
+        case drone:   return crate::drone::kStrings;
         default:      return 16;
     }
 }
@@ -1848,6 +1956,17 @@ GrooveView::Cell GrooveView::cellAt (int row, int i) const
             c.sub = picked ? (live ? "Listening" : "Off") : juce::String();
             break;
         }
+        case drone:
+        {
+            // A string: its name and note; lit while the drone's on, bright as it rings.
+            auto& d = engine.getDrone();
+            c.label = droneStringName (i);
+            c.sub = d.stringNotes()[i];
+            c.lit = d.isOn();
+            c.dim = ! d.isOn() && d.getRinging (i) < 0.05f;
+            c.playing = d.getRinging (i) > 0.35f;
+            break;
+        }
         default: break;
     }
     return c;
@@ -2009,6 +2128,9 @@ void GrooveView::pressCell (int row, int i)
             engine.inputJack = i;
             if (! lineInLive())
                 setLineIn (true);
+            break;
+        case drone:
+            engine.pluckDrone (i);
             break;
         default: break;
     }
@@ -2178,6 +2300,11 @@ void GrooveView::pressPattern (int i)
                 loopLineIn();
             else if (onOpen)
                 onOpen (tabFor (lineIn));
+            break;
+        case drone:
+            engine.getDrone().loadPreset (i);
+            say ("The drone is " + DroneProcessor::presetNames()[i] + " now (its note and On stay as they were)."
+                 + (droneOn() ? juce::String() : juce::String (" Press On to hear it.")));
             break;
         default: break;
     }
@@ -2409,7 +2536,7 @@ void GrooveView::paint (juce::Graphics& g)
         h.removeFromLeft (12);
         g.setColour (p.wellInk);
         g.setFont (vintage::cond (24.0f, Weight::extra, 0.1f));
-        const juce::String title = (bigCells() ? (track == vocoder ? "Parts" : track == sampler ? "Pads" : "Layers") : "Steps")
+        const juce::String title = (bigCells() ? (track == vocoder ? "Parts" : track == sampler ? "Pads" : track == drone ? "Strings" : "Layers") : "Steps")
                                    + juce::String::fromUTF8 (" \xc2\xb7 ") + trackName (track);
         const int titleWidth = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), title.toUpperCase()) + 8;
         g.drawText (title.toUpperCase(), h.removeFromLeft (titleWidth), juce::Justification::centredLeft, false);

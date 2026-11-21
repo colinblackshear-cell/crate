@@ -101,7 +101,7 @@ struct RigGrooveTests : juce::UnitTest
             engine.vocoderOn = false;
             GrooveView view (engine);
             view.setSize (1400, 860);
-            expectEquals ((int) GrooveView::numTracks, 8);
+            expectEquals ((int) GrooveView::numTracks, 9);
             expectEquals (GrooveView::trackName (GrooveView::drums), juce::String ("MPC"), "the MPC says MPC");
             expectEquals (GrooveView::stripFor (GrooveView::lineIn), (int) RigEngine::inputStrip);
             expectEquals (GrooveView::tabFor (GrooveView::lineIn), juce::String ("Effects"));

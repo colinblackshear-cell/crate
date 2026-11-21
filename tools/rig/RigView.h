@@ -222,7 +222,7 @@ private:
     bool takeStarted = false;   // the take's layer has been seen armed or recording
     bool takeKeptSaid = false;  // told you the song left the take alone
     int tourStop = 0;   // the walkthrough's stop you were on
-    std::array<int, 8> lastTake { -1, -1, -1, -1, -1, -1, -1, -1 };
+    std::array<int, 9> lastTake { -1, -1, -1, -1, -1, -1, -1, -1, -1 };   // by track
     void updateCaptureButtons();
     int recSection = -1, recLayer = -1;   // the Rec into target as picked (-1: follow the song)
     bool recCycle = true, recFree = false, recAsSound = false;

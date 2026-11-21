@@ -53,6 +53,7 @@ const std::vector<EffectsView::Source>& EffectsView::sources()
             { "MPC", "pads and sequences", RigEngine::mpcStrip, -1, "MPC", RigLooper::mpc, RigCapture::mpc },
             { "Drums", "the drum machine", RigEngine::drumsStrip, -1, "Drum machine", RigLooper::drums, RigCapture::drums },
             { "Sampler", "the sampler's keys", RigEngine::samplerStrip, -1, "Sampler", RigLooper::sampler, RigCapture::sampler },
+            { "Drone", "tanpura and reeds", RigEngine::droneStrip, -1, "Drone", RigLooper::drone, -1 },
         };
         static const char* loopNames[] = { "Loop 1", "Loop 2", "Loop 3", "Loop 4", "Loop 5", "Loop 6", "Loop 7", "Loop 8",
                                            "Loop 9", "Loop 10", "Loop 11", "Loop 12", "Loop 13", "Loop 14", "Loop 15", "Loop 16" };

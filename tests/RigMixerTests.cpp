@@ -196,7 +196,8 @@ public:
                 if (c == nullptr)
                     continue;
                 for (auto* control : std::initializer_list<juce::Component*> { &c->fader, &c->sendA, &c->sendB, &c->pan, &c->mute, &c->solo, &c->fx, &c->learn })
-                    expect (control->isVisible() && ! control->getBounds().isEmpty(), RigEngine::stripName (strip));
+                    if (control != &c->learn || MixerView::faderControl (strip) >= 0)   // (the drone's level has no keyboard control)
+                        expect (control->isVisible() && ! control->getBounds().isEmpty(), RigEngine::stripName (strip));
                 expect (c->fader.getHeight() > 80, "a tall fader");
 
                 // The strip's controls play the engine.

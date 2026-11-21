@@ -52,7 +52,7 @@ public:
         int captureSource;   // what sampling records it as (-1: it can't)
     };
     static const std::vector<Source>& sources();
-    enum { lineIn, vocoderSource, bassSource, synthSource, mpcSource, drumsSource, samplerSource, firstLoop,
+    enum { lineIn, vocoderSource, bassSource, synthSource, mpcSource, drumsSource, samplerSource, droneSource, firstLoop,
            allLoops = firstLoop + RigLooper::kLayers, masterSource, numSources };
 
     void showSource (int);

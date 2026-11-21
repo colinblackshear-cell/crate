@@ -63,6 +63,7 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/SongView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MoreView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/MixerView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/DroneView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SamplerScreen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/VocoderScreen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/VocoderSettings.cpp
@@ -88,7 +89,7 @@ set(RIG_SOURCES
     ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
     PARENT_SCOPE)
 
-target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp RigTakes.cpp RigNotes.cpp NoteEditor.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp
+target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp RigTakes.cpp RigNotes.cpp NoteEditor.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp DroneView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp
     RigMacros.cpp MacroStrip.cpp
     AutomationPanel.cpp ControllersPanel.cpp RigPhoneLink.cpp ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
     ${MPC_SOURCES}
@@ -96,12 +97,13 @@ target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigRouting.cpp RigTrans
     ${BASS_SOURCES}
     ${SYNTH_SOURCES}
     ${DRUMS_SOURCES}
+    ${PROJECT_SOURCE_DIR}/tools/drone/DroneProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
 target_include_directories(Kaleidobox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
-    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
+    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums ${PROJECT_SOURCE_DIR}/tools/drone)
 # The sampler is the Sample Editor's code and the vocoder is the Vocoder's; they use the plugin's
 # name in a few places.
 target_compile_definitions(Kaleidobox PRIVATE
@@ -150,7 +152,7 @@ juce_add_plugin(KaleidoboxPlugin
 
 # What every Kaleidobox plugin is made of (the instrument and the Input version share it all).
 macro(kaleidobox_plugin_parts target)
-    target_sources(${target} PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp RigTakes.cpp RigNotes.cpp NoteEditor.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp
+    target_sources(${target} PRIVATE RigPlugin.cpp RigEngine.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp RigTakes.cpp RigNotes.cpp NoteEditor.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp DroneView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp
     RigMacros.cpp MacroStrip.cpp
     AutomationPanel.cpp ControllersPanel.cpp RigPhoneLink.cpp ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
         ${MPC_SOURCES}
@@ -158,12 +160,13 @@ macro(kaleidobox_plugin_parts target)
         ${BASS_SOURCES}
         ${SYNTH_SOURCES}
         ${DRUMS_SOURCES}
+        ${PROJECT_SOURCE_DIR}/tools/drone/DroneProcessor.cpp
         ${PROJECT_SOURCE_DIR}/tools/editor/EditDocument.cpp
         ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
         ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
     target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/editor ${VOCODER_INCLUDE}
-        ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums)
+        ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums ${PROJECT_SOURCE_DIR}/tools/drone)
     target_link_libraries(${target}
         PRIVATE
             crate_core

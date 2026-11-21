@@ -10,7 +10,8 @@ namespace RigColours
 // The design's track colours (drums red, bass orange, synth yellow, vocoder teal, loops green).
 inline const juce::Colour mpc { 0xffe85a3a }, sampler { 0xffc58fd6 }, vocoder { 0xff5fb3c4 }, master { 0xfff1e7d1 },
                           bass { 0xfff39b33 }, synth { 0xffefcb45 }, input { 0xffd8c49a }, loops { 0xff9cc27a },
-                          song { 0xffffb23e }, drums { 0xffd8452c };   // the drum machine: its step-key red
+                          song { 0xffffb23e }, drums { 0xffd8452c },   // the drum machine: its step-key red
+                          drone { 0xffd8578e };   // the drone: kumkum rose (the saffrons are the bass's and the song's)
 
 inline juce::Colour forStrip (int strip)
 {
@@ -24,6 +25,7 @@ inline juce::Colour forStrip (int strip)
         case RigEngine::inputStrip:   return input;
         case RigEngine::loopsStrip:   return loops;
         case RigEngine::drumsStrip:   return drums;
+        case RigEngine::droneStrip:   return drone;
         default:                      return master;
     }
 }

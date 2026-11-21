@@ -472,8 +472,11 @@ void TrackRail::resized()
     auto top = r.removeFromTop (40);
     newPattern.setBounds (top.withTrimmedRight (4).withHeight (36));
     r.removeFromTop (6);
+    // In a short window the buttons under the tracks are a little shorter, so the tracks keep room.
+    const int rows = recMoves.isVisible() || moves.isVisible() ? 2 : 1;
+    const int buttonHeight = (r.getHeight() - rows * 60) / juce::jmax (1, cards.size()) < 44 ? 42 : 54;
     {
-        auto capture = r.removeFromBottom (54).withTrimmedRight (4);
+        auto capture = r.removeFromBottom (buttonHeight).withTrimmedRight (4);
         r.removeFromBottom (6);
         const int w = (capture.getWidth() - 6) / 2;
         recTake.setBounds (capture.removeFromLeft (w));
@@ -482,7 +485,7 @@ void TrackRail::resized()
     }
     if (recMoves.isVisible() || moves.isVisible())
     {
-        auto automation = r.removeFromBottom (54).withTrimmedRight (4);
+        auto automation = r.removeFromBottom (buttonHeight).withTrimmedRight (4);
         r.removeFromBottom (6);
         const int w = (automation.getWidth() - 6) / 2;
         recMoves.setBounds (automation.removeFromLeft (w));
