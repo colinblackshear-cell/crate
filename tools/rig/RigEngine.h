@@ -22,6 +22,8 @@
 #include "RigChords.h"
 #include "RigTakes.h"
 #include "RigAutomation.h"
+#include "RigSounds.h"
+#include "core/SafetyLimiter.h"
 #include "core/control/Controllers.h"
 
 #include <array>
@@ -526,6 +528,13 @@ private:
     std::array<StripFx, numStrips> fx;
     std::array<StripFx, RigLooper::kLayers> loopFx;
     PluginSlot bassPlugin { true }, synthPlugin { true };
+    // The level trim of the Bass's, Synth's and Vocoder's picked sounds (the previous block's, to ramp from).
+    RigSounds::Trim bassTrim, synthTrim, vocoderTrim;
+    float bassTrimWas = 1.0f, synthTrimWas = 1.0f, vocoderTrimWas = 1.0f;
+    // The safety limiters: the master mix (before it's recorded), the final output, and each
+    // tool's own output in Logic.
+    crate::SafetyLimiter masterLimiter, outputLimiter;
+    std::array<crate::SafetyLimiter, numStems> stemLimiters;
     PerformFx performFx;
     juce::MidiBuffer bassTap, synthTap;
     juce::MidiBuffer noMidi;

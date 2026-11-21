@@ -157,6 +157,9 @@ RigEngine::RigEngine()
     arrangeTo.fill (1.0f);
     arrangeRestart.fill (-1.0);
     // The Rig is the host, so the tools follow its clock the way they follow Logic's.
+    bassTrim.attach (bass.params, RigSounds::bass());
+    synthTrim.attach (synthTool.params, RigSounds::synth());
+    vocoderTrim.attach (vocoder.params.state, "program", [this] { return RigSounds::vocoderTrimDb (vocoder.getProgramName (vocoder.getCurrentProgram())); });
     mpc.setPlayHead (&transport);
     sampler.setPlayHead (&transport);
     vocoder.setPlayHead (&transport);
@@ -350,6 +353,10 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     sampleRate = rate > 0 ? rate : 44100.0;
     maxBlock = juce::jmax (16, maximumBlockSize);
     chords.prepare (sampleRate);
+    masterLimiter.prepare (sampleRate);
+    outputLimiter.prepare (sampleRate);
+    for (auto& l : stemLimiters)
+        l.prepare (sampleRate);
 
     for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder, &bass, &synthTool, &drums })
     {
@@ -468,6 +475,9 @@ void RigEngine::process (const float* const* inputs, int numInputs, float* const
         // (Up to the timeline's next jump or the end of its cycle, so it lands exactly.)
         const int n = samplesToTimelineEvent (juce::jmin (maxBlock, numSamples - offset));
         processChunk (inputs, numInputs, offset, n);
+        // The click and the preview join after the master: the last safety limiter catches them
+        // (a no-op below -3 dBFS).
+        outputLimiter.process (mixBuffer.getWritePointer (0), mixBuffer.getWritePointer (1), n);
 
         // Mono outputs get both sides; stereo gets left and right.
         for (int ch = 0; ch < numOutputs; ++ch)
@@ -758,8 +768,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         drums.processBlock (drumsBlock, drumsMidi);
     // A plugin in the Bass's or Synth's slot plays the notes the tool plays (its steps, arp and
     // keys) instead of the tool's own sound.
+    // The tool's own sound gets its level trim (so every sound is as loud as the others); a
+    // plugin's sound is left as the plugin makes it.
     auto playTool = [] (juce::AudioProcessor& tool, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi, PluginSlot& slot,
-                        juce::MidiBuffer& tap, auto setTap)
+                        juce::MidiBuffer& tap, auto setTap, const RigSounds::Trim& trim, float& trimWas)
     {
         block.clear();
         const bool external = slot.isLoaded() && ! slot.bypassed.load();
@@ -768,13 +780,18 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         tool.processBlock (block, midi);
         if (external && ! slot.process (block, tap))
             block.clear();
+        const float to = external ? 1.0f : trim.gain();
+        if (to != trimWas || to != 1.0f)
+            for (int ch = 0; ch < block.getNumChannels(); ++ch)
+                block.applyGainRamp (ch, 0, block.getNumSamples(), trimWas, to);
+        trimWas = to;
     };
     bassBlock.clear();
     if (runsStrip (bassStrip))
-        playTool (bass, bassBlock, bassMidi, bassPlugin, bassTap, [this] (juce::MidiBuffer* t) { bass.setNoteTap (t); });
+        playTool (bass, bassBlock, bassMidi, bassPlugin, bassTap, [this] (juce::MidiBuffer* t) { bass.setNoteTap (t); }, bassTrim, bassTrimWas);
     synthBlock.clear();
     if (runsStrip (synthStrip))
-        playTool (synthTool, synthBlock, synthMidi, synthPlugin, synthTap, [this] (juce::MidiBuffer* t) { synthTool.setNoteTap (t); });
+        playTool (synthTool, synthBlock, synthMidi, synthPlugin, synthTap, [this] (juce::MidiBuffer* t) { synthTool.setNoteTap (t); }, synthTrim, synthTrimWas);
 
     // The vocoder shapes its synth with your voice from the input.
     const bool hearMic = micOn.load();
@@ -808,6 +825,14 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             vocoderBlock.clear();
         }
         vocoder.processBlock (vocoderBlock, vocoderMidi);
+        {
+            // The sound's level trim, so every vocoder sound is as loud as the others.
+            const float to = vocoderTrim.gain();
+            if (to != vocoderTrimWas || to != 1.0f)
+                for (int ch = 0; ch < 2; ++ch)
+                    vocoderBlock.applyGainRamp (ch, 0, n, vocoderTrimWas, to);
+            vocoderTrimWas = to;
+        }
         if (vocoderFade.isSmoothing())
         {
             const float from = vocoderFade.getCurrentValue();
@@ -944,6 +969,8 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             for (int ch = 0; ch < 2; ++ch)
                 if (out[ch] != nullptr)
                     juce::FloatVectorOperations::copy (out[ch] + offset, from.getReadPointer (ch), n);
+            if (out[0] != nullptr)
+                stemLimiters[(size_t) st].process (out[0] + offset, out[1] != nullptr ? out[1] + offset : nullptr, n);
         }
 
     // The metronome: heard (under the master fader), but kept out of recordings.
@@ -962,8 +989,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     {
         const float g = masterGain.getNextValue();
         for (int ch = 0; ch < 2; ++ch)
-            mix.setSample (ch, i, juce::jlimit (-1.0f, 1.0f, mix.getSample (ch, i) * g));
+            mix.setSample (ch, i, mix.getSample (ch, i) * g);
     }
+    // The safety limiter (and NaN guard), before the mix is recorded.
+    masterLimiter.process (mix.getWritePointer (0), mix.getWritePointer (1), n);
 
     recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
     capture.process (recClock, { &rawInput, &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);

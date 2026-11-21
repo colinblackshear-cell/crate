@@ -2,6 +2,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "core/SafetyLimiter.h"
+
 #include "DrumEngine.h"
 
 #include <vector>
@@ -109,6 +111,7 @@ private:
     crate::drums::Settings readSettings() const;
 
     crate::drums::Engine engine;
+    crate::SafetyLimiter limiter;   // the last stop: nothing over -0.3 dBFS, and no NaN
 
     juce::SpinLock patternLock;
     std::array<crate::drums::Pattern, crate::drums::kPatterns> patterns, patternsB;   // under patternLock

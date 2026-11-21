@@ -41,6 +41,9 @@ const char* voiceShort (int voice);
 int noteForVoice (int voice);
 int voiceForNote (int note);
 
+// A sound's level trim in dB (voice, and the index of its choice of sound).
+float trimDb (int voice, int sound);
+
 // Each sound's choice of sounds ("Classic", "Long boom"...), the first being the classic one.
 juce::StringArray soundNames (int voice);
 
