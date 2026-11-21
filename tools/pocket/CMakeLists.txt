@@ -64,6 +64,8 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketVocoder.cpp
     PocketSynth.cpp
     SynthScreen.cpp
+    PocketChords.cpp
+    ChordsScreen.cpp
     VocoderScreen.cpp
     PocketLinkClient.cpp
     LinkScreens.cpp

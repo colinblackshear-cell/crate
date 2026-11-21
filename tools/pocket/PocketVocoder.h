@@ -76,6 +76,10 @@ public:
     void pressPad (int pad);                       // the same pad again lets go
     bool drone() const;
     void toggleDrone();
+    // The CHORDS tool feeds the chords straight to the vocoder (from the audio thread): the robot sings them, the
+    // drone and the vocoder's own chord step aside, and a robot sound no longer picks the key's chord by itself.
+    void feedTakesOver();
+    bool chordsFed() const { return fed; }
 
     // Hearing yourself. Off until asked: the mic through the speaker would squeal.
     void setMonitor (bool on) { monitor = on; }
@@ -128,6 +132,7 @@ private:
     std::atomic<float> micPeak { 0.0f };
     std::atomic<bool> changed { false };
     int chord = -1;
+    bool fed = false;
 
     // what a pedal comes back as when it's stomped on again
     float keptFormant = -7.0f, keptDrive = 0.35f, keptCrush = 0.0f, keptChorus = 0.4f, keptEcho = 0.3f, keptSpace = 0.3f,

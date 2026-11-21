@@ -20,13 +20,14 @@
 #include "VocoderScreen.h"
 #include "SingScreen.h"
 #include "SynthScreen.h"
+#include "ChordsScreen.h"
 #include "PocketKey.h"
 #include "PocketIntro.h"
 #include "PocketLesson.h"
 
 // The whole phone app, tool first: a slim header (the song, the bar and where the next take goes, the Mac
 // link, ···), the tool on screen, the thumb bar (BPM, CLICK, REC, PLAY, UNDO) and the tool row (LOOPS,
-// DRUMS, PADS, SYNTH, VOCODER). REC records whatever tool is on screen onto the next empty loop layer, in time.
+// DRUMS, PADS, SYNTH, CHORDS, VOCODER). REC records whatever tool is on screen onto the next empty loop layer, in time.
 // Your songs, the sound recorder, every vocoder setting and the More pages are pages without the thumb bar.
 class PocketApp : public juce::Component, private PocketHost
 {
@@ -154,6 +155,9 @@ private:
     void recPads();
     void recVocoder();
     void recSynth();
+    void recChords();
+    int chordsRecBars() const;   // a CHORDS take's bars: REC LENGTH, stretched to whole passes of the progression
+    void applyChordsPadSound();  // MY PAD SOUND: the picked PADS pad's sound to the chords
     void finishSynthTake();   // a SYNTH REC pass is over or called off: what was played stays in the pattern
     void startClockForRec();  // the song starts (the loops if there are any, else the drum machine)
     void applyClick();   // the click follows CLICK (and is always on while pads are recorded)
@@ -166,14 +170,18 @@ private:
     // synthLive: what you play on the SYNTH keys (or the arp) goes into its pattern for a pass, then the pattern
     // is locked onto a layer; synthPattern: SYNTH's pattern is locked as it is. Either way, once the layer plays
     // the pattern is cleared (UNDO brings it back with the layer off), so the synth is free for a new part.
-    enum class LockKind { none, pads, drums, drumsLive, synthLive, synthPattern };
+    // chords: a CHORDS take (the looper records the chords source); once its layer plays, the progression's sound
+    // is muted (it still drives the vocoder) and a held chord lets go, so nothing plays twice.
+    enum class LockKind { none, pads, drums, drumsLive, synthLive, synthPattern, chords };
     LockKind lockKind = LockKind::none;
     bool playingIn() const
     {
         return (lockKind == LockKind::pads || lockKind == LockKind::drumsLive || lockKind == LockKind::synthLive || lockKind == LockKind::synthPattern) && ! lockArmed;
     }
     bool synthLock() const { return lockKind == LockKind::synthLive || lockKind == LockKind::synthPattern; }
-    int synthUndoLayer = -1;   // the layer the last SYNTH part went on (UNDO takes it off and gives the part back)
+    int synthUndoLayer = -1;
+    int chordsUndoLayer = -1;      // the layer the last CHORDS take went on (UNDO un-mutes the progression)
+    bool chordsLockProg = false;   // the CHORDS take records the progression (it starts from its first box)   // the layer the last SYNTH part went on (UNDO takes it off and gives the part back)
     int lockLayer = -1, lockBars = 0;
     double lockStart = 0, lockLen = 8, padsFrom = 0;
     bool lockArmed = false;
@@ -237,9 +245,11 @@ private:
     BeatsScreen beats;     // before the sound card, so the card stops before the engine goes
     LoopsScreen loopsScreen;   // owns the one renderer the sound card plays (Beats inside it)
     VocoderScreen vocoderScreen;   // plays inside that renderer, so it stops after the sound card does
-    SingScreen singScreen;         // its chord player too
+    pocket::ChordsTool chordsTool; // the one chord state (CHORDS and the VOCODER's quick pads), inside the renderer
+    SingScreen singScreen;
     pocket::SynthPart synthPart;   // the SYNTH tool's sound and pattern, also inside the renderer
     SynthScreen synthScreen;
+    ChordsScreen chordsScreen;
     PocketAudio audio;
     EffectsSheet sheet;
     PadSheet padSheet;
@@ -285,7 +295,8 @@ private:
         if (pocket::currentRoute() != route) routeChanged();
     } };
 
-    // The song: its one key (SYNTH, CHORDS and the vocoder follow it) and the SYNTH part, in the idea's song.json.
+    // The song: its one key (SYNTH, CHORDS and the vocoder follow it), the SYNTH part and the CHORDS settings, in the
+    // idea's song.json.
     pocket::SongKey songKey;
     void setSongKey (pocket::SongKey);
     void openKeyMenu (juce::Component&, juce::Rectangle<int>);

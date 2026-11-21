@@ -120,9 +120,9 @@ TourOverlay::TourOverlay()
 const std::vector<TourOverlay::Stop>& TourOverlay::stops()
 {
     static const std::vector<Stop> all {
-        { "TOOLS", col::ink, "Pick a tool", "LOOPS, DRUMS, PADS, SYNTH and VOCODER live down here. Switch any time: the song keeps playing.", "Next" },
-        { "REC", juce::Colour (0xffd8452f), "One button records", U8("REC records the tool on screen onto the next empty loop layer, in time. Tap it again to stop. Tap the display up top for count-in and length."), "Got it" },
-        { U8("BPM \xc2\xb7 CLICK"), col::amber, "Tempo and click", "Tap BPM to set the tempo (or tap it in). CLICK turns the metronome on or off; the count-in always clicks.", "Next" },
+        { "TOOLS", col::ink, "Pick a tool", "LOOPS, DRUMS, PADS, SYNTH, CHORDS and VOCODER live down here. Switch any time: the song keeps playing.", "Next" },
+        { "REC", juce::Colour (0xffd8452f), "One button records", U8("REC records the tool on screen onto the next empty loop layer, in time. Tap it again to stop. Tap the display up top for count-in and length; BPM sets the tempo, CLICK the metronome."), "Got it" },
+        { "CHORDS", juce::Colour (0xffb9a3dc), "Chords in the song's key", "Eight chords of the song's key: tap one, or fill the PROGRESSION for one chord a bar. They set the vocoder's notes, and SYNTH plays in the same key.", "Next" },
         { "PADS", col::amber, "Hit it!", "Every pad holds a sound, and a factory kit is already loaded. Tap one. Press REC to play a pattern in, then it locks onto a layer.", "I hit it" },
         { "LOOPS", col::ink, "Build it up", "Every take lands on a layer. Mute and dub them as it plays, and EDIT one to trim it, add effects and record knob moves.", "Next" },
         { "VOCODER", juce::Colour (0xff82cf6a), "Headphones first", "The mic stays off until you say what you're listening on. With headphones on, you hear yourself; without, it still records.", "Next" },

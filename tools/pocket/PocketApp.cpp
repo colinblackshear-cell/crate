@@ -281,9 +281,11 @@ PocketApp::PocketApp (Options o)
       beats (static_cast<PocketHost&> (*this), lib),
       loopsScreen (static_cast<PocketHost&> (*this), lib, beats.engine(), appSettings),
       vocoderScreen (static_cast<PocketHost&> (*this), lib, audio, loopsScreen, beats.engine()),
-      singScreen (static_cast<PocketHost&> (*this), loopsScreen, vocoderScreen.engine(), beats, appSettings),
+      chordsTool (beats.engine()),
+      singScreen (static_cast<PocketHost&> (*this), loopsScreen, vocoderScreen.engine(), chordsTool, appSettings),
       synthPart (beats.engine()),
       synthScreen (synthPart, beats.engine()),
+      chordsScreen (chordsTool),
       padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
       sounds (static_cast<PocketHost&> (*this), audio, lib)
@@ -335,7 +337,7 @@ PocketApp::PocketApp (Options o)
     dim->onTap = [this] { closeAllSheets(); };
 
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
-    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::synth, Tool::vocoder };
+    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::synth, Tool::chords, Tool::vocoder };
     toolRow.onSelect = [this] (Tool t) { showTool (t); };
     thumb.state = [this]
     {
@@ -431,7 +433,51 @@ PocketApp::PocketApp (Options o)
     synthScreen.nextLayer = [this] { return loopsScreen.nextLayer(); };
     synthScreen.recBusy = [this] { return synthLock() && ! lockArmed; };
     singScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
+    singScreen.onOpenChords = [this] { showTool (Tool::chords); };
+    singScreen.onChanged = [this] { saveSong(); };
+    chordsScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
+    chordsScreen.toast = [this] (const juce::String& t) { toast (t); };
+    chordsScreen.onChanged = [this] { saveSong(); singScreen.repaint(); };
+    chordsScreen.padSounds = [this]
+    {
+        juce::StringArray names;
+        for (int p = 0; p < kPads; ++p)
+            if (! beats.kit().pads[(size_t) p].empty())
+                names.add ("PAD " + Kit::padLabel (p) + U8(" \xc2\xb7 ") + beats.kit().pads[(size_t) p].name);
+        return names;
+    };
+    chordsScreen.padSoundPads = [this]
+    {
+        juce::Array<int> pads;
+        for (int p = 0; p < kPads; ++p)
+            if (! beats.kit().pads[(size_t) p].empty())
+                pads.add (p);
+        return pads;
+    };
+    chordsScreen.onPadSound = [this] (int pad)
+    {
+        if (! juce::isPositiveAndBelow (pad, kPads) || beats.kit().pads[(size_t) pad].empty())
+            return false;
+        chordsTool.padSoundPad = pad;
+        chordsTool.padSoundId = Kit::padLabel (pad);
+        applyChordsPadSound();
+        toast ("The chords play pad " + Kit::padLabel (pad) + " (" + beats.kit().pads[(size_t) pad].name + ").");
+        return true;
+    };
+    chordsScreen.lockedText = [this]
+    {
+        return chordsUndoLayer >= 0 && loopsScreen.engine().state (chordsUndoLayer) != pocket::LoopState::empty
+                   ? "Chords on layer " + juce::String (chordsUndoLayer + 1) : juce::String();
+    };
+    chordsTool.onPlay = [this]
+    {
+        if (chordsTool.playsVocoder)
+            vocoderScreen.engine().feedTakesOver();   // the robot sings what CHORDS plays
+        singScreen.repaint();
+    };
+    chordsTool.engine().setVocoder (&vocoderScreen.engine().processor());
     loopsScreen.engine().setInstrument (0, &synthPart.engine());
+    loopsScreen.engine().setInstrument (1, &chordsTool.engine());
     loadSong();
     loopsScreen.engine().setCountInBars (appSettings.countInBars);
     headerTick.startTimerHz (15);
@@ -466,7 +512,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
     addChildComponent (countPanel);
     addChildComponent (thumb);
@@ -551,6 +597,7 @@ void PocketApp::showPage (Page p, int morePage)
     loopsScreen.setVisible (onTool && tool == Tool::loops);
     singScreen.setVisible (onTool && tool == Tool::vocoder);
     synthScreen.setVisible (onTool && tool == Tool::synth);
+    chordsScreen.setVisible (onTool && tool == Tool::chords);
     vocoderScreen.setVisible (p == Page::vocoderSettings);
     showMorePage (p == Page::more ? morePage : -1);
 
@@ -610,7 +657,7 @@ void PocketApp::noteStep()
     if (page == Page::recorder)
         s = sheetOpen ? stepShape : stepRecord;
     else if (page == Page::tool)
-        s = tool == Tool::loops || tool == Tool::synth ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
+        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
           : beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
     if (s >= 0)
         ideas.reachedStep (s);
@@ -622,6 +669,8 @@ void PocketApp::stopEverything()
     lockKind = LockKind::none;
     finishSynthTake();
     synthScreen.leave();
+    chordsScreen.leave();
+    chordsTool.releaseAll();
     beats.leave();
     loopsScreen.leave();
 }
@@ -964,6 +1013,8 @@ void PocketApp::switchIdea (const juce::String& id)
     lockKind = LockKind::none;
     finishSynthTake();
     synthScreen.leave();
+    chordsScreen.leave();
+    chordsTool.releaseAll();
     if (sheetOpen)
         closeSheet();
     closePadSheet();
@@ -1363,6 +1414,16 @@ void PocketApp::thumbPressed (int button)
                 saveSong();
                 toast ("Layer " + juce::String (top + 1) + U8(" is off. The synth part is back in its pattern: REC puts it on again."));
             }
+            else if (top >= 0 && top == chordsUndoLayer)
+            {
+                chordsUndoLayer = -1;
+                if (chordsTool.engine().progressionMuted())
+                {
+                    chordsTool.progressionEdited();
+                    toast ("Layer " + juce::String (top + 1) + U8(" is off. The progression plays from CHORDS again."));
+                }
+                chordsScreen.repaint();
+            }
             break;
         }
         default: break;
@@ -1393,6 +1454,7 @@ void PocketApp::recPressed()
         case Tool::pads: recPads(); break;
         case Tool::vocoder: recVocoder(); break;
         case Tool::synth: recSynth(); break;
+        case Tool::chords: recChords(); break;
         default: break;
     }
     applyClick();
@@ -1584,6 +1646,64 @@ void PocketApp::recSynth()
     synthScreen.partChanged();
 }
 
+// CHORDS: the chords source goes onto the next layer for the take's length, in time (a count-in first from a
+// stopped song). With the progression on, the take starts the progression from its first box and lasts whole
+// passes of it. Once the layer plays, the progression's sound is muted here (it still drives the vocoder) and a
+// held chord lets go, so nothing doubles. UNDO takes the layer off and the progression sounds again.
+int PocketApp::chordsRecBars() const
+{
+    int bars = appSettings.recBars();
+    const int pass = chordsTool.progressionOn ? chordsTool.usedBoxes() : 0;
+    if (pass > 0)
+        bars = bars <= 0 ? pass : (int) std::ceil ((double) bars / pass - 1.0e-9) * pass;
+    return bars;
+}
+
+void PocketApp::recChords()
+{
+    auto& b = beats.engine();
+    if (loopsScreen.nextLayer() < 0)
+        return toast ("All 8 layers are used. Clear one in LOOPS to record.");
+    if (! chordsTool.playsSynth && ! chordsTool.playsPad)
+        return toast ("The chords only play the vocoder's notes: pick SYNTH or MY PAD SOUND to record them.");
+    const bool running = b.clockRunning();
+    const bool prog = chordsTool.progressionOn && chordsTool.usedBoxes() > 0;
+    const int bars = chordsRecBars();
+    chordsScreen.leave();
+    const int layer = loopsScreen.recordFrom ((int) pocket::LoopSource::chords, bars);
+    if (layer < 0)
+        return;
+    auto& eng = chordsTool.engine();
+    eng.setProgressionMuted (false);
+    if (prog)   // the take starts where it will (corrected once it has): the progression from its top there
+        eng.setOrigin (running ? std::ceil (b.clockBeat() / 4.0 - 1.0e-9) * 4.0 : appSettings.countInBars * 4.0);
+    chordsLockProg = prog;
+    lockKind = LockKind::chords;
+    lockLayer = layer;
+    lockArmed = true;
+    lockWatch.startTimer (20);
+    if (! running)
+        togglePlay();   // the song starts; the take starts after the count-in (or at once without one)
+    toast (prog ? "The progression goes on layer " + juce::String (layer + 1) + U8(" from its first chord (") + lengthLabel (bars).toLowerCase() + ")."
+                : "Play the chords " + juce::String (running ? "from the next bar" : "after the count-in") + ": they go on layer " + juce::String (layer + 1) + ".");
+}
+
+void PocketApp::applyChordsPadSound()
+{
+    const int pad = chordsTool.padSoundPad;
+    if (juce::isPositiveAndBelow (pad, kPads) && ! beats.kit().pads[(size_t) pad].empty())
+    {
+        const auto& kp = beats.kit().pads[(size_t) pad];
+        chordsTool.engine().setPadSound (kp.audio, kp.tune / 10.0);
+    }
+    else
+    {
+        chordsTool.engine().setPadSound (nullptr, 0);
+        chordsTool.playsPad = false;
+    }
+    chordsTool.apply();
+}
+
 void PocketApp::lockWatchTick()
 {
     auto& b = beats.engine();
@@ -1695,6 +1815,39 @@ void PocketApp::lockWatchTick()
     if (lockLayer < 0 || loops.settling (lockLayer))
         return;
     const auto st = loops.state (lockLayer);
+    if (lockKind == LockKind::chords && st == pocket::LoopState::recording && chordsLockProg)
+    {
+        // the take has started: the progression's top on its first beat, wherever the looper put it
+        const double start = loops.startBeat (lockLayer);
+        if (std::abs (chordsTool.engine().getOrigin() - start) > 1.0e-6)
+            chordsTool.engine().setOrigin (start);
+    }
+    if (lockKind == LockKind::chords && st == pocket::LoopState::playing)
+    {
+        lockWatch.stopTimer();
+        lockKind = LockKind::none;
+        loops.setTransport (true);
+        if (chordsLockProg)
+            chordsTool.engine().setProgressionMuted (true);   // still drives the vocoder
+        chordsTool.releaseAll();
+        chordsUndoLayer = lockLayer;
+        loops.setKnob (lockLayer, fxDelay, echoToDelay (chordsTool.engine().echoSend()));
+        loops.setKnob (lockLayer, fxReverb, echoToReverb (chordsTool.engine().echoSend()));
+        chordsScreen.repaint();
+        singScreen.repaint();
+        toast ("Chords on layer " + juce::String (lockLayer + 1) + (chordsLockProg ? U8(". The progression is muted here so it doesn't double; it still sets the vocoder's notes.")
+                                                                                  : U8(". It keeps looping. UNDO takes it off.")));
+        return;
+    }
+    if (lockKind == LockKind::chords)
+    {
+        if (st == pocket::LoopState::empty)
+        {
+            lockWatch.stopTimer();
+            lockKind = LockKind::none;
+        }
+        return;
+    }
     if (st == pocket::LoopState::playing && synthLock())
     {
         // The SYNTH part is on its layer: the pattern is cleared (kept for UNDO) so nothing plays twice, and the
@@ -1763,6 +1916,8 @@ PocketApp::RecView PocketApp::recView() const
         bars = beats.drums().padPattern.hits.empty() && appSettings.recBars() > 0 ? appSettings.recBars() : beats.drums().padPattern.bars;
     else if (synthLock())
         bars = lockBars;
+    else if (page == Page::tool && tool == Tool::chords)
+        bars = chordsRecBars();
     else if (page == Page::tool && tool == Tool::synth)
     {
         const int patBars = synthPart.pattern.bars, want = appSettings.recBars();
@@ -1820,12 +1975,14 @@ void PocketApp::setSongKey (SongKey k)
     auto& voc = vocoderScreen.engine();
     if (voc.key() != k.root || voc.minor() != k.minor)
         voc.setKey (k.root, k.minor);
+    chordsTool.setKey (k);
     saveSong();
     synthScreen.leave();
     synthScreen.repaint();
+    chordsScreen.repaint();
     singScreen.repaint();
     if (changed)
-        toast ("The song is in " + k.label() + ". SYNTH and the vocoder follow it.");
+        toast ("The song is in " + k.label() + ". SYNTH, CHORDS and the vocoder follow it.");
 }
 
 void PocketApp::openKeyMenu (juce::Component& c, juce::Rectangle<int> r)
@@ -1844,6 +2001,11 @@ void PocketApp::loadSong()
     songKey = SongKey::fromVar (v.getProperty ("key", {}), SongKey { voc.key(), voc.minor() });   // older songs: the vocoder's key
     synthPart.fromVar (v.getProperty ("synth", {}));
     synthUndoLayer = -1;
+    chordsTool.fromVar (v.getProperty ("chords", {}));
+    chordsTool.setKey (songKey);
+    applyChordsPadSound();
+    chordsUndoLayer = -1;
+    chordsScreen.toolChanged();
     if (voc.key() != songKey.root || voc.minor() != songKey.minor)
         voc.setKey (songKey.root, songKey.minor);
     synthScreen.partChanged();
@@ -1854,6 +2016,7 @@ void PocketApp::saveSong()
     auto* o = new juce::DynamicObject();
     o->setProperty ("key", songKey.toVar());
     o->setProperty ("synth", synthPart.toVar());
+    o->setProperty ("chords", chordsTool.toVar());
     auto file = lib.ideaRoot().getChildFile ("song.json");
     file.getParentDirectory().createDirectory();
     file.replaceWithText (juce::JSON::toString (juce::var (o)));
@@ -1867,8 +2030,10 @@ void PocketApp::headerTickNow()
         if (voc.key() != songKey.root || voc.minor() != songKey.minor)
         {
             songKey = { voc.key(), voc.minor() };
+            chordsTool.setKey (songKey);
             saveSong();
             synthScreen.repaint();
+            chordsScreen.repaint();
         }
     }
 
@@ -2088,7 +2253,7 @@ void PocketApp::resized()
     thumb.setVisible (thumbShown());
 
     const auto content = contentBounds();
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
     countPanel.setBounds (16, content.getY() + 8, w - 32, 136);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
@@ -2205,8 +2370,8 @@ juce::Rectangle<int> PocketApp::tourStop (int stop)
             showTool (Tool::pads, false);
             return getLocalArea (&thumb, thumb.buttonRect (ThumbBar::rec).toNearestInt()).expanded (2);
         case 2:
-            showTool (Tool::pads, false);
-            return getLocalArea (&thumb, thumb.buttonRect (ThumbBar::bpm).getUnion (thumb.buttonRect (ThumbBar::click)).toNearestInt());
+            showTool (Tool::chords, false);
+            return getLocalArea (&chordsScreen, chordsScreen.tourSpot());
         case 3:
             showTool (Tool::pads, false);
             return getLocalArea (&beats, beats.tourSpot (0));
@@ -2446,7 +2611,49 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         synthScreen.partChanged();
     }
 
-    // VOCODER: the mic off, the headphones sheet (wired, Bluetooth, none), then the banner
+    // CHORDS in A minor: a chord held, then the progression playing its second bar, then 8 boxes
+    auto chordsRender = [this] (bool running, double beat)
+    {
+        std::vector<float> l (256), r (256);
+        chordsTool.engine().renderAt (l.data(), r.data(), 256, running, beat, 120.0);   // (no sound card here)
+    };
+    {
+        setSongKey ({ 9, true });
+        chordsTool.reset();
+        chordsTool.setKey (songKey);
+        chordsScreen.toolChanged();
+        showTool (Tool::chords);
+        chordsTool.padDown (3, false);
+        chordsRender (false, 0.0);
+        toastBox->setVisible (false);
+        savePng (folder.getChildFile ("15-tool-chords.png"));
+        chordsTool.releaseAll();
+        chordsTool.progression = { 0, 3, 5, 6, -1, -1, -1, -1 };
+        chordsTool.progressionOn = true;
+        chordsTool.style = pocket::styleStabs;
+        chordsTool.apply();
+        chordsRender (true, 4.5);
+        chordsScreen.repaint();
+        savePng (folder.getChildFile ("15b-chords-progression.png"));
+        chordsTool.progLength = 8;
+        chordsTool.progression = { 0, 3, 5, 6, 0, 3, 4, 7 };
+        chordsTool.colour = (int) pocket::ChordColour::plain;
+        chordsTool.style = pocket::styleChord;
+        chordsTool.bass = true;
+        chordsTool.editingBox = 6;
+        chordsTool.apply();
+        chordsScreen.toolChanged();
+        chordsRender (true, 4.0 * 6 + 0.5);
+        savePng (folder.getChildFile ("15c-chords-8-boxes.png"));
+        chordsTool.reset();
+        chordsTool.setKey (songKey);
+        chordsScreen.toolChanged();
+    }
+
+    // VOCODER: the mic off, the headphones sheet (wired, Bluetooth, none), then the banner. The CHORDS tool holds
+    // Dm7, so the vocoder shows the chord CHORDS is sending.
+    chordsTool.padDown (3, false);
+    chordsRender (false, 0.0);
     singScreen.showDemo();
     micOn = micHear = false;
     applyMic();
@@ -2469,6 +2676,17 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     routeChanged();
     toastBox->setVisible (false);
     savePng (folder.getChildFile ("06f-tool-vocoder-bluetooth.png"));
+    // the progression running: the VOCODER tool shows which chord CHORDS is sending, and CHORDS · ... › opens it
+    chordsTool.releaseAll();
+    chordsTool.progression = { 0, 3, 5, 6, -1, -1, -1, -1 };
+    chordsTool.progressionOn = true;
+    chordsTool.apply();
+    chordsRender (true, 8.5);
+    toastBox->setVisible (false);
+    savePng (folder.getChildFile ("16-vocoder-linked-chord.png"));
+    chordsTool.reset();
+    chordsTool.setKey (songKey);
+    chordsRender (false, 0.0);
     pocket::setDemoRoute ((int) pocket::Route::wired);
     routeChanged();
     micHear = true;
@@ -2533,6 +2751,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     juce::String synthReport;
     if (const auto why = synthSelfCheck (synthReport); why.isNotEmpty())
         problems.add ("Synth: " + why);
+    juce::String chordsReport;
+    if (const auto why = chordsSelfCheck (chordsReport); why.isNotEmpty())
+        problems.add ("Chords: " + why);
 
     // Ideas: each keeps its own pads and beat
     {
@@ -2655,10 +2876,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     }
 
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nPLAY LIVE early hit: " + beats.liveReport + "\n"
                           + "\nSynth self-check (120 BPM, 44.1 kHz):\n" + synthReport
+                          + "\nChords self-check (120 BPM, 44.1 kHz):\n" + chordsReport
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport
                           + "\nREC, count-in and mic checks (97 BPM, 44.1 kHz):\n" + recReport);
@@ -3006,6 +3228,87 @@ juce::String PocketApp::runRecChecks (juce::String& report)
             if (! synthPart.pattern.empty())
                 problems.add ("REC on SYNTH (PATTERN): the pattern wasn't cleared after the lock");
         }
+    }
+    togglePlay();
+    pump (2048);
+
+    // CHORDS with the progression on (Am Dm F G, a bar each): REC from a stopped song counts in, the take is whole
+    // passes of the progression (1 bar asked: 4 bars), starts the progression from its top, isn't silent, and once
+    // it plays the progression is muted here (no doubling) while it still drives the vocoder. UNDO un-mutes it.
+    // Then a held chord: REC takes it from the next bar for 1 bar, and it lets go once its layer plays.
+    switchIdea (ideas.create ("Chords check"));
+    appSettings.countInBars = 1;
+    appSettings.recLength = 0;   // 1 bar
+    L.setCountInBars (1);
+    appSettings.click = false;
+    applyClick();
+    silentInput = true;
+    pump (2048);
+    showTool (Tool::chords, false);
+    {
+        auto& ce = chordsTool.engine();
+        chordsTool.reset();
+        chordsTool.setKey ({ 9, true });
+        chordsTool.progression = { 0, 3, 5, 6, -1, -1, -1, -1 };
+        chordsTool.progressionOn = true;
+        chordsTool.apply();
+        recPressed();
+        pump (barSamples / 2);
+        const bool counting = recView().kind == RecView::counting;
+        const bool landed = waitPlaying (0, 12);
+        report << "chords progression: count-in " << (counting ? "yes" : "no") << ", layer 1 " << (landed ? "playing" : "NOT playing")
+               << ", progression from beat " << juce::String (ce.getOrigin(), 2) << "\n";
+        if (! counting)
+            problems.add ("REC on CHORDS: no count-in from a stopped song");
+        if (! landed)
+            problems.add ("REC on CHORDS: no take landed on layer 1");
+        else
+        {
+            checkTake ("CHORDS (progression)", 0, 16.0, 4.0);
+            if (takePeak (0) < 0.02f)
+                problems.add ("REC on CHORDS: the layer is silent (peak " + juce::String (takePeak (0), 4) + ")");
+            if (std::abs (ce.getOrigin() - L.startBeat (0)) > 1.0e-6)
+                problems.add ("REC on CHORDS: the progression didn't start from its first box with the take");
+            if (! ce.progressionMuted())
+                problems.add ("REC on CHORDS: the progression kept sounding over its layer");
+            pump (barSamples);
+            ce.takePeak();
+            const int sendsBefore = ce.vocoderSends();
+            pump (barSamples * 2);
+            const float livePeak = ce.takePeak();
+            const int sent = ce.vocoderSends() - sendsBefore;
+            report << "chords after the lock: live peak " << juce::String (livePeak, 6) << ", layer peak " << juce::String (takePeak (0), 3)
+                   << ", chords sent to the vocoder in 2 bars " << sent << "\n";
+            if (livePeak > 1.0e-4f)
+                problems.add ("REC on CHORDS: the live chords kept playing over their layer (peak " + juce::String (livePeak, 5) + ")");
+            if (sent < 2)
+                problems.add ("REC on CHORDS: the muted progression stopped driving the vocoder (" + juce::String (sent) + " chords in 2 bars)");
+            thumbPressed (ThumbBar::undo);
+            pump (2048);
+            if (L.state (0) != pocket::LoopState::empty || ce.progressionMuted())
+                problems.add ("UNDO after a CHORDS take: the layer should be off and the progression sounding again");
+        }
+
+        // a held chord, the song playing: from the next bar, 1 bar
+        chordsTool.progressionOn = false;
+        chordsTool.progressionEdited();
+        chordsTool.hold = true;
+        chordsTool.padDown (3, false);
+        pump (barSamples / 4);
+        const int layer = loopsScreen.nextLayer();
+        recPressed();
+        const bool held = waitPlaying (layer, 6);
+        if (! held)
+            problems.add ("REC on CHORDS (held chord): no take landed on layer " + juce::String (layer + 1));
+        else
+        {
+            checkTake ("CHORDS (held chord)", layer, 4.0, 4.0);
+            if (takePeak (layer) < 0.02f)
+                problems.add ("REC on CHORDS (held chord): the layer is silent");
+            if (chordsTool.heldPad() >= 0)
+                problems.add ("REC on CHORDS (held chord): the chord kept ringing over its layer");
+        }
+        chordsTool.reset();
     }
     togglePlay();
     pump (2048);

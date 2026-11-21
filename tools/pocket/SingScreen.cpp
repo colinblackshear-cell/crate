@@ -11,35 +11,40 @@ const juce::Colour kPadLit { 0xffb9a3dc }, kPadDark { 0xff4a4037 }, kPadText { 0
                    kAmberBg { 0xfffbe9c4 };
 }
 
-SingScreen::SingScreen (PocketHost& h, LoopsScreen& l, VocoderEngine& v, BeatsScreen& b, AppSettings& s)
-    : host (h), loopsScreen (l), voc (v), beats (b), settings (s)
+SingScreen::SingScreen (PocketHost& h, LoopsScreen& l, VocoderEngine& v, ChordsTool& c, AppSettings& s)
+    : host (h), loopsScreen (l), voc (v), chords (c), settings (s)
 {
-    loopsScreen.engine().setChordSource (&chords);
     startTimerHz (20);
 }
 
 SingScreen::~SingScreen()
 {
     stopTimer();
-    loopsScreen.engine().setChordSource (nullptr);
 }
 
 void SingScreen::leave()
 {
-    if (heldPad >= 0)
-        pressPad (heldPad, false);
+    if (pressed >= padBase && pressed < padBase + kChordPads)
+        pressPad (pressed - padBase, false);
+    pressed = 0;
 }
 
 void SingScreen::visibilityChanged()
 {
     if (isVisible() && ! demo)
-    {
         applyMode();
-        if (settings.singPadSound)
-            pickPadSound();
-    }
     else
         leave();
+}
+
+juce::String SingScreen::sendingName() const
+{
+    const int pad = chords.soundingPad();
+    if (pad >= 0 && chords.playsVocoder)
+        return chords.padName (pad);
+    if (! voc.chordsFed() && voc.activeChord() >= 0)
+        return voc.padName (voc.activeChord());   // the vocoder's own chord (its settings' CHORDS pedal)
+    return {};
 }
 
 int SingScreen::recLayer() const
@@ -61,26 +66,13 @@ bool SingScreen::hearShown() const
     return host.micReady() && host.micRoute() != Route::none && (host.micRoute() == Route::bluetooth || ! host.hearingMyself());
 }
 
-void SingScreen::pickPadSound()
-{
-    const int pad = beats.selectedPad();
-    const auto& kp = beats.kit().pads[(size_t) juce::jlimit (0, kPads - 1, pad)];
-    if (kp.empty())
-    {
-        chords.setSound (nullptr, 0);
-        soundPad = -1;
-        return;
-    }
-    chords.setSound (kp.audio, kp.tune / 10.0);
-    soundPad = pad;
-}
-
 //==============================================================================
 void SingScreen::timerCallback()
 {
     ++ticks;
     if (! isVisible() || demo)
         return;
+    shownChord = chords.soundingPad();
     float level = voc.takeMicLevel();
     if (settings.singMode != 0)
         level = juce::jmax (level, voc.outputLevel());
@@ -112,9 +104,9 @@ int SingScreen::idAt (juce::Point<float> p) const
             return modeBase + i;
     if (lcdRect().contains (p)) return lcdId;
     if (keyRect().expanded (2).contains (p)) return keyId;
-    if (soundRect().expanded (2).contains (p)) return soundId;
+    if (chordsRect().expanded (2).contains (p)) return chordsId;
     if (holdRect().expanded (2).contains (p)) return holdId;
-    for (int i = 0; i < VocoderEngine::kChordPads; ++i)
+    for (int i = 0; i < kChordPads; ++i)
         if (padRect (i).contains (p))
             return padBase + i;
     if (settingsRect().contains (p)) return settingsId;
@@ -125,7 +117,7 @@ int SingScreen::idAt (juce::Point<float> p) const
 void SingScreen::mouseDown (const juce::MouseEvent& e)
 {
     pressed = idAt (e.position);
-    if (pressed >= padBase && pressed < padBase + VocoderEngine::kChordPads)
+    if (pressed >= padBase && pressed < padBase + kChordPads)
         pressPad (pressed - padBase, true);   // pads sound on the touch, not the lift
     repaint();
 }
@@ -134,7 +126,7 @@ void SingScreen::mouseUp (const juce::MouseEvent& e)
 {
     const int id = idAt (e.position), was = pressed;
     pressed = 0;
-    if (was >= padBase && was < padBase + VocoderEngine::kChordPads)
+    if (was >= padBase && was < padBase + kChordPads)
         pressPad (was - padBase, false);
     else if (id != 0 && id == was)
         press (id);
@@ -143,29 +135,12 @@ void SingScreen::mouseUp (const juce::MouseEvent& e)
 
 void SingScreen::pressPad (int pad, bool down)
 {
-    const bool hold = settings.singHold;
+    // the CHORDS tool's chords: the same HOLD, sound and vocoder notes (a picked progression box is left alone)
     if (down)
-    {
-        if (hold && voc.activeChord() == pad)
-        {
-            voc.pressPad (pad);   // the lit pad again: let go
-            chords.release();
-            heldPad = -1;
-            return;
-        }
-        if (voc.activeChord() != pad)
-            voc.pressPad (pad);
-        if (settings.singPadSound && chords.hasSound())
-            chords.play (voc.padNotes (pad));
-        heldPad = pad;
-    }
-    else if (! hold && heldPad == pad)
-    {
-        if (voc.activeChord() == pad)
-            voc.pressPad (pad);
-        chords.release();
-        heldPad = -1;
-    }
+        chords.padDown (pad, false);
+    else
+        chords.padUp (pad);
+    repaint();
 }
 
 void SingScreen::press (int id)
@@ -191,31 +166,20 @@ void SingScreen::press (int id)
         host.showLoops();
     else if (id == keyId)
         showKeyMenu();
-    else if (id == soundId)
+    else if (id == chordsId)
     {
-        settings.singPadSound = ! settings.singPadSound;
-        settings.save();
-        if (settings.singPadSound)
-        {
-            pickPadSound();
-            if (! chords.hasSound())
-            {
-                settings.singPadSound = false;
-                host.toast ("Pick a pad with a sound in Beats first. Its sound then plays the chords.");
-            }
-            else
-                host.toast ("The chords play pad " + Kit::padLabel (soundPad) + " (" + beats.kit().pads[(size_t) soundPad].name
-                            + ") and drive the vocoder. Pick another pad in Beats to change it.");
-        }
-        else
-            chords.release();
+        if (onOpenChords)
+            onOpenChords();
     }
     else if (id == holdId)
     {
-        settings.singHold = ! settings.singHold;
-        settings.save();
-        host.toast (settings.singHold ? "HOLD on: a chord rings until you tap it again or another one."
-                                      : "HOLD off: a chord plays while your finger is on it.");
+        chords.hold = ! chords.hold;
+        if (! chords.hold)
+            chords.releaseAll();
+        if (onChanged)
+            onChanged();
+        host.toast (chords.hold ? "HOLD on: a chord rings until you tap it again or another one."
+                                : "HOLD off: a chord plays while your finger is on it.");
     }
 }
 
@@ -319,8 +283,10 @@ void SingScreen::paint (juce::Graphics& g)
     {
         auto r = lcdRect();
         drawWell (g, r, 12.0f);
+        const auto sending = sendingName();
         const juce::String sound = settings.singMode == 0 ? juce::String ("YOUR VOICE")
-                                                          : voc.presetName (voc.preset()).toUpperCase() + U8(" \xc2\xb7 CHORDS");
+                                                          : voc.presetName (voc.preset()).toUpperCase() + U8(" \xc2\xb7 ")
+                                                                + (sending.isNotEmpty() ? sending : juce::String ("NO CHORD"));
         juce::String right;
         auto bar = [&] (double rel) { return juce::String ((int) std::floor (rel / 4.0) + 1); };
         if (rec >= 0 && loops.state (rec) == LoopState::recording)
@@ -359,11 +325,7 @@ void SingScreen::paint (juce::Graphics& g)
         }
     }
 
-    // CHORDS · A MINOR, KEY, SOUND, HOLD
-    g.setColour (col::ink);
-    g.setFont (spaced (condensedBold (17.0f), 0.08f));
-    g.drawFittedText ("CHORDS " + juce::String (U8("\xc2\xb7 ")) + voc.keyLabel(), juce::Rectangle<int> (16, (int) keyRect().getY(), (int) keyRect().getX() - 22, (int) keyRect().getHeight()),
-                      juce::Justification::centredLeft, 1, 0.7f);
+    // CHORDS · Dm › (the CHORDS tool), KEY, HOLD
     auto smallButton = [&] (juce::Rectangle<float> b, const juce::String& text, bool lit, int id)
     {
         drawRaised (g, b, lit ? Look::amber : Look::cream, pressed == id, 10.0f);
@@ -371,15 +333,32 @@ void SingScreen::paint (juce::Graphics& g)
         g.setFont (spaced (condensed (14.0f), 0.08f));
         g.drawFittedText (text, b.withTrimmedBottom (3).reduced (4, 0).toNearestInt(), juce::Justification::centred, 1, 0.75f);
     };
+    {
+        auto b = chordsRect();
+        drawRaised (g, b, Look::cream, pressed == chordsId, 10.0f);
+        auto inner = b.withTrimmedBottom (3).reduced (12, 0).translated (0, pressed == chordsId ? 2.0f : 0.0f);
+        const auto sending = sendingName();
+        const bool progression = chords.engine().fromProgression() && chords.soundingPad() >= 0;
+        juce::AttributedString a;
+        a.append ("CHORDS ", spaced (condensedBold (16.0f), 0.08f), col::ink);
+        a.append (U8("\xc2\xb7 ") + (sending.isNotEmpty() ? sending : SongKey::pitchName (chords.key.root) + (chords.key.minor ? " MINOR" : " MAJOR")),
+                  spaced (condensedBold (16.0f), 0.04f), sending.isNotEmpty() ? juce::Colour (0xff6a4f9a) : col::ink);
+        if (progression)
+            a.append (U8("  \xc2\xb7 PROGRESSION"), spaced (condensed (12.0f), 0.08f), col::inkDim);
+        a.setJustification (juce::Justification::centredLeft);
+        a.draw (g, inner.withTrimmedRight (16));
+        g.setColour (col::ink);
+        g.setFont (condensedBold (24.0f));
+        g.drawText (U8("\xe2\x80\xba"), inner.removeFromRight (16), juce::Justification::centredRight);
+    }
     smallButton (keyRect(), "KEY", false, keyId);
-    smallButton (soundRect(), settings.singPadSound && soundPad >= 0 ? "SOUND: PAD " + Kit::padLabel (soundPad) : juce::String ("SOUND: SYNTH"), settings.singPadSound, soundId);
-    smallButton (holdRect(), "HOLD", settings.singHold, holdId);
+    smallButton (holdRect(), "HOLD", chords.hold, holdId);
 
     drawWell (g, padWell(), 12.0f);
-    for (int i = 0; i < VocoderEngine::kChordPads; ++i)
+    for (int i = 0; i < kChordPads; ++i)
     {
         auto p = padRect (i);
-        const bool lit = voc.activeChord() == i;
+        const bool lit = chords.soundingPad() == i;
         const float down = pressed == padBase + i ? 2.0f : 0.0f;
         g.setColour (juce::Colour (0xff120f0c));
         g.fillRoundedRectangle (p.translated (0, 3), 10.0f);
@@ -387,10 +366,10 @@ void SingScreen::paint (juce::Graphics& g)
         g.fillRoundedRectangle (p.translated (0, down), 10.0f);
         g.setColour (lit ? col::ink : kPadText);
         g.setFont (condensedBold (19.0f));
-        g.drawFittedText (voc.padName (i), p.translated (0, down).withTrimmedBottom (p.getHeight() * 0.38f).toNearestInt(), juce::Justification::centredBottom, 1, 0.7f);
+        g.drawFittedText (chords.padName (i), p.translated (0, down).withTrimmedBottom (p.getHeight() * 0.38f).toNearestInt(), juce::Justification::centredBottom, 1, 0.7f);
         g.setColour (lit ? juce::Colour (0xff3a2a55) : juce::Colour (0xffa89a86));
         g.setFont (lcdFont (16.0f));
-        g.drawText (voc.padNumeral (i), p.translated (0, down).withTrimmedTop (p.getHeight() * 0.6f), juce::Justification::centredTop);
+        g.drawText (chords.padNumeral (i), p.translated (0, down).withTrimmedTop (p.getHeight() * 0.6f), juce::Justification::centredTop);
     }
 
     // what happens
@@ -415,8 +394,7 @@ void SingScreen::showDemo()
 {
     demo = true;
     settings.singMode = 1;
-    if (voc.activeChord() != 2)
-        voc.pressPad (2);
+    // (PocketApp holds the chord: the CHORDS tool's state is shared)
     juce::Random rng (5);
     for (size_t i = 0; i < levels.size(); ++i)
         levels[i] = (float) (0.15 + 0.6 * std::pow (std::sin ((double) i * 0.37), 2.0) * rng.nextFloat());
