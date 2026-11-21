@@ -175,6 +175,21 @@ public:
                 editor.undo();
                 expectEquals ((int) engine.getNoteClips()[(size_t) c].notes.size(), 2);
 
+                if (const auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_TAKES_SNAPSHOT", {}); path.isNotEmpty())
+                {
+                    editor.addNote (1.0, 41, 0.5);
+                    editor.addNote (2.5, 43, 0.25);
+                    editor.addNote (3.0, 46, 1.0);
+                    editor.setSize (980, 560);
+                    const auto image = editor.createComponentSnapshot (editor.getLocalBounds(), true, 2.0f);
+                    juce::File file (path + "-notes.png");
+                    file.deleteFile();
+                    juce::FileOutputStream stream (file);
+                    juce::PNGImageFormat().writeImageToStream (image, stream);
+                    for (int k = 0; k < 3; ++k)
+                        editor.undo();
+                }
+
                 // Saved: the clip in the show, the takes beside it.
                 auto xml = engine.saveShow().createXml();
                 expect (xml != nullptr && xml->writeTo (showFile.getFile()));

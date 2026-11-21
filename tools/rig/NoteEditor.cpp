@@ -387,9 +387,11 @@ NoteEditor::NoteEditor (RigEngine& e, int s, double bar) : engine (e), strip (s)
 
     for (auto* l : { &title, &info, &hint })
         addAndMakeVisible (*l);
-    title.setFont (vintage::cond (20.0f, vintage::Weight::extra, 0.04f));
-    info.setFont (vintage::barlow (14.0f));
+    title.setFont (vintage::cond (22.0f, vintage::Weight::extra, 0.04f));
+    info.setFont (vintage::barlow (15.0f));
     hint.setFont (vintage::barlow (13.0f));
+    info.setColour (juce::Label::textColourId, vintage::pal().ink);
+    hint.setColour (juce::Label::textColourId, vintage::pal().ink2);
     hint.setText ("Drag a note to move it, its right end to make it longer; double-click to add or delete; drag the bars at the bottom "
                   "for how hard each note is hit. Arrows move the picked notes (Shift: an octave). It plays as you change it.",
                   juce::dontSendNotification);
@@ -697,29 +699,30 @@ void NoteEditor::paint (juce::Graphics& g)
 void NoteEditor::resized()
 {
     auto area = getLocalBounds().reduced (14, 10);
+    auto head = area.removeFromTop (30);
+    title.setBounds (head.removeFromLeft (juce::jmin (420, head.getWidth() / 2)));
+    info.setBounds (head);
+    area.removeFromTop (6);
     auto top = area.removeFromTop (32);
+    snap.setBounds (top.removeFromLeft (170).reduced (0, 2));
+    top.removeFromLeft (8);
+    quantize.setBounds (top.removeFromLeft (100));
+    top.removeFromLeft (14);
+    for (auto* b : { &down12, &down1, &up1, &up12 })
+    {
+        b->setBounds (top.removeFromLeft (42));
+        top.removeFromLeft (3);
+    }
+    top.removeFromLeft (11);
+    all.setBounds (top.removeFromLeft (80));
+    top.removeFromLeft (6);
+    remove.setBounds (top.removeFromLeft (72));
+    top.removeFromLeft (6);
+    undoButton.setBounds (top.removeFromLeft (66));
     done.setBounds (top.removeFromRight (80));
     top.removeFromRight (6);
-    play.setBounds (top.removeFromRight (70));
-    top.removeFromRight (12);
-    undoButton.setBounds (top.removeFromRight (64));
-    top.removeFromRight (6);
-    remove.setBounds (top.removeFromRight (70));
-    top.removeFromRight (6);
-    all.setBounds (top.removeFromRight (76));
-    top.removeFromRight (12);
-    for (auto* b : { &up12, &up1, &down1, &down12 })
-    {
-        b->setBounds (top.removeFromRight (40));
-        top.removeFromRight (3);
-    }
-    top.removeFromRight (9);
-    quantize.setBounds (top.removeFromRight (96));
-    top.removeFromRight (6);
-    snap.setBounds (top.removeFromRight (160).reduced (0, 2));
-    title.setBounds (top);
-    area.removeFromTop (4);
-    info.setBounds (area.removeFromTop (22));
+    play.setBounds (top.removeFromRight (72));
+    area.removeFromTop (8);
     hint.setBounds (area.removeFromBottom (34));
     area.removeFromBottom (4);
     grid->setBounds (area);
