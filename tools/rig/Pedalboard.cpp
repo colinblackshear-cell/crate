@@ -63,6 +63,12 @@ const std::vector<Pedal>& pedals()
           "Catches a slice of the beat and loops it while it's on: stomp it for a fill, stomp again to let go.",
           0xffc9a472, { "repeat", "Slice" }, nullptr,
           { { "repeat", "Slice" } } },
+        { "Grain", "cloud + freeze",
+          "Cuts the sound into many tiny pieces and plays them back as a cloud: shifted in pitch, scattered in time, some backwards. "
+          "Freeze stops listening and keeps the last moment ringing on, so a word, a chord or a drum hit becomes a pad to play over.",
+          0xff5fb7c9, { "grainMix", "Mix" }, "grainOn",
+          { { "grainMix", "Mix" }, { "grainSize", "Size" }, { "grainDensity", "Density" }, { "grainSpray", "Spray" },
+            { "grainPitch", "Pitch" }, { "grainSpread", "Spread" }, { "grainReverse", "Reverse" }, { "grainFreeze", "Freeze" } } },
     };
     return list;
 }

@@ -2830,13 +2830,22 @@ void RigView::say (const juce::String& text)
 void RigView::audioProcessorParameterChangeGestureBegin (juce::AudioProcessor* tool, int parameterIndex)
 {
     // Called when a control is touched on screen (on the message thread for the Rig's own windows).
-    if (! learningKnob)
-        return;
+    // Every touch is noted for Move in the Automation panel; while learning, it's the knob's target.
     for (int t = 0; t < RigEngine::numTools; ++t)
         if (&engine.getTool (t) == tool)
         {
             juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this), t, parameterIndex]
             {
+                if (safe != nullptr)
+                {
+                    // (Only settings that turn smoothly: a switch or a pattern choice can't Move.)
+                    const auto& list = safe->engine.getTool (t).getParameters();
+                    if (juce::isPositiveAndBelow (parameterIndex, list.size()) && ! list[parameterIndex]->isDiscrete() && ! list[parameterIndex]->isBoolean())
+                    {
+                        safe->engine.lastTouchedTool = t;
+                        safe->engine.lastTouchedParameter = parameterIndex;
+                    }
+                }
                 if (safe != nullptr && safe->learningKnob)
                 {
                     safe->touchedTool = t;

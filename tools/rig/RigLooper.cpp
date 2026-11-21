@@ -224,6 +224,9 @@ void RigLooper::reset (int index)
         layer.length = 0;
         layer.lengthBeats = 0;
         layer.position = 0;
+        layer.bend = straight;
+        layer.bendNow = layer.bendBefore = {};
+        layer.bendFade = 0;
         if (undoLayer == index)
             undoLayer = -1;
     }
@@ -455,6 +458,9 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
 
     if (layer.clears.exchange (0) > 0)
     {
+        layer.bend = straight;   // a new loop here starts straight
+        layer.bendNow = layer.bendBefore = {};
+        layer.bendFade = 0;
         layer.state = (int) State::empty;
         layer.length = 0;
         layer.lengthBeats = 0;
@@ -534,6 +540,45 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 break;
         }
     }
+}
+
+juce::String RigLooper::bendName (int b)
+{
+    switch (b)
+    {
+        case reverse:   return "Reverse";
+        case half:      return "Half speed";
+        case twice:     return "Double speed";
+        case stutter4:  return "Stutter 1/4";
+        case stutter8:  return "Stutter 1/8";
+        case stutter16: return "Stutter 1/16";
+        default:        return "Straight";
+    }
+}
+
+double RigLooper::bentPosition (const Layer::BendAt& b, double straightPos, double beat, double lengthBeats, int)
+{
+    if (b.mode == straight)
+        return straightPos;
+    const double since = beat - b.at;
+    double p = b.from;
+    switch (b.mode)
+    {
+        case reverse: p = b.from - since; break;
+        case half:    p = b.from + since * 0.5; break;
+        case twice:   p = b.from + since * 2.0; break;
+        case stutter4: case stutter8: case stutter16:
+        {
+            // The slice it was in (on the grid), round and round from where it was.
+            const double slice = juce::jmin (lengthBeats, b.mode == stutter4 ? 1.0 : b.mode == stutter8 ? 0.5 : 0.25);
+            const double top = std::floor (b.from / slice + 1.0e-9) * slice;
+            p = top + std::fmod (b.from - top + since, slice);
+            break;
+        }
+        default: break;
+    }
+    p = std::fmod (p, lengthBeats);
+    return p < 0 ? p + lengthBeats : p;
 }
 
 bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioBuffer<float>*, numSources>& sources,
@@ -692,10 +737,41 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                     p += lengthBeats;
                 const double pos = p / lengthBeats * layer.length;
                 const int i0 = juce::jlimit (0, layer.length - 1, (int) pos);
-                const int i1 = (i0 + 1) % layer.length;
-                const float frac = (float) (pos - i0);
-                const float l = audioL[i0] + (audioL[i1] - audioL[i0]) * frac;
-                const float r = audioR[i0] + (audioR[i1] - audioR[i0]) * frac;
+                auto readAt = [&] (double beats, float& outL2, float& outR2)
+                {
+                    const double at = beats / lengthBeats * layer.length;
+                    const int j0 = juce::jlimit (0, layer.length - 1, (int) at);
+                    const int j1 = (j0 + 1) % layer.length;
+                    const float f = (float) (at - j0);
+                    outL2 = audioL[j0] + (audioL[j1] - audioL[j0]) * f;
+                    outR2 = audioR[j0] + (audioR[j1] - audioR[j0]) * f;
+                };
+
+                // A bend: where it plays from, if not straight on the beat.
+                const int wanted = layer.bend.load (std::memory_order_relaxed);
+                if (wanted != layer.bendNow.mode)
+                {
+                    layer.bendBefore = layer.bendNow;
+                    layer.bendNow = { wanted, bentPosition (layer.bendBefore, p, beat, lengthBeats, clock.beatsPerBar), beat };
+                    layer.bendFade = juce::jmax (1, (int) (0.008 * sampleRate));
+                }
+                float l, r;
+                if (layer.bendNow.mode == straight && layer.bendFade == 0)
+                    readAt (p, l, r);
+                else
+                {
+                    readAt (bentPosition (layer.bendNow, p, beat, lengthBeats, clock.beatsPerBar), l, r);
+                    if (layer.bendFade > 0)
+                    {
+                        // A short fade from how it played before, so a bend never clicks.
+                        float bl, br;
+                        readAt (bentPosition (layer.bendBefore, p, beat, lengthBeats, clock.beatsPerBar), bl, br);
+                        const float t = (float) layer.bendFade / (float) juce::jmax (1, (int) (0.008 * sampleRate));
+                        l += (bl - l) * t;
+                        r += (br - r) * t;
+                        --layer.bendFade;
+                    }
+                }
 
                 if (layer.gain < target)
                     layer.gain = juce::jmin (target, layer.gain + gainStep);

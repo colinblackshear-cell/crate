@@ -20,6 +20,7 @@ public:
 #include "PluginSlot.h"
 #endif
 #include "dsp/MicModel.h"   // the vocoder's Mic locker, shared
+#include "core/GrainCloud.h"
 
 // A rack of live effects on one of the Rig's mixer strips (and on each loop): a pedalboard.
 // In the order the sound goes through them:
@@ -27,7 +28,7 @@ public:
 //   Gain in, Mic (a classic studio mic style), Gate, Comp, Wah (an envelope filter), Filter (DJ style: one knob, left is
 //   low-pass, right is high-pass, the middle is off), Drive + Crush, Amp (clean, crunch, lead,
 //   fuzz or a bass amp, with its cabinet), EQ, Chorus, Phaser, Tremolo, Delay and Repeat in
-//   time with the Rig's tempo, Reverb, then your own plugin.
+//   time with the Rig's tempo, Reverb, Grain (a cloud of tiny pieces, or Freeze), then your own plugin.
 //
 // Every setting is a parameter, so the Rig's knob Learn can put it on a knob of your keyboard
 // and it's saved with the show. (The pedals added later come last in the parameter list, so
@@ -177,6 +178,15 @@ private:
     std::atomic<float>* micAir = nullptr;
     std::atomic<float>* micPolish = nullptr;
     std::atomic<float>* micAmount = nullptr;
+    std::atomic<float>* grainOn = nullptr;
+    std::atomic<float>* grainMix = nullptr;
+    std::atomic<float>* grainSize = nullptr;
+    std::atomic<float>* grainDensity = nullptr;
+    std::atomic<float>* grainSpray = nullptr;
+    std::atomic<float>* grainPitch = nullptr;
+    std::atomic<float>* grainSpread = nullptr;
+    std::atomic<float>* grainReverse = nullptr;
+    std::atomic<float>* grainFreeze = nullptr;
 
     void processMic (float* left, float* right, int n);
     void processDynamics (float* left, float* right, int n);
@@ -185,6 +195,7 @@ private:
     void processEq (juce::AudioBuffer<float>&, int n);
     void processModulation (float* left, float* right, int n, double bpm);
     void processRepeat (float* left, float* right, int n, double bpm);
+    void processGrain (juce::AudioBuffer<float>&, int n);
     double currentPpq (bool& known) const;
 
     // Tuner.
@@ -193,6 +204,10 @@ private:
 
     // Mic: the vocoder's Mic locker, faded in and out so switching never clicks.
     vox::MicModel mic;
+    // Grain: the cloud, and how much of it is heard (faded, so switching never clicks).
+    GrainCloud grains;
+    juce::AudioBuffer<float> grainWet;
+    juce::SmoothedValue<float> grainAmount;
     juce::SmoothedValue<float> micMix;
 
     // Gate and comp.

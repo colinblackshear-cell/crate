@@ -105,6 +105,14 @@ public:
     void undo();
     // Adds a lane (or replaces the one for that setting). Returns its index.
     int addLane (Lane);
+    // Move: a lane made to move a setting by itself, round and round in time like an LFO (a
+    // filter that breathes every 2 bars, a delay mix that pulses, random steps on a pitch).
+    // It's an ordinary Loop lane, so it's drawn, edited, switched off and saved like the rest.
+    enum MoveShape { moveSine, moveTriangle, moveRampUp, moveRampDown, moveSquare, moveRandom, numMoveShapes };
+    static juce::String moveShapeName (int);
+    // `beats` for one time round, swinging `depth` (0..1) either side of `centre` (kept inside 0..1).
+    static Lane makeMove (int tool, int parameter, int shape, double beats, float centre, float depth, int seed = 1);
+
     // Every lane of a tool (and its effects, if `fxTool` >= 0), e.g. to clear a track's moves.
     void clearTool (int tool, int fxTool = -1);
     // Where a lane is now (0..1 through it), -1 when it isn't playing: for drawing.

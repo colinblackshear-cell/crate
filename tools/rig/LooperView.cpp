@@ -307,6 +307,9 @@ public:
                 word = layer.mute.load() ? "Muted" : "Playing";
                 break;
         }
+        // Bent: says how, so it's never a mystery why a loop sounds different.
+        if (const int bend = layer.bend.load(); bend != RigLooper::straight && state == RigLooper::State::playing && ! layer.mute.load())
+            word = RigLooper::bendName (bend);
         drawLamp (g, { (float) stateArea.getX() + 8, (float) stateArea.getCentreY() }, lit, 14.0f);
         engraved (g, word, stateArea.withTrimmedLeft (22), juce::Justification::centredLeft, 12.0f, true);
 
@@ -393,6 +396,22 @@ private:
             if (owner.onQuantize)
                 owner.onQuantize (RigQuantizer::loopTarget (index), this);
         });
+        menu.addSeparator();
+        {
+            // Bend it, live: the loop itself stays as it is.
+            const bool playing = state == RigLooper::State::playing || state == RigLooper::State::overdubbing;
+            const int bend = engine.getLooper().getBend (index);
+            menu.addSectionHeader ("Play it");
+            for (int b = 0; b < RigLooper::numBends; ++b)
+                menu.addItem (RigLooper::bendName (b), playing || b == RigLooper::straight, bend == b, [this, b]
+                {
+                    engine.getLooper().setBend (index, b);
+                    say (b == RigLooper::straight ? "Layer " + juce::String (index + 1) + " plays straight again, back on the beat."
+                                                  : "Layer " + juce::String (index + 1) + " plays " + RigLooper::bendName (b).toLowerCase()
+                                                        + " from where it was. Pick Straight to drop it back on the beat.");
+                    repaint();
+                });
+        }
         menu.addSeparator();
         menu.addItem ("Import a loop, stretched to Kaleidobox's tempo...", [this] { importFile (false); });
         menu.addItem ("Import a song or loop, and set Kaleidobox's tempo to it...", [this] { importFile (true); });

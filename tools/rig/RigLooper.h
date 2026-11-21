@@ -59,6 +59,9 @@ public:
         std::atomic<int> version { 0 };       // changes when the sound does (for the waveform)
         // How the last recording on this layer ended, for the window to say (see takeEnding()).
         std::atomic<int> ending { 0 };
+        // How it plays right now (a Bend: reverse, half or double speed, a stutter), any thread.
+        // Only the playing changes: the loop itself, and what an overdub writes, stay as they are.
+        std::atomic<int> bend { 0 };
 
     private:
         friend class RigLooper;
@@ -78,7 +81,26 @@ public:
         float swapLevel = 0.8f;
         bool swapMute = false;
         std::atomic<bool> swapPending { false };
+        // The bend now and the one it's fading from: where in the loop (in beats) and on which
+        // clock beat it took over, so it carries on from there without a jump.
+        struct BendAt
+        {
+            int mode = 0;
+            double from = 0, at = 0;
+        };
+        BendAt bendNow, bendBefore;
+        int bendFade = 0;   // samples left of the fade from bendBefore
     };
+
+    // Ways a playing loop can be bent, live: backwards, at half speed (an octave down, like a
+    // slowed tape), at double speed (an octave up), or a stutter that keeps playing the slice
+    // it was in (a beat, an 8th or a 16th). Each takes over from where the loop is, and going
+    // back to Straight drops it back on the beat.
+    enum Bend { straight, reverse, half, twice, stutter4, stutter8, stutter16, numBends };
+    static juce::String bendName (int);
+    // Any thread.
+    void setBend (int layer, int bend) { layers[(size_t) layer].bend = juce::jlimit (0, numBends - 1, bend); }
+    int getBend (int layer) const { return layers[(size_t) layer].bend.load(); }
 
     RigLooper();
 
@@ -213,6 +235,8 @@ private:
     void handleRequests (Layer&, int index, const Clock&, bool& wantsPlay);
     void finishRecording (Layer&);
     void applySwap (Layer&, int index);   // under the layer's lock
+    // Where a bend plays from (beats into the loop), given where straight would be.
+    static double bentPosition (const Layer::BendAt&, double straightPos, double beat, double lengthBeats, int beatsPerBar);
 
     double sampleRate = 44100.0;
     std::array<Layer, kLayers> layers;
