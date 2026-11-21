@@ -143,7 +143,7 @@ bool Pattern::isEmpty() const
 bool Pattern::operator== (const Pattern& o) const
 {
     return hits == o.hits && accent == o.accent && length == o.length && chance == o.chance && cond == o.cond && nudge == o.nudge
-           && rowLength == o.rowLength;
+           && rowLength == o.rowLength && pitch == o.pitch && decayLock == o.decayLock && velocity == o.velocity;
 }
 
 bool Pattern::hasLife() const
@@ -153,7 +153,8 @@ bool Pattern::hasLife() const
         if (rowLength[(size_t) v] != 0)
             return true;
         for (int st = 0; st < kMaxSteps; ++st)
-            if (chance[(size_t) v][(size_t) st] != 100 || cond[(size_t) v][(size_t) st] != 0 || nudge[(size_t) v][(size_t) st] != 0)
+            if (chance[(size_t) v][(size_t) st] != 100 || cond[(size_t) v][(size_t) st] != 0 || nudge[(size_t) v][(size_t) st] != 0
+                || pitch[(size_t) v][(size_t) st] != 0 || decayLock[(size_t) v][(size_t) st] != 0 || velocity[(size_t) v][(size_t) st] != 100)
                 return true;
     }
     return false;
@@ -239,11 +240,13 @@ void Engine::tap (int voice, float velocity)
 
 void Engine::trigger (int voice, float velocity, bool accent) { start (voice, velocity, accent); }
 
-void Engine::start (int v, float velocity, bool accent)
+void Engine::start (int v, float velocity, bool accent, float tuneLock, float decayLock)
 {
     if (! juce::isPositiveAndBelow (v, kVoices))
         return;
-    const auto& vs = settings.voices[(size_t) v];
+    auto vs = settings.voices[(size_t) v];   // (a copy: a step's locks change it for this hit)
+    vs.tune += tuneLock;
+    vs.decay = juce::jlimit (0.0f, 1.0f, vs.decay + decayLock);
     if (vs.mute)
         return;
     auto& s = state[(size_t) v];
@@ -620,18 +623,19 @@ void Engine::hitVoice (int v, int step, const Pattern& p, double stepStart, doub
     const int hits = juce::jlimit (1, 4, (int) h);
     const double gap = stepLength / hits;
     const double at = stepStart + p.nudge[(size_t) v][(size_t) step] / 100.0 * stepLength;
-    schedule (v, at, hits, gap, 1.0f, accent);
+    schedule (v, at, hits, gap, juce::jlimit (1, 100, (int) p.velocity[(size_t) v][(size_t) step]) / 100.0f, accent,
+              (float) p.pitch[(size_t) v][(size_t) step], p.decayLock[(size_t) v][(size_t) step] / 100.0f);
 }
 
-void Engine::schedule (int v, double beat, int hits, double gap, float velocity, bool accent)
+void Engine::schedule (int v, double beat, int hits, double gap, float velocity, bool accent, float tune, float decay)
 {
     for (auto& slot : pending[(size_t) v])
         if (slot.beat < 0)
         {
-            slot = { beat, hits, gap, velocity, accent };
+            slot = { beat, hits, gap, velocity, accent, tune, decay };
             return;
         }
-    pending[(size_t) v][0] = { beat, hits, gap, velocity, accent };
+    pending[(size_t) v][0] = { beat, hits, gap, velocity, accent, tune, decay };
 }
 
 const Pattern* Engine::byCode (int code) const
@@ -812,15 +816,17 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 for (auto& slot : pending[(size_t) v])
                     if (slot.beat >= 0 && beat >= slot.beat - 1.0e-9)
                     {
-                        start (v, slot.velocity, slot.accent);
+                        start (v, slot.velocity, slot.accent, slot.tune, slot.decay);
                         auto& r = rolls[(size_t) v];
                         r.left = slot.hits - 1;
                         if (r.left > 0)
                         {
                             r.gap = slot.gap;
                             r.next = slot.beat + slot.gap;
-                            r.velocity = 0.8f;
+                            r.velocity = 0.8f * slot.velocity;
                             r.accent = slot.accent;
+                            r.tune = slot.tune;
+                            r.decay = slot.decay;
                         }
                         slot.beat = -1;
                     }
@@ -829,7 +835,7 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 auto& r = rolls[(size_t) v];
                 if (r.left > 0 && beat >= r.next)
                 {
-                    start (v, r.velocity, r.accent);
+                    start (v, r.velocity, r.accent, r.tune, r.decay);
                     r.velocity *= 0.9f;
                     r.next += r.gap;
                     --r.left;
