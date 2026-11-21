@@ -24,6 +24,12 @@
 // knobs (level, tune, decay, tone, snappy, pan), a mute, and a choice of sounds: the toms
 // switch to congas, the clap to maracas, the kick to a long sub boom, and more.
 //
+// And a ritual kit of hand drums, made the same way (no samples): each is a skin's own set of
+// tones ringing after a stroke of the hand. Frame drum and djembe bass on the kick; djembe slap
+// and bendir (with its buzzing strings) on the snare; tabla, djembe, udu and talking drum on the
+// three toms; log drum, temple bell, caxixi, ankle bells and gong on the others. A step's own
+// pitch, decay and level (the locks) make one of them play a melody of open and muted strokes.
+//
 // The keys and the pads play the sounds too, from C (kick) up the octave; any octave works.
 namespace crate::drums
 {
@@ -48,6 +54,8 @@ float trimDb (int voice, int sound);
 
 // Each sound's choice of sounds ("Classic", "Long boom"...), the first being the classic one.
 juce::StringArray soundNames (int voice);
+// True for the hand drums among them (the ritual kit).
+bool isHandDrum (int voice, int sound);
 
 struct Pattern
 {
@@ -64,6 +72,12 @@ struct Pattern
     std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> cond {};
     std::array<std::array<std::int8_t, kMaxSteps>, kVoices> nudge {};
     std::array<std::uint8_t, kVoices> rowLength {};
+    // Locks, for each hit (the ritual kit): its own pitch (semitones on top of the sound's Tune),
+    // its own decay (percent on top of the sound's Decay, -50..50) and how hard it hits (percent,
+    // 100 as set). So one hand drum can play a melody of tones, open and muted strokes.
+    std::array<std::array<std::int8_t, kMaxSteps>, kVoices> pitch {};
+    std::array<std::array<std::int8_t, kMaxSteps>, kVoices> decayLock {};
+    std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> velocity = full (100);
     int rowLengthOf (int voice) const { return rowLength[(size_t) voice] > 0 ? (int) rowLength[(size_t) voice] : length; }
     bool hasLife() const;   // anything besides the hits and accents
     static std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> full (std::uint8_t v)
@@ -191,17 +205,30 @@ private:
         float lastOut = 0;
         double bell = 0;        // the ride's bell
         int sound = 0;          // the sound picked when it was hit
+        // A hand drum: the skin's tones, each fading at its own speed, and the stroke of the hand.
+        bool hand = false;
+        int modes = 0;
+        float modeAmp[6] {}, modeEnv[6] {}, modeCoeff[6] {};
+        float bend = 0;         // the pitch slides in from this far off (a hand pressing the skin)
+        float stroke = 0, clickCoeff = 0.99f;
+        float buzz = 0;         // the bendir's strings
+        float bloom = 0;        // the gong's high tones come in after the stroke (seconds)
+        bool jingle = false;    // ankle bells keep ringing each other
+        bool shake = false;     // a caxixi: the beads go out and back
     };
 
-    void start (int voice, float velocity, bool accent);
+    // tune: semitones on top of the sound's; decay: on top of its Decay (-0.5..0.5). A step's locks.
+    void start (int voice, float velocity, bool accent, float tune = 0.0f, float decay = 0.0f);
     float renderVoice (int voice, VoiceState&);
+    void startHand (int voice, int sound, VoiceState&, const VoiceSettings&, float ratio, float velocity);
+    float renderHand (VoiceState&, float& level);
     float noise();
     void handleMidi (const juce::MidiMessage&);
     void hitStep (int step, const Pattern&, double stepStartBeat, double stepLength, long long index);
     // A hit of `voice` at `step`, by the pattern's life: plays now, later (nudged), or not at all.
     void hitVoice (int voice, int step, const Pattern&, double stepStartBeat, double stepLength, long long index, bool lookAhead);
     bool lifeSays (int voice, int step, const Pattern&, long long index);
-    void schedule (int voice, double beat, int hits, double gap, float velocity, bool accent);
+    void schedule (int voice, double beat, int hits, double gap, float velocity, bool accent, float tune = 0.0f, float decay = 0.0f);
     const Pattern* byCode (int code) const;
     const Pattern* basePattern (long long loop, int& code) const;
     void resync (long long index);
@@ -233,10 +260,10 @@ private:
     std::atomic<bool> fillOnce { false };
     bool fillQueued = false;
     bool wasPlaying = false;
-    struct Roll { int left = 0; double next = 0, gap = 0; float velocity = 0; bool accent = false; };
+    struct Roll { int left = 0; double next = 0, gap = 0; float velocity = 0; bool accent = false; float tune = 0, decay = 0; };
     std::array<Roll, kVoices> rolls {};
     // Nudged hits, waiting for their moment.
-    struct Pending { double beat = -1; int hits = 1; double gap = 0; float velocity = 1; bool accent = false; };
+    struct Pending { double beat = -1; int hits = 1; double gap = 0; float velocity = 1; bool accent = false; float tune = 0, decay = 0; };
     std::array<std::array<Pending, 2>, kVoices> pending {};
     long long firstLoop = 0;        // the time round when Play was pressed (for First / Not first)
     long long lookedAheadFor = -1;  // the step whose early hits were already started

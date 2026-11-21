@@ -435,14 +435,19 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
 
     // Pattern life: what a click on a lit step changes.
     {
-        const char* names[] = { "Hits", "Chance", "Condition", "Nudge" };
+        const char* names[] = { "Hits", "Chance", "Condition", "Nudge", "Pitch", "Decay", "Level" };
         const char* tips[] = { "A click lights or clears a step (as always).",
                                "A click on a lit step sets how often it plays: 100%, 75%, 50%, 25%, 10% of the times round (Shift goes back). "
                                "The beat breathes: never quite the same twice.",
                                "A click on a lit step sets which times round it plays: 1:2 the first of every two, 3:4 the third of every "
                                "four, Fill only in a fill, First only the first time after Play (Shift goes back).",
                                "A click on a lit step pushes it a little early or drags it a little late (part of a step), for a "
-                               "human, swung or rushing feel (Shift goes back)." };
+                               "human, swung or rushing feel (Shift goes back).",
+                               "A click on a lit step gives that one hit its own pitch, in semitones over the sound's tune: one hand drum "
+                               "plays a melody of tones (Shift goes back).",
+                               "A click on a lit step makes that one hit ring longer (open) or shorter (muted) than the sound's Decay "
+                               "(Shift goes back).",
+                               "A click on a lit step sets how hard that one hit plays: ghost notes and strong strokes (Shift goes back)." };
         for (int m = 0; m < numLifeModes; ++m)
         {
             auto* b = lifeButtons.add (new juce::TextButton (names[m]));
@@ -456,6 +461,11 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
         mutateButton.setTooltip ("Changes the pattern a little (or a lot): moves, adds and drops a few hits, so it grows. Undo puts it back.");
         mutateButton.onClick = [this] { showMutateMenu(); };
         addChildComponent (mutateButton);
+        wellButton (feelButton, Lit::current, 14.0f);
+        feelButton.setTooltip ("A ready-made feel for the drum machine: 12/8 and 6/8 (three to a beat), triplets, shuffle, "
+                               "or straight 16ths. Sets the step size, the pattern's length and the swing.");
+        feelButton.onClick = [this] { showFeelMenu(); };
+        addChildComponent (feelButton);
     }
 
     // Start on the track the keys already play, so nothing changes until you pick one.
@@ -1190,11 +1200,12 @@ void GrooveView::updateButtons()
     const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
     for (int m = 0; m < lifeButtons.size(); ++m)
     {
-        const bool shown = (track == machine) || (track == bass && m != lifeNudge);
+        const bool shown = (track == machine) || (track == bass && m != lifeNudge && m < lifePitch);
         lifeButtons[m]->setVisible (shown);
         setLit (lifeButtons[m], lifeMode == m, Lit::current);
     }
     mutateButton.setVisible (hasLife());
+    feelButton.setVisible (track == machine);
     if (track != loops)
     {
         const auto text = canUndoClear() ? juce::String ("Undo clear") : juce::String ("Clear");
@@ -1746,6 +1757,12 @@ GrooveView::Cell GrooveView::cellAt (int row, int i) const
                     c.sub = crate::life::condName (cond);
                 else if (lifeMode == lifeNudge || (lifeMode == lifeHits && nudge != 0))
                     c.sub = (nudge > 0 ? "+" : "") + juce::String (nudge);
+                else if (const int pitch = p.pitch[(size_t) voice][(size_t) step]; lifeMode == lifePitch || (lifeMode == lifeHits && pitch != 0))
+                    c.sub = pitch == 0 ? juce::String ("0 st") : (pitch > 0 ? "+" : "") + juce::String (pitch) + " st";
+                else if (const int decay = p.decayLock[(size_t) voice][(size_t) step]; lifeMode == lifeDecay || (lifeMode == lifeHits && decay != 0))
+                    c.sub = decay == 0 ? juce::String ("decay") : decay > 0 ? "open" : "mute";
+                else if (const int level = p.velocity[(size_t) voice][(size_t) step]; lifeMode == lifeLevel || (lifeMode == lifeHits && level != 100))
+                    c.sub = juce::String (level) + "%";
                 c.dim = c.dim || chance < 100 || cond != 0;
             }
             // A row of its own length: past its end the steps are greyed.
@@ -2250,15 +2267,26 @@ void GrooveView::timerCallback()
 }
 
 //==============================================================================
+int GrooveView::beatGroup() const
+{
+    // The drum machine in threes (12/8, 6/8, triplets): the grid is grouped by beat, three a beat.
+    if (track == machine)
+        if (auto* p = engine.getDrums().params.getParameter ("stepRate"))
+            if (const int rate = juce::roundToInt (p->convertFrom0to1 (p->getValue())); rate == 2 || rate == 4)
+                return 3;
+    return 4;
+}
+
 juce::Rectangle<float> GrooveView::cellRect (int row, int i) const
 {
     const int n = numSteps(), rows = numRows();
     auto grid = gridArea.toFloat();
     if (! bigCells())
         grid.removeFromLeft ((float) kLabelWidth + 12.0f);
+    const int group = beatGroup();
     const float gap = bigCells() ? 12.0f : 6.0f, groupGap = n == 16 ? 14.0f : 0.0f;
-    const float w = (grid.getWidth() - gap * (n - 1) - groupGap * 3) / (float) n;
-    const float x = grid.getX() + i * (w + gap) + (n == 16 ? (i / 4) * (groupGap) : 0.0f);
+    const float w = (grid.getWidth() - gap * (n - 1) - groupGap * (float) ((n - 1) / group)) / (float) n;
+    const float x = grid.getX() + i * (w + gap) + (n == 16 ? (float) (i / group) * groupGap : 0.0f);
     const float rowGap = rows > 6 ? 3.0f : 10.0f;   // the drum machine's 13 rows sit closer
     float h = (grid.getHeight() - rowGap * (rows - 1)) / (float) rows;
     if (! bigCells())
@@ -2447,7 +2475,7 @@ void GrooveView::paint (juce::Graphics& g)
             if (track == bass && row == 1)
                 alpha *= 0.45f;
             // (On Loops, the ring marks the layer you've picked.)
-            vintage::drawStep (g, r, c.lit, track == loops ? i == pickedLayer : i == now && ! bigCells(), (i / 4) % 2 == 1 && n == 16, fill, alpha);
+            vintage::drawStep (g, r, c.lit, track == loops ? i == pickedLayer : i == now && ! bigCells(), (i / beatGroup()) % 2 == 1 && n == 16, fill, alpha);
             if (c.dim && ! c.lit)
             {
                 g.setColour (p.well.withAlpha (0.45f));
@@ -2644,10 +2672,15 @@ void GrooveView::resized()
         for (auto* b : lifeButtons)
             if (b->isVisible())
             {
-                b->setBounds (row.removeFromLeft (b->getButtonText() == "Condition" ? 104 : 84));
+                b->setBounds (row.removeFromLeft (b->getButtonText() == "Condition" ? 100 : 74));
                 row.removeFromLeft (6);
             }
         mutateButton.setBounds (lifeArea.removeFromRight (100));
+        if (track == machine)
+        {
+            lifeArea.removeFromRight (6);
+            feelButton.setBounds (lifeArea.removeFromRight (90));
+        }
     }
     numbersArea = bigCells() ? juce::Rectangle<int>() : c.removeFromTop (20);
     if (! bigCells())
@@ -2715,12 +2748,15 @@ vintage::Knob* GrooveView::partKnob (int part, int index) const
 void GrooveView::setLifeMode (int m)
 {
     lifeMode = juce::jlimit (0, (int) numLifeModes - 1, m);
-    if (track == bass && lifeMode == lifeNudge)
+    if (track == bass && (lifeMode == lifeNudge || lifeMode >= lifePitch))
         lifeMode = lifeHits;
     static const char* says[] = { "Hits: a click lights or clears a step.",
                                   "Chance: click a lit step for how often it plays (100, 75, 50, 25, 10%). Shift+click goes back.",
                                   "Condition: click a lit step for which times round it plays (1:2, 3:4, Fill, First...). Shift+click goes back.",
-                                  "Nudge: click a lit step to push it early or drag it late. Shift+click goes back." };
+                                  "Nudge: click a lit step to push it early or drag it late. Shift+click goes back.",
+                                  "Pitch: click a lit step to give that hit its own pitch (+2, +3, +5, +7, +12, -2...). Shift+click goes back.",
+                                  "Decay: click a lit step to let that hit ring open or mute it short. Shift+click goes back.",
+                                  "Level: click a lit step for how hard it hits (ghost notes at 30%, 50%, 70%). Shift+click goes back." };
     say (says[lifeMode]);
     updateButtons();
     repaint();
@@ -2758,6 +2794,24 @@ bool GrooveView::pressLife (int row, int i, bool back)
             text = nudge == 0 ? juce::String ("right on the step")
                               : juce::String (std::abs ((int) nudge)) + "% of a step " + (nudge < 0 ? "early" : "late");
         }
+        else if (lifeMode == lifePitch)
+        {
+            auto& pitch = p.pitch[(size_t) voice][(size_t) step];
+            pitch = life::nextIn (life::pitchSteps(), pitch, back);
+            text = pitch == 0 ? juce::String ("its own tune") : (pitch > 0 ? "+" : "") + juce::String ((int) pitch) + " semitones";
+        }
+        else if (lifeMode == lifeDecay)
+        {
+            auto& decay = p.decayLock[(size_t) voice][(size_t) step];
+            decay = life::nextIn (life::decaySteps(), decay, back);
+            text = decay == 0 ? juce::String ("its own decay") : decay > 0 ? "rings longer (open)" : "shorter (muted)";
+        }
+        else if (lifeMode == lifeLevel)
+        {
+            auto& level = p.velocity[(size_t) voice][(size_t) step];
+            level = life::nextIn (life::levelSteps(), level, back);
+            text = juce::String ((int) level) + "% as hard";
+        }
         setMachinePattern (p);
         say (rowName (row) + ", step " + juce::String (step + 1) + ": " + text + ".");
         repaint();
@@ -2790,6 +2844,45 @@ bool GrooveView::pressLife (int row, int i, bool back)
         return true;
     }
     return false;
+}
+
+juce::StringArray GrooveView::feelNames()
+{
+    return { "Straight 16ths", "12/8 (three to a beat, 12 steps)", "6/8 (three to a beat, 6 steps)", "16th triplets (24 steps)",
+             "Shuffle (swung 16ths)", "Heavy shuffle", "Half time (8ths)" };
+}
+
+void GrooveView::applyFeel (int feel)
+{
+    // Step rates: 0 1/8, 1 1/16, 2 1/16 triplets, 3 1/32, 4 1/8 triplets.
+    struct Feel { int rate, length; float swing; };
+    static const Feel feels[] = { { 1, 16, 0.0f }, { 4, 12, 0.0f }, { 4, 6, 0.0f }, { 2, 24, 0.0f }, { 1, 16, 0.33f }, { 1, 16, 0.66f }, { 0, 16, 0.0f } };
+    feel = juce::jlimit (0, (int) std::size (feels) - 1, feel);
+    auto& drumsProc = engine.getDrums();
+    auto set = [&drumsProc] (const char* id, float value)
+    {
+        if (auto* p = drumsProc.params.getParameter (id))
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+    };
+    set ("stepRate", (float) feels[feel].rate);
+    set ("swing", feels[feel].swing);
+    auto p = machinePattern();
+    p.length = feels[feel].length;
+    setMachinePattern (p);
+    say ("Feel: " + feelNames()[feel] + ". The hits stay where they are on the grid: try Euclid (right-click a sound) for a ritual pattern to start.");
+    buildTrack();
+    resized();
+    repaint();
+}
+
+void GrooveView::showFeelMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Feel: the drum machine's grid and swing");
+    const auto names = feelNames();
+    for (int f = 0; f < names.size(); ++f)
+        menu.addItem (names[f], [this, f] { applyFeel (f); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&feelButton));
 }
 
 void GrooveView::showMutateMenu()
@@ -3045,6 +3138,9 @@ void GrooveView::turnRow (int row, int by)
         turn (p.chance[(size_t) voice]);
         turn (p.cond[(size_t) voice]);
         turn (p.nudge[(size_t) voice]);
+        turn (p.pitch[(size_t) voice]);
+        turn (p.decayLock[(size_t) voice]);
+        turn (p.velocity[(size_t) voice]);
         setMachinePattern (p);
     }
     else if (track == bass)

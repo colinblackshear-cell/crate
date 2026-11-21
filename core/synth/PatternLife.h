@@ -56,6 +56,10 @@ inline bool passes (int c, long long loop, bool inFill)
 // The chances a click on a step goes through, and the nudges (percent of a step).
 inline const std::vector<int>& chanceSteps() { static const std::vector<int> v { 100, 75, 50, 25, 10 }; return v; }
 inline const std::vector<int>& nudgeSteps() { static const std::vector<int> v { 0, 10, 25, 40, -10, -25, -40 }; return v; }
+// The step locks a click goes through: pitch (semitones), decay (percent) and level (percent).
+inline const std::vector<int>& pitchSteps() { static const std::vector<int> v { 0, 2, 3, 5, 7, 12, -12, -7, -5, -3, -2 }; return v; }
+inline const std::vector<int>& decaySteps() { static const std::vector<int> v { 0, 25, 50, -25, -50 }; return v; }
+inline const std::vector<int>& levelSteps() { static const std::vector<int> v { 100, 70, 50, 30 }; return v; }
 template <typename T>
 inline T nextIn (const std::vector<int>& list, T now, bool back = false)
 {

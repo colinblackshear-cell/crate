@@ -138,7 +138,11 @@ private:
     // itself, its chance, its condition or its nudge), Mutate, and each row's menu (its own
     // length, Euclid, turn).
 public:
-    enum LifeMode { lifeHits, lifeChance, lifeCond, lifeNudge, numLifeModes };
+    // Pitch, Decay and Level are the drum machine's step locks (the ritual kit).
+    enum LifeMode { lifeHits, lifeChance, lifeCond, lifeNudge, lifePitch, lifeDecay, lifeLevel, numLifeModes };
+    // Feel: a ready-made grid and swing for the drum machine (12/8, 6/8, triplets, shuffle...).
+    void applyFeel (int feel);
+    static juce::StringArray feelNames();
     void setLifeMode (int);
     int getLifeMode() const { return lifeMode; }
     bool hasLife() const { return track == machine || track == bass || track == drums; }
@@ -153,7 +157,9 @@ private:
     void showMutateMenu();
     int lifeMode = lifeHits;
     juce::OwnedArray<juce::TextButton> lifeButtons;
-    juce::TextButton mutateButton { "Mutate" };
+    juce::TextButton mutateButton { "Mutate" }, feelButton { "Feel" };
+    void showFeelMenu();
+    int beatGroup() const;   // steps to a beat on the grid: 4, or 3 for triplet feels
     juce::Rectangle<int> lifeArea;
     ClearUndo lifeUndo;
     juce::Random lifeRandom;

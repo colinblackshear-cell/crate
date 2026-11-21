@@ -69,41 +69,57 @@ const char* voiceShort (int v)
 // brings every hit to the level its place in the kit calls for (the kick near -6 dBFS, the hats
 // and bells a few dB under it), whichever sound is picked. Set from the level check
 // (RigLevelTests), which measures every sound; the Level knobs stay as they were.
-static constexpr float kTrimDb[kVoices][4] = {
-    { 1.8f, 2.3f, 1.8f, 3.1f },   // kick: Classic, Long boom, Punch, Distorted
-    { -3.5f, -3.7f, 0.4f, 0 },   // snare: Classic, Tight, Fat
-    { -0.8f, 4.7f, 0, 0 },   // clap: Clap, Maracas
-    { 3.1f, 2.3f, 0, 0 },   // rim: Rim shot, Side stick
-    { 0.2f, 0.5f, 0, 0 },   // low tom: Tom, Conga
-    { 0.1f, 0.3f, 0, 0 },   // mid tom
-    { 0, -0.1f, 0, 0 },   // high tom
-    { -0.1f, -0.6f, 0, 0 },   // clave: Clave, Woodblock
-    { -6.1f, -2.2f, 0, 0 },   // cowbell: Cowbell, Agogo
-    { -0.7f, 9.0f, 1.9f, 0 },   // closed hat: Classic, Tight, Shaker
-    { 1.8f, 1.8f, 0, 0 },   // open hat: Classic, Trashy
-    { 7.1f, 10.4f, 0, 0 },   // cymbal: Crash, Ride
+static constexpr int kMaxSounds = 6;
+static constexpr float kTrimDb[kVoices][kMaxSounds] = {
+    { 1.8f, 2.3f, 1.8f, 3.1f, 0.6f, 1.7f },   // kick: Classic, Long boom, Punch, Distorted, Frame drum, Djembe bass
+    { -3.5f, -3.7f, 0.4f, -2.5f, -5.7f, 0 },   // snare: Classic, Tight, Fat, Djembe slap, Bendir
+    { -0.8f, 4.7f, 0, 0, 0, 0 },   // clap: Clap, Maracas
+    { 3.1f, 2.3f, 0, 0, 0, 0 },   // rim: Rim shot, Side stick
+    { 0.2f, 0.5f, 4.6f, 0.7f, 5.5f, 1.7f },   // low tom: Tom, Conga, Tabla, Djembe, Udu, Talking drum
+    { 0.1f, 0.3f, 2.1f, 0.7f, 2.1f, 1.6f },   // mid tom
+    { 0, -0.1f, -0.8f, 0.7f, 1.8f, 1.5f },   // high tom
+    { -0.1f, -0.6f, 3.5f, 0, 0, 0 },   // clave: Clave, Woodblock, Log drum
+    { -6.1f, -2.2f, -2.9f, 0, 0, 0 },   // cowbell: Cowbell, Agogo, Temple bell
+    { -0.7f, 9.0f, 1.9f, 2.7f, 0, 0 },   // closed hat: Classic, Tight, Shaker, Caxixi
+    { 1.8f, 1.8f, 1.5f, 0, 0, 0 },   // open hat: Classic, Trashy, Ankle bells
+    { 7.1f, 10.4f, 2.6f, 0, 0, 0 },   // cymbal: Crash, Ride, Gong
 };
 
 float trimDb (int voice, int sound)
 {
-    return juce::isPositiveAndBelow (voice, kVoices) && juce::isPositiveAndBelow (sound, 4) ? kTrimDb[voice][sound] : 0.0f;
+    return juce::isPositiveAndBelow (voice, kVoices) && juce::isPositiveAndBelow (sound, kMaxSounds) ? kTrimDb[voice][sound] : 0.0f;
 }
+
+// How many of a voice's sounds are the machine's own; the ones after are the hand drums.
+static int machineSounds (int v)
+{
+    switch (v)
+    {
+        case kick:      return 4;
+        case snare:     return 3;
+        case closedHat: return 3;
+        case clap: case rim: return 99;
+        default:        return 2;
+    }
+}
+
+bool isHandDrum (int voice, int sound) { return sound >= machineSounds (voice); }
 
 juce::StringArray soundNames (int v)
 {
     switch (v)
     {
-        case kick:      return { "Classic", "Long boom", "Punch", "Distorted" };
-        case snare:     return { "Classic", "Tight", "Fat" };
+        case kick:      return { "Classic", "Long boom", "Punch", "Distorted", "Frame drum", "Djembe bass" };
+        case snare:     return { "Classic", "Tight", "Fat", "Djembe slap", "Bendir" };
         case clap:      return { "Clap", "Maracas" };
         case rim:       return { "Rim shot", "Side stick" };
         case lowTom: case midTom: case highTom:
-                        return { "Tom", "Conga" };
-        case clave:     return { "Clave", "Woodblock" };
-        case cowbell:   return { "Cowbell", "Agogo" };
-        case closedHat: return { "Classic", "Tight", "Shaker" };
-        case openHat:   return { "Classic", "Trashy" };
-        case cymbal:    return { "Crash", "Ride" };
+                        return { "Tom", "Conga", "Tabla", "Djembe", "Udu", "Talking drum" };
+        case clave:     return { "Clave", "Woodblock", "Log drum" };
+        case cowbell:   return { "Cowbell", "Agogo", "Temple bell" };
+        case closedHat: return { "Classic", "Tight", "Shaker", "Caxixi" };
+        case openHat:   return { "Classic", "Trashy", "Ankle bells" };
+        case cymbal:    return { "Crash", "Ride", "Gong" };
         default:        return { "Classic" };
     }
 }
@@ -143,7 +159,7 @@ bool Pattern::isEmpty() const
 bool Pattern::operator== (const Pattern& o) const
 {
     return hits == o.hits && accent == o.accent && length == o.length && chance == o.chance && cond == o.cond && nudge == o.nudge
-           && rowLength == o.rowLength;
+           && rowLength == o.rowLength && pitch == o.pitch && decayLock == o.decayLock && velocity == o.velocity;
 }
 
 bool Pattern::hasLife() const
@@ -153,7 +169,8 @@ bool Pattern::hasLife() const
         if (rowLength[(size_t) v] != 0)
             return true;
         for (int st = 0; st < kMaxSteps; ++st)
-            if (chance[(size_t) v][(size_t) st] != 100 || cond[(size_t) v][(size_t) st] != 0 || nudge[(size_t) v][(size_t) st] != 0)
+            if (chance[(size_t) v][(size_t) st] != 100 || cond[(size_t) v][(size_t) st] != 0 || nudge[(size_t) v][(size_t) st] != 0
+                || pitch[(size_t) v][(size_t) st] != 0 || decayLock[(size_t) v][(size_t) st] != 0 || velocity[(size_t) v][(size_t) st] != 100)
                 return true;
     }
     return false;
@@ -239,11 +256,13 @@ void Engine::tap (int voice, float velocity)
 
 void Engine::trigger (int voice, float velocity, bool accent) { start (voice, velocity, accent); }
 
-void Engine::start (int v, float velocity, bool accent)
+void Engine::start (int v, float velocity, bool accent, float tuneLock, float decayLock)
 {
     if (! juce::isPositiveAndBelow (v, kVoices))
         return;
-    const auto& vs = settings.voices[(size_t) v];
+    auto vs = settings.voices[(size_t) v];   // (a copy: a step's locks change it for this hit)
+    vs.tune += tuneLock;
+    vs.decay = juce::jlimit (0.0f, 1.0f, vs.decay + decayLock);
     if (vs.mute)
         return;
     auto& s = state[(size_t) v];
@@ -268,6 +287,22 @@ void Engine::start (int v, float velocity, bool accent)
     for (auto& p : s.phase)
         p = 0;
     s.bell = 0;
+    s.hand = isHandDrum (v, sound);
+    if (s.hand)
+    {
+        startHand (v, sound, s, vs, ratio, juce::jlimit (0.0f, 1.0f, velocity));
+        // (A caxixi on the closed hat still cuts the open hat off.)
+        if (v == closedHat && state[openHat].active)
+        {
+            state[openHat].envCoeff = coeffFor (0.012f, invRate);
+            for (auto& c : state[openHat].modeCoeff)
+                c = coeffFor (0.012f, invRate);
+        }
+        s.envCoeff = coeffFor (decay, invRate);
+        ++hitCounts[(size_t) v];
+        tap (v, velocity);
+        return;
+    }
 
     switch (v)
     {
@@ -373,7 +408,11 @@ void Engine::start (int v, float velocity, bool accent)
             }
             // The closed hat cuts the open one off, as on the old machines.
             if (v == closedHat && state[openHat].active)
+            {
                 state[openHat].envCoeff = coeffFor (0.012f, invRate);
+                for (auto& c : state[openHat].modeCoeff)   // (ankle bells too)
+                    c = coeffFor (0.012f, invRate);
+            }
             break;
         }
         default:
@@ -384,6 +423,269 @@ void Engine::start (int v, float velocity, bool accent)
     tap (v, velocity);
 }
 
+
+// A hand drum's stroke. A skin doesn't ring at neat multiples of its note: a plain round one goes
+// 1, 1.59, 2.14, 2.30, 2.65... (the tabla's black spot is there to pull those into tune, which is
+// why it sings a note). Each tone fades at its own speed, the high ones first; a soft stroke
+// leaves the high ones out; and a burst of filtered noise is the hand landing.
+void Engine::startHand (int v, int sound, VoiceState& s, const VoiceSettings& vs, float ratio, float velocity)
+{
+    const float rate = (float) sampleRate;
+    const float tone = juce::jlimit (0.0f, 1.0f, vs.tone);
+    const float snappy = juce::jlimit (0.0f, 1.0f, vs.snappy);
+    const float longer = std::pow (4.0f, juce::jlimit (0.0f, 1.0f, vs.decay) - 0.5f);   // Decay: half as long to twice
+    s.modes = 0;
+    s.bend = 0;
+    s.buzz = 0;
+    s.bloom = 0;
+    s.jingle = s.shake = false;
+    s.stroke = 0;
+    s.env2Coeff = coeffFor (0.04f, invRate);
+    float clickSeconds = 0.02f, strokeHz = 1500.0f, strokeQ = 0.9f;
+
+    auto mode = [&] (float hz, float amp, float seconds)
+    {
+        if (s.modes >= 6 || hz * ratio > rate * 0.45f)
+            return;
+        const int i = s.modes++;
+        s.freqs[i] = hz * ratio;
+        // (A soft stroke: less of the high tones.)
+        s.modeAmp[i] = amp * std::pow (juce::jmax (0.05f, velocity), 0.45f * (float) i);
+        s.modeEnv[i] = 1.0f;
+        s.modeCoeff[i] = coeffFor (seconds * longer, invRate);
+    };
+    static constexpr float skin[] = { 1.0f, 1.59f, 2.14f, 2.30f, 2.65f, 2.92f };
+    auto skinOf = [&] (float hz, std::initializer_list<float> amps, std::initializer_list<float> seconds)
+    {
+        int i = 0;
+        auto sec = seconds.begin();
+        for (float a : amps)
+            mode (hz * skin[i++], a, *sec++);
+    };
+    const int tom = v - lowTom;   // (for the three toms)
+
+    if (v == kick && sound == 4)
+    {
+        // Frame drum: the deep "doum" of a big skin on a hoop.
+        skinOf (58.0f, { 1.0f, 0.5f, 0.28f, 0.2f, 0.1f }, { 1.0f, 0.5f, 0.32f, 0.26f, 0.16f });
+        s.bend = 0.10f;
+        s.env2Coeff = coeffFor (0.05f, invRate);
+        strokeHz = 300.0f + 900.0f * tone;
+        s.stroke = 0.45f;
+    }
+    else if (v == kick)
+    {
+        // Djembe bass: the palm in the middle of the skin.
+        skinOf (72.0f, { 1.0f, 0.4f, 0.2f, 0.1f }, { 0.5f, 0.25f, 0.18f, 0.1f });
+        s.bend = 0.25f;
+        s.env2Coeff = coeffFor (0.03f, invRate);
+        strokeHz = 500.0f + 1500.0f * tone;
+        s.stroke = 0.6f;
+    }
+    else if (v == snare && sound == 3)
+    {
+        // Djembe slap: fingers on the edge, all crack and high tones.
+        skinOf (390.0f, { 0.5f, 0.8f, 0.7f, 0.5f, 0.3f }, { 0.14f, 0.12f, 0.09f, 0.07f, 0.05f });
+        s.bend = 0.04f;
+        strokeHz = 2500.0f + 3000.0f * tone;
+        clickSeconds = 0.012f;
+        s.stroke = 1.0f;
+    }
+    else if (v == snare)
+    {
+        // Bendir: a frame drum with gut strings against the skin, buzzing along with it (Snappy).
+        skinOf (150.0f, { 1.0f, 0.5f, 0.3f, 0.2f }, { 0.5f, 0.3f, 0.2f, 0.15f });
+        s.bend = 0.06f;
+        strokeHz = 1200.0f + 1500.0f * tone;
+        s.stroke = 0.4f;
+        s.buzz = 0.4f + 1.2f * snappy;
+        s.f2.set (1800.0f + 2500.0f * tone, 0.7f, rate);
+    }
+    else if (v >= lowTom && v <= highTom && sound == 2)
+    {
+        // Tabla. Low: the bayan, the heel of the hand sliding the note up (Tone: how far).
+        // Mid: "tin", the small drum ringing its note. High: "na", struck on the rim: the same
+        // drum, its upper tones without the bottom one.
+        if (tom == 0)
+        {
+            mode (80.0f, 1.0f, 1.1f);
+            mode (158.0f, 0.25f, 0.5f);
+            mode (232.0f, 0.1f, 0.3f);
+            s.bend = -(0.12f + 0.3f * tone);
+            s.env2Coeff = coeffFor (0.12f, invRate);
+            strokeHz = 250.0f;
+            s.stroke = 0.35f;
+        }
+        else
+        {
+            static constexpr float tin[] = { 1.0f, 0.55f, 0.3f, 0.18f, 0.1f }, na[] = { 0.12f, 1.0f, 0.75f, 0.4f, 0.25f };
+            static constexpr float tinSec[] = { 1.2f, 0.9f, 0.6f, 0.4f, 0.3f }, naSec[] = { 0.3f, 0.7f, 0.55f, 0.35f, 0.25f };
+            static constexpr float tuned[] = { 1.0f, 2.0f, 3.01f, 4.03f, 5.04f };
+            for (int i = 0; i < 5; ++i)
+                mode (277.0f * tuned[i], tom == 1 ? tin[i] : na[i], tom == 1 ? tinSec[i] : naSec[i]);
+            s.bend = 0.01f;
+            strokeHz = (tom == 1 ? 1800.0f : 3000.0f) * (0.7f + 0.6f * tone);
+            clickSeconds = 0.008f;
+            s.stroke = tom == 1 ? 0.35f : 0.6f;
+        }
+    }
+    else if (v >= lowTom && v <= highTom && sound == 3)
+    {
+        // Djembe: bass-tone, open tone, high tone.
+        static constexpr float hz[] = { 165.0f, 262.0f, 349.0f };
+        skinOf (hz[tom], { 1.0f, 0.5f, 0.3f, 0.15f }, { 0.32f, 0.2f, 0.14f, 0.1f });
+        s.bend = 0.06f;
+        s.env2Coeff = coeffFor (0.02f, invRate);
+        strokeHz = 900.0f + 2500.0f * tone;
+        s.stroke = 0.5f;
+    }
+    else if (v >= lowTom && v <= highTom && sound == 4)
+    {
+        // Udu, the clay pot. Low: the palm on the hole, the air inside going "bwoop" (Tone: how
+        // far it slides). Mid and high: fingers on the clay, with the pot humming under them.
+        if (tom == 0)
+        {
+            mode (92.0f, 1.0f, 0.55f);
+            mode (184.0f, 0.08f, 0.2f);
+            s.bend = -(0.25f + 0.3f * tone);
+            s.env2Coeff = coeffFor (0.09f, invRate);
+            strokeHz = 400.0f;
+            s.stroke = 0.2f;
+        }
+        else
+        {
+            const float hz = tom == 1 ? 540.0f : 760.0f;
+            mode (hz, 1.0f, 0.12f);
+            mode (hz * 2.4f, 0.35f, 0.07f);
+            mode (hz * 4.1f, 0.15f, 0.05f);
+            mode (tom == 1 ? 110.0f : 130.0f, 0.45f, 0.25f);
+            strokeHz = 2500.0f * (0.7f + 0.6f * tone);
+            clickSeconds = 0.008f;
+            s.stroke = 0.4f;
+        }
+    }
+    else if (v >= lowTom && v <= highTom)
+    {
+        // Talking drum: squeezed under the arm, so every note bends up (Tone: how far).
+        static constexpr float hz[] = { 105.0f, 150.0f, 210.0f };
+        skinOf (hz[tom], { 1.0f, 0.45f, 0.25f, 0.12f }, { 0.55f, 0.3f, 0.2f, 0.14f });
+        s.bend = -(0.08f + 0.45f * tone);
+        s.env2Coeff = coeffFor (0.16f, invRate);
+        strokeHz = 700.0f;
+        s.stroke = 0.45f;
+    }
+    else if (v == clave)
+    {
+        // Log drum: a hollow slit log, struck with a stick.
+        mode (196.0f, 1.0f, 0.35f);
+        mode (196.0f * 2.76f, 0.3f * (0.4f + 1.2f * tone), 0.1f);
+        mode (196.0f * 5.4f, 0.1f * (0.4f + 1.2f * tone), 0.05f);
+        strokeHz = 1200.0f;
+        clickSeconds = 0.006f;
+        s.stroke = 0.35f;
+    }
+    else if (v == cowbell)
+    {
+        // Temple bell: a bowl's tones, two of them a hair apart so it shimmers as it rings.
+        mode (587.0f, 1.0f, 3.5f);
+        mode (587.0f * 1.006f, 0.6f, 3.5f);
+        mode (587.0f * 2.71f, 0.6f * (0.5f + tone), 2.5f);
+        mode (587.0f * 5.15f, 0.35f * (0.5f + tone), 1.6f);
+        mode (587.0f * 8.1f, 0.2f * (0.5f + tone), 1.0f);
+        strokeHz = 4000.0f;
+        clickSeconds = 0.006f;
+        s.stroke = 0.2f;
+    }
+    else if (v == closedHat)
+    {
+        // Caxixi: a woven shaker; the beads go out and come back.
+        s.shake = true;
+        strokeHz = 5000.0f + 4000.0f * tone;
+        strokeQ = 0.8f;
+        clickSeconds = 0.035f * longer;
+        s.stroke = 1.0f;
+    }
+    else if (v == openHat)
+    {
+        // Ankle bells: a string of little bells that keep setting each other off as they fade.
+        static constexpr float bells[] = { 2850.0f, 3420.0f, 4100.0f, 4780.0f, 5650.0f, 6900.0f };
+        for (int i = 0; i < 6; ++i)
+            mode (bells[i] * (0.85f + 0.3f * tone), 0.35f, 0.5f - 0.05f * (float) i);
+        s.jingle = true;
+        strokeHz = 7000.0f;
+        clickSeconds = 0.01f;
+        s.stroke = 0.3f;
+    }
+    else
+    {
+        // Gong: a soft mallet, then the high tones bloom in after the stroke and it rings and rings.
+        static constexpr float tones[] = { 1.0f, 1.47f, 2.09f, 2.56f, 3.36f, 4.2f };
+        static constexpr float amps[] = { 1.0f, 0.7f, 0.6f, 0.5f, 0.4f, 0.3f }, secs[] = { 8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f };
+        for (int i = 0; i < 6; ++i)
+            mode (98.0f * tones[i], amps[i] * (i == 0 ? 1.0f : 0.5f + tone), secs[i]);
+        s.bloom = 0.12f;
+        strokeHz = 220.0f;
+        clickSeconds = 0.05f;
+        s.stroke = 0.5f;
+    }
+
+    s.f1.set (juce::jmin (strokeHz, rate * 0.4f), strokeQ, rate);
+    // Snappy: how much of the hand you hear; a soft stroke has less of it.
+    if (! s.shake)
+        s.stroke *= (0.3f + 1.2f * snappy) * (0.4f + 0.6f * velocity);
+    s.clickCoeff = coeffFor (clickSeconds, invRate);
+}
+
+float Engine::renderHand (VoiceState& s, float& level)
+{
+    float lp, bp, hp;
+    if (s.shake)
+    {
+        // Out, and back a moment later.
+        s.f1.process (noise(), lp, bp, hp);
+        const float back = s.t > 0.055f ? 0.7f * s.env2 : 0.0f;
+        if (s.t > 0.055f)
+            s.env2 *= s.clickCoeff;
+        else
+            s.env2 = 1.0f;
+        const float e = juce::jmin (1.0f, s.t / 0.002f) * s.clickEnv + back;
+        s.clickEnv *= s.clickCoeff;
+        level = s.t < 0.06f ? 1.0f : juce::jmax (s.clickEnv, back);
+        return (bp + 0.5f * hp) * e * 1.2f;
+    }
+
+    const float slide = 1.0f + s.bend * s.env2;
+    s.env2 *= s.env2Coeff;
+    float x = 0, top = 0;
+    for (int i = 0; i < s.modes; ++i)
+    {
+        advance (s.phase[i], s.freqs[i] * slide, invRate);
+        float e = s.modeEnv[i] * s.modeAmp[i];
+        top = juce::jmax (top, e);
+        if (s.bloom > 0 && i > 0)
+            e *= 1.0f - std::exp (-s.t / (s.bloom * (float) i));
+        x += sine (s.phase[i]) * e;
+        s.modeEnv[i] *= s.modeCoeff[i];
+    }
+    if (s.jingle && noise() > 1.0f - 90.0f * invRate)
+    {
+        // One bell knocks another.
+        const int which = juce::jlimit (0, juce::jmax (0, s.modes - 1), (int) ((noise() * 0.5f + 0.5f) * (float) s.modes));
+        s.modeEnv[which] = juce::jmax (s.modeEnv[which], s.env * (0.4f + 0.3f * (noise() + 1.0f)));
+    }
+    s.f1.process (noise(), lp, bp, hp);
+    const float hit = bp * s.clickEnv * s.stroke;
+    s.clickEnv *= s.clickCoeff;
+    if (s.buzz > 0)
+    {
+        float lp2, bp2, hp2;
+        s.f2.process (noise(), lp2, bp2, hp2);
+        x += hp2 * std::abs (x) * s.buzz;
+    }
+    level = juce::jmax (top, s.clickEnv * s.stroke, s.jingle ? s.env : 0.0f);
+    return x * 0.5f + hit;
+}
+
 float Engine::renderVoice (int v, VoiceState& s)
 {
     const auto& vs = settings.voices[(size_t) v];
@@ -392,6 +694,16 @@ float Engine::renderVoice (int v, VoiceState& s)
     const int sound = s.sound;
     float out = 0, lp, bp, hp;
     float level = s.env;
+
+    if (s.hand)
+    {
+        out = renderHand (s, level);
+        s.env *= s.envCoeff;
+        s.t += invRate;
+        if (s.t > 0.05f && level < 1.0e-4f)
+            s.active = false;
+        return out * s.gain;
+    }
 
     switch (v)
     {
@@ -620,18 +932,19 @@ void Engine::hitVoice (int v, int step, const Pattern& p, double stepStart, doub
     const int hits = juce::jlimit (1, 4, (int) h);
     const double gap = stepLength / hits;
     const double at = stepStart + p.nudge[(size_t) v][(size_t) step] / 100.0 * stepLength;
-    schedule (v, at, hits, gap, 1.0f, accent);
+    schedule (v, at, hits, gap, juce::jlimit (1, 100, (int) p.velocity[(size_t) v][(size_t) step]) / 100.0f, accent,
+              (float) p.pitch[(size_t) v][(size_t) step], p.decayLock[(size_t) v][(size_t) step] / 100.0f);
 }
 
-void Engine::schedule (int v, double beat, int hits, double gap, float velocity, bool accent)
+void Engine::schedule (int v, double beat, int hits, double gap, float velocity, bool accent, float tune, float decay)
 {
     for (auto& slot : pending[(size_t) v])
         if (slot.beat < 0)
         {
-            slot = { beat, hits, gap, velocity, accent };
+            slot = { beat, hits, gap, velocity, accent, tune, decay };
             return;
         }
-    pending[(size_t) v][0] = { beat, hits, gap, velocity, accent };
+    pending[(size_t) v][0] = { beat, hits, gap, velocity, accent, tune, decay };
 }
 
 const Pattern* Engine::byCode (int code) const
@@ -812,15 +1125,17 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 for (auto& slot : pending[(size_t) v])
                     if (slot.beat >= 0 && beat >= slot.beat - 1.0e-9)
                     {
-                        start (v, slot.velocity, slot.accent);
+                        start (v, slot.velocity, slot.accent, slot.tune, slot.decay);
                         auto& r = rolls[(size_t) v];
                         r.left = slot.hits - 1;
                         if (r.left > 0)
                         {
                             r.gap = slot.gap;
                             r.next = slot.beat + slot.gap;
-                            r.velocity = 0.8f;
+                            r.velocity = 0.8f * slot.velocity;
                             r.accent = slot.accent;
+                            r.tune = slot.tune;
+                            r.decay = slot.decay;
                         }
                         slot.beat = -1;
                     }
@@ -829,7 +1144,7 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 auto& r = rolls[(size_t) v];
                 if (r.left > 0 && beat >= r.next)
                 {
-                    start (v, r.velocity, r.accent);
+                    start (v, r.velocity, r.accent, r.tune, r.decay);
                     r.velocity *= 0.9f;
                     r.next += r.gap;
                     --r.left;

@@ -46,6 +46,49 @@ public:
         return hits;
     }
 
+    // The drum machine's sound over `steps` 16ths (left channel).
+    static std::vector<float> render (crate::drums::Pattern& p, int steps, double rate = 48000.0)
+    {
+        using namespace crate::drums;
+        Engine e;
+        e.prepare (rate);
+        Settings s;
+        s.sequencerOn = true;
+        e.setSettings (s);
+        e.setPatterns (&p, nullptr);
+        juce::MidiBuffer none;
+        std::vector<float> out;
+        const int block = 480;
+        const int total = (int) std::round (steps * 0.25 * 60.0 / 120.0 * rate);
+        std::vector<float> l ((size_t) block), r ((size_t) block);
+        for (int at = 0; at < total; at += block)
+        {
+            Clock c;
+            c.playing = true;
+            c.bpm = 120.0;
+            c.ppq = at * 120.0 / (60.0 * rate);
+            e.render (l.data(), r.data(), block, none, c);
+            out.insert (out.end(), l.begin(), l.end());
+        }
+        return out;
+    }
+
+    static int crossings (const std::vector<float>& v, size_t from, size_t to)
+    {
+        int n = 0;
+        for (size_t i = from + 1; i < to && i < v.size(); ++i)
+            n += (v[i - 1] < 0) != (v[i] < 0) ? 1 : 0;
+        return n;
+    }
+
+    static float energy (const std::vector<float>& v, size_t from, size_t to)
+    {
+        double e = 0;
+        for (size_t i = from; i < to && i < v.size(); ++i)
+            e += v[i] * v[i];
+        return (float) e;
+    }
+
     static int count (const std::vector<std::pair<int, int>>& hits, int voice)
     {
         int n = 0;
@@ -117,6 +160,96 @@ public:
             poly.rowLength[rim] = 3;
             expectEquals (count (play (poly, 16), rim), 6, "every 3 steps: 0, 3, 6, 9, 12, 15");
             expectEquals (count (play (poly, 32), rim), 11, "and on round the next bar (18, 21...)");
+        }
+
+        beginTest ("step locks: one hit's own pitch, decay and level (the ritual kit)");
+        {
+            Pattern p;
+            p.hits[lowTom][0] = 1;
+            const auto plain = render (p, 4);
+            p.pitch[lowTom][0] = 12;
+            const auto up = render (p, 4);
+            const int a = crossings (plain, 200, 4800), b = crossings (up, 200, 4800);
+            expect (b > a * 3 / 2, "an octave up: about twice the cycles (" + juce::String (a) + " -> " + juce::String (b) + ")");
+
+            p.pitch[lowTom][0] = 0;
+            p.velocity[lowTom][0] = 30;
+            const auto soft = render (p, 4);
+            expectLessThan (energy (soft, 0, 4800), energy (plain, 0, 4800) * 0.3f, "a ghost note is softer");
+
+            p.velocity[lowTom][0] = 100;
+            p.decayLock[lowTom][0] = -50;
+            const auto muted = render (p, 8);
+            const auto open = [&] { Pattern q = p; q.decayLock[lowTom][0] = 50; return render (q, 8); }();
+            expectLessThan (energy (muted, 6000, 24000), energy (open, 6000, 24000) * 0.5f, "muted dies away sooner than open");
+
+            // Saved, and only where used.
+            p.pitch[lowTom][3] = -5;
+            p.hits[lowTom][3] = 1;
+            p.velocity[lowTom][3] = 50;
+            const auto back = DrumProcessor::patternFromTree (DrumProcessor::patternToTree (p));
+            expect (back == p);
+            expect (p.hasLife());
+        }
+
+        beginTest ("the Groove grid: Pitch, Decay and Level modes, and Feel");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            GrooveView view (engine);
+            view.setSize (1280, 820);
+            view.selectTrack (GrooveView::machine);
+            view.resized();
+            auto& d = engine.getDrums();
+            auto pattern = [&] { return d.getPattern (d.getSelectedPattern(), d.editVariation); };
+            d.setPattern (d.getSelectedPattern(), Pattern {}, d.editVariation);
+            const int row = 1 + lowTom;
+            view.pressCell (row, 2);
+            view.setLifeMode (GrooveView::lifePitch);
+            view.pressCell (row, 2);
+            expectEquals ((int) pattern().pitch[lowTom][2], 2);
+            view.setLifeMode (GrooveView::lifeDecay);
+            view.pressCell (row, 2);
+            expectEquals ((int) pattern().decayLock[lowTom][2], 25);
+            view.setLifeMode (GrooveView::lifeLevel);
+            view.pressCell (row, 2);
+            expectEquals ((int) pattern().velocity[lowTom][2], 70);
+            expectEquals ((int) pattern().hits[lowTom][2], 1, "still lit");
+
+            view.applyFeel (1);   // 12/8
+            expectEquals (pattern().length, 12);
+            expectEquals ((int) d.params.getParameter ("stepRate")->convertFrom0to1 (d.params.getParameter ("stepRate")->getValue()), 4);
+            view.applyFeel (0);
+            expectEquals (pattern().length, 16);
+
+            // The bass has no step locks.
+            view.selectTrack (GrooveView::bass);
+            view.setLifeMode (GrooveView::lifePitch);
+            expectEquals (view.getLifeMode(), (int) GrooveView::lifeHits);
+
+            if (const auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_TAKES_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                view.selectTrack (GrooveView::machine);
+                view.applyFeel (1);
+                auto q = pattern();
+                const int tones[] = { 0, 3, 5, 0, 7, 5, 3, 0, 12, 7, 5, 3 };
+                for (int st = 0; st < 12; ++st)
+                {
+                    q.hits[lowTom][(size_t) st] = (st % 3 != 1) ? 1 : 0;
+                    q.pitch[lowTom][(size_t) st] = (std::int8_t) tones[st];
+                    q.hits[midTom][(size_t) st] = (st % 4 == 1) ? 1 : 0;
+                    q.decayLock[midTom][(size_t) st] = -50;
+                    q.hits[clave][(size_t) st] = (st == 0 || st == 3 || st == 7 || st == 10) ? 1 : 0;
+                }
+                d.setPattern (d.getSelectedPattern(), q, d.editVariation);
+                view.setLifeMode (GrooveView::lifePitch);
+                view.resized();
+                const auto image = view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f);
+                juce::File file (path + "-ritual.png");
+                file.deleteFile();
+                juce::FileOutputStream stream (file);
+                juce::PNGImageFormat().writeImageToStream (image, stream);
+            }
         }
 
         beginTest ("pattern life is saved with the drum machine and the bass");

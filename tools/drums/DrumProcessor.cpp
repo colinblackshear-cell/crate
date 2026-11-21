@@ -57,6 +57,11 @@ const Written written[] = {
                       "x.x.x.x.x.x.x.x.", "", "x..............." }, "x...>...x...>..." },
     { "Conga groove", { "x.......x.......", "", "....x.......x...", "..x.....x.x.....", "......x..x....x.", "...x.......x....",
                         "x.x.......x.....", "", "", "x.x.x.x.x.x.x.x.", "", "" }, "x...x...x...x..." },
+    // For the hand drums (the Ritual kits).
+    { "Circle", { "x.....x...x.....", "....x..x....x..x", "", "", "..x.......x.....", "...x.x.....x.x..", "......x.......x.",
+                  "x..x..x...x.x...", "", "x.xxx.xxx.xxx.xx", "", "" }, "x...>...x...>..." },
+    { "Procession", { "x.......x..x....", "............x...", "", "", "x..x..x.....x...", "....x.....x.....", "......x.x.....x.",
+                      "", "x...............", "..x...x...x...x.", "....x.......x...", "x..............." }, "x.......x......." },
 };
 
 // Kits: the same machine set up for different styles. Each is the starting settings plus these.
@@ -77,6 +82,15 @@ const Kit kits[] = {
                          { "snare", "Sound", 1 }, { "closedHat", "Sound", 1 } }, 0.0f },
     { "Big room", { { "kick", "Decay", 0.75f }, { "snare", "Sound", 2 }, { "snare", "Decay", 0.7f }, { "clap", "Decay", 0.7f },
                     { "cymbal", "Decay", 0.8f }, { "openHat", "Decay", 0.6f } }, 0.2f },
+    // The hand drums.
+    { "Ritual (frame drum, tabla, bells)", { { "kick", "Sound", 4 }, { "snare", "Sound", 4 }, { "lowTom", "Sound", 2 }, { "midTom", "Sound", 2 },
+                                             { "highTom", "Sound", 2 }, { "clap", "Sound", 1 }, { "clave", "Sound", 2 }, { "cowbell", "Sound", 2 },
+                                             { "closedHat", "Sound", 3 }, { "openHat", "Sound", 2 }, { "cymbal", "Sound", 2 } }, 0.0f },
+    { "Djembe circle", { { "kick", "Sound", 5 }, { "snare", "Sound", 3 }, { "lowTom", "Sound", 3 }, { "midTom", "Sound", 3 }, { "highTom", "Sound", 3 },
+                         { "clave", "Sound", 2 }, { "cowbell", "Sound", 1 }, { "closedHat", "Sound", 3 }, { "clap", "Sound", 1 } }, 0.05f },
+    { "Clay and skin (udu, talking drum)", { { "kick", "Sound", 4 }, { "snare", "Sound", 4 }, { "lowTom", "Sound", 4 }, { "midTom", "Sound", 5 },
+                                             { "highTom", "Sound", 5 }, { "clave", "Sound", 2 }, { "cowbell", "Sound", 2 }, { "closedHat", "Sound", 3 },
+                                             { "openHat", "Sound", 2 }, { "cymbal", "Sound", 2 } }, 0.0f },
 };
 }
 
@@ -487,12 +501,15 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
         juce::ValueTree life ("Life");
         for (int v = 0; v < drums::kVoices; ++v)
         {
-            juce::StringArray chance, cond, nudge;
+            juce::StringArray chance, cond, nudge, pitch, decay, velocity;
             for (int s = 0; s < drums::kMaxSteps; ++s)
             {
                 chance.add (juce::String ((int) p.chance[(size_t) v][(size_t) s]));
                 cond.add (juce::String ((int) p.cond[(size_t) v][(size_t) s]));
                 nudge.add (juce::String ((int) p.nudge[(size_t) v][(size_t) s]));
+                pitch.add (juce::String ((int) p.pitch[(size_t) v][(size_t) s]));
+                decay.add (juce::String ((int) p.decayLock[(size_t) v][(size_t) s]));
+                velocity.add (juce::String ((int) p.velocity[(size_t) v][(size_t) s]));
             }
             juce::ValueTree row ("Row");
             row.setProperty ("voice", v, nullptr);
@@ -500,6 +517,9 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
             row.setProperty ("chance", chance.joinIntoString (","), nullptr);
             row.setProperty ("cond", cond.joinIntoString (","), nullptr);
             row.setProperty ("nudge", nudge.joinIntoString (","), nullptr);
+            row.setProperty ("pitch", pitch.joinIntoString (","), nullptr);
+            row.setProperty ("decay", decay.joinIntoString (","), nullptr);
+            row.setProperty ("velocity", velocity.joinIntoString (","), nullptr);
             life.appendChild (row, nullptr);
         }
         t.appendChild (life, nullptr);
@@ -529,6 +549,9 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
         const auto chance = juce::StringArray::fromTokens (row.getProperty ("chance").toString(), ",", "");
         const auto cond = juce::StringArray::fromTokens (row.getProperty ("cond").toString(), ",", "");
         const auto nudge = juce::StringArray::fromTokens (row.getProperty ("nudge").toString(), ",", "");
+        const auto pitch = juce::StringArray::fromTokens (row.getProperty ("pitch").toString(), ",", "");
+        const auto decay = juce::StringArray::fromTokens (row.getProperty ("decay").toString(), ",", "");
+        const auto velocity = juce::StringArray::fromTokens (row.getProperty ("velocity").toString(), ",", "");
         for (int s = 0; s < drums::kMaxSteps; ++s)
         {
             if (s < chance.size())
@@ -537,6 +560,12 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
                 p.cond[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (0, (int) life::numConds - 1, cond[s].getIntValue());
             if (s < nudge.size())
                 p.nudge[(size_t) v][(size_t) s] = (std::int8_t) juce::jlimit (-50, 50, nudge[s].getIntValue());
+            if (s < pitch.size())
+                p.pitch[(size_t) v][(size_t) s] = (std::int8_t) juce::jlimit (-24, 24, pitch[s].getIntValue());
+            if (s < decay.size())
+                p.decayLock[(size_t) v][(size_t) s] = (std::int8_t) juce::jlimit (-50, 50, decay[s].getIntValue());
+            if (s < velocity.size())
+                p.velocity[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (1, 100, velocity[s].getIntValue());
         }
     }
     return p;
