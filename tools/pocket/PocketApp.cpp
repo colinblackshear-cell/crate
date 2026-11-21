@@ -337,8 +337,9 @@ PocketApp::PocketApp (Options o)
     dim->onTap = [this] { closeAllSheets(); };
 
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
-    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::synth, Tool::chords, Tool::vocoder };
-    toolRow.onSelect = [this] (Tool t) { showTool (t); };
+    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::synth, Tool::chords, Tool::vocoder, Tool::effects };
+    // EFFECTS from a tool opens on that tool's board
+    toolRow.onSelect = [this] (Tool t) { if (t == Tool::effects) openEffects (page == Page::tool ? boardForTool (tool) : -1); else showTool (t); };
     thumb.state = [this]
     {
         ThumbBar::State s;
@@ -427,6 +428,7 @@ PocketApp::PocketApp (Options o)
     lesson->nextLayerNumber = [this] { return loopsScreen.nextLayer() + 1; };
     loopsScreen.onSourceChanged = [this] { applyMic(); };
     loopsScreen.onOpenTool = [this] (Tool t) { showTool (t); };
+    loopsScreen.onFullBoard = [this] (int layer) { openEffects (pocket::layerBoardId (layer)); };
     loopsScreen.kitSounds = [this]
     {
         std::vector<PadSetup> kit;
@@ -443,6 +445,8 @@ PocketApp::PocketApp (Options o)
     singScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
     singScreen.onOpenChords = [this] { showTool (Tool::chords); };
     singScreen.onChanged = [this] { saveSong(); };
+    singScreen.onEffects = [this] { openEffects (boardForTool (Tool::vocoder)); };
+    singScreen.fxActive = [this] { const int b = boardForTool (Tool::vocoder); return b >= 0 && loopsScreen.engine().board (b).audible(); };
     chordsScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
     chordsScreen.toast = [this] (const juce::String& t) { toast (t); };
     chordsScreen.onChanged = [this] { saveSong(); singScreen.repaint(); };
@@ -486,6 +490,7 @@ PocketApp::PocketApp (Options o)
     chordsTool.engine().setVocoder (&vocoderScreen.engine().processor());
     loopsScreen.engine().setInstrument (0, &synthPart.engine());
     loopsScreen.engine().setInstrument (1, &chordsTool.engine());
+    setupEffects();
     loadSong();
     loopsScreen.engine().setCountInBars (appSettings.countInBars);
     headerTick.startTimerHz (15);
@@ -520,7 +525,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, effects.get(), remote.get(), macLink.get(), settings.get(), more.get() })
         addChildComponent (c);
     addChildComponent (countPanel);
     addChildComponent (thumb);
@@ -606,6 +611,7 @@ void PocketApp::showPage (Page p, int morePage)
     singScreen.setVisible (onTool && tool == Tool::vocoder);
     synthScreen.setVisible (onTool && tool == Tool::synth);
     chordsScreen.setVisible (onTool && tool == Tool::chords);
+    effects->setVisible (onTool && tool == Tool::effects);
     vocoderScreen.setVisible (p == Page::vocoderSettings);
     showMorePage (p == Page::more ? morePage : -1);
 
@@ -665,7 +671,7 @@ void PocketApp::noteStep()
     if (page == Page::recorder)
         s = sheetOpen ? stepShape : stepRecord;
     else if (page == Page::tool)
-        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
+        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords || tool == Tool::effects ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
           : beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
     if (s >= 0)
         ideas.reachedStep (s);
@@ -1367,7 +1373,8 @@ void PocketApp::applyMic()
     // Your own voice, dry, while you hear yourself: on MY VOICE, and on LOOPS with the mic picked. (The
     // vocoder carries your voice itself when its VOICE pedal is on, so VOCODER and BOTH don't add it.)
     const bool dry = page == Page::tool && ((tool == Tool::vocoder && appSettings.singMode == 0)
-                                            || (tool == Tool::loops && loopsScreen.source() == (int) LoopSource::mic));
+                                            || (tool == Tool::loops && loopsScreen.source() == (int) LoopSource::mic)
+                                            || (tool == Tool::effects && effects != nullptr && effects->source() == pocket::boardVoice));
     l.setDryMonitor (dry);
 }
 
@@ -1446,8 +1453,9 @@ void PocketApp::recPressed()
         return stopRec();
     if (page != Page::tool)
         return;
-    const bool needsMic = tool == Tool::vocoder
-                       || (tool == Tool::loops && (loopsScreen.source() == (int) LoopSource::mic || loopsScreen.source() == (int) LoopSource::vocoder));
+    const bool needsMic = recTool() == Tool::vocoder
+                       || (tool == Tool::loops && (loopsScreen.source() == (int) LoopSource::mic || loopsScreen.source() == (int) LoopSource::vocoder))
+                       || (tool == Tool::effects && effects->source() == pocket::boardVoice);
     if (needsMic && ! micOn)
         return askForMic ([this] { recPressed(); });
     switch (tool)
@@ -1458,6 +1466,7 @@ void PocketApp::recPressed()
         case Tool::vocoder: recVocoder(); break;
         case Tool::synth: recSynth(); break;
         case Tool::chords: recChords(); break;
+        case Tool::effects: recEffects(); break;
         default: break;
     }
     applyClick();
@@ -1761,6 +1770,7 @@ void PocketApp::lockWatchTick()
             part->preset = synthPart.preset;
             part->knobs = synthPart.knobs;
             part->octave = synthPart.octave;
+            part->board = loopsScreen.engine().board (pocket::boardSynth).settings();   // recorded through it: QUANTIZE keeps it
             part->lengthBeats = lockBars * 4.0;
             part->startBeat = lockStart;
             lockPart = part;
@@ -1826,6 +1836,8 @@ void PocketApp::lockWatchTick()
                 part->drums = beats.drums();
             for (int p = 0; p < kPads; ++p)
                 part->kit.push_back (beats.kit().pads[(size_t) p].setup());
+            part->board = loopsScreen.engine().board (pocket::boardDrums).settings();
+            part->padsBoard = loopsScreen.engine().board (pocket::boardPads).settings();
             part->lengthBeats = lockBars * 4.0;
             part->startBeat = lockStart;
             lockPart = part;
@@ -1941,13 +1953,13 @@ PocketApp::RecView PocketApp::recView() const
     int bars = appSettings.recBars();
     if (busy >= 0)
         bars = loops.recordingBars (busy);
-    else if (page == Page::tool && tool == Tool::pads)
+    else if (page == Page::tool && recTool() == Tool::pads)
         bars = beats.drums().padPattern.hits.empty() && appSettings.recBars() > 0 ? appSettings.recBars() : beats.drums().padPattern.bars;
     else if (synthLock())
         bars = lockBars;
-    else if (page == Page::tool && tool == Tool::chords)
+    else if (page == Page::tool && recTool() == Tool::chords)
         bars = chordsRecBars();
-    else if (page == Page::tool && tool == Tool::synth)
+    else if (page == Page::tool && recTool() == Tool::synth)
     {
         const int patBars = synthPart.pattern.bars, want = appSettings.recBars();
         if (synthPart.mode == SynthPart::patternMode)
@@ -2038,6 +2050,7 @@ void PocketApp::loadSong()
     if (voc.key() != songKey.root || voc.minor() != songKey.minor)
         voc.setKey (songKey.root, songKey.minor);
     synthScreen.partChanged();
+    boardsFromVar (v.getProperty ("boards", {}));   // older songs: none, every board neutral
 }
 
 void PocketApp::saveSong()
@@ -2046,6 +2059,8 @@ void PocketApp::saveSong()
     o->setProperty ("key", songKey.toVar());
     o->setProperty ("synth", synthPart.toVar());
     o->setProperty ("chords", chordsTool.toVar());
+    if (const auto b = boardsToVar(); ! b.isVoid())
+        o->setProperty ("boards", b);
     auto file = lib.ideaRoot().getChildFile ("song.json");
     file.getParentDirectory().createDirectory();
     file.replaceWithText (juce::JSON::toString (juce::var (o)));
@@ -2282,7 +2297,7 @@ void PocketApp::resized()
     thumb.setVisible (thumbShown());
 
     const auto content = contentBounds();
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, remote.get(), macLink.get(), settings.get(), more.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, effects.get(), remote.get(), macLink.get(), settings.get(), more.get() })
         c->setBounds (content);
     countPanel.setBounds (16, content.getY() + 8, w - 32, 136);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
@@ -2885,6 +2900,15 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = runLoopEditChecks (editReport); why.isNotEmpty())
         problems.add ("Loop editor in the app: " + why);
 
+    // EFFECTS: the pedals themselves, then through the app (bit-identical when untouched, REC through a board, ...)
+    juce::String boardsReport;
+    if (const auto why = pocket::boardsSelfCheck (boardsReport); why.isNotEmpty())
+        problems.add ("Pedals: " + why);
+    juce::String effectsReport;
+    if (const auto why = runEffectsChecks (effectsReport); why.isNotEmpty())
+        problems.add (why);
+    writeEffectsSnapshots (folder);
+
     // The count-in as it looks: REC on VOCODER with the song stopped, at beat 3 of the count
     {
         switchIdea (ideas.create ("Train horn song"));
@@ -2944,7 +2968,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     }
 
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: + NEW SONG makes an empty song open on LOOPS, SET IN / SET OUT at the playhead and TRIM give a loop of the snapped length that plays gap-free in time (a 7-beat trim pads to 2 bars), FIT TO n BARS is exact and keeps the pitch, QUANTIZE moves loosely played pad hits and synth notes onto the grid in the re-rendered layer and UNDO brings the original back, effects and moves survive trim, fit and quantize, a BPM change keeps every layer's pitch, each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: + NEW SONG makes an empty song open on LOOPS, SET IN / SET OUT at the playhead and TRIM give a loop of the snapped length that plays gap-free in time (a 7-beat trim pads to 2 bars), FIT TO n BARS is exact and keeps the pitch, QUANTIZE moves loosely played pad hits and synth notes onto the grid in the re-rendered layer and UNDO brings the original back, effects and moves survive trim, fit and quantize, a BPM change keeps every layer's pitch, each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, the mic is silent in the speaker until it's allowed, an untouched song renders bit for bit as before the effect boards, each pedal changes the sound when on and is bit-transparent when off, a SYNTH board changes only the synth, REC on EFFECTS records through the board with the layer's own board left empty, QUANTIZE keeps the board, boards come back with the song, and the tempo-synced delay follows the BPM\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nPLAY LIVE early hit: " + beats.liveReport + "\n"
                           + "\nSynth self-check (120 BPM, 44.1 kHz):\n" + synthReport
@@ -2953,7 +2977,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nLoop editor (offline):\n" + toolsReport
                           + "\nLoop editor in the app (96 BPM, 44.1 kHz):\n" + editReport
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport
-                          + "\nREC, count-in and mic checks (97 BPM, 44.1 kHz):\n" + recReport);
+                          + "\nREC, count-in and mic checks (97 BPM, 44.1 kHz):\n" + recReport
+                          + "\nEffect pedals (44.1 kHz):\n" + boardsReport
+                          + "\nEffects in the app (97 BPM, 44.1 kHz):\n" + effectsReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }

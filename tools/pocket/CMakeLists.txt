@@ -70,6 +70,10 @@ target_sources(KaleidoboxPocket PRIVATE
     VocoderScreen.cpp
     PocketLinkClient.cpp
     LinkScreens.cpp
+    PocketFxChecks.cpp
+    PocketBoards.cpp
+    EffectsScreen.cpp
+    PocketAppEffects.cpp
     ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
     ${VOCODER_SOURCES})
 
@@ -92,6 +96,11 @@ target_compile_definitions(KaleidoboxPocket PRIVATE
 
 # The SYNTH tool: the Mac's PS-8 synth engine (its DSP only, no plugin or window), on every build.
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/synth/SynthEngine.cpp)
+
+# The EFFECTS tool: the Mac's pedalboard (the StripFx rack and its pedals, factory boards and tuner), its DSP only.
+# The phone hosts no plugins, so the rack's plugin slot is left out.
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/StripFx.cpp ${TOOLS}/rig/Pedalboard.cpp)
+target_compile_definitions(KaleidoboxPocket PRIVATE CRATE_STRIPFX_NO_PLUGINS=1)
 
 # The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools
 # already define mpc_format; on iOS the phone makes it here.

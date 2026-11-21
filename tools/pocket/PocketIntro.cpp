@@ -120,7 +120,7 @@ TourOverlay::TourOverlay()
 const std::vector<TourOverlay::Stop>& TourOverlay::stops()
 {
     static const std::vector<Stop> all {
-        { "TOOLS", col::ink, "Pick a tool", "LOOPS, DRUMS, PADS, SYNTH, CHORDS and VOCODER live down here. Switch any time: the song keeps playing.", "Next" },
+        { "TOOLS", col::ink, "Pick a tool", "LOOPS, DRUMS, PADS, SYNTH, CHORDS and VOCODER live down here, and EFFECTS puts a pedalboard on any of them. Switch any time: the song keeps playing.", "Next" },
         { "REC", juce::Colour (0xffd8452f), "One button records", U8("REC records the tool on screen onto the next empty loop layer, in time. Tap it again to stop. Tap the display up top for count-in and length; BPM sets the tempo, CLICK the metronome."), "Got it" },
         { "CHORDS", juce::Colour (0xffb9a3dc), "Chords in the song's key", "Eight chords of the song's key: tap one, or fill the PROGRESSION for one chord a bar. They set the vocoder's notes, and SYNTH plays in the same key.", "Next" },
         { "PADS", col::amber, "Hit it!", "Every pad holds a sound, and a factory kit is already loaded. Tap one. Press REC to play a pattern in, then it locks onto a layer.", "I hit it" },

@@ -2,7 +2,23 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#if CRATE_STRIPFX_NO_PLUGINS
+// Kaleidobox Pocket builds the same racks (the phone has no plugins to host): an empty slot with the
+// same face, so the pedals' code is shared as it is.
+class PluginSlot
+{
+public:
+    explicit PluginSlot (bool) {}
+    bool isLoaded() const { return false; }
+    void prepare (double, int) {}
+    void setPlayHead (juce::AudioPlayHead*) {}
+    bool process (juce::AudioBuffer<float>&, juce::MidiBuffer&) { return false; }
+    juce::ValueTree toTree() const { return {}; }
+    void fromTree (const juce::ValueTree&) {}
+};
+#else
 #include "PluginSlot.h"
+#endif
 #include "dsp/MicModel.h"   // the vocoder's Mic locker, shared
 
 // A rack of live effects on one of the Rig's mixer strips (and on each loop): a pedalboard.

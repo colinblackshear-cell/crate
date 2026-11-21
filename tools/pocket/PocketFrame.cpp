@@ -29,6 +29,7 @@ const char* toolName (Tool t)
         case Tool::synth: return "SYNTH";
         case Tool::chords: return "CHORDS";
         case Tool::vocoder: return "VOCODER";
+        case Tool::effects: return "EFFECTS";
     }
     return "";
 }
@@ -43,6 +44,7 @@ juce::Colour toolColour (Tool t)
         case Tool::synth: return juce::Colour (0xff5fb3c4);
         case Tool::chords: return juce::Colour (0xffb9a3dc);
         case Tool::vocoder: return juce::Colour (0xff82cf6a);
+        case Tool::effects: return juce::Colour (0xffe8c27a);
     }
     return col::ink;
 }
@@ -96,6 +98,15 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
             p.startNewSubPath (c.x, c.y + 7);
             p.lineTo (c.x, c.y + 12);
             g.strokePath (p, stroke);
+            break;
+        }
+        case Tool::effects:   // two pedal knobs, linked
+        {
+            g.drawEllipse (c.x - 11, c.y - 11, 11, 11, 2.3f);
+            g.drawEllipse (c.x + 0, c.y + 0, 11, 11, 2.3f);
+            g.drawLine (c.x - 5.5f, c.y - 5.5f, c.x - 5.5f, c.y - 9.5f, 2.3f);
+            g.drawLine (c.x + 5.5f, c.y + 5.5f, c.x + 8.5f, c.y + 2.5f, 2.3f);
+            g.drawLine (c.x - 1.5f, c.y + 1.5f, c.x + 1.5f, c.y - 1.5f, 2.3f);
             break;
         }
     }
@@ -268,7 +279,8 @@ void ToolRow::paint (juce::Graphics& g)
         auto cell = cellRect (i);
         const bool on = i == selected;
         const auto t = tools[(size_t) i];
-        auto well = juce::Rectangle<float> (cell.getCentreX() - 28, cell.getY() + 2, 56, 40);
+        const float wellW = juce::jmin (56.0f, cell.getWidth() - 4.0f);   // seven tools on a 375-point phone: 47 wide
+        auto well = juce::Rectangle<float> (cell.getCentreX() - wellW * 0.5f, cell.getY() + 2, wellW, 40);
         if (on)
         {
             g.setColour (col::well);
@@ -292,7 +304,7 @@ void ToolRow::paint (juce::Graphics& g)
         drawToolIcon (g, t, well.getCentre(), on ? kPaper : col::inkDim.withAlpha (0.8f));
         g.setColour (on ? col::ink : col::inkDim);
         g.setFont (spaced (condensedBold (12.0f), 0.1f));
-        g.drawText (toolName (t), juce::Rectangle<float> (cell.getX(), well.getBottom() + 2, cell.getWidth(), 16), juce::Justification::centred);
+        g.drawFittedText (toolName (t), juce::Rectangle<float> (cell.getX(), well.getBottom() + 2, cell.getWidth(), 16).toNearestInt(), juce::Justification::centred, 1, 0.8f);
     }
 }
 

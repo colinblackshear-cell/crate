@@ -10,7 +10,7 @@ namespace pocket
 {
 // Every tool the row can show, in the row's order. Stage 1 shows the ones that exist (PocketApp's
 // tools list); SYNTH and CHORDS slot in between PADS and VOCODER when they come.
-enum class Tool { loops, drums, pads, synth, chords, vocoder };
+enum class Tool { loops, drums, pads, synth, chords, vocoder, effects };
 const char* toolName (Tool);
 juce::Colour toolColour (Tool);
 void drawToolIcon (juce::Graphics&, Tool, juce::Point<float> centre, juce::Colour);

@@ -428,7 +428,7 @@ void BeatsEngine::renderPads (float* left, float* right, int n)
     sounding = mask;
 }
 
-void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, float* clickOut)
+void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, float* clickOut, float* padsLeft, float* padsRight)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -552,7 +552,10 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
         const int upTo = i < numTriggers ? triggers[(size_t) i].offset : numSamples;
         if (upTo > done)
         {
-            renderPads (left + done, right != nullptr ? right + done : nullptr, upTo - done);
+            if (padsLeft != nullptr)
+                renderPads (padsLeft + done, padsRight != nullptr ? padsRight + done : nullptr, upTo - done);
+            else
+                renderPads (left + done, right != nullptr ? right + done : nullptr, upTo - done);
             done = upTo;
         }
         if (i < numTriggers)

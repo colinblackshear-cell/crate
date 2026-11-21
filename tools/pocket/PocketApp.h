@@ -2,6 +2,7 @@
 
 #include "BeatsScreen.h"
 #include "EffectsSheet.h"
+#include "EffectsScreen.h"
 #include "IdeasScreen.h"
 #include "LinkScreens.h"
 #include "LoopsScreen.h"
@@ -27,7 +28,7 @@
 
 // The whole phone app, tool first: a slim header (the song, the bar and where the next take goes, the Mac
 // link, ···), the tool on screen, the thumb bar (BPM, CLICK, REC, PLAY, UNDO) and the tool row (LOOPS,
-// DRUMS, PADS, SYNTH, CHORDS, VOCODER). REC records whatever tool is on screen onto the next empty loop layer, in time.
+// DRUMS, PADS, SYNTH, CHORDS, VOCODER, EFFECTS). REC records whatever tool is on screen onto the next empty loop layer, in time.
 // Your songs, the sound recorder, every vocoder setting and the More pages are pages without the thumb bar.
 class PocketApp : public juce::Component, private PocketHost
 {
@@ -155,6 +156,17 @@ private:
     void recVocoder();
     void recSynth();
     void recChords();
+    // EFFECTS (PocketAppEffects.cpp): a pedalboard for every sound. REC on EFFECTS records the picked sound through its
+    // board the way that sound's own tool does (VOICE: the mic source); LAYER, ALL and MASTER are resampled.
+    void setupEffects();
+    void openEffects (int boardId);       // -1 = the sound it showed last
+    int boardForTool (Tool) const;        // the board a tool's sound goes through (-1 = none: LOOPS with no layer picked)
+    Tool recTool() const;                 // the tool REC works as (EFFECTS on SYNTH records like SYNTH)
+    void recEffects();
+    juce::var boardsToVar() const;        // the tools' boards, ALL and MASTER (song.json; the layers' are in loops.json)
+    void boardsFromVar (const juce::var&);
+    juce::String runEffectsChecks (juce::String& report);
+    void writeEffectsSnapshots (const juce::File& folder);
     int chordsRecBars() const;   // a CHORDS take's bars: REC LENGTH, stretched to whole passes of the progression
     void applyChordsPadSound();  // MY PAD SOUND: the picked PADS pad's sound to the chords
     void finishSynthTake();   // a SYNTH REC pass is over or called off: what was played stays in the pattern
@@ -251,6 +263,7 @@ private:
     pocket::SynthPart synthPart;   // the SYNTH tool's sound and pattern, also inside the renderer
     SynthScreen synthScreen;
     ChordsScreen chordsScreen;
+    std::unique_ptr<EffectsScreen> effects;
     PocketAudio audio;
     EffectsSheet sheet;
     PadSheet padSheet;

@@ -22,6 +22,8 @@ public:
     std::function<void (juce::Component&, juce::Rectangle<int>)> onKeyMenu;   // the song's KEY menu (PocketApp)
     std::function<void()> onOpenChords;   // CHORDS · Dm ›: the CHORDS tool
     std::function<void()> onChanged;      // the chords' settings changed (HOLD): save the song
+    std::function<void()> onEffects;      // FX: the EFFECTS tool on this tool's board (your voice, or the vocoder)
+    std::function<bool()> fxActive;       // that board is in use (FX lit)
     void leave();   // another screen opened: let go of a chord under a finger (a held one keeps ringing)
     juce::Rectangle<int> tourSpot() const { return padWell().toNearestInt(); }
     juce::Rectangle<int> bannerSpot() const { return bannerRect().toNearestInt(); }
@@ -42,7 +44,7 @@ public:
 
 private:
     enum Id { modeBase = 1, lcdId = 10, keyId = 11, chordsId = 12, holdId = 13, padBase = 20, micId = 30, hearId = 31,
-              settingsId = 33, layersId = 34 };
+              settingsId = 33, layersId = 34, fxId = 35 };
 
     void timerCallback() override;
     int idAt (juce::Point<float>) const;
@@ -62,8 +64,11 @@ private:
     juce::Rectangle<float> holdRect() const { return { (float) getWidth() - 80, 184, 64, 44 }; }
     juce::Rectangle<float> keyRect() const { return { (float) getWidth() - 146, 184, 60, 44 }; }
     juce::Rectangle<float> chordsRect() const { return { 16, 184, keyRect().getX() - 22, 44 }; }
-    juce::Rectangle<float> settingsRect() const { return { 16, 236, (float) getWidth() * 0.5f - 20, 44 }; }
-    juce::Rectangle<float> layersRect() const { return { (float) getWidth() * 0.5f + 4, 236, (float) getWidth() * 0.5f - 20, 44 }; }
+    // VOCODER SETTINGS · FX · LOOP LAYERS
+    float wideButton() const { return ((float) getWidth() - 32.0f - 60.0f - 12.0f) * 0.5f; }
+    juce::Rectangle<float> settingsRect() const { return { 16, 236, wideButton(), 44 }; }
+    juce::Rectangle<float> fxRect() const { return { settingsRect().getRight() + 6, 236, 60, 44 }; }
+    juce::Rectangle<float> layersRect() const { return { fxRect().getRight() + 6, 236, wideButton(), 44 }; }
     juce::Rectangle<float> padWell() const { const float top = juce::jmax (314.0f, (float) getHeight() - 268.0f); return { 16, top, (float) getWidth() - 32, (float) getHeight() - 8 - top }; }
     juce::Rectangle<float> padRect (int i) const;
 

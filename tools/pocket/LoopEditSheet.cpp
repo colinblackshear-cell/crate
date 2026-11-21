@@ -40,13 +40,14 @@ void boxTitle (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
 LoopEditSheet::LoopEditSheet (LoopsEngine& l) : loops (l)
 {
     for (auto* b : { &done, &tabShape, &tabFx, &setIn, &setOut, &hear, &trimButton, &swingButton, &half50, &full100, &halfButton, &doubleButton,
-                     &reverseButton, &undo, &recMoves, &clearMoves, &undoFx })
+                     &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &fullBoard })
         addAndMakeVisible (*b);
     for (auto& b : snaps) addAndMakeVisible (b);
     for (auto& b : fitButtons) addAndMakeVisible (b);
     for (auto& b : grids) addAndMakeVisible (b);
-    for (auto* b : { &done, &tabShape, &tabFx, &halfButton, &doubleButton, &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &trimButton })
+    for (auto* b : { &done, &tabShape, &tabFx, &halfButton, &doubleButton, &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &trimButton, &fullBoard })
         b->setFontHeight (16.0f);
+    fullBoard.onClick = [this] { if (onFullBoard) onFullBoard(); };
 
     done.onClick = [this] { if (onDone) onDone(); };
     tabShape.onClick = [this] { showPage (shapePage); };
@@ -320,6 +321,7 @@ void LoopEditSheet::timerCallback()
     const bool rec = loops.recMoves (current);
     recMoves.setText (rec ? U8("\xe2\x96\xa0 Stop rec") : U8("\xe2\x97\x8f Rec moves"));
     recMoves.setLook (rec ? Look::amber : Look::red);
+    fullBoard.setLamp (true, loops.board (layerBoardId (current)).audible());   // lit: the layer's board is in use
     if (flash > 0)
         --flash;
     if (flash % 100 == 0)
@@ -390,7 +392,7 @@ void LoopEditSheet::layout()
         b->setVisible (shape);
     for (auto* b : { &swingButton, &half50, &full100 })
         b->setVisible (shape && hasPart());
-    for (auto* b : { &recMoves, &clearMoves, &undoFx })
+    for (auto* b : { &recMoves, &clearMoves, &undoFx, &fullBoard })
         b->setVisible (! shape);
 
     if (shape)
@@ -457,6 +459,7 @@ void LoopEditSheet::layout()
         recMoves.setBounds (juce::Rectangle<float> (16, 300, inner * 0.55f, 46).toNearestInt());
         clearMoves.setBounds (juce::Rectangle<float> ((float) recMoves.getRight() + 8, 300, w - 16 - (float) recMoves.getRight() - 8, 46).toNearestInt());
         undoFx.setBounds (16, 354, 80, 42);
+        fullBoard.setBounds (juce::Rectangle<float> (w - 16 - 170, 354, 170, 42).toNearestInt());
     }
     refreshButtons();
 }
@@ -703,7 +706,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
         hint = "Knobs with a dot play their moves. Touch one to take over.";
     else
         hint = "Double-tap a knob to reset it. Moves and effects stay with the layer through trims, fits and quantize.";
-    g.drawFittedText (hint, juce::Rectangle<int> (undoFx.getRight() + 10, undoFx.getY() - 4, getWidth() - undoFx.getRight() - 26, 50), juce::Justification::centredLeft, 3, 0.9f);
+    g.drawFittedText (hint, juce::Rectangle<int> (16, undoFx.getBottom() + 6, getWidth() - 32, 38), juce::Justification::centredLeft, 2, 0.9f);
 }
 
 //==============================================================================
