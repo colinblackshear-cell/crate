@@ -182,6 +182,21 @@ public:
             expect (! (pattern() == before), "mutated");
             expect (view.undoMutate());
             expect (pattern() == before, "and put back");
+
+            if (const auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_TAKES_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                view.euclidRow (rimRow, 5, 12);
+                view.euclidRow (1 + kick, 4, 16);
+                view.setLifeMode (GrooveView::lifeChance);
+                view.pressCell (1 + kick, 4);
+                view.pressCell (1 + kick, 4);
+                view.resized();
+                const auto image = view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f);
+                juce::File file (path + "-life.png");
+                file.deleteFile();
+                juce::FileOutputStream stream (file);
+                juce::PNGImageFormat().writeImageToStream (image, stream);
+            }
         }
     }
 };

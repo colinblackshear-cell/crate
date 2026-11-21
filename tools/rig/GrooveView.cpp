@@ -2499,7 +2499,8 @@ void GrooveView::paint (juce::Graphics& g)
                 if (c.sub.isNotEmpty())
                 {
                     const auto face = r.withTrimmedBottom (3.0f).toNearestInt();
-                    g.setColour (c.lit ? juce::Colour (0xff1e1a16) : p.wellInk);
+                    // (On a dimmed step, a light ink, so 50% still reads on the darker red.)
+                    g.setColour (c.lit && ! c.dim ? juce::Colour (0xff1e1a16) : p.wellInk);
                     g.setFont (vintage::cond (juce::jlimit (9.0f, 13.0f, face.getHeight() * 0.42f), Weight::extra));
                     g.drawFittedText (c.sub, face.reduced (1, 1), c.label.isNotEmpty() ? juce::Justification::centredBottom : juce::Justification::centred, 1, 0.5f);
                 }
