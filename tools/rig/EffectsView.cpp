@@ -54,7 +54,9 @@ const std::vector<EffectsView::Source>& EffectsView::sources()
             { "Drums", "the drum machine", RigEngine::drumsStrip, -1, "Drum machine", RigLooper::drums, RigCapture::drums },
             { "Sampler", "the sampler's keys", RigEngine::samplerStrip, -1, "Sampler", RigLooper::sampler, RigCapture::sampler },
         };
-        static const char* loopNames[] = { "Loop 1", "Loop 2", "Loop 3", "Loop 4", "Loop 5", "Loop 6", "Loop 7", "Loop 8" };
+        static const char* loopNames[] = { "Loop 1", "Loop 2", "Loop 3", "Loop 4", "Loop 5", "Loop 6", "Loop 7", "Loop 8",
+                                           "Loop 9", "Loop 10", "Loop 11", "Loop 12", "Loop 13", "Loop 14", "Loop 15", "Loop 16" };
+        static_assert (std::size (loopNames) == RigLooper::kLayers, "a name for each loop layer");
         for (int i = 0; i < RigLooper::kLayers; ++i)
             s.push_back ({ loopNames[i], "one loop layer", -1, i, "Looper", -1, -1 });
         s.push_back ({ "All loops", "every loop together", RigEngine::loopsStrip, -1, "Looper", -1, RigCapture::loops });
@@ -1004,14 +1006,15 @@ void EffectsView::resized()
         auto c = column.reduced (8, 8);
         const int labelH = 16;
         const int tools = firstLoop;
-        const int loopRowH = juce::jlimit (22, 30, c.getHeight() / 16);
-        const int bh = juce::jlimit (22, 36, (c.getHeight() - labelH * 3 - loopRowH * 2 - 6 * 2) / (tools + 2));
+        const int loopRows = RigLooper::kLayers / 4;
+        const int loopRowH = juce::jlimit (20, 30, c.getHeight() / 20);
+        const int bh = juce::jlimit (22, 36, (c.getHeight() - labelH * 3 - loopRowH * loopRows - 6 * 2) / (tools + 2));
         toolsLabel = c.removeFromTop (labelH);
         for (int i = 0; i < tools; ++i)
             sourceButtons[i]->setBounds (c.removeFromTop (bh).reduced (0, 2));
         c.removeFromTop (6);
         loopsLabel = c.removeFromTop (labelH);
-        for (int row = 0; row < 2; ++row)
+        for (int row = 0; row < loopRows; ++row)
         {
             auto line = c.removeFromTop (loopRowH);
             const int w = line.getWidth() / 4;

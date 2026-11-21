@@ -18,7 +18,7 @@
 // plain copy, and changes the mutes exactly at the bar.
 struct RigScene
 {
-    static constexpr int kMaxStrips = 16, kLayers = 8;
+    static constexpr int kMaxStrips = 16, kLayers = 16;   // (scenes saved with 8 loops leave loops 9-16 as they are)
 
     // What it changes. -1 (or "leave") keeps what's playing.
     struct State

@@ -7,7 +7,7 @@
 #include <array>
 #include <atomic>
 
-// The Rig's looper: eight layers of sound recorded live, in time with the Rig's clock.
+// The Rig's looper: sixteen layers of sound recorded live, in time with the Rig's clock.
 //
 // Press record on a layer and it starts at the next bar (or right away if the clock was
 // stopped: the clock starts with it). Press again and it stops at the end of that bar, so a
@@ -26,7 +26,7 @@
 class RigLooper
 {
 public:
-    static constexpr int kLayers = 8;
+    static constexpr int kLayers = 16;
     // Each layer starts with room for kStartSeconds; while it records, maintain() gives it more
     // in the background, up to kMaxRecordSeconds (so a long loop only takes memory when you make one):
     // a take as long as a whole long set. All the layers together stop growing at
@@ -152,15 +152,31 @@ public:
     // keeps the copy it has, if the loop hasn't changed since the last trim), and setTrim plays
     // the part between two of its beats, stretched to `playBeats` so it stays on the beat.
     // Recording, overdubbing, clearing or loading a new sound on the layer starts afresh.
+    // The shape is applied to the whole loop each time (reverse, then slip and nudge round the
+    // loop, then the crop, then level and fades), so every step can be changed or undone.
+    struct Shape
+    {
+        double slipBeats = 0;                 // moves the audio later inside the loop (wraps)
+        double nudgeMs = 0;                   // the same, in milliseconds, for timing fixes
+        float gainDb = 0;
+        double fadeInBeats = 0, fadeOutBeats = 0;   // in beats of the part that plays
+        bool reversed = false;
+
+        bool isDefault() const { return slipBeats == 0 && nudgeMs == 0 && gainDb == 0 && fadeInBeats == 0 && fadeOutBeats == 0 && ! reversed; }
+    };
     struct Trim
     {
         juce::AudioBuffer<float> whole;   // the loop before trimming
         double wholeBeats = 0;
         double start = 0, end = 0;        // the part that plays, in beats of `whole`
+        double playBeats = 0;             // how many beats that part plays for
+        Shape shape;
     };
     bool openTrim (int layer);            // false if the layer has no loop
     const Trim& getTrim (int layer) const { return trims[(size_t) layer]; }
     void setTrim (int layer, double startBeat, double endBeat, double playBeats);
+    // Changes the shape and plays it with the current start, end and length.
+    void setShape (int layer, const Shape& shape);
     // The part of `audio` (which is `beats` long) between two beats, with short fades at the cuts.
     static juce::AudioBuffer<float> cropBeats (const juce::AudioBuffer<float>& audio, double beats, double from, double to);
 
@@ -171,6 +187,13 @@ public:
     void setEffects (int layer, StripFx* fx) { effects[(size_t) layer] = fx; }
     // The song timeline's level for a layer over the next block, from `from` to `to` (1 when
     // the timeline isn't playing it). Before its effects, so an echo rings out after a fade.
+    // How late a live source (the mic, the vocoder, the line in) comes in, in samples: the
+    // interface's round trip, so what you sing in time with what you hear lands on the beat.
+    // A loop recorded from one is moved this much earlier as it closes, and an overdub is
+    // written this much earlier.
+    void setLiveDelay (int samples) { liveDelay = juce::jmax (0, samples); }
+    int getLiveDelay() const { return liveDelay.load(); }
+    static bool isLiveSource (int source) { return source == input || source == vocoder || source == line; }
     void setArrangeGain (int layer, float from, float to) { arrangeFrom[(size_t) layer] = from; arrangeTo[(size_t) layer] = to; }
 
     struct Clock
@@ -198,7 +221,9 @@ private:
     std::atomic<int> undoLayer { -1 };
     int undoLength = 0;
     std::array<StripFx*, kLayers> effects {};
-    std::array<float, kLayers> arrangeFrom { 1, 1, 1, 1, 1, 1, 1, 1 }, arrangeTo { 1, 1, 1, 1, 1, 1, 1, 1 };
+    std::atomic<int> liveDelay { 0 };
+    std::array<float, kLayers> arrangeFrom = filled (1.0f), arrangeTo = filled (1.0f);
+    static std::array<float, kLayers> filled (float v) { std::array<float, kLayers> a; a.fill (v); return a; }
     std::array<juce::AudioBuffer<float>, kLayers> layerOut;   // a layer's sound, before its effects
     std::array<int, kLayers> fxTail {};                        // samples left of an effect's tail
     std::array<Trim, kLayers> trims;

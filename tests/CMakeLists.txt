@@ -10,6 +10,7 @@ target_sources(CrateTests PRIVATE
     RigTests.cpp
     RigFxTests.cpp
     RigLooperTests.cpp
+    LoopShapeTests.cpp
     RigSceneTests.cpp
     RigTimelineTests.cpp
     RigSongTests.cpp
@@ -38,10 +39,13 @@ target_sources(CrateTests PRIVATE
     RigLogicImportTests.cpp
     RigSongCaptureTests.cpp
     RigTakesTests.cpp
+    RigNotesTests.cpp
     RigAutomationTests.cpp
+    RigLevelTests.cpp
     RigControllersTests.cpp
     RigClearTests.cpp
     RigPhoneLinkTests.cpp
+    RigLayers16Tests.cpp
     ${PROJECT_SOURCE_DIR}/tools/pocket/PocketLinkClient.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
     SoundBankTests.cpp

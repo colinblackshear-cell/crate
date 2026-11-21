@@ -26,15 +26,19 @@ class RigTimeline
 public:
     static constexpr int kMaxBlocks = 256;
 
-    // The lanes: loops 1-8, then the tools.
+    // The lanes: loops 1-8, then the tools, then loops 9-16 (added later: lane numbers are saved
+    // in shows, so the first 15 stay where they were).
     struct Lane
     {
         bool isLoop;
         int index;   // looper layer, or RigEngine::StripId
     };
-    static constexpr int kLanes = 15;   // (the drum machine came last)
+    static constexpr int kFirstLoops = 8;           // loops 1-8 on lanes 0-7
+    static constexpr int kToolLanes = 7;            // lanes 8-14 (the drum machine came last)
+    static constexpr int kMoreLoopsLane = kFirstLoops + kToolLanes;   // loops 9-16 on lanes 15-22
+    static constexpr int kLanes = 23;
     static const std::array<Lane, kLanes>& lanes();
-    static int laneForLoop (int layer) { return layer; }
+    static int laneForLoop (int layer) { return layer < kFirstLoops ? layer : kMoreLoopsLane + (layer - kFirstLoops); }
     static int laneForStrip (int strip);   // -1 if the strip has no lane
 
     struct Block

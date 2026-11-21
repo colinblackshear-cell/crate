@@ -82,6 +82,7 @@ public:
 private:
     void timerCallback() override;
     void layoutStrips (juce::Rectangle<int>);
+    bool layerShown (int layer) const;
 
     RigEngine& engine;
     std::unique_ptr<juce::LookAndFeel> look;

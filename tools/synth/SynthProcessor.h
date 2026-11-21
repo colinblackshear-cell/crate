@@ -2,6 +2,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "core/SafetyLimiter.h"
+
 #include "SynthEngine.h"
 
 // The Synth as a plugin: the Mac app, an Audio Unit instrument for Logic, a VST3, and a block in
@@ -49,6 +51,7 @@ private:
     crate::synthtool::Settings readSettings() const;
 
     crate::synthtool::Engine engine;
+    crate::SafetyLimiter limiter;   // the last stop: nothing over -0.3 dBFS, and no NaN
     juce::SpinLock rhythmLock;
     crate::synthtool::Rhythm rhythm;     // under rhythmLock
     std::atomic<int> arpStep { -1 };

@@ -119,15 +119,16 @@ struct RigLogicImportTests : juce::UnitTest
             expectWithinAbsoluteError (plain.sections[0].bars, 30.0 * 100.0 / 60.0 / 4.0, 1.0e-6);
         }
 
-        beginTest ("more than eight stems: the rest are mixed on loop 8, Other");
+        beginTest ("more than sixteen stems: the rest are mixed on loop 16, Other");
         {
             std::vector<rigimport::Stem> stems;
-            for (int i = 0; i < 11; ++i)
+            for (int i = 0; i < 19; ++i)
                 stems.push_back (stem ("S" + juce::String (i + 1), 2.0, 0.1f));
             const auto song = rigimport::make (std::move (stems), {}, 120.0, "Big");
-            expectEquals ((int) song.layers.size(), 8);
-            expectEquals (song.layers[7].name, juce::String ("Other"));
-            expectWithinAbsoluteError (song.layers[7].audio.getSample (0, 10), 0.4f, 1.0e-5f, "S8 to S11 together");
+            expectEquals ((int) song.layers.size(), 16);
+            expectEquals (song.layers[11].name, juce::String ("S12"));
+            expectEquals (song.layers[15].name, juce::String ("Other"));
+            expectWithinAbsoluteError (song.layers[15].audio.getSample (0, 10), 0.4f, 1.0e-5f, "S16 to S19 together");
         }
 
         beginTest ("on the box: the tempo, a loop per stem from bar 1, sections on the Song screen, and it plays");

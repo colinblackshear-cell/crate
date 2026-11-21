@@ -1,5 +1,7 @@
 #include "RigLooper.h"
 
+#include <algorithm>
+
 namespace
 {
 constexpr int kFade = 96;   // samples of fade at each end of a new loop, so it doesn't click
@@ -258,6 +260,8 @@ bool RigLooper::openTrim (int index)
     trim.wholeBeats = beats;
     trim.start = 0;
     trim.end = beats;
+    trim.playBeats = beats;
+    trim.shape = {};
     trimVersions[(size_t) index] = layer.version.load();
     return true;
 }
@@ -294,10 +298,53 @@ void RigLooper::setTrim (int index, double startBeat, double endBeat, double pla
     endBeat = juce::jlimit (0.0, trim.wholeBeats, endBeat);
     if (endBeat - startBeat < 1.0e-3 || playBeats <= 0)
         return;
-    auto part = cropBeats (trim.whole, trim.wholeBeats, startBeat, endBeat);
     trim.start = startBeat;
     trim.end = endBeat;
-    setLayerAudio (index, std::move (part), playBeats);
+    trim.playBeats = playBeats;
+    setShape (index, trim.shape);
+}
+
+void RigLooper::setShape (int index, const Shape& shape)
+{
+    auto& trim = trims[(size_t) index];
+    if (trim.wholeBeats <= 0 || trim.playBeats <= 0)
+        return;
+    trim.shape = shape;
+    juce::AudioBuffer<float> source;
+    const int total = trim.whole.getNumSamples();
+    if (shape.reversed || shape.slipBeats != 0 || shape.nudgeMs != 0)
+    {
+        source.setSize (2, total);
+        const long long shift = (long long) std::llround (shape.slipBeats / trim.wholeBeats * total)
+                                + (long long) std::llround (shape.nudgeMs * 0.001 * sampleRate);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float* in = trim.whole.getReadPointer (juce::jmin (ch, trim.whole.getNumChannels() - 1));
+            float* out = source.getWritePointer (ch);
+            for (int i = 0; i < total; ++i)
+            {
+                long long from = ((long long) i - shift) % total;   // out[i] = in[i - shift]
+                if (from < 0)
+                    from += total;
+                out[i] = in[shape.reversed ? total - 1 - (int) from : (int) from];
+            }
+        }
+    }
+    auto part = cropBeats (shape.reversed || shape.slipBeats != 0 || shape.nudgeMs != 0 ? source : trim.whole,
+                           trim.wholeBeats, trim.start, trim.end);
+    const int n = part.getNumSamples();
+    if (shape.gainDb != 0)
+        part.applyGain (juce::Decibels::decibelsToGain (shape.gainDb));
+    const auto fadeSamples = [&] (double beats) { return juce::jlimit (0, n, (int) std::round (beats / trim.playBeats * n)); };
+    const int fi = fadeSamples (shape.fadeInBeats), fo = fadeSamples (shape.fadeOutBeats);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        if (fi > 0)
+            part.applyGainRamp (ch, 0, fi, 0.0f, 1.0f);
+        if (fo > 0)
+            part.applyGainRamp (ch, n - fo, fo, 1.0f, 0.0f);
+    }
+    setLayerAudio (index, std::move (part), trim.playBeats);
     trimVersions[(size_t) index] = layers[(size_t) index].version.load();
 }
 
@@ -385,6 +432,13 @@ void RigLooper::finishRecording (Layer& layer)
 {
     layer.length = juce::jmax (1, layer.writeIndex);
     layer.lengthBeats = layer.stopBeat - layer.startBeat;
+    // A live source came in late by the round trip: what was sung on the beat is that far in.
+    if (const int delay = isLiveSource (layer.source.load()) ? liveDelay.load() : 0; delay > 0 && delay < layer.length / 4)
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto* d = layer.audio.getWritePointer (ch);
+            std::rotate (d, d + delay, d + layer.length);
+        }
     const int fade = juce::jmin (kFade, layer.length / 4);
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -538,6 +592,13 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         float target = layer.mute.load() ? 0.0f : layer.level.load();
         float peak = 0;
         bool changed = false;
+        // An overdub from a live source is written earlier by its delay (in the loop's samples).
+        int dubDelay = 0;
+        if (isLiveSource (layer.source.load()) && layer.length > 1 && layer.lengthBeats.load() > 0)
+        {
+            const double loopPerDevice = layer.length / (layer.lengthBeats.load() * sampleRate * 60.0 / juce::jmax (1.0, clock.bpm));
+            dubDelay = juce::jlimit (0, layer.length / 4, (int) std::round (liveDelay.load() * loopPerDevice));
+        }
 
         for (int i = 0; i < n; ++i)
         {
@@ -648,10 +709,11 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
 
                 if (state == State::overdubbing)
                 {
+                    const int w = (i0 - dubDelay + layer.length) % layer.length;
                     if (srcL != nullptr)
-                        audioL[i0] += srcL[i];
+                        audioL[w] += srcL[i];
                     if (srcR != nullptr)
-                        audioR[i0] += srcR[i];
+                        audioR[w] += srcR[i];
                     changed = true;
                 }
             }

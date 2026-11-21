@@ -169,6 +169,7 @@ bass::Settings BassProcessor::readSettings() const
 void BassProcessor::prepareToPlay (double sampleRate, int)
 {
     engine.prepare (sampleRate);
+    limiter.prepare (sampleRate);
     keyboardState.reset();
     playing = getPattern (getSelectedPattern());
     playingPattern = getSelectedPattern();
@@ -221,6 +222,7 @@ void BassProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     engine.setSettings (readSettings());
     auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
     engine.render (buffer.getWritePointer (0), right, numSamples, midi, clock);
+    limiter.process (buffer.getWritePointer (0), right, numSamples);
     currentStep = engine.getCurrentStep();
     transpose = engine.getTranspose();
     midi.clear();

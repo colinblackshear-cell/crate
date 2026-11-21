@@ -39,6 +39,22 @@ juce::String barsText (double bars)
     return juce::String (bars, whole ? 0 : 2) + (whole && (int) std::round (bars) == 1 ? " bar" : " bars");
 }
 
+// The lanes top to bottom: every loop (1-16), then the tools. Loops 9-16 sit at the end of the
+// saved lane numbers (after the tools), so a lane's row isn't its number.
+int rowOfLane (int lane)
+{
+    if (lane < RigTimeline::kFirstLoops)
+        return lane;
+    if (lane < RigTimeline::kMoreLoopsLane)
+        return lane + (RigLooper::kLayers - RigTimeline::kFirstLoops);
+    return lane - RigTimeline::kToolLanes;
+}
+
+int laneOfRow (int row)
+{
+    return row < RigLooper::kLayers ? RigTimeline::laneForLoop (row) : row - (RigLooper::kLayers - RigTimeline::kFirstLoops);
+}
+
 const juce::StringArray& sectionNames()
 {
     static const juce::StringArray list { "Intro", "Verse", "Pre-chorus", "Chorus", "Bridge", "Drop", "Break", "Solo", "Outro" };
@@ -70,12 +86,12 @@ public:
     int bpb() const { return juce::jmax (1, owner.engine.getTransport().getBeatsPerBar()); }
     double snap() const { return owner.snapBeats ? 1.0 / bpb() : 1.0; }
     double snapped (double bar) const { return std::round (bar / snap()) * snap(); }
-    int laneAt (int y) const { return y < kRuler ? -1 : juce::jlimit (0, RigTimeline::kLanes - 1, (y - kRuler) / laneHeight()); }
+    int laneAt (int y) const { return y < kRuler ? -1 : laneOfRow (juce::jlimit (0, RigTimeline::kLanes - 1, (y - kRuler) / laneHeight())); }
 
     juce::Rectangle<float> blockBounds (const RigTimeline::Block& b) const
     {
         const int h = laneHeight();
-        return juce::Rectangle<float> (xFor (b.start), (float) (kRuler + b.lane * h + 2), (float) b.length * owner.pxPerBar, (float) (h - 4));
+        return juce::Rectangle<float> (xFor (b.start), (float) (kRuler + rowOfLane (b.lane) * h + 2), (float) b.length * owner.pxPerBar, (float) (h - 4));
     }
 
     void updateSize (int height)
@@ -94,14 +110,14 @@ public:
         const double visibleBars = barFor ((float) getWidth());
 
         g.fillAll (Theme::background);
-        for (int lane = 0; lane < RigTimeline::kLanes; ++lane)
+        for (int row = 0; row < RigTimeline::kLanes; ++row)
         {
-            g.setColour (lane % 2 == 0 ? Theme::panel.brighter (0.03f) : Theme::panel);
-            g.fillRect (0, kRuler + lane * h, getWidth(), h);
-            if (lane == RigLooper::kLayers)
+            g.setColour (row % 2 == 0 ? Theme::panel.brighter (0.03f) : Theme::panel);
+            g.fillRect (0, kRuler + row * h, getWidth(), h);
+            if (row == RigLooper::kLayers)   // the first tool, under the last loop
             {
                 g.setColour (Theme::outline);
-                g.drawHorizontalLine (kRuler + lane * h, 0.0f, (float) getWidth());
+                g.drawHorizontalLine (kRuler + row * h, 0.0f, (float) getWidth());
             }
         }
 
@@ -545,7 +561,7 @@ void TimelineView::Names::paint (juce::Graphics& g)
     const int h = owner.lanes->laneHeight(), bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
     for (int lane = 0; lane < RigTimeline::kLanes; ++lane)
     {
-        auto area = juce::Rectangle<int> (0, kRuler + lane * h, getWidth() - 6, h).reduced (0, 2);
+        auto area = juce::Rectangle<int> (0, kRuler + rowOfLane (lane) * h, getWidth() - 6, h).reduced (0, 2);
         g.setColour (laneColour (lane));
         g.fillRoundedRectangle (area.removeFromLeft (5).toFloat(), 2.0f);
         area.removeFromLeft (8);

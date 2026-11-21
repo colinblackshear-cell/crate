@@ -2,6 +2,8 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "RigNotes.h"
+
 #include <array>
 #include <atomic>
 #include <vector>
@@ -31,6 +33,14 @@ public:
     static constexpr int kPool = 3;               // passes in flight (recording, or waiting to be collected)
     static constexpr int kMaxTakes = 12;          // per layer; the oldest one not playing goes first
     static constexpr double kMaxSeconds = 600.0;  // the longest section that can be recorded into
+    static constexpr int kMaxEvents = 16384;      // notes on and off in one pass
+    // A tool played by notes (the Bass, the Synth, the Sampler, the Drum machine, the MPC)
+    // records its notes: its takes go on no loop, but into a clip of notes for the tool, kept
+    // under a "layer" of its own: notesLayer (its strip).
+    static constexpr int kNotesLayer = 1000;
+    static int notesLayer (int strip) { return kNotesLayer + strip; }
+    static bool isNotesLayer (int layer) { return layer >= kNotesLayer; }
+    static int stripOfNotesLayer (int layer) { return layer - kNotesLayer; }
 
     RigTakes() = default;
 
@@ -42,6 +52,7 @@ public:
         double beats = 0;
         bool partial = false;             // cut short (the rest is silence)
         int number = 1;                   // Take 1, Take 2... (kept when older ones are deleted)
+        std::vector<rignotes::Note> notes;   // what was played (a notes layer's takes)
     };
     // The takes of one loop layer, over one stretch of the song.
     struct Set
@@ -71,6 +82,9 @@ public:
     int getSource() const { return activeSource.load(); }
     bool isCycling() const { return cycle.load(); }
     void setCycle (bool c) { cycle = c; }
+    // How late the source comes in (samples; the mic's round trip, 0 for a tool): a pass is
+    // written that much later, so what was played on the section's top is its first sample.
+    void setDelay (int samples) { delay = juce::jmax (0, samples); }
     double getStartBar() const { return activeStart; }
     double getBars() const { return activeBars; }
     // The take being recorded (its number), and how far through the section it is (0..1).
@@ -97,13 +111,19 @@ public:
     void forget (int layer);
     // A new song: forgets everything (stops a recording first).
     void clear();
+    // Every layer's takes (to save them with the show).
+    const std::vector<Set>& getSets() const { return sets; }
+    // Puts back a saved set (after clear(), as a show loads). A set already there for its
+    // layer is replaced. Sets with no takes are ignored.
+    void restore (Set);
 
     //==========================================================================
     // Audio thread: once per block, with the recorded source's block (stereo; null for silence)
     // and the clock at the block's start (beats from the song's start). The engine splits its
     // blocks at the song's jumps, so a jump only ever falls between two calls.
+    // `midi`: the notes played into the recorded tool in this block (for a notes layer).
     void process (const juce::AudioBuffer<float>* source, int numSamples, double beat, double bpm,
-                  bool playing, double sampleRate);
+                  bool playing, double sampleRate, const juce::MidiBuffer* midi = nullptr);
 
 private:
     void finishPass();
@@ -111,6 +131,7 @@ private:
     // What the message thread set up (read by the audio thread after it sees `state`).
     std::atomic<int> state { (int) State::idle };
     std::atomic<bool> stopRequested { false }, cycle { true };
+    std::atomic<int> delay { 0 };
     double startBeat = 0, endBeat = 0;
     int expected = 0;                     // samples in a whole pass
     std::atomic<int> activeLayer { -1 }, activeSource { 0 };   // (the engine reads them on the audio thread)
@@ -123,6 +144,7 @@ private:
     std::array<std::atomic<int>, kPool> status {};
     std::array<int, kPool> written {};
     std::array<int, kPool> order {};      // which pass it was, so they're collected in order
+    std::array<std::vector<rignotes::Event>, kPool> events;   // (reserved: the audio thread never grows them)
     int current = -1, writeIndex = 0, passCount = 0, firstNumber = 1;
     double lastEnd = -1.0;
     std::atomic<int> passesStarted { 0 }, progressSamples { 0 };

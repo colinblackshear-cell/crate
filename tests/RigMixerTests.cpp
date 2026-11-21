@@ -272,14 +272,16 @@ public:
             expectEquals (engine.getRouting().getLearning(), (int) RigRouting::synthLevel);
             engine.getRouting().cancelLearn();
 
-            // Loop layers: eight strips, into the Loops strip.
+            // Loop layers: a strip each for 1-8 (9-16 once they have a loop), into the Loops strip.
             mixer->layersBank.onClick();
             expect (mixer->isShowingLayers());
-            for (int l = 0; l < RigLooper::kLayers; ++l)
+            for (int l = 0; l < 8; ++l)
             {
                 auto* c = mixer->layerChannel (l);
                 expect (c != nullptr && c->isVisible() && c->rec.isVisible() && c->fader.isVisible(), "layer " + juce::String (l + 1));
             }
+            for (int l = 8; l < RigLooper::kLayers; ++l)
+                expect (mixer->layerChannel (l) != nullptr && ! mixer->layerChannel (l)->isVisible(), "empty layer " + juce::String (l + 1) + " hidden");
             expect (mixer->channelFor (RigEngine::loopsStrip)->isVisible() && ! mixer->channelFor (RigEngine::mpcStrip)->isVisible());
             mixer->layerChannel (2)->fader.setValue (0.3, juce::sendNotificationSync);
             expectWithinAbsoluteError (engine.getLooper().getLayer (2).level.load(), 0.3f, 1.0e-6f);

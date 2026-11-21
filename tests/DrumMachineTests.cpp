@@ -74,7 +74,7 @@ struct DrumMachineTests : juce::UnitTest
                 const auto h = listen (e, 4.0);
                 expect (h.finite, drums::voiceName (v));
                 expectGreaterThan (h.peak, 0.05f, drums::voiceName (v));
-                expectLessThan (h.peak, 2.0f, drums::voiceName (v));
+                expectLessThan (h.peak, 3.0f, drums::voiceName (v));
                 expectLessThan (h.tail, 1.0e-3f, juce::String (drums::voiceName (v)) + " fades away");
             }
         }
@@ -305,7 +305,7 @@ struct DrumMachineTests : juce::UnitTest
                         const auto what = juce::String (drums::voiceName (v)) + " " + drums::soundNames (v)[sound];
                         expect (h.finite, what);
                         expectGreaterThan (h.peak, 0.04f, what);
-                        expectLessThan (h.peak, 2.0f, what);
+                        expectLessThan (h.peak, 3.0f, what);
                         expectLessThan (h.tail, 1.0e-3f, what + " fades away");
                     }
 

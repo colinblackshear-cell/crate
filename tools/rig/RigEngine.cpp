@@ -8,6 +8,8 @@
 #include "core/Edits.h"
 #include "core/SoundFx.h"
 
+static_assert (RigScene::kLayers == RigLooper::kLayers, "a scene has a mute for each loop layer");
+
 namespace
 {
     // Every RigEngine in this program (message thread): the boxes a one-tool plugin can reach.
@@ -136,6 +138,11 @@ float RigEngine::faderGain (float level)
     return level < 0.1f ? gain * (level / 0.1f) : gain;
 }
 
+static juce::String timingKey()
+{
+    return juce::JUCEApplicationBase::isStandaloneApp() ? "app" : "plugin";
+}
+
 RigEngine::RigEngine()
 {
     automation.numTools = numTools;
@@ -152,6 +159,9 @@ RigEngine::RigEngine()
     arrangeTo.fill (1.0f);
     arrangeRestart.fill (-1.0);
     // The Rig is the host, so the tools follow its clock the way they follow Logic's.
+    bassTrim.attach (bass.params, RigSounds::bass());
+    synthTrim.attach (synthTool.params, RigSounds::synth());
+    vocoderTrim.attach (vocoder.params.state, "program", [this] { return RigSounds::vocoderTrimDb (vocoder.getProgramName (vocoder.getCurrentProgram())); });
     mpc.setPlayHead (&transport);
     sampler.setPlayHead (&transport);
     vocoder.setPlayHead (&transport);
@@ -174,6 +184,9 @@ RigEngine::RigEngine()
     // The drum machine waits for its Play (on the Groove screen), so a new Rig starts quiet.
     if (auto* p = drums.params.getParameter ("sequencer"))
         p->setValueNotifyingHost (0.0f);
+    // This Mac's recording timing.
+    if (std::unique_ptr<juce::XmlElement> xml { juce::XmlDocument::parse (timingFile()) }; xml != nullptr && xml->hasTagName ("Timing"))
+        timingOffsetMs = juce::jlimit (-50.0f, 100.0f, (float) xml->getDoubleAttribute (timingKey(), 0.0));
     blankShow = saveShow();
     blankShow.removeChild (blankShow.getChildWithName ("Quantize"), nullptr);   // kept by New song
     blankShow.removeChild (blankShow.getChildWithName (RigChords::kTreeType), nullptr);   // so are your chords
@@ -342,6 +355,10 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     sampleRate = rate > 0 ? rate : 44100.0;
     maxBlock = juce::jmax (16, maximumBlockSize);
     chords.prepare (sampleRate);
+    masterLimiter.prepare (sampleRate);
+    outputLimiter.prepare (sampleRate);
+    for (auto& l : stemLimiters)
+        l.prepare (sampleRate);
 
     for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder, &bass, &synthTool, &drums })
     {
@@ -378,7 +395,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
     capture.prepare (sampleRate);
-    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi, &vocoderMissed, &midiScratch })
+    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi, &vocoderMissed, &midiScratch, &takeMidi })
         m->ensureSize (4096);
     vocoderFade.reset (sampleRate, 0.015);
     vocoderFade.setCurrentAndTargetValue (vocoderOn.load() ? 1.0f : 0.0f);
@@ -414,6 +431,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
         returnGains[(size_t) r].setCurrentAndTargetValue (returns[(size_t) r].mute.load() ? 0.0f : faderGain (returns[(size_t) r].level.load()));
     }
     prepared = true;
+    applyTiming();
 }
 
 juce::String RigEngine::stemName (int s)
@@ -459,6 +477,9 @@ void RigEngine::process (const float* const* inputs, int numInputs, float* const
         // (Up to the timeline's next jump or the end of its cycle, so it lands exactly.)
         const int n = samplesToTimelineEvent (juce::jmin (maxBlock, numSamples - offset));
         processChunk (inputs, numInputs, offset, n);
+        // The click and the preview join after the master: the last safety limiter catches them
+        // (a no-op below -3 dBFS).
+        outputLimiter.process (mixBuffer.getWritePointer (0), mixBuffer.getWritePointer (1), n);
 
         // Mono outputs get both sides; stereo gets left and right.
         for (int ch = 0; ch < numOutputs; ++ch)
@@ -691,6 +712,32 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         }
     }
 
+    // A take from a tool played by notes keeps what's played into it (before the song's own
+    // notes go in, below).
+    takeMidi.clear();
+    {
+        const int source = takes.getLayer() >= 0 ? takes.getSource() : -1;
+        const juce::MidiBuffer* from = source == RigLooper::bass ? &bassMidi : source == RigLooper::synth ? &synthMidi
+                                     : source == RigLooper::sampler ? &samplerMidi : source == RigLooper::mpc ? &mpcMidi
+                                     : source == RigLooper::drums ? &drumsMidi : nullptr;
+        if (from != nullptr && RigTakes::isNotesLayer (takes.getLayer()))
+            takeMidi.addEvents (*from, 0, -1, 0);
+    }
+    // The song's notes (the notes takes), into their tools.
+    {
+        std::array<juce::MidiBuffer*, numStrips> dests {};
+        dests[mpcStrip] = &mpcMidi;
+        dests[samplerStrip] = &samplerMidi;
+        dests[bassStrip] = &bassMidi;
+        dests[synthStrip] = &synthMidi;
+        dests[drumsStrip] = &drumsMidi;
+        const bool songPlays = timeline.on.load() && transport.isPlayingThisBlock();
+        const int recLayer = takes.getLayer();
+        notePlayer.process (transport.getBlockPosition(), n, transport.getBpm(), sampleRate, transport.getBeatsPerBar(), songPlays,
+                            dests.data(), (int) dests.size(),
+                            RigTakes::isNotesLayer (recLayer) ? RigTakes::stripOfNotesLayer (recLayer) : -1, takes.getStartBar());
+    }
+
     // The mixer: a solo anywhere silences the strips that aren't soloed; the sends fill up as
     // each strip plays.
     soloActive = anySolo();
@@ -723,8 +770,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         drums.processBlock (drumsBlock, drumsMidi);
     // A plugin in the Bass's or Synth's slot plays the notes the tool plays (its steps, arp and
     // keys) instead of the tool's own sound.
+    // The tool's own sound gets its level trim (so every sound is as loud as the others); a
+    // plugin's sound is left as the plugin makes it.
     auto playTool = [] (juce::AudioProcessor& tool, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi, PluginSlot& slot,
-                        juce::MidiBuffer& tap, auto setTap)
+                        juce::MidiBuffer& tap, auto setTap, const RigSounds::Trim& trim, float& trimWas)
     {
         block.clear();
         const bool external = slot.isLoaded() && ! slot.bypassed.load();
@@ -733,13 +782,18 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         tool.processBlock (block, midi);
         if (external && ! slot.process (block, tap))
             block.clear();
+        const float to = external ? 1.0f : trim.gain();
+        if (to != trimWas || to != 1.0f)
+            for (int ch = 0; ch < block.getNumChannels(); ++ch)
+                block.applyGainRamp (ch, 0, block.getNumSamples(), trimWas, to);
+        trimWas = to;
     };
     bassBlock.clear();
     if (runsStrip (bassStrip))
-        playTool (bass, bassBlock, bassMidi, bassPlugin, bassTap, [this] (juce::MidiBuffer* t) { bass.setNoteTap (t); });
+        playTool (bass, bassBlock, bassMidi, bassPlugin, bassTap, [this] (juce::MidiBuffer* t) { bass.setNoteTap (t); }, bassTrim, bassTrimWas);
     synthBlock.clear();
     if (runsStrip (synthStrip))
-        playTool (synthTool, synthBlock, synthMidi, synthPlugin, synthTap, [this] (juce::MidiBuffer* t) { synthTool.setNoteTap (t); });
+        playTool (synthTool, synthBlock, synthMidi, synthPlugin, synthTap, [this] (juce::MidiBuffer* t) { synthTool.setNoteTap (t); }, synthTrim, synthTrimWas);
 
     // The vocoder shapes its synth with your voice from the input.
     const bool hearMic = micOn.load();
@@ -773,6 +827,14 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             vocoderBlock.clear();
         }
         vocoder.processBlock (vocoderBlock, vocoderMidi);
+        {
+            // The sound's level trim, so every vocoder sound is as loud as the others.
+            const float to = vocoderTrim.gain();
+            if (to != vocoderTrimWas || to != 1.0f)
+                for (int ch = 0; ch < 2; ++ch)
+                    vocoderBlock.applyGainRamp (ch, 0, n, vocoderTrimWas, to);
+            vocoderTrimWas = to;
+        }
         if (vocoderFade.isSmoothing())
         {
             const float from = vocoderFade.getCurrentValue();
@@ -896,7 +958,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         // A take for the song (Rec into), from the same sources.
         const int source = takes.getSource();
         takes.process (juce::isPositiveAndBelow (source, (int) RigLooper::numSources) ? sources[(size_t) source] : nullptr,
-                       n, clock.beat, clock.bpm, clock.playing, sampleRate);
+                       n, clock.beat, clock.bpm, clock.playing, sampleRate, &takeMidi);
     }
     applyStrip (loopsStrip, loopsBlock);
     if (outs[loopsStem] == nullptr)
@@ -909,6 +971,8 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             for (int ch = 0; ch < 2; ++ch)
                 if (out[ch] != nullptr)
                     juce::FloatVectorOperations::copy (out[ch] + offset, from.getReadPointer (ch), n);
+            if (out[0] != nullptr)
+                stemLimiters[(size_t) st].process (out[0] + offset, out[1] != nullptr ? out[1] + offset : nullptr, n);
         }
 
     // The metronome: heard (under the master fader), but kept out of recordings.
@@ -927,8 +991,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     {
         const float g = masterGain.getNextValue();
         for (int ch = 0; ch < 2; ++ch)
-            mix.setSample (ch, i, juce::jlimit (-1.0f, 1.0f, mix.getSample (ch, i) * g));
+            mix.setSample (ch, i, mix.getSample (ch, i) * g);
     }
+    // The safety limiter (and NaN guard), before the mix is recorded.
+    masterLimiter.process (mix.getWritePointer (0), mix.getWritePointer (1), n);
 
     recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
     capture.process (recClock, { &rawInput, &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
@@ -1237,7 +1303,50 @@ void RigEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, in
 
 void RigEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
-    prepare (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples());
+    // The round trip: a buffer out and the output's latency before you hear it, a buffer in and
+    // the input's latency before what you sang gets here.
+    const int buffer = device->getCurrentBufferSizeSamples();
+    deviceRoundTrip = juce::jlimit (0, 48000, device->getInputLatencyInSamples() + device->getOutputLatencyInSamples() + 2 * buffer);
+    prepare (device->getCurrentSampleRate(), buffer);
+    applyTiming();
+}
+
+//==============================================================================
+juce::File RigEngine::timingFile()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+#if JUCE_MAC
+        .getChildFile ("Application Support")
+#endif
+        .getChildFile ("Crate Rig").getChildFile ("Timing.xml");
+}
+
+void RigEngine::setTimingOffsetMs (float ms, bool save)
+{
+    timingOffsetMs = juce::jlimit (-50.0f, 100.0f, ms);
+    applyTiming();
+    if (! save)
+        return;
+    const auto file = timingFile();
+    std::unique_ptr<juce::XmlElement> xml (juce::XmlDocument::parse (file));
+    if (xml == nullptr || ! xml->hasTagName ("Timing"))
+        xml = std::make_unique<juce::XmlElement> ("Timing");
+    xml->setAttribute (timingKey(), (double) timingOffsetMs);
+    file.getParentDirectory().createDirectory();
+    xml->writeTo (file);
+}
+
+int RigEngine::getLiveDelaySamples() const
+{
+    const double rate = sampleRate > 0 ? sampleRate : 44100.0;
+    return juce::jmax (0, deviceRoundTrip.load() + (int) std::round (timingOffsetMs * 0.001 * rate));
+}
+
+void RigEngine::applyTiming()
+{
+    const int delay = getLiveDelaySamples();
+    looper.setLiveDelay (delay);
+    takes.setDelay (RigLooper::isLiveSource (takes.getSource()) ? delay : 0);
 }
 
 void RigEngine::audioDeviceStopped()
@@ -1382,6 +1491,38 @@ juce::ValueTree RigEngine::saveShow() const
         show.appendChild (banks, nullptr);
     }
 
+    // The takes recorded into the song (their sound is saved beside the show, like the loops).
+    if (! takes.getSets().empty())
+    {
+        juce::ValueTree all ("Takes");
+        for (const auto& set : takes.getSets())
+        {
+            if (set.takes.empty())
+                continue;
+            juce::ValueTree t ("TakeSet");
+            t.setProperty ("layer", set.layer, nullptr);
+            t.setProperty ("source", set.source, nullptr);
+            t.setProperty ("startBar", set.startBar, nullptr);
+            t.setProperty ("bars", set.bars, nullptr);
+            t.setProperty ("playing", set.playing, nullptr);
+            t.setProperty ("nextNumber", set.nextNumber, nullptr);
+            for (const auto& take : set.takes)
+            {
+                juce::ValueTree one ("Take");
+                one.setProperty ("number", take.number, nullptr);
+                one.setProperty ("beats", take.beats, nullptr);
+                one.setProperty ("partial", take.partial, nullptr);
+                if (! take.notes.empty())
+                    one.setProperty ("notes", rignotes::encode (take.notes), nullptr);
+                t.appendChild (one, nullptr);
+            }
+            all.appendChild (t, nullptr);
+        }
+        show.appendChild (all, nullptr);
+    }
+
+    if (! noteClips.empty())
+        show.appendChild (rignotes::toTree (noteClips), nullptr);
     show.setProperty ("songMode", scenes.songMode, nullptr);
     show.appendChild (timeline.toTree(), nullptr);
     for (const auto& scene : scenes.getScenes())
@@ -1463,6 +1604,10 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     scenes.songMode = (bool) show.getProperty ("songMode", false);
     timeline.fromTree (show.getChildWithName (RigTimeline::kTreeType));
     takes.clear();
+    loadedTakeSets.clear();
+    noteClips = rignotes::fromTree (show.getChildWithName (rignotes::kTreeType));
+    notesChanged();
+    notePlayer.releaseAll();
     {
         // Older shows only had what the Sampler records.
         const int older = (int) show.getProperty ("sampleSource", 0);
@@ -1570,6 +1715,36 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         {
             if ((int) scenes.getScenes().size() < RigScenes::kMaxScenes)
                 scenes.getScenes().push_back (RigScene::fromTree (child));
+        }
+        else if (child.hasType ("Takes"))
+        {
+            for (const auto& t : child)
+            {
+                if (! t.hasType ("TakeSet"))
+                    continue;
+                RigTakes::Set set;
+                set.layer = t.getProperty ("layer", -1);
+                set.source = t.getProperty ("source", 0);
+                set.startBar = t.getProperty ("startBar", 0.0);
+                set.bars = t.getProperty ("bars", 0.0);
+                set.playing = t.getProperty ("playing", 0);
+                set.nextNumber = t.getProperty ("nextNumber", 1);
+                for (const auto& one : t)
+                {
+                    if (! one.hasType ("Take"))
+                        continue;
+                    RigTakes::Take take;
+                    take.number = one.getProperty ("number", 1);
+                    take.beats = one.getProperty ("beats", 0.0);
+                    take.partial = one.getProperty ("partial", false);
+                    take.notes = rignotes::decode (one.getProperty ("notes").toString());
+                    set.takes.push_back (std::move (take));   // (its sound comes in readLoopAudio)
+                }
+                const bool layerOk = juce::isPositiveAndBelow (set.layer, RigLooper::kLayers)
+                                     || (RigTakes::isNotesLayer (set.layer) && RigTakes::stripOfNotesLayer (set.layer) < numStrips);
+                if (layerOk && ! set.takes.empty() && set.bars > 0)
+                    loadedTakeSets.push_back (std::move (set));
+            }
         }
         else if (child.hasType ("Loop"))
         {
@@ -2038,10 +2213,12 @@ bool RigEngine::recordInto (int section, int layer, int source, bool cycle, juce
     const auto& sec = list[(size_t) section];
     const int bpb = juce::jmax (1, transport.getBeatsPerBar());
     const double rate = sampleRate > 0 ? sampleRate : 44100.0;
+    takes.setDelay (RigLooper::isLiveSource (source) ? getLiveDelaySamples() : 0);
     if (! takes.start (layer, source, sec.start, sec.bars, cycle, rate, transport.getBpm(), bpb, why))
         return false;
     // A loop holding something else (not in the song, or it would be busy) makes way.
-    if (const auto* set = takes.setFor (layer); set != nullptr && set->takes.empty() && looper.getState (layer) != RigLooper::State::empty)
+    if (const auto* set = takes.setFor (layer); ! RigTakes::isNotesLayer (layer) && set != nullptr && set->takes.empty()
+                                                && looper.getState (layer) != RigLooper::State::empty)
     {
         looper.reset (layer);
         setLoopName (layer, {});
@@ -2061,6 +2238,39 @@ bool RigEngine::useTake (int layer, int index)
     if (set == nullptr || ! juce::isPositiveAndBelow (index, (int) set->takes.size()))
         return false;
     const auto& take = set->takes[(size_t) index];
+    if (RigTakes::isNotesLayer (layer))
+    {
+        // Its notes, as the tool's clip in the section (taking the place of what was there).
+        const int strip = RigTakes::stripOfNotesLayer (layer);
+        set->playing = index;
+        set->fresh = false;
+        int c = noteClipAt (strip, set->startBar);
+        if (c < 0)
+        {
+            noteClips.push_back ({});
+            c = (int) noteClips.size() - 1;
+        }
+        auto& clip = noteClips[(size_t) c];
+        clip.strip = strip;
+        clip.startBar = set->startBar;
+        clip.bars = set->bars;
+        clip.notes = take.notes;
+        notesChanged();
+        // The tool's lane plays in that section (so the song brings it in there).
+        if (const int lane = RigTimeline::laneForStrip (strip); lane >= 0)
+        {
+            const auto list = rigsong::sections (timeline);
+            for (int i = 0; i < (int) list.size(); ++i)
+                if (std::abs (list[(size_t) i].start - set->startBar) < 1.0e-6)
+                {
+                    if (rigsong::boxBlock (timeline, i, lane) < 0)
+                        rigsong::setBox (timeline, i, lane, -1);
+                    break;
+                }
+        }
+        controlsMoved = true;
+        return true;
+    }
     looper.setLayerAudio (layer, take.audio, take.beats);
     looper.getLayer (layer).mute = false;
     set->playing = index;
@@ -2086,16 +2296,72 @@ bool RigEngine::useTake (int layer, int index)
 int RigEngine::serviceTakes()
 {
     const int made = takes.collect();
-    for (int l = 0; l < RigLooper::kLayers; ++l)
+    std::vector<int> layers;
+    for (const auto& set : takes.getSets())
+        layers.push_back (set.layer);
+    for (const int l : layers)
         if (auto* set = takes.setFor (l))
         {
             if (set->fresh)
                 useTake (l, set->playing);
             // Cleared since (or recorded over some other way): its takes go with it.
-            else if (looper.getState (l) == RigLooper::State::empty && takes.getLayer() != l)
+            else if (! RigTakes::isNotesLayer (l) && looper.getState (l) == RigLooper::State::empty && takes.getLayer() != l)
                 takes.forget (l);
         }
     return made;
+}
+
+bool RigEngine::isNotesSource (int source)
+{
+    return source == RigLooper::bass || source == RigLooper::synth || source == RigLooper::sampler
+           || source == RigLooper::mpc || source == RigLooper::drums;
+}
+
+int RigEngine::noteClipAt (int strip, double startBar) const
+{
+    for (int i = 0; i < (int) noteClips.size(); ++i)
+        if (noteClips[(size_t) i].strip == strip && std::abs (noteClips[(size_t) i].startBar - startBar) < 1.0e-6)
+            return i;
+    return -1;
+}
+
+void RigEngine::notesChanged()
+{
+    // (Kept in the order they're in: Edit notes picks them by place while you drag.)
+    notePlayer.publish (noteClips);
+}
+
+int RigEngine::takeToLoop (int notesLayer)
+{
+    const auto* set = takes.setFor (notesLayer);
+    if (set == nullptr || ! juce::isPositiveAndBelow (set->playing, (int) set->takes.size()))
+        return -1;
+    const auto& take = set->takes[(size_t) set->playing];
+    const int layer = freeLayerForSong();
+    if (layer < 0 || take.audio.getNumSamples() == 0)
+        return -1;
+    looper.setLayerAudio (layer, take.audio, take.beats);
+    looper.getLayer (layer).source = set->source;
+    looper.getLayer (layer).mute = false;
+    const auto source = set->source == RigLooper::drums ? juce::String ("Drums") : RigLooper::sourceName (set->source);
+    setLoopName (layer, source + " take " + juce::String (take.number));
+    const int bpb = juce::jmax (1, transport.getBeatsPerBar());
+    looper.restartAt (layer, set->startBar * bpb);
+    const auto list = rigsong::sections (timeline);
+    for (int i = 0; i < (int) list.size(); ++i)
+        if (std::abs (list[(size_t) i].start - set->startBar) < 1.0e-6)
+        {
+            rigsong::setBox (timeline, i, RigTimeline::laneForLoop (layer), -1);
+            break;
+        }
+    // The notes stop playing there (the sound has their place now).
+    if (const int c = noteClipAt (RigTakes::stripOfNotesLayer (notesLayer), set->startBar); c >= 0)
+    {
+        noteClips.erase (noteClips.begin() + c);
+        notesChanged();
+    }
+    controlsMoved = true;
+    return layer;
 }
 
 void RigEngine::playOrStop()
@@ -2246,11 +2512,29 @@ juce::File RigEngine::loopsFolder (const juce::File& showFile)
     return showFile.getSiblingFile (showFile.getFileNameWithoutExtension() + " loops");
 }
 
+static juce::String takesFolderName (int layer)
+{
+    return RigTakes::isNotesLayer (layer) ? "Notes " + juce::String (RigTakes::stripOfNotesLayer (layer))
+                                          : "Loop " + juce::String (layer + 1);
+}
+
 bool RigEngine::writeLoopAudio (const juce::File& showFile) const
 {
     const auto folder = loopsFolder (showFile);
     folder.deleteRecursively();
     bool ok = true, any = false;
+    auto writeWav = [this] (const juce::File& file, const juce::AudioBuffer<float>& audio)
+    {
+        std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
+        if (stream == nullptr)
+            return false;
+        juce::WavAudioFormat wav;
+        auto options = juce::AudioFormatWriterOptions().withSampleRate (sampleRate > 0 ? sampleRate : 44100.0)
+                                                       .withNumChannels (2).withBitsPerSample (24);
+        if (auto writer = wav.createWriterFor (stream, options))
+            return writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+        return false;
+    };
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
         const auto audio = looper.copyLayerAudio (i);
@@ -2273,6 +2557,19 @@ bool RigEngine::writeLoopAudio (const juce::File& showFile) const
             ok = writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()) && ok;
         else
             ok = false;
+    }
+
+    // The takes: "Takes/Loop 3/Take 2.wav".
+    for (const auto& set : takes.getSets())
+    {
+        for (const auto& take : set.takes)
+        {
+            if (take.audio.getNumSamples() == 0)
+                continue;
+            const auto sub = folder.getChildFile ("Takes").getChildFile (takesFolderName (set.layer));
+            sub.createDirectory();
+            ok = writeWav (sub.getChildFile ("Take " + juce::String (take.number) + ".wav"), take.audio) && ok;
+        }
     }
 
     // The other loop banks, each in its own folder ("Bank 2/Loop 1.wav").
@@ -2325,6 +2622,35 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
             setLoopName (i, loadedLoopNames[(size_t) i]);
         }
     }
+
+    // The takes, for the layers that still have a loop.
+    for (auto& set : loadedTakeSets)
+    {
+        const bool notes = RigTakes::isNotesLayer (set.layer);
+        if (! notes && looper.getState (set.layer) == RigLooper::State::empty && loadedLoopBeats[(size_t) set.layer] <= 0)
+            continue;
+        const auto sub = folder.getChildFile ("Takes").getChildFile (takesFolderName (set.layer));
+        std::vector<RigTakes::Take> kept;
+        int playingNumber = juce::isPositiveAndBelow (set.playing, (int) set.takes.size()) ? set.takes[(size_t) set.playing].number : -1;
+        for (auto& take : set.takes)
+        {
+            if (std::unique_ptr<juce::AudioFormatReader> reader { formats.createReaderFor (sub.getChildFile ("Take " + juce::String (take.number) + ".wav")) })
+            {
+                take.audio.setSize (2, (int) reader->lengthInSamples);
+                reader->read (&take.audio, 0, take.audio.getNumSamples(), 0, true, true);
+                kept.push_back (std::move (take));
+            }
+            else if (notes && ! take.notes.empty())
+                kept.push_back (std::move (take));   // (its notes are what count)
+        }
+        set.takes = std::move (kept);
+        set.playing = 0;
+        for (int k = 0; k < (int) set.takes.size(); ++k)
+            if (set.takes[(size_t) k].number == playingNumber)
+                set.playing = k;
+        takes.restore (std::move (set));
+    }
+    loadedTakeSets.clear();
 
     for (int b = 0; b < (int) loopBanks.size(); ++b)
     {
@@ -2612,7 +2938,7 @@ juce::String RigEngine::clearAllLoops()
     }
     clearedLoops = std::move (kept);
     return "Cleared all " + juce::String (loops) + (loops == 1 ? " loop" : " loops")
-           + " and their effects: eight empty layers, ready to record. Undo brings them back.";
+           + " and their effects: empty layers, ready to record. Undo brings them back.";
 }
 
 bool RigEngine::canUndoClearAllLoops() const

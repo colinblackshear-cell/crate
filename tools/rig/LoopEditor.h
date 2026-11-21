@@ -37,6 +37,14 @@ public:
 
     // For the tests: move the handles to these beats, as if dragged there and let go.
     void setRange (double start, double end);
+    // ...and the shape controls, as if set and let go (the sliders' units: dB and beats).
+    void setShape (const RigLooper::Shape&);
+    RigLooper::Shape getShape() const { return shape; }
+    void slip (int direction);              // the Slip < > buttons
+    void nudgeAudio (int direction);        // the Nudge < > buttons, 5 ms a click
+    void resetShape();
+    static juce::String slipText (double beats);
+    static juce::String nudgeText (double ms);
 
 private:
     class Wave;
@@ -44,6 +52,8 @@ private:
     void nudge (bool startHandle, int direction);
     void setLength (double beatsLong);
     void updateText();
+    void applyShape();
+    void syncShapeControls();
 
     RigEngine& engine;
     const int layer;
@@ -56,6 +66,12 @@ private:
     juce::TextButton whole { "Whole loop" }, play { "Play" }, done { "Done" };
     juce::TextButton startLeft { "<" }, startRight { ">" }, endLeft { "<" }, endRight { ">" };
     juce::Label startLabel, endLabel;
+
+    RigLooper::Shape shape;
+    juce::Label shapeLabel, slipLabel, nudgeLabel, levelLabel, fadeInLabel, fadeOutLabel, shapeInfo;
+    juce::TextButton slipLeft { "<" }, slipRight { ">" }, nudgeLeft { "<" }, nudgeRight { ">" };
+    juce::TextButton reverse { "Reverse" }, resetShapeButton { "Reset shape" };
+    juce::Slider levelSlider, fadeInSlider, fadeOutSlider;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoopEditor)
 };

@@ -17,8 +17,11 @@ const std::array<RigTimeline::Lane, RigTimeline::kLanes>& RigTimeline::lanes()
         Lane { true, 4 }, Lane { true, 5 }, Lane { true, 6 }, Lane { true, 7 },
         Lane { false, RigEngine::mpcStrip }, Lane { false, RigEngine::bassStrip }, Lane { false, RigEngine::synthStrip },
         Lane { false, RigEngine::vocoderStrip }, Lane { false, RigEngine::samplerStrip }, Lane { false, RigEngine::inputStrip },
-        Lane { false, RigEngine::drumsStrip }
+        Lane { false, RigEngine::drumsStrip },
+        Lane { true, 8 }, Lane { true, 9 }, Lane { true, 10 }, Lane { true, 11 },
+        Lane { true, 12 }, Lane { true, 13 }, Lane { true, 14 }, Lane { true, 15 }
     };
+    static_assert (kLanes == kMoreLoopsLane + 8, "loops 9-16 follow the tools");
     return list;
 }
 

@@ -2,6 +2,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "core/SafetyLimiter.h"
+
 #include "BassEngine.h"
 
 // The Bass as a plugin: the Mac app, an Audio Unit instrument for Logic, a VST3, and a block in
@@ -65,6 +67,7 @@ private:
     crate::bass::Settings readSettings() const;
 
     crate::bass::Engine engine;
+    crate::SafetyLimiter limiter;   // the last stop: nothing over -0.3 dBFS, and no NaN
 
     juce::SpinLock patternLock;
     std::array<crate::bass::Pattern, crate::bass::kPatterns> patterns;   // under patternLock

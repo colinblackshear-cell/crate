@@ -181,6 +181,7 @@ synthtool::Settings SynthProcessor::readSettings() const
 void SynthProcessor::prepareToPlay (double sampleRate, int)
 {
     engine.prepare (sampleRate);
+    limiter.prepare (sampleRate);
     keyboardState.reset();
 }
 
@@ -214,6 +215,7 @@ void SynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     engine.setSettings (readSettings());
     auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
     engine.render (buffer.getWritePointer (0), right, numSamples, midi, clock);
+    limiter.process (buffer.getWritePointer (0), right, numSamples);
     arpStep = engine.getArpStep();
     midi.clear();
 }

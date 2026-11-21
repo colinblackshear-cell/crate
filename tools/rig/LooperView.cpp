@@ -601,7 +601,7 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     };
     clearButton.setTooltip ("Clears the layer you picked last: it goes quiet and empty, ready to record again. Its effects stay "
                             "(its menu has Clear this layer and its effects).");
-    clearAllButton.setTooltip ("Start fresh: empties all eight layers and takes off their effects, names, mutes and solo. "
+    clearAllButton.setTooltip ("Start fresh: empties all the layers and takes off their effects, names, mutes and solo. "
                                "Sources and lengths stay; your other loop banks keep theirs. Undo brings it all back.");
     clearAllButton.onClick = [this] { pressClearAll(); };
     clearButton.onClick = [this]
@@ -668,8 +668,8 @@ LooperView::LooperView (RigEngine& e) : engine (e)
     bankBack.setTooltip ("The bank before this one (your loops here are kept in this bank).");
     bankNext.setTooltip ("The next bank (your loops here are kept in this bank).");
     bankName.setTooltip ("Pick a bank of loops, or rename, copy or delete this one.");
-    saveBank.setTooltip ("Keeps the eight layers in this bank, with a name. Save the show (Cmd+S) to keep them on disk.");
-    newBank.setTooltip ("Keeps these loops in their bank and gives you eight empty layers for a new batch. "
+    saveBank.setTooltip ("Keeps the layers in this bank, with a name. Save the show (Cmd+S) to keep them on disk.");
+    newBank.setTooltip ("Keeps these loops in their bank and gives you empty layers for a new batch. "
                         "Come back to this one any time with Back, Next or the bank's name.");
     bankBack.onClick = [this] { stepBank (-1); };
     bankNext.onClick = [this] { stepBank (1); };
@@ -682,6 +682,18 @@ LooperView::LooperView (RigEngine& e) : engine (e)
         b->getProperties().set ("fontSize", 15.0f);
         addAndMakeVisible (*b);
     }
+    // Which eight rows are shown.
+    for (int p = 0; p < kPages; ++p)
+    {
+        const int first = p * kRowsPerPage + 1, last = first + kRowsPerPage - 1;
+        auto* b = pageButtons.add (new juce::TextButton ((p == 0 ? "Loops " : "") + juce::String (first) + "-" + juce::String (last)));
+        setLit (*b, Lit::current);
+        b->getProperties().set ("fontSize", 15.0f);
+        b->setTooltip ("Shows layers " + juce::String (first) + " to " + juce::String (last) + ". Keys 1-8 record the layers shown.");
+        b->onClick = [this, p] { showPage (p); };
+        addAndMakeVisible (b);
+    }
+    showPage (0);
     updateTop();
     startTimerHz (30);
 }
@@ -699,7 +711,7 @@ juce::String LooperView::bankText() const
 void LooperView::pressSaveBank()
 {
     const int bank = engine.getCurrentLoopBank();
-    auto* w = new juce::AlertWindow ("Save bank", "Keep the eight layers in this bank, named:", juce::MessageBoxIconType::NoIcon, this);
+    auto* w = new juce::AlertWindow ("Save bank", "Keep the layers in this bank, named:", juce::MessageBoxIconType::NoIcon, this);
     w->addTextEditor ("name", engine.getLoopBankName (bank));
     w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -809,10 +821,24 @@ int LooperView::busyLayer() const
     return -1;
 }
 
+void LooperView::showPage (int p)
+{
+    page = juce::jlimit (0, kPages - 1, p);
+    for (int i = 0; i < rows.size(); ++i)
+        rows[i]->setVisible (i / kRowsPerPage == page);
+    for (int i = 0; i < pageButtons.size(); ++i)
+        pageButtons[i]->setToggleState (i == page, juce::dontSendNotification);
+    resized();
+    repaint();
+}
+
 void LooperView::pressLayer (int layer)
 {
-    if (juce::isPositiveAndBelow (layer, rows.size()))
-        rows[layer]->pressNumber();
+    if (! juce::isPositiveAndBelow (layer, rows.size()))
+        return;
+    if (layer / kRowsPerPage != page)
+        showPage (layer / kRowsPerPage);
+    rows[layer]->pressNumber();
 }
 
 void LooperView::pressRecNext()
@@ -831,6 +857,8 @@ void LooperView::pressRecNext()
     }
     engine.getLooper().pressRecord (next);
     selected = next;
+    if (next / kRowsPerPage != page)
+        showPage (next / kRowsPerPage);
     updateTop();
 }
 
@@ -1109,6 +1137,8 @@ void LooperView::editLoop (int layer)
     closeEditor();
     if (engine.getLooper().getState (layer) != RigLooper::State::playing)
         return;
+    if (juce::isPositiveAndBelow (layer, RigLooper::kLayers) && layer / kRowsPerPage != page)
+        showPage (layer / kRowsPerPage);   // its row stays in view over the editor
     auto e = std::make_unique<LoopEditor> (engine, layer);
     if (! e->isValid())
         return;
@@ -1236,6 +1266,12 @@ void LooperView::resized()
         saveBank.setBounds (b.removeFromLeft (110).reduced (0, 2));
         b.removeFromLeft (6);
         newBank.setBounds (b.removeFromLeft (130).reduced (0, 2));
+        b.removeFromLeft (14);
+        for (auto* pb : pageButtons)
+        {
+            pb->setBounds (b.removeFromLeft (pb == pageButtons[0] ? 104 : 64).reduced (0, 2));
+            b.removeFromLeft (6);
+        }
         // Start fresh, at the far right (away from Save bank).
         b.removeFromLeft (14);
         clearAllButton.setBounds (b.removeFromRight (juce::jmin (b.getWidth(), 170)).reduced (0, 2));
@@ -1249,10 +1285,12 @@ void LooperView::resized()
         fxPanel->setBounds (area.removeFromBottom (130));
         area.removeFromBottom (6);
     }
-    const int h = juce::jmin (60, (area.getHeight() - 6 * (rows.size() - 1)) / rows.size());
-    for (auto* r : rows)
+    const int h = juce::jmin (60, (area.getHeight() - 6 * (kRowsPerPage - 1)) / kRowsPerPage);
+    for (int i = 0; i < rows.size(); ++i)
     {
-        r->setBounds (area.removeFromTop (h));
+        if (i / kRowsPerPage != page)
+            continue;
+        rows[i]->setBounds (area.removeFromTop (h));
         area.removeFromTop (6);
     }
     if (songGrid != nullptr)
@@ -1275,7 +1313,7 @@ void LooperView::resized()
             bounds = bounds.withTrimmedBottom (136);
         const auto* row = rows[editor->getLayer()];
         const int below = row->getBottom() + 6;
-        const int height = juce::jmin (bounds.getHeight(), 320);
+        const int height = juce::jmin (bounds.getHeight(), 370);
         if (bounds.getBottom() - below >= height)
             bounds = bounds.withTop (below).withHeight (height);
         else

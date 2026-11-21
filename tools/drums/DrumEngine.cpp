@@ -65,6 +65,30 @@ const char* voiceShort (int v)
     return juce::isPositiveAndBelow (v, kVoices) ? names[v] : "";
 }
 
+// Each sound's level trim in dB, per voice and per choice of sound (the order of soundNames): it
+// brings every hit to the level its place in the kit calls for (the kick near -6 dBFS, the hats
+// and bells a few dB under it), whichever sound is picked. Set from the level check
+// (RigLevelTests), which measures every sound; the Level knobs stay as they were.
+static constexpr float kTrimDb[kVoices][4] = {
+    { 1.8f, 2.3f, 1.8f, 3.1f },   // kick: Classic, Long boom, Punch, Distorted
+    { -3.5f, -3.7f, 0.4f, 0 },   // snare: Classic, Tight, Fat
+    { -0.8f, 4.7f, 0, 0 },   // clap: Clap, Maracas
+    { 3.1f, 2.3f, 0, 0 },   // rim: Rim shot, Side stick
+    { 0.2f, 0.5f, 0, 0 },   // low tom: Tom, Conga
+    { 0.1f, 0.3f, 0, 0 },   // mid tom
+    { 0, -0.1f, 0, 0 },   // high tom
+    { -0.1f, -0.6f, 0, 0 },   // clave: Clave, Woodblock
+    { -6.1f, -2.2f, 0, 0 },   // cowbell: Cowbell, Agogo
+    { -0.7f, 9.0f, 1.9f, 0 },   // closed hat: Classic, Tight, Shaker
+    { 1.8f, 1.8f, 0, 0 },   // open hat: Classic, Trashy
+    { 7.1f, 10.4f, 0, 0 },   // cymbal: Crash, Ride
+};
+
+float trimDb (int voice, int sound)
+{
+    return juce::isPositiveAndBelow (voice, kVoices) && juce::isPositiveAndBelow (sound, 4) ? kTrimDb[voice][sound] : 0.0f;
+}
+
 juce::StringArray soundNames (int v)
 {
     switch (v)
@@ -214,7 +238,8 @@ void Engine::start (int v, float velocity, bool accent)
     float human = 1.0f;
     if (settings.humanize > 0.0f)
         human = 1.0f - settings.humanize * 0.35f * (0.5f + 0.5f * noise());
-    s.gain = juce::jlimit (0.0f, 1.0f, velocity) * vs.level * human * (accent ? 1.0f + 0.9f * settings.accent : 1.0f);
+    s.gain = juce::jlimit (0.0f, 1.0f, velocity) * vs.level * human * (accent ? 1.0f + 0.9f * settings.accent : 1.0f)
+             * juce::Decibels::decibelsToGain (kTrimDb[v][sound]);
     s.active = true;
     s.t = 0;
     s.env = 1.0f;
