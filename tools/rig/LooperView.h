@@ -10,23 +10,24 @@
 #include "core/ui/Theme.h"
 #include "Vintage.h"
 
-// The Looper screen (F3): eight layers in time with the Rig.
+// The Looper screen (F3): sixteen layers in time with the Rig, eight rows at a time (Loops 1-8 /
+// 9-16 in the bank row switch between them).
 //
 // Along the top: Rec next layer (records the next empty layer from the next bar; press again to
 // finish it), Overdub and Undo (on the layer picked last), the length and what the next layer
 // records from (your mic, the vocoder or the whole mix), whether it's in sync, and an LCD saying
 // what happens next ("LAYER 6 IN 2 BEATS").
 //
-// Then a row per layer: its number (click to record it, as keys 1-8 do), its name and source
+// Then a row per layer: its number (click to record it, as keys 1-8 do on the rows shown), its name and source
 // (click to change them), a lamp and a word for its state, the loop with its playhead and its
 // ends in yellow (double-click to trim them: LoopEditor), its effect slot (the loop's own
 // effects), its length in bars, level, mute, solo, and a menu (edit, undo, clear, import a loop
 // or song, save it, or put Record and Mute on buttons of your keyboard). Song grid lays the
 // loops (and tools) out into the song's parts.
 //
-// Under the top row, the loop bank: all eight layers as one named batch. Back and Next step
+// Under the top row, the loop bank: all the layers as one named batch. Back and Next step
 // through your banks, the name picks one (or renames, copies or deletes it), Save bank keeps the
-// layers in it, and + New batch keeps them and gives you eight empty layers to start again.
+// layers in it, and + New batch keeps them and gives you empty layers to start again.
 // While the clock plays, a bank comes in at the next bar. Song parts remember their bank.
 class LooperView : public juce::Component,
                    private juce::Timer
@@ -86,6 +87,11 @@ public:
     void pickBank (int bank);
     juce::String bankText() const;     // what the bank's name button says
     int getSoloed() const { return soloed; }
+    // The rows shown: page 0 is layers 1-8, page 1 is 9-16.
+    static constexpr int kRowsPerPage = 8, kPages = RigLooper::kLayers / kRowsPerPage;
+    void showPage (int page);
+    int getPage() const { return page; }
+    int firstShownLayer() const { return page * kRowsPerPage; }
 
 private:
     class Row;
@@ -111,6 +117,8 @@ private:
     juce::TextButton timelineButton { "Timeline" };
     juce::TextButton bankBack { "Back" }, bankName, bankNext { "Next" }, saveBank { "Save bank" }, newBank { "+ New batch" };
     juce::Rectangle<int> bankArea;
+    int page = 0;
+    juce::OwnedArray<juce::TextButton> pageButtons;
     int overlayTop = 86;
     int shownQueuedBank = -1;
     void showBankMenu();

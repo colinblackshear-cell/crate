@@ -1210,7 +1210,7 @@ int RigView::pressRecTake()
             layer = l;
     if (layer < 0)
     {
-        say ("All 8 loops are full. Clear one (Loops on the left, then Edit), or keep them as a bank and start a new batch there.");
+        say ("All 16 loops are full. Clear one (Loops on the left, then Edit), or keep them as a bank and start a new batch there.");
         return -1;
     }
     if (const int source = takeSourceFor (t); source >= 0)
@@ -1312,7 +1312,7 @@ void RigView::updateCaptureButtons()
                 case RigLooper::Ending::full:
                     say ("Take on loop " + juce::String (takeLayer + 1) + " stopped by itself at " + mins (beats, engine.getTransport().getBpm())
                          + ": that's all the room left (one take can be " + juce::String ((int) (RigLooper::kMaxRecordSeconds / 60)) + " minutes, "
-                         + juce::String ((int) (RigLooper::kTotalRecordSeconds / 60)) + " for all 8 loops together). Clear a loop you don't need for more.");
+                         + juce::String ((int) (RigLooper::kTotalRecordSeconds / 60)) + " for all the loops together). Clear a loop you don't need for more.");
                     break;
                 case RigLooper::Ending::clockStopped:
                     say ("The clock stopped, so the take on loop " + juce::String (takeLayer + 1) + " closed at the end of that bar (" + mins (beats, engine.getTransport().getBpm())
@@ -1560,7 +1560,7 @@ int RigView::pressRecInto()
     const int layer = recTargetLayer();
     if (layer < 0)
     {
-        say ("All 8 loops are in use. Clear one you don't need (Loops on the rail, then Edit), or record over one: Change > a loop.");
+        say ("All 16 loops are in use. Clear one you don't need (Loops on the rail, then Edit), or record over one: Change > a loop.");
         return -1;
     }
     const int source = t == GrooveView::loops ? engine.getLooper().getLayer (layer).source.load() : takeSourceFor (t);
@@ -3284,7 +3284,7 @@ bool RigView::keyPressed (const juce::KeyPress& key)
     {
         const int n = (int) (c - '1');
         if (currentPage() == "Looper")
-            engine.getLooper().recordOrClose (n);   // (never an overdub by accident)
+            engine.getLooper().recordOrClose (n + (looper != nullptr ? looper->firstShownLayer() : 0));   // the rows shown (never an overdub by accident)
         else if (getView() == "Play" && groove != nullptr && groove->getTrack() == GrooveView::loops)
             groove->pressCell (0, n);               // the same as pressing the layer on screen
         else if (n < (int) rigsong::sections (engine.getTimeline()).size())

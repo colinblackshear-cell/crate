@@ -134,7 +134,7 @@ const std::vector<GuideView::Entry>& GuideView::entries()
           "Thirteen pedals change the weather. Side effects may include spontaneous funk.",
           RigColours::vocoder, Art::vocoder, false, {} },
         { "Looper", "The Loops", "Time, folded neatly.",
-          "Record a bar, record another on top, repeat until the room is full. Eight layers that never drift off the beat, "
+          "Record a bar, record another on top, repeat until the room is full. Sixteen layers that never drift off the beat, "
           "up to an hour each, with their own effects, in banks you can switch on the bar.",
           RigColours::loops, Art::looper, false, {} },
         { "Sampler", utf8 ("The Sampler \xc2\xb7 MPC"), "Any sound, caught and put to work.",

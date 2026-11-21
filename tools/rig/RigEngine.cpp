@@ -8,6 +8,8 @@
 #include "core/Edits.h"
 #include "core/SoundFx.h"
 
+static_assert (RigScene::kLayers == RigLooper::kLayers, "a scene has a mute for each loop layer");
+
 namespace
 {
     // Every RigEngine in this program (message thread): the boxes a one-tool plugin can reach.
@@ -2936,7 +2938,7 @@ juce::String RigEngine::clearAllLoops()
     }
     clearedLoops = std::move (kept);
     return "Cleared all " + juce::String (loops) + (loops == 1 ? " loop" : " loops")
-           + " and their effects: eight empty layers, ready to record. Undo brings them back.";
+           + " and their effects: empty layers, ready to record. Undo brings them back.";
 }
 
 bool RigEngine::canUndoClearAllLoops() const

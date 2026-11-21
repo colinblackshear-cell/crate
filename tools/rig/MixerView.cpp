@@ -568,7 +568,7 @@ MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage
                                    "The Synth: its sound, the arp and your plugin.",
                                    "The Vocoder: your voice through the pedals.",
                                    "The Sampler and MPC pads, with the full sample editor.",
-                                   "The Looper: eight layers in time.",
+                                   "The Looper: sixteen layers in time.",
                                    "The Song: sections in order, what plays in each, Bars view.",
                                    "Your sounds and Splice folder.",
                                    "Set-up: what your keyboard's keys and pads play, the split, sampling between tools, knob Learn, the click and the mic." };
@@ -587,7 +587,7 @@ MixerView::MixerView (RigEngine& e) : engine (e), look (std::make_unique<vintage
         addAndMakeVisible (b);
     }
     toolsBank.setTooltip ("A strip for each tool: the MPC, drum machine, bass, synth, vocoder, sampler, your audio input and the loops.");
-    layersBank.setTooltip ("A strip for each of the looper's eight layers: record, effects, mute and level, into the Loops strip.");
+    layersBank.setTooltip ("A strip for each of the looper's layers: record, effects, mute and level, into the Loops strip.");
     clearSolo.setTooltip ("Turns every Solo off, so you hear everything again.");
     padBank.setTooltip ("The FX pad on the whole mix: filter sweeps, beat repeat, tape stop, gate and riser. Touch to play it, Hold keeps it.");
     padBank.onClick = [this] { showPad (! padShown); };
@@ -653,7 +653,7 @@ void MixerView::showLayers (bool show)
     for (auto* c : tools)
         c->setVisible (! show || c->index == RigEngine::loopsStrip);
     for (auto* c : layers)
-        c->setVisible (show);
+        c->setVisible (show && layerShown (c->index));
     toolsBank.lit = show ? Lit::none : Lit::current;
     layersBank.lit = show ? Lit::current : Lit::none;
     padBank.lit = Lit::none;
@@ -708,8 +708,26 @@ std::vector<std::pair<juce::Button*, int>> MixerView::learnButtons() const
     return list;
 }
 
+bool MixerView::layerShown (int layer) const
+{
+    // Layers 1-8 always have a strip; 9-16 only once they have a loop.
+    return layer < 8 || engine.getLooper().getState (layer) != RigLooper::State::empty;
+}
+
 void MixerView::timerCallback()
 {
+    if (layersShown && ! padShown)
+    {
+        bool changed = false;
+        for (auto* c : layers)
+            if (c->isVisible() != layerShown (c->index))
+            {
+                c->setVisible (layerShown (c->index));
+                changed = true;
+            }
+        if (changed)
+            resized();
+    }
     for (auto* list : { &tools, &layers, &returnsAndMaster })
         for (auto* c : *list)
             if (c->isVisible())

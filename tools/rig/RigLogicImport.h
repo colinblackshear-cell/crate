@@ -12,7 +12,7 @@ class RigEngine;
 // into a folder, and File > Export > Selection as MIDI File (select all, so the tempo and the
 // markers come with it) into the same folder. Then Song > Import from Logic... picks the folder.
 //
-// Each stem becomes a loop on its own layer (eight at most: any more are mixed together on the
+// Each stem becomes a loop on its own layer (sixteen at most: any more are mixed together on the
 // last one, "Other"), playing the whole song from bar 1 and following the tempo. Logic's markers
 // become the song's sections (Intro, Verse, Chorus...), so live you can jump to one, loop it, mute
 // or bring in stems, and play the vocoder, the MPC or anything else on top. Without a MIDI file
@@ -47,7 +47,7 @@ struct Song
     juce::String name;
     double bpm = 120;
     int beatsPerBar = 4;
-    std::vector<Stem> layers;                    // eight at most
+    std::vector<Stem> layers;                    // sixteen at most
     std::vector<RigTimeline::Marker> sections;   // in bars, end to end, the last runs to the end
     double bars = 0;                             // how long the song is
     juce::StringArray notes;                     // what to tell you (mixed stems, tempo changes...)

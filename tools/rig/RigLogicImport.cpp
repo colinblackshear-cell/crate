@@ -130,8 +130,8 @@ Song make (std::vector<Stem> stems, const MidiInfo& midi, double fallbackBpm, co
             s.audio.copyFrom (1, 0, s.audio, 0, 0, s.audio.getNumSamples());
         }
 
-    // More than eight: the rest go together on the eighth layer.
-    constexpr int kLayers = 8;
+    // More than the looper has layers: the rest go together on the last one.
+    constexpr int kLayers = RigLooper::kLayers;
     if ((int) stems.size() > kLayers)
     {
         Stem other;
@@ -155,7 +155,7 @@ Song make (std::vector<Stem> stems, const MidiInfo& midi, double fallbackBpm, co
                 other.audio.addFrom (ch, 0, stems[i].audio, ch, 0, stems[i].audio.getNumSamples());
             mixed.add (stems[i].name);
         }
-        song.notes.add ("Loop 8 (Other) is " + mixed.joinIntoString (", ") + " mixed together");
+        song.notes.add ("Loop " + juce::String (kLayers) + " (Other) is " + mixed.joinIntoString (", ") + " mixed together");
         stems.resize (kLayers - 1);
         stems.push_back (std::move (other));
     }

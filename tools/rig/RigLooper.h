@@ -7,7 +7,7 @@
 #include <array>
 #include <atomic>
 
-// The Rig's looper: eight layers of sound recorded live, in time with the Rig's clock.
+// The Rig's looper: sixteen layers of sound recorded live, in time with the Rig's clock.
 //
 // Press record on a layer and it starts at the next bar (or right away if the clock was
 // stopped: the clock starts with it). Press again and it stops at the end of that bar, so a
@@ -26,7 +26,7 @@
 class RigLooper
 {
 public:
-    static constexpr int kLayers = 8;
+    static constexpr int kLayers = 16;
     // Each layer starts with room for kStartSeconds; while it records, maintain() gives it more
     // in the background, up to kMaxRecordSeconds (so a long loop only takes memory when you make one):
     // a take as long as a whole long set. All the layers together stop growing at
@@ -222,7 +222,8 @@ private:
     int undoLength = 0;
     std::array<StripFx*, kLayers> effects {};
     std::atomic<int> liveDelay { 0 };
-    std::array<float, kLayers> arrangeFrom { 1, 1, 1, 1, 1, 1, 1, 1 }, arrangeTo { 1, 1, 1, 1, 1, 1, 1, 1 };
+    std::array<float, kLayers> arrangeFrom = filled (1.0f), arrangeTo = filled (1.0f);
+    static std::array<float, kLayers> filled (float v) { std::array<float, kLayers> a; a.fill (v); return a; }
     std::array<juce::AudioBuffer<float>, kLayers> layerOut;   // a layer's sound, before its effects
     std::array<int, kLayers> fxTail {};                        // samples left of an effect's tail
     std::array<Trim, kLayers> trims;

@@ -795,7 +795,7 @@ void GrooveView::pressTrackButton (int t)
                 layer = firstLayerIn (looper, { RigLooper::State::empty });
             if (layer < 0)
             {
-                say ("All eight loop layers have loops: clear one on the Looper, or start a new bank.");
+                say ("All sixteen loop layers have loops: clear one on the Looper, or start a new bank.");
                 break;
             }
             looper.pressRecord (layer);
@@ -847,7 +847,7 @@ void GrooveView::loopLineIn()
     const int layer = firstLayerIn (looper, { RigLooper::State::empty });
     if (layer < 0)
     {
-        say ("All eight loop layers have loops: clear one on the Looper, or start a new bank.");
+        say ("All sixteen loop layers have loops: clear one on the Looper, or start a new bank.");
         return;
     }
     if (! lineInLive())

@@ -56,8 +56,8 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Press Overdub to play over the layer you picked last; Undo takes the last overdub back.",
             "Double-click a loop to trim where it starts and ends. Its effect slot adds a filter, delay, reverb...",
             "Keys 1-8 record, stop or overdub layers 1-8.",
-            "Clear empties the layer you picked (its effects stay). Clear all loops (by the loop bank) starts fresh: all eight layers empty, their effects off. Undo brings them back.",
-            "Loop bank: Save bank names this batch of eight loops. + New batch keeps them and gives you eight empty layers. "
+            "Clear empties the layer you picked (its effects stay). Clear all loops (by the loop bank) starts fresh: all the layers empty, their effects off. Undo brings them back.",
+            "Loop bank: Save bank names this batch of loops. + New batch keeps them and gives you empty layers. "
             "Back and Next (or click the bank's name) bring a batch back, at the next bar while playing." },
           "Loops (and Rec takes) can be up to an hour long. A short loop and a long one play together in time." },
 
@@ -266,9 +266,9 @@ const std::vector<HelpPanel::Stop>& HelpPanel::tour()
           "Not happy with the take? Loops (on the left), then Edit: Clear or Redo the loop, and take it again.",
           "Play:Vocoder" },
         { "Loops: layer on the fly",
-          "The Looper is eight layers, all in time. Record from picks the source (Mic, Line in, Vocoder, a tool, Master). Rec next layer starts "
+          "The Looper is sixteen layers, all in time. Record from picks the source (Mic, Line in, Vocoder, a tool, Master). Rec next layer starts "
           "at the next bar; pick 1, 2, 4 or 8 bars, or Free. Overdub plays over a layer, Undo takes the overdub back, each layer has its own "
-          "effects. Save bank keeps eight loops and gives you eight empty ones.",
+          "effects. Save bank keeps the loops and gives you empty ones.",
           "Edit:Loops" },
         { "Arrange (Song, F3)",
           "Your song is a row of sections, each as wide as its bars; down the side, the tracks in it. Each box says what that track plays there.\n\n"
