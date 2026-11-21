@@ -50,7 +50,7 @@ DrumData::DrumData()
         s.snappy = defaultSnappy[v];
         s.pan = defaultPan[v];
     }
-    patterns[0][0] = demoPattern();
+    // A new song's drum grid starts empty: the beat is yours to make (demoPattern is for screenshots only).
 }
 
 drums::Pattern DrumData::demoPattern()
@@ -361,7 +361,24 @@ void BeatsEngine::handle (const Event& e)
                 if (v.audio != nullptr)
                     v.releasing = true;
             break;
+        case Event::skip:
+            if (numSkips < (int) skips.size())
+                skips[(size_t) numSkips++] = { juce::jlimit (0, drums::kVoices - 1, e.index), juce::jlimit (0, kPatternSlots - 1, e.slot),
+                                               juce::jlimit (0, drums::kMaxSteps - 1, e.cell), e.accent, e.until, 0 };
+            break;
     }
+}
+
+void BeatsEngine::skipStepOnce (int voice, int slot, bool b, int cell, double untilBeat)
+{
+    Event e;
+    e.kind = Event::skip;
+    e.index = voice;
+    e.slot = slot;
+    e.accent = b;
+    e.cell = cell;
+    e.until = untilBeat;
+    push (e);
 }
 
 void BeatsEngine::renderPads (float* left, float* right, int n)
@@ -411,7 +428,7 @@ void BeatsEngine::renderPads (float* left, float* right, int n)
     sounding = mask;
 }
 
-void BeatsEngine::render (float* left, float* right, int numSamples)
+void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, float* clickOut)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -448,6 +465,8 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
     const bool running = wantPlay.load() || clockHeld.load() || patternOn.load();
     const bool drumsOn = wantPlay.load();
     const double tempo = bpm.load();
+    if ((running && ! wasRunning) || ! running)
+        numSkips = 0;   // a new run of the clock (or none): no hand-played hits to skip
     if (running && ! wasRunning)
     {
         ppq = 0;
@@ -480,7 +499,24 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
     clock.playing = drumsOn;
     clock.ppq = ppq;
     clock.bpm = tempo;
+    // Steps a hand-played hit has already sounded: silenced in the grid for this block (put back after), until
+    // the step has gone by.
+    for (int i = 0; i < numSkips; ++i)
+    {
+        auto& k = skips[(size_t) i];
+        auto& cell = (k.b ? live.b : live.a)[(size_t) k.slot].hits[(size_t) k.voice][(size_t) k.cell];
+        k.kept = cell;
+        if (k.until > ppq)
+            cell = 0;
+    }
     drums.render (left, right, numSamples, noMidi, clock);
+    for (int i = numSkips; --i >= 0;)
+    {
+        auto& k = skips[(size_t) i];
+        (k.b ? live.b : live.a)[(size_t) k.slot].hits[(size_t) k.voice][(size_t) k.cell] = k.kept;
+        if (k.until <= ppq + numSamples * tempo / (60.0 * sampleRate))
+            skips[(size_t) i] = skips[(size_t) --numSkips];
+    }
 
     // The pad pattern's hits in this block, at the sample they fall on.
     const double beatsPerSample = tempo / (60.0 * sampleRate);
@@ -502,8 +538,8 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
         }
         std::sort (triggers.begin(), triggers.begin() + numTriggers, [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
     }
-    if (running && clickOn.load())
-        renderClick (left, right, numSamples, ppq, beatsPerSample);
+    if (running)
+        renderClick (left, right, clickOut, numSamples, ppq, beatsPerSample);
 
     if (running)
         ppq += numSamples * beatsPerSample;
@@ -527,9 +563,13 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
     }
 }
 
-// A click on each beat (higher on the bar), while REC PADS records.
-void BeatsEngine::renderClick (float* left, float* right, int n, double startBeat, double beatsPerSample)
+// A click on each beat (higher on the bar): while the click is on, and through a count-in.
+void BeatsEngine::renderClick (float* left, float* right, float* clickOut, int n, double startBeat, double beatsPerSample)
 {
+    const bool on = clickOn.load();
+    const double until = countInUntil.load();
+    if (! on && until <= startBeat - 1.0 && clickEnv <= 1.0e-4f)
+        return;   // nothing to sound
     const float decay = std::exp (-1.0f / (0.012f * (float) sampleRate));
     double beat = startBeat;
     for (int i = 0; i < n; ++i)
@@ -538,18 +578,26 @@ void BeatsEngine::renderClick (float* left, float* right, int n, double startBea
         if (std::floor (next) != std::floor (beat) || (i == 0 && beat == 0.0))
         {
             const auto whole = (long long) std::floor (beat == 0.0 && i == 0 ? 0.0 : next);
-            clickFreq = whole % 4 == 0 ? 1500.0f : 1000.0f;
-            clickEnv = 0.35f;
-            clickPhase = 0;
+            if (on || (double) whole < until - 1.0e-6)
+            {
+                clickFreq = whole % 4 == 0 ? 1500.0f : 1000.0f;
+                clickEnv = 0.35f;
+                clickPhase = 0;
+            }
         }
         if (clickEnv > 1.0e-4f)
         {
             const float s = std::sin (clickPhase) * clickEnv;
             clickPhase += juce::MathConstants<float>::twoPi * clickFreq / (float) sampleRate;
             clickEnv *= decay;
-            left[i] += s;
-            if (right != nullptr)
-                right[i] += s;
+            if (clickOut != nullptr)
+                clickOut[i] += s;
+            else
+            {
+                left[i] += s;
+                if (right != nullptr)
+                    right[i] += s;
+            }
         }
         beat = next;
     }

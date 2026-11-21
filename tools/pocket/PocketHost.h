@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PocketLinkClient.h"
+#include "PocketRoute.h"
 
 // What the screens ask of the app around them.
 struct PocketHost
@@ -19,16 +20,25 @@ struct PocketHost
     virtual void sendSoundToMac (const juce::String& soundId, const juce::String& dest = "sounds") = 0;
     virtual void sendToMac (pocket::MacSend) = 0;
     virtual void openMacLink() = 0;                        // More > Mac link
-    // LOCK BEAT: records what the Beats tab plays (the pad pattern and the drum machine) onto the next
-    // empty loop layer, `bars` long, from the pattern's start.
-    virtual void lockBeat (int bars) = 0;
-    // Play/Stop for the whole song (the header's button): loops, else the pad pattern, else the drum machine.
+    // Play/Stop for the whole song (the thumb bar's button): loops, else the pad pattern, else the drum machine.
     virtual void togglePlay() = 0;
     // The pad sample page: the Record tab edited the sound a pad plays and saved it. Every pad playing
     // that sound picks it up. backToPads returns to Beats > MPC Pads with the pad picked.
     virtual void padSoundEdited (const juce::String& soundId) = 0;
     virtual void backToPads (int pad) = 0;
     virtual void openSoundBank() = 0;   // SOUNDS on the pads: factory kits and your own sounds
-    virtual void showLoops() = 0;       // the Loops tab (layers)
-    virtual void showVocoder() = 0;     // the Vocoder tab with every setting (Sing's display opens it)
+    virtual void showLoops() = 0;       // the LOOPS tool (layers)
+    virtual void showVocoder() = 0;     // every vocoder setting (the VOCODER tool's display opens it)
+    virtual void closeVocoderSettings() = 0;   // back from every vocoder setting to the VOCODER tool
+    virtual void openRecorder() = 0;    // RECORD A SOUND: the sound recorder (a sample for the pads)
+
+    // The mic, for the whole app: off at every launch, and nothing from it reaches the speaker until the
+    // headphones sheet says so. askForMic shows that sheet (if the mic is off) and runs `then` once it's on.
+    virtual bool micReady() = 0;
+    virtual void askForMic (std::function<void()> then) = 0;
+    virtual pocket::Route micRoute() = 0;
+    virtual bool hearingMyself() = 0;
+    virtual void setHearMyself (bool) = 0;
+    virtual void micOff() = 0;
+    virtual void micUseChanged() = 0;   // a screen changed what it wants to hear (MY VOICE, VOCODER, BOTH)
 };

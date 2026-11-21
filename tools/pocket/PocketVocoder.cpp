@@ -138,8 +138,19 @@ void VocoderEngine::stepPreset (int delta)
 // Sing to Play gets the key's own chord (the Mac's Vocoder screen does the same).
 void VocoderEngine::ensureChord()
 {
-    if (param (robotOn) > 0.5f && param (singToPlay) < 0.5f && param (ParamIDs::drone) < 0.5f && chord < 0)
+    if (param (robotOn) > 0.5f && param (singToPlay) < 0.5f && param (ParamIDs::drone) < 0.5f && chord < 0 && ! fed)
         pressChord (0);
+}
+
+void VocoderEngine::feedTakesOver()
+{
+    fed = true;
+    chord = -1;   // (no empty chord is sent: CHORDS' own is on its way)
+    if (param (robotOn) < 0.5f)
+        setParam (robotOn, 1.0f);
+    if (param (ParamIDs::drone) > 0.5f)
+        setParam (ParamIDs::drone, 0.0f);
+    changed = true;
 }
 
 //==============================================================================
@@ -391,6 +402,7 @@ void VocoderEngine::requestChord (const juce::Array<int>& notes)
 
 void VocoderEngine::pressChord (int degree)
 {
+    fed = false;   // the vocoder's own chord buttons take the chords back
     if (degree == chord || degree < 0)
     {
         chord = -1;
@@ -433,6 +445,7 @@ juce::String VocoderEngine::padNumeral (int pad) const
 
 void VocoderEngine::pressPad (int pad)
 {
+    fed = false;
     if (pad < 7)
         return pressChord (pad);
     if (chord == pad)
@@ -770,7 +783,8 @@ juce::String VocoderEngine::selfCheck (juce::String& report)
         loops->setVocoderSource (voc.get(), &voc->monitorFlag());
         loops->prepare (sr);
         loops->setLatency (0);
-        loops->setCountIn (false);
+        loops->setCountInBars (0);
+        loops->setMic (true, true);   // heard: only HEAR ME (the monitor) decides below
         beatsEngine->setBpm (bpm);
         voc->setPreset (1);
 

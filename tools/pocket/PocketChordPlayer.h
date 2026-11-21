@@ -21,6 +21,9 @@ public:
     bool hasSound() const { return sound != nullptr; }
     void play (const juce::Array<int>& midiNotes);   // replaces the chord that's sounding
     void release();                                   // lets the chord fade out
+    // The same from any thread, without allocating (the CHORDS engine plays it from the audio thread).
+    void playNotes (const int* notes, int count);
+    void setStrum (int samplesBetweenNotes) { strum = juce::jmax (0, samplesBetweenNotes); }
 
     // Audio thread
     void prepare (double rate) override { sampleRate = rate; }
@@ -28,7 +31,8 @@ public:
 
 private:
     static constexpr int kVoices = 6;
-    struct Voice { double pos = 0, step = 1; float gain = 0, target = 0; bool on = false; };
+    struct Voice { double pos = 0, step = 1; float gain = 0, target = 0; bool on = false; int wait = 0; };
+    std::atomic<int> strum { 0 };
 
     crate::SharedAudio sound;                         // the message thread's
     std::vector<crate::SharedAudio> keepAlive;

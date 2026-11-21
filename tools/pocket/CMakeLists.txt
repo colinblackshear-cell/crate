@@ -46,9 +46,12 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketFactory.cpp
     PocketLoopFx.cpp
     LoopEditSheet.cpp
+    PocketLoopTools.cpp
     PocketChordPlayer.cpp
     SingScreen.cpp
+    PocketFrame.cpp
     PocketIntro.cpp
+    PocketLesson.cpp
     SoundBankSheet.cpp
     TempoSheet.cpp
     IdeasScreen.cpp
@@ -60,6 +63,10 @@ target_sources(KaleidoboxPocket PRIVATE
     RecordScreen.cpp
     SoundsScreen.cpp
     PocketVocoder.cpp
+    PocketSynth.cpp
+    SynthScreen.cpp
+    PocketChords.cpp
+    ChordsScreen.cpp
     VocoderScreen.cpp
     PocketLinkClient.cpp
     LinkScreens.cpp
@@ -82,6 +89,9 @@ target_compile_definitions(KaleidoboxPocket PRIVATE
     JUCE_APPLICATION_NAME_STRING="Kaleidobox Pocket"
     JUCE_APPLICATION_VERSION_STRING="0.2.0"
     JUCE_MODAL_LOOPS_PERMITTED=0)
+
+# The SYNTH tool: the Mac's PS-8 synth engine (its DSP only, no plugin or window), on every build.
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/synth/SynthEngine.cpp)
 
 # The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools
 # already define mpc_format; on iOS the phone makes it here.

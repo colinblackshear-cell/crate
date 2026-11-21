@@ -27,6 +27,14 @@ void ChordPlayer::play (const juce::Array<int>& notes)
     ++serial;
 }
 
+void ChordPlayer::playNotes (const int* notes, int count)
+{
+    for (int v = 0; v < kVoices; ++v)
+        nextNotes[(size_t) v] = v < count ? notes[v] : -1;
+    releasing = false;
+    ++serial;
+}
+
 void ChordPlayer::release()
 {
     releasing = true;
@@ -62,6 +70,7 @@ void ChordPlayer::render (float* left, float* right, int n)
             voice.on = true;
             voice.pos = 0;
             voice.gain = 0.0f;
+            voice.wait = v * strum.load();
             voice.target = 0.8f / std::sqrt ((float) juce::jmax (1, count));
             voice.step = rate * std::pow (2.0, ((double) note - 60.0 + tune.load()) / 12.0);
         }
@@ -81,6 +90,11 @@ void ChordPlayer::render (float* left, float* right, int n)
             continue;
         for (int i = 0; i < n; ++i)
         {
+            if (v.wait > 0)
+            {
+                --v.wait;
+                continue;
+            }
             const int i0 = (int) v.pos;
             if (i0 >= len - 1)
             {

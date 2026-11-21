@@ -28,8 +28,9 @@ struct LayerFxState
     bool isNeutral() const;
     float valueAt (int k, double frac) const;          // the knob at a place in the loop (0..1)
     // When the loop is edited, its moves follow: the part [from, to) of the loop becomes the whole, `times`
-    // over, backwards if asked.
-    void remap (double from, double to, int times, bool reversed);
+    // over, backwards if asked. With `fill` under 1 (a trim padded to the bar), it becomes the first `fill` of the
+    // loop and the rest holds where it ended.
+    void remap (double from, double to, int times, bool reversed, double fill = 1.0);
 };
 
 class FxDsp

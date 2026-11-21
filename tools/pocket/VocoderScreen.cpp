@@ -92,8 +92,6 @@ void VocoderScreen::timerCallback()
     {
         micLevel = juce::jmax (micLevel * 0.85f, voc.takeMicLevel());
         outLevel = juce::jmax (outLevel * 0.85f, voc.outputLevel());
-        if ((ticks % 30) == 0)
-            headphones = headphonesConnected();
     }
 
     if (pressedPedal >= 0 && ! dragged && ! held && juce::Time::getMillisecondCounter() - pressTime > 450)
@@ -132,6 +130,7 @@ juce::Rectangle<float> VocoderScreen::keyLabelRect() const
 
 int VocoderScreen::idAt (juce::Point<float> p) const
 {
+    if (backRect().expanded (2).contains (p)) return backId;
     if (hearRect().expanded (4).contains (p)) return hearMe;
     if (prevRect().expanded (4).contains (p)) return prev;
     if (nextRect().expanded (4).contains (p)) return next;
@@ -226,11 +225,18 @@ void VocoderScreen::mouseDoubleClick (const juce::MouseEvent& e)
 
 void VocoderScreen::press (int id)
 {
-    if (id == hearMe)
+    if (id == backId)
+        host.closeVocoderSettings();
+    else if (id == hearMe)
     {
+        // HEAR ME: the vocoder in your ears. It needs the mic on (the headphones sheet), and it only
+        // reaches the speaker while you hear yourself.
+        if (! host.micReady())
+            return host.askForMic ([this] { voc.setMonitor (true); });
         voc.setMonitor (! voc.monitoring());
-        if (voc.monitoring() && ! headphones)
-            host.toast ("No headphones found. Turn the volume down, or the speaker may squeal.");
+        if (voc.monitoring() && ! host.hearingMyself())
+            host.toast (host.micRoute() == Route::none ? "No headphones: the mic is recorded but not heard, so the speaker can't squeal."
+                                                       : "Hear myself is off. Turn it on in the VOCODER tool's banner.");
     }
     else if (id == prev)
         voc.stepPreset (-1);
@@ -248,8 +254,12 @@ void VocoderScreen::press (int id)
     {
         if (loopsScreen.vocoderLayer() >= 0)
             loopsScreen.stopVocoder();
-        else if (const int layer = loopsScreen.recordVocoder(); layer >= 0)
-            host.toast ("Recording the vocoder onto layer " + juce::String (layer + 1) + " from the next bar");
+        else
+            host.askForMic ([this]
+            {
+                if (const int layer = loopsScreen.recordVocoder(); layer >= 0)
+                    host.toast ("Recording the vocoder onto layer " + juce::String (layer + 1) + " from the next bar");
+            });
     }
     else if (id == toMac)
     {
@@ -321,7 +331,6 @@ void VocoderScreen::finishTake()
 void VocoderScreen::showDemo()
 {
     demo = true;
-    headphones = true;
     voc.setPreset (1);
     voc.setKey (0, true);
     voc.pressChord (5);                       // A flat
@@ -337,38 +346,25 @@ void VocoderScreen::showDemo()
 //==============================================================================
 void VocoderScreen::paint (juce::Graphics& g)
 {
-    const bool micOn = demo || audio.isRunning();
+    const bool micOn = demo || (audio.isRunning() && host.micReady());
 
-    // the mic line
+    // back to the VOCODER tool, what the mic is doing, HEAR ME
     {
-        drawLed (g, { 24, 29 }, micOn, col::green);
-        auto f = spaced (condensed (14.0f), 0.08f);
-        const juce::String status = micOn ? "MIC ON" : "MIC OFF";
-        g.setFont (f);
+        drawButton (g, backRect(), U8("\xe2\x80\xb9 VOCODER"), Look::cream, pressed == backId, 16.0f);
+        drawLed (g, { backRect().getRight() + 14, 28 }, micOn, col::green);
+        const float x = backRect().getRight() + 26;
+        const auto route = host.micRoute();
+        g.setFont (spaced (condensedBold (14.0f), 0.08f));
         g.setColour (col::ink);
-        g.drawText (status, juce::Rectangle<float> (37, 14, 90, 30), juce::Justification::centredLeft);
-        const float x = 37.0f + juce::GlyphArrangement::getStringWidth (f, status) + 8.0f;
-        juce::String note;
-        bool warn = false;
-        if (! micOn)
-            note = "allow it in Settings";
-        else if (voc.monitoring() && ! headphones)
-        {
-            note = "speaker on: it may squeal";
-            warn = true;
-        }
-        else if (! headphones)
-        {
-            note = "no headphones found";
-            warn = true;
-        }
-        else
-            note = "wear headphones";
-        g.setFont (small (14.0f));
-        g.setColour (warn ? col::amberDark : col::inkDim);
-        g.drawText (U8("\xc2\xb7 ") + note, juce::Rectangle<float> (x, 14, (float) getWidth() - 95 - x, 30), juce::Justification::centredLeft);
+        g.drawText (micOn ? "MIC ON" : "MIC OFF", juce::Rectangle<float> (x, 6, hearRect().getX() - x - 4, 22), juce::Justification::bottomLeft);
+        g.setFont (small (12.5f));
+        g.setColour (! micOn || route != Route::wired ? col::amberDark : col::inkDim);
+        const juce::String note = ! micOn ? juce::String ("tap HEAR ME to turn it on")
+                                : host.hearingMyself() ? juce::String (route == Route::bluetooth ? "Bluetooth: you hear it late" : "you hear yourself")
+                                                       : juce::String (route == Route::none ? "no headphones: not heard" : "hear myself is off");
+        g.drawFittedText (note, juce::Rectangle<float> (x, 28, hearRect().getX() - x - 4, 20).toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
 
-        drawButton (g, hearRect(), "HEAR ME", voc.monitoring() ? Look::amber : Look::cream, pressed == hearMe, 16.0f);
+        drawButton (g, hearRect(), "HEAR ME", voc.monitoring() && host.hearingMyself() ? Look::amber : Look::cream, pressed == hearMe, 16.0f);
     }
 
     // the preset LCD

@@ -120,13 +120,13 @@ TourOverlay::TourOverlay()
 const std::vector<TourOverlay::Stop>& TourOverlay::stops()
 {
     static const std::vector<Stop> all {
-        { stepRecord, "Catch a sound", "Tap the big red button and record anything: a train horn, a hum, a pot lid. Tap it again to stop. Every song starts here.", "Got it" },
-        { stepShape, "Make it weird", "SHAPE is where a recording gets trimmed, faded, reversed and soaked in effects. CHOP slices it into hits for the pads.", "Next" },
-        { stepPads, "Hit it!", "Every pad holds a sound, and a factory kit is already loaded. Tap this one. Hold a pad (or tap its name) for its own sample page.", "I hit it" },
-        { stepBeat, "Make it loop", "REC PADS records your hits in time with a click. LOCK BEAT puts the pattern on a loop layer, so it keeps playing.", "Next" },
-        { stepSing, "Sing over it", "Headphones on. Pick your voice or the vocoder, hold chords on the pads, and REC lays the take on the next loop layer.", "Next" },
-        { stepSong, "Build it up", "Every take lands on a layer. Mute and dub them as it plays, and EDIT one to trim it, add effects and record knob moves.", "Next" },
-        { stepSend, "Send it home", U8("TO MAC puts every layer on your Mac's Kaleidobox, in time. Play, Stop and the BPM up top work on every screen."), "Let's make one" } };
+        { "TOOLS", col::ink, "Pick a tool", "LOOPS, DRUMS, PADS, SYNTH, CHORDS and VOCODER live down here. Switch any time: the song keeps playing.", "Next" },
+        { "REC", juce::Colour (0xffd8452f), "One button records", U8("REC records the tool on screen onto the next empty loop layer, in time. Tap it again to stop. Tap the display up top for count-in and length; BPM sets the tempo, CLICK the metronome."), "Got it" },
+        { "CHORDS", juce::Colour (0xffb9a3dc), "Chords in the song's key", "Eight chords of the song's key: tap one, or fill the PROGRESSION for one chord a bar. They set the vocoder's notes, and SYNTH plays in the same key.", "Next" },
+        { "PADS", col::amber, "Hit it!", "Every pad holds a sound, and a factory kit is already loaded. Tap one. Press REC to play a pattern in, then it locks onto a layer.", "I hit it" },
+        { "LOOPS", col::ink, "Build it up", "Every take lands on its own layer, marked with the tool that made it. Tap a layer: IN / OUT trims it, FIT or QUANTIZE puts it in time, EFFECTS adds knob moves.", "Next" },
+        { "VOCODER", juce::Colour (0xff82cf6a), "Headphones first", "The mic stays off until you say what you're listening on. With headphones on, you hear yourself; without, it still records.", "Next" },
+        { "TO MAC", juce::Colour (0xff56b3d6), "Send it home", "TO MAC puts the picked layer (or every layer) on your Mac's Kaleidobox, in time.", "Let's make one" } };
     return all;
 }
 
@@ -194,7 +194,7 @@ void TourOverlay::paint (juce::Graphics& g)
     auto in = card.reduced (18, 18);
     g.setColour (col::inkDim);
     g.setFont (spaced (condensedBold (13.0f), 0.12f));
-    g.drawText ("STEP " + juce::String (index + 1) + " OF " + juce::String ((int) stops().size()) + U8(" \xc2\xb7 ") + stepName (stop.step),
+    g.drawText ("STOP " + juce::String (index + 1) + " OF " + juce::String ((int) stops().size()) + U8(" \xc2\xb7 ") + stop.tag,
                 in.removeFromTop (18), juce::Justification::centredLeft);
     in.removeFromTop (4);
     g.setColour (col::ink);
@@ -208,7 +208,7 @@ void TourOverlay::paint (juce::Graphics& g)
     const float w = (dots.getWidth() - (float) (n - 1) * 5.0f) / (float) n;
     for (int s = 0; s < n; ++s)
     {
-        g.setColour (s <= index ? stepColour (stops()[(size_t) s].step) : col::creamDeep);
+        g.setColour (s <= index ? stops()[(size_t) s].colour : col::creamDeep);
         g.fillRoundedRectangle (dots.getX() + (float) s * (w + 5.0f), dots.getY(), w, 6.0f, 3.0f);
     }
 }

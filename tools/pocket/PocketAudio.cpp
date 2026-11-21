@@ -38,6 +38,15 @@ void PocketAudio::audioDeviceAboutToStart (juce::AudioIODevice* d)
     }
 }
 
+void PocketAudio::updateLatency (int samples)
+{
+    if (samples <= 0 || ! running)
+        return;
+    latency = samples;
+    if (renderer != nullptr)
+        renderer->setLatency (samples);   // the looper keeps it in an atomic
+}
+
 bool PocketAudio::startRecording (const juce::File& file)
 {
     if (! running || recording.load())

@@ -29,10 +29,10 @@ public:
 
     // Screenshot mode: the design's state. The Robot pedal open, A-flat picked, the mic on.
     void showDemo();
-    void setDemoHeadphones (bool on) { headphones = on; }
+
 
 private:
-    enum Id { hearMe = 1, prev, next, pedalBase = 10, knobBase = 30, chordBase = 40, drone = 50, keyLabel = 51, recTake = 52,
+    enum Id { hearMe = 1, backId = 56, prev, next, pedalBase = 10, knobBase = 30, chordBase = 40, drone = 50, keyLabel = 51, recTake = 52,
               toLoop = 53, toMac = 54, pedalsHeader = 55 };
 
     void timerCallback() override;
@@ -46,8 +46,8 @@ private:
     juce::File stateFile() const { return library.getRoot().getChildFile ("Vocoder").getChildFile ("vocoder.xml"); }
     juce::String nextTakeName() const;
 
-    juce::Rectangle<float> micRect() const { return { 16, 6, (float) getWidth() - 110, 46 }; }
-    juce::Rectangle<float> hearRect() const { return { (float) getWidth() - 87, 12, 71, 36 }; }
+    juce::Rectangle<float> backRect() const { return { 16, 6, 104, 44 }; }
+    juce::Rectangle<float> hearRect() const { return { (float) getWidth() - 96, 6, 80, 44 }; }
     juce::Rectangle<float> lcdRect() const { return { 16, 58, (float) getWidth() - 32, 66 }; }
     juce::Rectangle<float> prevRect() const { return { 24, 68, 35, 46 }; }
     juce::Rectangle<float> nextRect() const { return { (float) getWidth() - 59, 68, 35, 46 }; }
@@ -83,7 +83,7 @@ private:
     int knobDrag = -1;
     float knobStart = 0.0f;
     float micLevel = 0.0f, outLevel = 0.0f;
-    bool headphones = true, demo = false;
+    bool demo = false;
     int ticks = 0;
     juce::File takeFile;
 };

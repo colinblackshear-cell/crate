@@ -23,10 +23,36 @@ namespace pocket
 {
 constexpr int kLoopLayers = 8;
 
-enum class LoopSource { mic, drums, vocoder, mix, both, count };   // both = your voice and the vocoder (Sing)
+enum class LoopSource { mic, drums, vocoder, mix, both, synth, chords, count };   // both = your voice and the vocoder (Sing)
+constexpr int kInstruments = 2;   // the SYNTH and CHORDS tools' sound, each its own source
+
+// A tool that plays notes inside the looper (SYNTH, CHORDS): always heard, recorded as its own source, and
+// sending echoSend() of itself to the shared delay and reverb.
+struct Instrument : public PocketAudio::Renderer
+{
+    virtual float echoSend() const { return 0.0f; }
+};
 enum class LoopState { empty, waiting, recording, playing, overdubWait, overdubbing };
 
-// One layer's recorded sound. The audio thread writes `data` while the layer records or overdubs.
+// The tool that made a layer (what the Loops rows show): set when the take is armed.
+enum class LayerTool { mic, drums, pads, synth, chords, vocoder, mix, count };
+int toolForSource (int source);   // a LoopSource's usual maker (DRUMS for the drums source: PADS says so itself)
+
+// QUANTIZE on a layer that came from notes: the grid (0 = as played, 1 = 1/4, 2 = 1/8, 3 = 1/16), how far the
+// notes move onto it, and swing (every second grid line later, by a third of a grid step).
+struct LoopQuantize
+{
+    int grid = 0;
+    float strength = 1.0f;
+    bool swing = false;
+    double gridBeats() const { return grid == 1 ? 1.0 : grid == 2 ? 0.5 : grid == 3 ? 0.25 : 0.0; }
+    bool operator== (const LoopQuantize& o) const { return grid == o.grid && std::abs (strength - o.strength) < 1.0e-4f && swing == o.swing; }
+};
+
+struct NotePart;   // PocketLoopTools.h: the notes a layer was printed from
+
+// One layer's recorded sound. The audio thread writes `data` while the layer records or overdubs (and reads
+// only `data`, `length` and `lengthBeats`); the rest is the message thread's.
 struct LoopTake
 {
     std::vector<float> data;               // capacity; the loop is the first `length` samples
@@ -34,6 +60,14 @@ struct LoopTake
     std::atomic<double> lengthBeats { 0 };
     double sampleRate = 44100.0;
     int source = 0;
+    int tool = 0;                          // LayerTool
+    int content = 0;                       // samples of real sound from the start (the rest pads it to the bar), 0 = all
+    std::shared_ptr<const NotePart> part;  // the notes it was printed from (QUANTIZE re-renders them), or null
+    LoopQuantize quant;                    // how `part` was re-timed for this audio
+    // The audio before it was stretched to follow a tempo change (null = `data` is it): every new tempo is
+    // stretched from this, so changes don't pile up.
+    std::shared_ptr<const std::vector<float>> origin;
+    int contentSamples() const { return content > 0 ? juce::jmin (content, length.load()) : length.load(); }
 };
 using SharedTake = std::shared_ptr<LoopTake>;
 
@@ -51,11 +85,24 @@ public:
     bool hasVocoder() const { return vocoder != nullptr; }
     // Sing's chord pads in your own sound: always heard, and part of the VOCODER and BOTH sources. Not owned.
     void setChordSource (PocketAudio::Renderer* r) { chordSource = r; }
-    void setCountIn (bool on) { countIn = on; }
+    // The SYNTH (0) and CHORDS (1) tools: heard, and the SYNTH / CHORDS sources. Not owned. Set before the sound starts.
+    void setInstrument (int slot, Instrument* i) { if (juce::isPositiveAndBelow (slot, kInstruments)) instruments[(size_t) slot] = i; }
+    // The count-in, in bars (0, 1 or 2), for a recording that starts the clock. The click plays through it.
+    void setCountInBars (int bars) { countInBars = juce::jlimit (0, 2, bars); }
 
-    // Arms an empty layer: it starts at the next bar (or after a one-bar count-in when the clock is
-    // stopped and the count-in is on) and runs `bars` bars (0 = until stop()).
-    bool arm (int layer, LoopSource, int bars);
+    // The mic, for the whole app. Off at every launch: with `on` false the mic is silence everywhere (no
+    // take, no vocoder, nothing in the speaker). `heard` lets what comes from the mic (the vocoder while
+    // its monitor is on, and your dry voice while setDryMonitor is on) reach the speaker; off, it is still
+    // recorded but never heard, so a phone speaker can't feed back into the mic.
+    void setMic (bool on, bool heard) { micOn = on; micHeard = on && heard; }
+    bool micIsOn() const { return micOn.load(); }
+    bool micIsHeard() const { return micHeard.load(); }
+    // Your own voice, dry, in the speaker (only while the mic is heard).
+    void setDryMonitor (bool on) { dryWanted = on; }
+
+    // Arms an empty layer: it starts at the next bar (or after the count-in when the clock is stopped
+    // and the count-in is on) and runs `bars` bars (0 = until stop()).
+    bool arm (int layer, LoopSource, int bars, int tool = -1);   // tool: a LayerTool, -1 = the source's usual one
     // Recording: ends at the end of the bar. Waiting for the next bar: cancels.
     void stop (int layer);
     // A playing layer records on top of itself from the next loop.
@@ -63,8 +110,12 @@ public:
     void setMute (int layer, bool);
     bool isMuted (int layer) const { return layers[(size_t) layer].mute.load(); }
     void clear (int layer);
-    // Puts a loop on a layer (restoring a saved one, or undoing). nullptr empties it.
-    void setLayer (int layer, SharedTake, bool mute);
+    // Puts a loop on a layer (restoring a saved one, or undoing). nullptr empties it. `startBeat` is the clock
+    // beat its top falls on (the loop's place against the song; it plays from there, round and round).
+    void setLayer (int layer, SharedTake, bool mute, double startBeat = 0.0);
+    // Plays only [fromBeat, toBeat) of the layer, round and round (the editor's HEAR IN-OUT). to <= from: all of it.
+    void setRegion (int layer, double fromBeat, double toBeat) { layers[(size_t) layer].regionFrom = fromBeat; layers[(size_t) layer].regionTo = toBeat; }
+    bool hasRegion (int layer) const { return layers[(size_t) layer].regionTo.load() > layers[(size_t) layer].regionFrom.load() + 1.0e-9; }
     SharedTake takeOf (int layer) const { return takes[(size_t) layer]; }
     // A copy of the layer's loop, to put back with setLayer later (overdub's undo).
     SharedTake copyOf (int layer) const;
@@ -84,6 +135,8 @@ public:
     double beatNow() const { return beats.clockBeat(); }
     double bpm() const { return beats.getBpm(); }
     bool countingIn() const { for (auto& l : layers) if (l.uiCounting.load()) return true; return false; }
+    // The beat a count-in ends on (where the take starts), -1 when there is no count-in going.
+    double countInEnd() const { return uiCountEnd.load(); }
     // Message thread, often: lets go of sounds the audio thread no longer uses.
     void maintain();
     //==========================================================================
@@ -126,7 +179,7 @@ public:
 private:
     static constexpr int kChunk = 256;
 
-    struct Cmd { enum Kind { arm, stop, dub, clear, set } kind = arm; int layer = 0, a = 0, b = 0, c = 0; LoopTake* take = nullptr; };
+    struct Cmd { enum Kind { arm, stop, dub, clear, set } kind = arm; int layer = 0, a = 0, b = 0, c = 0; double beat = 0; LoopTake* take = nullptr; };
 
     struct Layer
     {
@@ -140,13 +193,15 @@ private:
         std::atomic<bool> uiCounting { false };
         std::atomic<double> uiStart { 0.0 };   // beat the loop (or the recording) started on
         std::atomic<int> uiBars { 0 };         // the recording's length in bars, 0 = until stopped
+        std::atomic<double> regionFrom { 0.0 }, regionTo { 0.0 };   // HEAR IN-OUT
         // the audio thread's
         LoopTake* take = nullptr;
         LoopState st = LoopState::empty;
         LoopSource source = LoopSource::mic;
         int bars = 0, writeIdx = 0;
         double armBeat = -1, startBeat = 0, lenBeats = 0, endBeat = -1, dubBeat = 0;
-        bool fresh = false, withCountIn = false;   // armed while the clock was stopped
+        bool fresh = false;   // armed while the clock was stopped
+        int withCountIn = 0;  // bars
         float gain = 0.0f;
         FxDsp dsp;
     };
@@ -175,6 +230,7 @@ private:
     BeatsEngine& beats;
     PocketAudio::Renderer* vocoder = nullptr;
     PocketAudio::Renderer* chordSource = nullptr;
+    std::array<Instrument*, kInstruments> instruments {};
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;
     std::array<Layer, kLoopLayers> layers;
@@ -182,7 +238,9 @@ private:
     FxBus bus;
     std::array<SharedTake, kLoopLayers> takes;                          // the message thread's
     std::vector<std::pair<SharedTake, juce::uint32>> retired;           // kept a while after the audio thread lets go
-    bool countIn = true;
+    int countInBars = 1;
+    std::atomic<bool> micOn { false }, micHeard { false }, dryWanted { false };
+    std::atomic<double> uiCountEnd { -1.0 };
 
     juce::AbstractFifo fifo { 128 };
     std::array<Cmd, 128> cmds;
@@ -201,6 +259,7 @@ private:
     int chunkOffset = 0;
     std::array<std::vector<float>, kLoopLayers> layerOut;
     std::vector<float> busDelay, busReverb, busL, busR;
-    std::vector<float> srcMic, srcDrums, srcVoc, srcMix, srcBoth, vocL, vocR;
+    std::vector<float> srcMic, srcDrums, srcVoc, srcMix, srcBoth, vocL, vocR, clickBuf;
+    std::array<std::vector<float>, kInstruments> srcInst;
 };
 }

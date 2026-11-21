@@ -22,7 +22,7 @@ TempoSheet::TempoSheet()
     twice.onClick = [this] { change (getBpm() * 2.0); };
     tapButton.onClick = [this] { tap(); };
     clickButton.onClick = [this] { setClick (! getClick()); refresh(); };
-    countButton.onClick = [this] { setCountIn (! getCountIn()); refresh(); };
+    countButton.onClick = [this] { setCountIn ((getCountIn() + 1) % 3); refresh(); };
     done.onClick = [this] { if (onDone) onDone(); };
 }
 
@@ -32,8 +32,9 @@ void TempoSheet::refresh()
         return;
     clickButton.setText (getClick() ? "Click: on" : "Click: off");
     clickButton.setLook (getClick() ? Look::amber : Look::cream);
-    countButton.setText (getCountIn() ? "Count-in: 1 bar" : "Count-in: off");
-    countButton.setLook (getCountIn() ? Look::amber : Look::cream);
+    const int bars = getCountIn();
+    countButton.setText (bars == 0 ? "Count-in: off" : bars == 1 ? "Count-in: 1 bar" : "Count-in: 2 bars");
+    countButton.setLook (bars > 0 ? Look::amber : Look::cream);
     repaint();
 }
 
@@ -96,7 +97,7 @@ void TempoSheet::paint (juce::Graphics& g)
 
     g.setColour (col::inkDim);
     g.setFont (small (14.0f));
-    g.drawFittedText (U8("One tempo for the whole song: the beat, the click and new loop layers. Set it before you lock the beat; layers already recorded keep the speed they were played at."),
+    g.drawFittedText (U8("One tempo for the whole song: the beat, the click and new loop layers. Set it before you record; layers already recorded keep the speed they were played at."),
                       juce::Rectangle<int> (28, 328, getWidth() - 56, 60), juce::Justification::topLeft, 3);
 }
 

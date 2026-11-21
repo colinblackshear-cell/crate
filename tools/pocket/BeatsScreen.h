@@ -6,7 +6,8 @@
 #include "PocketLibrary.h"
 #include "PocketTheme.h"
 
-// The Beats tab: a switch at the top between the drum machine (the Mac's 808 engine) and the MPC pads.
+// Two tools in one: DRUMS (the Mac's 808 engine, mode 0) and PADS (the MPC pads, mode 1). The tool row
+// picks the mode. The thumb bar's REC records either onto the next loop layer (PocketApp drives it).
 class BeatsScreen : public juce::Component, private juce::Timer
 {
 public:
@@ -38,19 +39,44 @@ public:
     void exportForMpc();
     void renameKit();
 
-    // The pad pattern (REC PADS). Recording runs the clock with a click; pads played go into the
-    // pattern, snapped to the grid. LOCK BEAT records the beat onto the next empty loop layer.
-    void toggleRecordPads();
+    // The pad pattern. While recording, pads played from `fromBeat` on go into the pattern, snapped to the
+    // grid (REC on PADS turns it on, with the pattern playing; PocketApp then locks it onto a layer).
+    void setRecordingPads (bool on, double fromBeat = 0.0);
     bool recordingPads() const { return recPads; }
+    std::function<bool()> clickWanted;   // the app's CLICK, for when the pattern stops
     void togglePatternPlay();
     void setPatternBars (int bars);
     void cycleQuantize();
     void undoPatternHit();
     void clearPattern();
-    void lockBeat();
     void patternChanged();
     double patternPosition() const;   // beats into the pattern, -1 when it isn't playing
     void recordHit (int pad, float velocity);
+
+    // The drum machine's two ways in: STEPS (the 16 big boxes) and PLAY LIVE (finger drumming on 12 pads).
+    int drumMode() const { return drumModeValue; }   // 0 STEPS, 1 PLAY LIVE
+    void setDrumMode (int mode);
+    std::function<void()> onDrumModeChanged;
+    // A PLAY LIVE hit: the voice sounds at once; while the clock runs (the song plays, or REC counts and records)
+    // the hit is also written into the edited drum pattern on the nearest step. Returns that step, or -1 when
+    // nothing was written (stopped, or still counting in). Message thread: the sound goes through the engine's
+    // lock-free queue and the pattern is published like any other edit.
+    int hitLive (int voice);
+    void undoLiveHit();
+    void clearDrumPattern();
+    bool canUndoLiveHit() const { return ! liveUndo.empty(); }
+    std::function<bool()> inCountIn;   // the app's count-in is running: hits sound but aren't written
+    // REC on PLAY LIVE (PocketApp): hits are written from `fromBeat` on.
+    void setRecordingDrums (bool on, double fromBeat = 0.0);
+    bool recordingDrums() const { return recDrumsOn; }
+    // The Make a beat lesson: a compact layout that leaves `reservePx` free at the bottom for the coach card,
+    // and amber hints on steps of one voice (only drawn, never written).
+    void setLessonLayout (bool on, int reservePx = 0);
+    void setGuide (int voice, juce::uint32 stepMask);
+    void tapStep (int step);                    // what a tap on a step box does (the self-checks tap with it)
+    juce::Rectangle<int> stepsBounds() const;   // the 16 big step buttons, in this screen's coordinates
+    juce::String selfCheckLive();               // PLAY LIVE writes to the nearest step, the lesson hints write nothing, no double hits
+    juce::String liveReport;                    // what selfCheckLive measured for the early hit
 
     // Screenshot mode
     void setDemoStep (int step) { demoStep = step; repaint(); }
@@ -62,14 +88,11 @@ public:
     juce::String selfCheckSound();
     juce::String selfCheckPattern();   // a recorded hit plays on its beat, and LOCK BEAT's timing holds
     void fillDemoPattern();
-    // A ready beat for a new song: a 2-bar boom-bap pattern on the Street kit's pads at 90 BPM.
-    void fillStarterBeat();
-    // The tour's spotlights, in this screen's coordinates: 0 = pad A13, 1 = the REC PADS ... LOCK BEAT row.
+    void fillDemoDrums();   // screenshots only: a boom-bap beat in the drum grid (a new song's grid is empty)
+    // The tour's spotlights, in this screen's coordinates: 0 = pad A13, 1 = the pattern and its controls.
     juce::Rectangle<int> tourSpot (int which) const;
 
-    void paint (juce::Graphics&) override;
     void resized() override;
-    void mouseUp (const juce::MouseEvent&) override;
 
 private:
     class DrumView;
@@ -77,7 +100,6 @@ private:
     void timerCallback() override;
     void saveSoon() { saveCountdown = 30; }
     void pushPads();
-    juce::Rectangle<float> segment (int i) const;
 
     PocketHost& host;
     pocket::Library& library;
@@ -88,7 +110,14 @@ private:
     std::unique_ptr<PadsView> padsView;
 
     int screenMode = 0, bank = 0, selected = -1, voice = 0, demoStep = -1, saveCountdown = 0;
-    bool recPads = false;
+    bool recPads = false, recDrumsOn = false;
+    double recDrumsFrom = 0.0;
+    int drumModeValue = 0, lessonReserve = 0, guideVoice = -1;
+    bool lessonLayout = false;
+    juce::uint32 guideMask = 0;
+    struct LiveUndo { int slot = 0; bool b = false; crate::drums::Pattern pattern; };
+    std::vector<LiveUndo> liveUndo;
+    double recFrom = 0.0;
     std::vector<pocket::PadPattern> patternUndo;
     bool drumsDirty = false, kitDirty = false;
    #if JUCE_IOS || JUCE_ANDROID

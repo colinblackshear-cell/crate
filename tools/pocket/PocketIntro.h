@@ -7,7 +7,8 @@
 // TitleScreen: Kaleidobox's kaleidoscope (a mandala of petals that turns, and blooms with the mic) and
 // two ways in: TAKE THE 2-MINUTE TOUR or START MAKING. Shown each time the app opens.
 //
-// TourOverlay: seven coach marks, one per step from a sound to a song. Each stop opens the real screen,
+// TourOverlay: seven coach marks on the real controls (the tool row, REC, BPM and CLICK, the pads, the loop
+// layers, the vocoder's headphones, TO MAC). Each stop opens the real screen,
 // dims everything but one spotlit control (which still works, so you can hit the pad it points at) and
 // says what it does, with NEXT and Skip tour.
 class TitleScreen : public juce::Component, private juce::Timer
@@ -37,7 +38,8 @@ class TourOverlay : public juce::Component
 public:
     struct Stop
     {
-        int step;                         // pocket::Step, for the card's "STEP n OF 7 · PADS"
+        juce::String tag;                 // for the card's "STOP n OF 7 · REC"
+        juce::Colour colour;              // its dot
         juce::String title, body, next;   // "Hit it!", what it does, the button ("I HIT IT")
     };
 

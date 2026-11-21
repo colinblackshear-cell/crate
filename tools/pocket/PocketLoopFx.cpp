@@ -79,8 +79,9 @@ float LayerFxState::valueAt (int k, double frac) const
     return m[(size_t) a] + (m[(size_t) b] - m[(size_t) a]) * t;
 }
 
-void LayerFxState::remap (double from, double to, int times, bool reversed)
+void LayerFxState::remap (double from, double to, int times, bool reversed, double fill)
 {
+    fill = juce::jlimit (1.0e-6, 1.0, fill);
     times = juce::jmax (1, times);
     for (auto& m : moves)
     {
@@ -91,6 +92,7 @@ void LayerFxState::remap (double from, double to, int times, bool reversed)
         {
             double t = (double) j / kMoveBins * times;
             t -= std::floor (t);
+            t = juce::jmin (1.0, t / fill);
             if (reversed)
                 t = 1.0 - t;
             const double src = (from + t * (to - from)) * kMoveBins;
