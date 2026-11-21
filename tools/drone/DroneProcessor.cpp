@@ -107,7 +107,8 @@ DroneProcessor::DroneProcessor()
 
 int DroneProcessor::getFeed() const { return juce::jlimit (0, (int) numFeeds - 1, juce::roundToInt (get (params, "droneFeed"))); }
 bool DroneProcessor::isOn() const { return get (params, "droneOn") > 0.5f; }
-bool DroneProcessor::wantsToPlay() const { return isOn() || get (params, "droneResonate") > 0.0f || engine.isSounding(); }
+// (Follow keys counts: it has to hear the keys to take its note from them, even while off.)
+bool DroneProcessor::wantsToPlay() const { return isOn() || get (params, "droneResonate") > 0.0f || get (params, "droneFollow") > 0.5f || engine.isSounding(); }
 
 drone::Settings DroneProcessor::readSettings() const
 {
