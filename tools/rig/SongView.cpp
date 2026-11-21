@@ -1,4 +1,5 @@
 #include "SongView.h"
+#include "GrooveView.h"
 #include "RigColours.h"
 #include "RigExport.h"
 #include "TimelineView.h"
@@ -27,6 +28,13 @@ juce::String fadeText (double bars, int bpb)
     }
     return rigsong::barsText (bars);
 }
+}
+
+const std::array<int, 7>& SongView::layerTracks()
+{
+    static const std::array<int, 7> tracks { GrooveView::drums, GrooveView::machine, GrooveView::bass, GrooveView::synth,
+                                             GrooveView::vocoder, GrooveView::sampler, GrooveView::lineIn };
+    return tracks;
 }
 
 juce::Colour SongView::laneColour (int lane)
@@ -762,6 +770,15 @@ SongView::SongView (RigEngine& e) : engine (e)
                                                              { if (safe != nullptr) safe->showBars (false); }); };
     addChildComponent (*bars);
 
+    for (int track : layerTracks())
+    {
+        auto* b = layerButtons.add (new rigpanels::PanelButton (GrooveView::trackName (track)));
+        b->fontSize = 14.0f;
+        b->setTooltip ("Opens " + GrooveView::trackName (track) + " ready to record into the picked section, with the song playing round "
+                       "it. Play along; Rec into (bottom left) records a take, and with Cycle on every time round is a new one.");
+        b->onClick = [this, track] { if (onAddLayer) onAddLayer (track); };
+        addChildComponent (b);
+    }
     addButton.sub = "empty or playing";
     addButton.setTooltip ("Adds a section at the end of the song: an empty one to fill in, or one that plays what's on now.");
     addButton.onClick = [this] { showAddMenu(); };
@@ -1423,8 +1440,8 @@ void SongView::paint (juce::Graphics& g)
 
     if (! stepsArea.isEmpty())
     {
-        const char* steps[] = { "Dial in a sound and pattern", "Rec take: play it over the beat", "To Song: lock it into a section",
-                                "Arrange: copy, move, delete", "Song mode: Play runs it all" };
+        const char* steps[] = { "Pick a section", "Add a layer with an instrument", "Play over it: every time round is a take",
+                                "Takes: keep the best one", "Song mode: Play runs it all" };
         auto r = stepsArea;
         const int w = r.getWidth() / 5;
         for (int i = 0; i < 5; ++i)
@@ -1467,6 +1484,25 @@ void SongView::paint (juce::Graphics& g)
                                     : hidden > 0 ? "+ " + juce::String (hidden) + " more tracks with nothing in them yet (empty loops, Sampler, Line in). Click to show."
                                                  : juce::String(),
                     moreLanesArea, juce::Justification::centredLeft);
+    }
+    if (! addLayerArea.isEmpty())
+    {
+        auto label = addLayerArea.withWidth (144);
+        engraved (g, "Add a layer with", label.removeFromTop (label.getHeight() / 2 + 4), juce::Justification::bottomLeft, 13.0f);
+        const auto list = rigsong::sections (timeline());
+        const int sec = juce::isPositiveAndBelow (selSection, (int) list.size()) ? selSection : -1;
+        g.setColour (p.ink2);
+        g.setFont (barlow (12.0f));
+        g.drawFittedText (sec >= 0 ? "into " + rigsong::letterFor (sec) + " " + list[(size_t) sec].name : juce::String ("into the section you pick"),
+                          label, juce::Justification::topLeft, 1, 0.8f);
+        // Each button's track colour, as a stripe under it.
+        const auto tracks = layerTracks();
+        for (int i = 0; i < layerButtons.size(); ++i)
+        {
+            const auto b = layerButtons[i]->getBounds();
+            g.setColour (GrooveView::trackColour (tracks[(size_t) i]));
+            g.fillRoundedRectangle (b.toFloat().removeFromBottom (5.0f).translated (0, 5.0f).reduced (6.0f, 0), 2.0f);
+        }
     }
 }
 
@@ -1520,6 +1556,9 @@ void SongView::resized()
     bigEmpty.setVisible (empty && ! barsShown);
     emptyArea = {};
     moreLanesArea = {};
+    addLayerArea = {};
+    for (auto* b : layerButtons)
+        b->setVisible (false);
     if (barsShown)
         return;
     if (empty)
@@ -1537,6 +1576,19 @@ void SongView::resized()
 
     inspector->setBounds (area.removeFromRight (kInspectorW));
     area.removeFromRight (10);
+    {
+        addLayerArea = area.removeFromBottom (42);
+        area.removeFromBottom (6);
+        auto row = addLayerArea.withTrimmedLeft (150);
+        const int n = layerButtons.size(), gap = 6;
+        const int w = (row.getWidth() - gap * (n - 1)) / n;
+        for (auto* b : layerButtons)
+        {
+            b->setBounds (row.removeFromLeft (w));
+            row.removeFromLeft (gap);
+            b->setVisible (true);
+        }
+    }
     moreLanesArea = area.removeFromBottom (22);
     area.removeFromBottom (4);
     boardArea = area;

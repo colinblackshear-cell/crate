@@ -95,6 +95,27 @@ public:
     // last take (its loop) there instead of what the track plays. Returns the section (-1: none).
     void showToSongMenu();
     int toSong (int section, bool take = false);
+    // Rec into (the song strip along the bottom, and Rec take once there's a song): records the
+    // picked track into a section of the song, from its top, onto a loop of its own; with Cycle
+    // on the section plays round and every time round is a new take (RigTakes). Again stops it.
+    // Returns the loop it records onto (-1: none, or it stopped).
+    int pressRecInto();
+    // Where the next take goes: the section (the one picked on the strip or the Song screen, or
+    // the one playing, or the first; -1 with no song) and the loop (the takes this track already
+    // has there, or the first free loop; -1 when none is free).
+    int recTargetSection() const;
+    int recTargetLayer() const;
+    void pickRecSection (int section);
+    // `layer` -1: a new layer (or the track's takes there).
+    void setRecTarget (int section, int layer);
+    void showRecTargetMenu (juce::Component& from);
+    void showTakesMenu (juce::Component& from);
+    // Cycle (the strip): the target section plays round, and every pass records a new take.
+    void toggleCycle();
+    bool isCycleOn() const { return recCycle; }
+    // The Song screen's Add a layer with: `track` opens in Edit, ready to record into the picked
+    // section, with the song playing round it.
+    void addLayerWith (int track);
     // Rec moves (the rail): records the knobs you turn from the next bar, or stops at the end of
     // the bar. showAutomation opens the lanes (Cmd+Shift+A).
     void pressRecMoves();
@@ -203,6 +224,10 @@ private:
     int tourStop = 0;   // the walkthrough's stop you were on
     std::array<int, 8> lastTake { -1, -1, -1, -1, -1, -1, -1, -1 };
     void updateCaptureButtons();
+    int recSection = -1, recLayer = -1;   // the Rec into target as picked (-1: follow the song)
+    bool recCycle = true, recFree = false;
+    int takesSeen = 0;
+    void updateRecInto();
     juce::Component::SafePointer<juce::Component> automationPanel;
     std::unique_ptr<juce::FileChooser> toolChooser;
     juce::File printedMidi, printedAudio;
