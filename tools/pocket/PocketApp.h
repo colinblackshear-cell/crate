@@ -135,13 +135,12 @@ private:
 
     // Ideas (Your songs)
     void openIdea (const juce::String& id);
-    void newIdea();
+    void newIdea();          // + NEW SONG
     void switchIdea (const juce::String& id);
     void renameIdea (const juce::String& id);
     void deleteIdea (const juce::String& id);
     void makeABeat();        // Your songs' MAKE A BEAT: a new song with an empty grid, and the lesson
     void lessonFromMore();   // More > Show me: make a beat
-    void newSongWithKit();
     void playIdea (const juce::String& id);
 
     //==========================================================================
@@ -183,6 +182,7 @@ private:
     int chordsUndoLayer = -1;      // the layer the last CHORDS take went on (UNDO un-mutes the progression)
     bool chordsLockProg = false;   // the CHORDS take records the progression (it starts from its first box)   // the layer the last SYNTH part went on (UNDO takes it off and gives the part back)
     int lockLayer = -1, lockBars = 0;
+    std::shared_ptr<pocket::NotePart> lockPart;   // the notes of the take being locked (PADS, SYNTH), for QUANTIZE
     double lockStart = 0, lockLen = 8, padsFrom = 0;
     bool lockArmed = false;
     // What the header and the count-in panel show.
@@ -234,6 +234,7 @@ private:
     void closeAllSheets();
     void savePng (const juce::File&);
     juce::String runRecChecks (juce::String& report);
+    juce::String runLoopEditChecks (juce::String& report);
 
     struct PocketLook : juce::LookAndFeel_V4 { PocketLook(); juce::Font getPopupMenuFont() override; juce::Font getTextButtonFont (juce::TextButton&, int) override; };
     PocketLook look;

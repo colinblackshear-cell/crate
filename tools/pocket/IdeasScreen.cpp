@@ -1,10 +1,12 @@
 #include "IdeasScreen.h"
 
+#include "PocketLoopTools.h"
+
 using namespace pocket;
 
 namespace
 {
-constexpr int kCardH = 104, kGap = 10, kTop = 136;
+constexpr int kCardH = 90, kGap = 10, kTop = 312;
 
 juce::String whenText (juce::Time t)
 {
@@ -18,27 +20,24 @@ juce::String whenText (juce::Time t)
     return t.formatted ("%b %d");
 }
 
-// A little picture for each song: bars in the colour of the step it has reached.
-void drawThumb (juce::Graphics& g, juce::Rectangle<float> r, const IdeaInfo& idea)
-{
-    g.setColour (col::well);
-    g.fillRoundedRectangle (r, 10.0f);
-    const auto colour = idea.reached >= 0 ? stepColour (idea.reached) : col::grey;
-    auto in = r.reduced (8, 10);
-    const int n = 9;
-    const float w = in.getWidth() / (float) n;
-    auto seed = (juce::uint32) idea.id.hashCode();
-    for (int i = 0; i < n; ++i)
-    {
-        seed = seed * 1664525u + 1013904223u;
-        const float shape = idea.reached >= stepSing ? (float) (i + 2) / (float) (n + 1)                  // building up
-                          : idea.reached >= stepBeat ? (i % 2 == 0 ? 0.85f : 0.35f)                      // a beat
-                                                     : std::exp (-(float) i * 0.35f);                     // one sound dying away
-        const float h = juce::jmax (3.0f, in.getHeight() * juce::jlimit (0.1f, 1.0f, shape * (0.7f + 0.3f * (float) (seed >> 24) / 255.0f)));
-        g.setColour (colour.withAlpha (0.55f + 0.45f * (float) i / (float) n));
-        g.fillRoundedRectangle (in.getX() + (float) i * w + 1.0f, in.getBottom() - h, w - 2.0f, h, 1.0f);
-    }
+const juce::Colour kNumberColours[3] = { juce::Colour (0xff5fb3c4), juce::Colour (0xfff0674f), juce::Colour (0xff82cf6a) };
 }
+
+IdeasScreen::Facts IdeasScreen::factsOf (const juce::File& song)
+{
+    Facts f;
+    const auto loops = juce::JSON::parse (song.getChildFile ("Loops").getChildFile ("loops.json"));
+    if (auto* layers = loops.getProperty ("layers", {}).getArray())
+        for (auto& l : *layers)
+        {
+            ++f.layers;
+            f.tools.push_back (l.hasProperty ("tool") ? (int) l.getProperty ("tool", 0) : toolForSource ((int) l.getProperty ("source", 0)));
+        }
+    const auto drums = juce::JSON::parse (song.getChildFile ("Beats").getChildFile ("drums.json"));
+    f.bpm = f.layers > 0 ? (double) loops.getProperty ("bpm", 0.0) : 0.0;
+    if (f.bpm <= 0.0)
+        f.bpm = (double) drums.getProperty ("bpm", 0.0);
+    return f;
 }
 
 //==============================================================================
@@ -47,12 +46,13 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
     explicit List (IdeasScreen& o) : owner (o) {}
 
     IdeasScreen& owner;
-    int pressed = -1, pressedPlay = -1;
+    int pressed = -1, pressedPlay = -1, pressedMore = -1;
     bool held = false, moved = false;
     juce::Point<float> downAt;
 
     juce::Rectangle<float> card (int row) const { return { 16.0f, (float) (row * (kCardH + kGap)) + 2.0f, (float) getWidth() - 32.0f, (float) kCardH }; }
-    juce::Rectangle<float> playButton (int row) const { auto c = card (row); return { c.getRight() - 60, c.getCentreY() - 22, 44, 44 }; }
+    juce::Rectangle<float> playButton (int row) const { auto c = card (row); return { c.getRight() - 62, c.getCentreY() - 24, 48, 48 }; }
+    juce::Rectangle<float> moreButton (int row) const { auto c = card (row); return { c.getRight() - 112, c.getCentreY() - 22, 44, 44 }; }
     int rowAt (juce::Point<float> p) const
     {
         for (int i = 0; i < (int) owner.ideas.list().size(); ++i)
@@ -70,43 +70,53 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
         for (int row = 0; row < (int) ord.size(); ++row)
         {
             const auto& idea = all[(size_t) ord[(size_t) row]];
+            const auto it = owner.facts.find (idea.id);
+            const Facts f = it != owner.facts.end() ? it->second : Facts();
             auto r = card (row);
             g.setColour (col::creamLight);
             g.fillRoundedRectangle (r, 14.0f);
             g.setColour (idea.id == currentId ? col::amber : col::rule);
             g.drawRoundedRectangle (r.reduced (1.0f), 14.0f, 2.0f);
-            if (row == pressed)
+            if (row == pressed && pressedPlay < 0 && pressedMore < 0)
             {
                 g.setColour (col::ink.withAlpha (0.06f));
                 g.fillRoundedRectangle (r, 14.0f);
             }
-            drawThumb (g, juce::Rectangle<float> (r.getX() + 12, r.getCentreY() - 28, 56, 56), idea);
 
-            auto in = r.withTrimmedLeft (80).withTrimmedRight (70).reduced (0, 10);
+            auto in = juce::Rectangle<float> (r.getX() + 14, r.getY() + 10, moreButton (row).getX() - r.getX() - 18, r.getHeight() - 20);
             g.setColour (col::ink);
             g.setFont (small (18.0f).boldened());
-            g.drawFittedText (idea.name, in.removeFromTop (24).toNearestInt(), juce::Justification::centredLeft, 1);
+            g.drawFittedText (idea.name, in.removeFromTop (24).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
             g.setColour (col::inkDim);
             g.setFont (small (13.5f));
-            auto meta = whenText (idea.modified);
-            if (idea.summary.isNotEmpty())
-                meta << U8(" · ") << idea.summary;
-            g.drawFittedText (meta, in.removeFromTop (19).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
-            in.removeFromTop (7);
-            auto dots = in.removeFromTop (6);
-            const float w = (dots.getWidth() - 6 * 4.0f) / (float) kSteps;
-            for (int s = 0; s < kSteps; ++s)
+            juce::String meta = whenText (idea.modified);
+            if (f.bpm > 0.0)
+                meta << U8(" \xc2\xb7 ") << juce::String (f.bpm, 0) << " BPM";
+            meta << U8(" \xc2\xb7 ") << (f.layers == 0 ? juce::String ("no layers yet") : juce::String (f.layers) + (f.layers == 1 ? " layer" : " layers"));
+            g.drawFittedText (meta, in.removeFromTop (20).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+            in.removeFromTop (5);
+            // the tools on its layers
+            float x = in.getX();
+            for (int tool : f.tools)
             {
-                g.setColour (s <= idea.reached ? stepColour (s) : col::creamDeep);
-                g.fillRoundedRectangle (dots.getX() + (float) s * (w + 4.0f), dots.getY(), w, 6.0f, 3.0f);
+                auto box = juce::Rectangle<float> (x, in.getY(), 24, 24);
+                if (box.getRight() > in.getRight())
+                    break;
+                g.setColour (col::well);
+                g.fillRoundedRectangle (box, 6.0f);
+                juce::Graphics::ScopedSaveState s (g);
+                g.addTransform (juce::AffineTransform::scale (0.62f, 0.62f, box.getCentreX(), box.getCentreY()));
+                drawLayerToolIcon (g, tool, box.getCentre(), layerToolColour (tool));
+                x += 29;
             }
-            in.removeFromTop (6);
+
+            // ··· rename / delete
+            auto mb = moreButton (row);
+            g.setColour (pressedMore == row ? col::creamDeep : col::creamLight);
+            g.fillRoundedRectangle (mb.reduced (2), 10.0f);
             g.setColour (col::inkDim);
-            g.setFont (spaced (condensedBold (13.0f), 0.06f));
-            const int next = juce::jmin (kSteps - 1, idea.reached + 1);
-            const juce::String nextText = idea.sent ? U8("SENT · open it again any time")
-                                                    : U8("NEXT: ") + juce::String (stepName (next)) + U8(" · ") + stepHint (next);
-            g.drawFittedText (nextText, in.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+            for (int k = -1; k <= 1; ++k)
+                g.fillEllipse (mb.getCentreX() + (float) k * 8.0f - 2.5f, mb.getCentreY() - 2.5f, 5.0f, 5.0f);
 
             // play what it has so far
             auto pb = playButton (row);
@@ -128,18 +138,18 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
         {
             g.setColour (col::inkDim);
             g.setFont (small (16.0f));
-            g.drawFittedText ("No songs yet. Start one below: record a sound, make a beat, or load a kit.",
-                              getLocalBounds().reduced (24, 0).withHeight (80), juce::Justification::centred, 3);
+            g.drawFittedText ("No songs yet. + NEW SONG starts one.", getLocalBounds().reduced (24, 0).withHeight (80), juce::Justification::centred, 3);
         }
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
         pressed = rowAt (e.position);
-        pressedPlay = pressed >= 0 && playButton (pressed).expanded (6).contains (e.position) ? pressed : -1;
+        pressedPlay = pressed >= 0 && playButton (pressed).expanded (4).contains (e.position) ? pressed : -1;
+        pressedMore = pressed >= 0 && pressedPlay < 0 && moreButton (pressed).contains (e.position) ? pressed : -1;
         held = moved = false;
         downAt = e.position;
-        if (pressed >= 0 && pressedPlay < 0)
+        if (pressed >= 0 && pressedPlay < 0 && pressedMore < 0)
             startTimer (550);
         repaint();
     }
@@ -150,7 +160,7 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
         {
             moved = true;
             stopTimer();
-            pressed = pressedPlay = -1;
+            pressed = pressedPlay = pressedMore = -1;
             repaint();
         }
     }
@@ -158,20 +168,33 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
     void mouseUp (const juce::MouseEvent& e) override
     {
         stopTimer();
-        const int row = pressed, playRow = pressedPlay;
-        pressed = pressedPlay = -1;
+        const int row = pressed, playRow = pressedPlay, moreRow = pressedMore;
+        pressed = pressedPlay = pressedMore = -1;
         repaint();
         if (row < 0 || moved || held || rowAt (e.position) != row)
             return;
         const auto id = ideaAt (row).id;
-        if (playRow == row && playButton (row).expanded (6).contains (e.position))
+        if (playRow == row && playButton (row).expanded (4).contains (e.position))
         {
             if (owner.onPlay)
                 owner.onPlay (id);
             return;
         }
+        if (moreRow == row && moreButton (row).contains (e.position))
+            return showMenu (row, moreButton (row).getCentre());
         if (owner.onOpen)
             owner.onOpen (id);
+    }
+
+    void showMenu (int row, juce::Point<float> at)
+    {
+        const auto id = ideaAt (row).id;
+        const bool isCurrent = id == owner.ideas.current().id;
+        juce::PopupMenu m;
+        m.addItem ("Open", [this, id] { if (owner.onOpen) owner.onOpen (id); });
+        m.addItem ("Rename", [this, id] { if (owner.onRename) owner.onRename (id); });
+        m.addItem (isCurrent ? "Delete (open another song first)" : "Delete", ! isCurrent, false, [this, id] { if (owner.onDelete) owner.onDelete (id); });
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (juce::Rectangle<int> ((int) at.x, (int) at.y, 1, 1))));
     }
 
     void timerCallback() override
@@ -180,28 +203,29 @@ struct IdeasScreen::List : public juce::Component, private juce::Timer
         if (pressed < 0 || pressed >= (int) owner.ideas.list().size())
             return;
         held = true;
-        const auto id = ideaAt (pressed).id;
-        const bool isCurrent = id == owner.ideas.current().id;
+        const int row = pressed;
         pressed = -1;
         repaint();
-        juce::PopupMenu m;
-        m.addItem ("Open", [this, id] { if (owner.onOpen) owner.onOpen (id); });
-        m.addItem ("Rename", [this, id] { if (owner.onRename) owner.onRename (id); });
-        m.addItem (isCurrent ? "Delete (open another song first)" : "Delete", ! isCurrent, false, [this, id] { if (owner.onDelete) owner.onDelete (id); });
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (juce::Rectangle<int> ((int) downAt.x, (int) downAt.y, 1, 1))));
+        showMenu (row, downAt);
     }
 };
 
 //==============================================================================
-IdeasScreen::IdeasScreen (Ideas& i) : ideas (i), newButton ({}, Look::ghost)
+IdeasScreen::IdeasScreen (Ideas& i) : ideas (i)
 {
     list = std::make_unique<List> (*this);
     view.setViewedComponent (list.get(), false);
     view.setScrollBarsShown (false, false);
     view.setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::all);
     addAndMakeVisible (view);
+    newButton.setFontHeight (24.0f);
+    lessonButton.setFontHeight (15.0f);
+    tourButton.setFontHeight (15.0f);
     newButton.onClick = [this] { if (onNew) onNew(); };
-    addAndMakeVisible (newButton);
+    lessonButton.onClick = [this] { if (onNewBeat) onNewBeat(); };
+    tourButton.onClick = [this] { if (onTour) onTour(); };
+    for (auto* b : { &newButton, &lessonButton, &tourButton })
+        addAndMakeVisible (*b);
 }
 
 IdeasScreen::~IdeasScreen() = default;
@@ -215,108 +239,78 @@ std::vector<int> IdeasScreen::order() const
     if (sortBy == 1)
         std::stable_sort (o.begin(), o.end(), [&all] (int a, int b) { return all[(size_t) a].name.compareNatural (all[(size_t) b].name) < 0; });
     else if (sortBy == 2)
-        std::stable_sort (o.begin(), o.end(), [&all] (int a, int b)
+        std::stable_sort (o.begin(), o.end(), [this, &all] (int a, int b)
         {
-            const int ra = all[(size_t) a].sent ? kSteps : all[(size_t) a].reached, rb = all[(size_t) b].sent ? kSteps : all[(size_t) b].reached;
-            return ra > rb;
+            const auto fa = facts.find (all[(size_t) a].id), fb = facts.find (all[(size_t) b].id);
+            return (fa != facts.end() ? fa->second.layers : 0) > (fb != facts.end() ? fb->second.layers : 0);
         });
     return o;
 }
 
 void IdeasScreen::refresh()
 {
+    facts.clear();
+    for (auto& idea : ideas.list())
+        facts[idea.id] = factsOf (ideas.folderFor (idea.id));
     resized();
     list->repaint();
     repaint();
 }
 
-juce::Rectangle<int> IdeasScreen::newBounds() const { return { getWidth() / 2 - 38, getHeight() - 112, 76, 76 }; }
-juce::Rectangle<float> IdeasScreen::beatRect() const { return { 16, (float) getHeight() - 104, (float) getWidth() / 2 - 70, 58 }; }
-juce::Rectangle<float> IdeasScreen::kitRect() const { return { (float) getWidth() / 2 + 54, (float) getHeight() - 104, (float) getWidth() / 2 - 70, 58 }; }
-
-juce::Rectangle<float> IdeasScreen::chip (int i) const
-{
-    static const float x[3] = { 16, 104, 192 }, w[3] = { 80, 80, 150 };
-    return { x[i], 96, w[i], 32 };
-}
-
 void IdeasScreen::resized()
 {
-    view.setBounds (0, kTop, getWidth(), getHeight() - kTop - 148);
+    const int w = getWidth();
+    newButton.setBounds (16, 144, w - 32, 62);
+    lessonButton.setBounds (16, 216, (w - 40) / 2, 46);
+    tourButton.setBounds (lessonButton.getRight() + 8, 216, w - 16 - lessonButton.getRight() - 8, 46);
+    view.setBounds (0, kTop, w, getHeight() - kTop);
     const int n = (int) ideas.list().size();
-    list->setSize (getWidth(), juce::jmax (view.getHeight(), n * (kCardH + kGap) + 4));
-    newButton.setBounds (newBounds());
+    list->setSize (w, juce::jmax (view.getHeight(), n * (kCardH + kGap) + 12));
 }
 
 void IdeasScreen::mouseUp (const juce::MouseEvent& e)
 {
-    for (int i = 0; i < 3; ++i)
-        if (chip (i).contains (e.position))
-        {
-            sortBy = i;
-            view.setViewPosition (0, 0);
-            refresh();
-            return;
-        }
-    if (beatRect().contains (e.position) && onNewBeat)
-        onNewBeat();
-    else if (kitRect().contains (e.position) && onNewKit)
-        onNewKit();
+    if (sortChip().contains (e.position))
+    {
+        sortBy = (sortBy + 1) % 3;
+        view.setViewPosition (0, 0);
+        refresh();
+    }
 }
 
 void IdeasScreen::paint (juce::Graphics& g)
 {
-    g.setColour (col::ink);
-    g.setFont (condensedBold (32.0f));
-    g.drawText ("Your songs", 18, 8, 200, 40, juce::Justification::centredLeft);
-    const int n = (int) ideas.list().size();
-    g.setColour (col::inkDim);
-    g.setFont (small (15.0f));
-    g.drawText (juce::String (n) + " in progress", getWidth() - 166, 12, 148, 34, juce::Justification::centredRight);
-    g.setFont (small (14.5f));
-    g.drawFittedText (U8("Each one is a song in the making: its sounds, pads, beat and layers. \xe2\x96\xb6 plays what it has so far."),
-                      juce::Rectangle<int> (18, 48, getWidth() - 36, 42), juce::Justification::topLeft, 2, 0.9f);
-
-    static const char* names[3] = { "RECENT", "NAME", "FURTHEST ALONG" };
-    for (int i = 0; i < 3; ++i)
-    {
-        auto c = chip (i);
-        drawRaised (g, c, sortBy == i ? Look::amber : Look::cream, false, 10.0f);
-        g.setColour (col::ink);
-        g.setFont (spaced (condensedBold (14.0f), 0.08f));
-        g.drawText (names[i], c.withTrimmedBottom (3), juce::Justification::centred);
-    }
-
-    // a new song: with a sound (record), a beat you make step by step, or a factory kit
-    g.setColour (col::rule);
-    g.fillRect (16.0f, (float) getHeight() - 146, (float) getWidth() - 32, 1.0f);
     g.setColour (col::inkDim);
     g.setFont (spaced (condensedBold (13.0f), 0.14f));
-    g.drawText ("START A NEW SONG WITH", 0, getHeight() - 140, getWidth(), 22, juce::Justification::centred);
+    g.drawText ("HOW IT WORKS", 16, 6, 200, 20, juce::Justification::centredLeft);
 
-    auto side = [&] (juce::Rectangle<float> r, const juce::String& top, const juce::String& bottom)
+    static const char* heads[3] = { "PICK A TOOL", "PRESS REC", "IT LOOPS" };
+    static const char* bodies[3] = { "Drums, pads, synth, chords or your voice.", "Count-in and click, then play.", "On its own layer, in time. Add the next." };
+    const float bw = ((float) getWidth() - 32.0f - 16.0f) / 3.0f;
+    for (int i = 0; i < 3; ++i)
     {
-        drawRaised (g, r, Look::cream, false, 14.0f);
-        g.setColour (col::ink);
-        g.setFont (spaced (condensedBold (17.0f), 0.08f));
-        g.drawFittedText (top, r.withHeight (r.getHeight() * 0.55f).translated (0, 3).reduced (4, 0).toNearestInt(), juce::Justification::centred, 1, 0.8f);
-        g.setColour (col::inkDim);
+        auto box = juce::Rectangle<float> (16.0f + (float) i * (bw + 8.0f), 30.0f, bw, 104.0f);
+        g.setColour (col::well);
+        g.fillRoundedRectangle (box, 12.0f);
+        auto in = box.reduced (10, 9);
+        g.setColour (kNumberColours[i]);
+        g.setFont (lcdFont (22.0f));
+        g.drawText (juce::String (i + 1), in.removeFromTop (20), juce::Justification::centredLeft);
+        g.setColour (juce::Colour (0xfff1e7d1));
+        g.setFont (spaced (condensedBold (15.0f), 0.04f));
+        g.drawFittedText (heads[i], in.removeFromTop (20).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        g.setColour (juce::Colour (0xffcdbfa5));
         g.setFont (small (12.5f));
-        g.drawText (bottom, r.withTrimmedTop (r.getHeight() * 0.52f).withTrimmedBottom (4), juce::Justification::centred);
-    };
-    side (beatRect(), "MAKE A BEAT", "I'll show you how");
-    side (kitRect(), "A KIT", "16 pads to jam on");
+        g.drawFittedText (bodies[i], in.toNearestInt(), juce::Justification::topLeft, 3, 0.85f);
+    }
 
-    auto b = newBounds().toFloat();
-    g.setColour (col::creamLight);
-    g.fillEllipse (b.expanded (4));
-    g.setColour (col::rule);
-    g.drawEllipse (b.expanded (5), 2.0f);
-    g.setColour (juce::Colour (0xff922a1c));
-    g.fillEllipse (b.reduced (4).translated (0, 3));
-    g.setColour (juce::Colour (0xffd8452f));
-    g.fillEllipse (b.reduced (4));
+    g.setColour (col::inkDim);
+    g.setFont (spaced (condensedBold (13.0f), 0.14f));
+    g.drawText ("YOUR SONGS", 16, 274, 160, 26, juce::Justification::centredLeft);
+    static const char* sorts[3] = { "RECENT", "A-Z", "MOST LAYERS" };
+    auto chip = sortChip();
+    drawRaised (g, chip, Look::cream, false, 10.0f);
     g.setColour (col::ink);
-    g.setFont (spaced (condensedBold (14.0f), 0.12f));
-    g.drawText ("A SOUND", 0, (int) b.getBottom() + 6, getWidth(), 20, juce::Justification::centred);
+    g.setFont (spaced (condensedBold (13.0f), 0.06f));
+    g.drawFittedText (juce::String ("SORT: ") + sorts[sortBy], chip.withTrimmedBottom (3).reduced (6, 0).toNearestInt(), juce::Justification::centred, 1, 0.8f);
 }

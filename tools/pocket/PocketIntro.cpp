@@ -124,9 +124,9 @@ const std::vector<TourOverlay::Stop>& TourOverlay::stops()
         { "REC", juce::Colour (0xffd8452f), "One button records", U8("REC records the tool on screen onto the next empty loop layer, in time. Tap it again to stop. Tap the display up top for count-in and length; BPM sets the tempo, CLICK the metronome."), "Got it" },
         { "CHORDS", juce::Colour (0xffb9a3dc), "Chords in the song's key", "Eight chords of the song's key: tap one, or fill the PROGRESSION for one chord a bar. They set the vocoder's notes, and SYNTH plays in the same key.", "Next" },
         { "PADS", col::amber, "Hit it!", "Every pad holds a sound, and a factory kit is already loaded. Tap one. Press REC to play a pattern in, then it locks onto a layer.", "I hit it" },
-        { "LOOPS", col::ink, "Build it up", "Every take lands on a layer. Mute and dub them as it plays, and EDIT one to trim it, add effects and record knob moves.", "Next" },
+        { "LOOPS", col::ink, "Build it up", "Every take lands on its own layer, marked with the tool that made it. Tap a layer: IN / OUT trims it, FIT or QUANTIZE puts it in time, EFFECTS adds knob moves.", "Next" },
         { "VOCODER", juce::Colour (0xff82cf6a), "Headphones first", "The mic stays off until you say what you're listening on. With headphones on, you hear yourself; without, it still records.", "Next" },
-        { "TO MAC", juce::Colour (0xff56b3d6), "Send it home", "TO MAC puts every layer on your Mac's Kaleidobox, in time.", "Let's make one" } };
+        { "TO MAC", juce::Colour (0xff56b3d6), "Send it home", "TO MAC puts the picked layer (or every layer) on your Mac's Kaleidobox, in time.", "Let's make one" } };
     return all;
 }
 

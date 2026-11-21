@@ -8,6 +8,20 @@ constexpr float kLayerLevel = 0.8f;
 constexpr double kEps = 1.0e-9;
 }
 
+int pocket::toolForSource (int source)
+{
+    switch ((LoopSource) source)
+    {
+        case LoopSource::drums: return (int) LayerTool::drums;
+        case LoopSource::vocoder:
+        case LoopSource::both: return (int) LayerTool::vocoder;
+        case LoopSource::mix: return (int) LayerTool::mix;
+        case LoopSource::synth: return (int) LayerTool::synth;
+        case LoopSource::chords: return (int) LayerTool::chords;
+        default: return (int) LayerTool::mic;
+    }
+}
+
 LoopsEngine::LoopsEngine (BeatsEngine& b) : beats (b)
 {
     for (auto& c : cmds)
@@ -51,7 +65,7 @@ void LoopsEngine::push (const Cmd& c)
     fifo.finishedWrite (n1 + n2);
 }
 
-bool LoopsEngine::arm (int layer, LoopSource source, int bars)
+bool LoopsEngine::arm (int layer, LoopSource source, int bars, int tool)
 {
     if (layer < 0 || layer >= kLoopLayers || state (layer) != LoopState::empty
         || layers[(size_t) layer].pending.load() > 0)
@@ -63,6 +77,8 @@ bool LoopsEngine::arm (int layer, LoopSource source, int bars)
                               : (int) (600.0 * sampleRate) + lat;   // FREE: up to 10 minutes
     auto take = makeTake (room, sampleRate);
     take->source = (int) source;
+    take->tool = tool >= 0 ? tool : toolForSource ((int) source);
+    setRegion (layer, 0, 0);
     resetFx (layer);   // a new recording starts with its effects off
     if (takes[(size_t) layer] != nullptr)
         retired.push_back ({ takes[(size_t) layer], juce::Time::getMillisecondCounter() });
@@ -110,8 +126,9 @@ void LoopsEngine::clear (int layer)
     push (c);
 }
 
-void LoopsEngine::setLayer (int layer, SharedTake take, bool mute)
+void LoopsEngine::setLayer (int layer, SharedTake take, bool mute, double startBeat)
 {
+    setRegion (layer, 0, 0);
     if (takes[(size_t) layer] != nullptr)
         retired.push_back ({ takes[(size_t) layer], juce::Time::getMillisecondCounter() });
     takes[(size_t) layer] = take;
@@ -121,6 +138,7 @@ void LoopsEngine::setLayer (int layer, SharedTake take, bool mute)
     Cmd c;
     c.kind = Cmd::set;
     c.layer = layer;
+    c.beat = startBeat;
     c.take = take.get();
     push (c);
 }
@@ -136,6 +154,11 @@ SharedTake LoopsEngine::copyOf (int layer) const
     t->length = src->length.load();
     t->lengthBeats = src->lengthBeats.load();
     t->source = src->source;
+    t->tool = src->tool;
+    t->content = src->content;
+    t->part = src->part;
+    t->quant = src->quant;
+    t->origin = src->origin;
     return t;
 }
 
@@ -405,7 +428,7 @@ void LoopsEngine::handle (const Cmd& c)
             else
             {
                 l.lenBeats = c.take->lengthBeats.load();
-                l.startBeat = 0;
+                l.startBeat = c.beat;
                 setState (l, LoopState::playing);
                 ++l.version;
             }
@@ -677,10 +700,16 @@ void LoopsEngine::playLayer (Layer& l, int index, double blockBeat, double bps, 
 
     const float* d = l.take->data.data();
     const double perBeat = (double) len / lenBeats;
-    double phase = std::fmod (blockBeat - l.startBeat, lenBeats);
+    // HEAR IN-OUT: only that part, round and round
+    const double rf = l.regionFrom.load(), rt = juce::jmin (lenBeats, l.regionTo.load());
+    const bool region = rt > rf + 1.0e-6 && rf >= 0.0;
+    const double loopFrom = region ? rf : 0.0, loopBeats = region ? rt - rf : lenBeats;
+    double phase = std::fmod (blockBeat - l.startBeat - loopFrom, loopBeats);
     if (phase < 0)
-        phase += lenBeats;
+        phase += loopBeats;
+    phase += loopFrom;
     double pos = phase * perBeat;
+    const double loopStart = loopFrom * perBeat, loopEnd = juce::jmin ((double) len, (loopFrom + loopBeats) * perBeat);
     const double step = bps * perBeat;
     const float target = l.mute.load() ? 0.0f : kLayerLevel;
     const float coef = 1.0f - std::exp (-1.0f / (0.005f * (float) sampleRate));
@@ -694,8 +723,8 @@ void LoopsEngine::playLayer (Layer& l, int index, double blockBeat, double bps, 
         g += (target - g) * coef;
         out[(size_t) i] = (d[i0] + (d[i1] - d[i0]) * frac) * g;
         pos += step;
-        if (pos >= (double) len)
-            pos -= (double) len;
+        if (pos >= loopEnd)
+            pos -= loopEnd - loopStart;
     }
     l.gain = g;
     l.uiPos = (float) (pos / (double) len);

@@ -34,7 +34,25 @@ struct Instrument : public PocketAudio::Renderer
 };
 enum class LoopState { empty, waiting, recording, playing, overdubWait, overdubbing };
 
-// One layer's recorded sound. The audio thread writes `data` while the layer records or overdubs.
+// The tool that made a layer (what the Loops rows show): set when the take is armed.
+enum class LayerTool { mic, drums, pads, synth, chords, vocoder, mix, count };
+int toolForSource (int source);   // a LoopSource's usual maker (DRUMS for the drums source: PADS says so itself)
+
+// QUANTIZE on a layer that came from notes: the grid (0 = as played, 1 = 1/4, 2 = 1/8, 3 = 1/16), how far the
+// notes move onto it, and swing (every second grid line later, by a third of a grid step).
+struct LoopQuantize
+{
+    int grid = 0;
+    float strength = 1.0f;
+    bool swing = false;
+    double gridBeats() const { return grid == 1 ? 1.0 : grid == 2 ? 0.5 : grid == 3 ? 0.25 : 0.0; }
+    bool operator== (const LoopQuantize& o) const { return grid == o.grid && std::abs (strength - o.strength) < 1.0e-4f && swing == o.swing; }
+};
+
+struct NotePart;   // PocketLoopTools.h: the notes a layer was printed from
+
+// One layer's recorded sound. The audio thread writes `data` while the layer records or overdubs (and reads
+// only `data`, `length` and `lengthBeats`); the rest is the message thread's.
 struct LoopTake
 {
     std::vector<float> data;               // capacity; the loop is the first `length` samples
@@ -42,6 +60,14 @@ struct LoopTake
     std::atomic<double> lengthBeats { 0 };
     double sampleRate = 44100.0;
     int source = 0;
+    int tool = 0;                          // LayerTool
+    int content = 0;                       // samples of real sound from the start (the rest pads it to the bar), 0 = all
+    std::shared_ptr<const NotePart> part;  // the notes it was printed from (QUANTIZE re-renders them), or null
+    LoopQuantize quant;                    // how `part` was re-timed for this audio
+    // The audio before it was stretched to follow a tempo change (null = `data` is it): every new tempo is
+    // stretched from this, so changes don't pile up.
+    std::shared_ptr<const std::vector<float>> origin;
+    int contentSamples() const { return content > 0 ? juce::jmin (content, length.load()) : length.load(); }
 };
 using SharedTake = std::shared_ptr<LoopTake>;
 
@@ -76,7 +102,7 @@ public:
 
     // Arms an empty layer: it starts at the next bar (or after the count-in when the clock is stopped
     // and the count-in is on) and runs `bars` bars (0 = until stop()).
-    bool arm (int layer, LoopSource, int bars);
+    bool arm (int layer, LoopSource, int bars, int tool = -1);   // tool: a LayerTool, -1 = the source's usual one
     // Recording: ends at the end of the bar. Waiting for the next bar: cancels.
     void stop (int layer);
     // A playing layer records on top of itself from the next loop.
@@ -84,8 +110,12 @@ public:
     void setMute (int layer, bool);
     bool isMuted (int layer) const { return layers[(size_t) layer].mute.load(); }
     void clear (int layer);
-    // Puts a loop on a layer (restoring a saved one, or undoing). nullptr empties it.
-    void setLayer (int layer, SharedTake, bool mute);
+    // Puts a loop on a layer (restoring a saved one, or undoing). nullptr empties it. `startBeat` is the clock
+    // beat its top falls on (the loop's place against the song; it plays from there, round and round).
+    void setLayer (int layer, SharedTake, bool mute, double startBeat = 0.0);
+    // Plays only [fromBeat, toBeat) of the layer, round and round (the editor's HEAR IN-OUT). to <= from: all of it.
+    void setRegion (int layer, double fromBeat, double toBeat) { layers[(size_t) layer].regionFrom = fromBeat; layers[(size_t) layer].regionTo = toBeat; }
+    bool hasRegion (int layer) const { return layers[(size_t) layer].regionTo.load() > layers[(size_t) layer].regionFrom.load() + 1.0e-9; }
     SharedTake takeOf (int layer) const { return takes[(size_t) layer]; }
     // A copy of the layer's loop, to put back with setLayer later (overdub's undo).
     SharedTake copyOf (int layer) const;
@@ -149,7 +179,7 @@ public:
 private:
     static constexpr int kChunk = 256;
 
-    struct Cmd { enum Kind { arm, stop, dub, clear, set } kind = arm; int layer = 0, a = 0, b = 0, c = 0; LoopTake* take = nullptr; };
+    struct Cmd { enum Kind { arm, stop, dub, clear, set } kind = arm; int layer = 0, a = 0, b = 0, c = 0; double beat = 0; LoopTake* take = nullptr; };
 
     struct Layer
     {
@@ -163,6 +193,7 @@ private:
         std::atomic<bool> uiCounting { false };
         std::atomic<double> uiStart { 0.0 };   // beat the loop (or the recording) started on
         std::atomic<int> uiBars { 0 };         // the recording's length in bars, 0 = until stopped
+        std::atomic<double> regionFrom { 0.0 }, regionTo { 0.0 };   // HEAR IN-OUT
         // the audio thread's
         LoopTake* take = nullptr;
         LoopState st = LoopState::empty;

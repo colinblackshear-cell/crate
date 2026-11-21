@@ -320,7 +320,7 @@ PocketApp::PocketApp (Options o)
     ideasScreen->onOpen = [this] (const juce::String& id) { openIdea (id); };
     ideasScreen->onNew = [this] { newIdea(); };
     ideasScreen->onNewBeat = [this] { makeABeat(); };
-    ideasScreen->onNewKit = [this] { newSongWithKit(); };
+    ideasScreen->onTour = [this] { startTour(); };
     ideasScreen->onPlay = [this] (const juce::String& id) { playIdea (id); };
     ideasScreen->isPlaying = [this] (const juce::String& id) { return id == ideas.current().id && beats.engine().clockRunning(); };
     ideasScreen->onRename = [this] (const juce::String& id) { renameIdea (id); };
@@ -426,6 +426,14 @@ PocketApp::PocketApp (Options o)
     lesson->recSpot = [this] { return getLocalArea (&thumb, thumb.buttonRect (ThumbBar::rec).toNearestInt()); };
     lesson->nextLayerNumber = [this] { return loopsScreen.nextLayer() + 1; };
     loopsScreen.onSourceChanged = [this] { applyMic(); };
+    loopsScreen.onOpenTool = [this] (Tool t) { showTool (t); };
+    loopsScreen.kitSounds = [this]
+    {
+        std::vector<PadSetup> kit;
+        for (int p = 0; p < kPads; ++p)
+            kit.push_back (beats.kit().pads[(size_t) p].setup());
+        return kit;
+    };
     synthScreen.songKey = [this] { return songKey; };
     synthScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
     synthScreen.toast = [this] (const juce::String& t) { toast (t); };
@@ -1041,12 +1049,14 @@ void PocketApp::openIdea (const juce::String& id)
     showTool (loopsScreen.layerCount() > 0 ? Tool::loops : Tool::pads);
 }
 
+// Home's + NEW SONG: an empty song (the Street kit on the pads, nothing programmed), open on LOOPS with its empty
+// layers, and the tool row lit to say where to start.
 void PocketApp::newIdea()
 {
     switchIdea (ideas.create (ideas.nextName()));
-    showPage (Page::recorder);
-    record.startRecording();
-    toast (ideas.current().name + U8(": recording a sound. Tap the red button again to stop."));
+    showTool (Tool::loops, false);
+    toolRow.flash();
+    toast ("Pick a tool down here, then press REC: it lands on layer 1, in time.");
 }
 
 void PocketApp::renameIdea (const juce::String& id)
@@ -1108,13 +1118,6 @@ void PocketApp::lessonFromMore()
     startLesson();
 }
 
-void PocketApp::newSongWithKit()
-{
-    switchIdea (ideas.create (ideas.nextName()));
-    showTool (Tool::pads);
-    openSoundBank();
-    toast ("Pick a kit to start from. The Street kit is on the pads already.");
-}
 
 void PocketApp::playIdea (const juce::String& id)
 {
@@ -1752,6 +1755,15 @@ void PocketApp::lockWatchTick()
                 return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::synth, lockBars))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            auto part = std::make_shared<pocket::NotePart>();
+            part->kind = pocket::NotePart::synth;
+            part->notes = synthPart.pattern;
+            part->preset = synthPart.preset;
+            part->knobs = synthPart.knobs;
+            part->octave = synthPart.octave;
+            part->lengthBeats = lockBars * 4.0;
+            part->startBeat = lockStart;
+            lockPart = part;
             lockLayer = layer;
             lockArmed = true;
             applyClick();
@@ -1803,8 +1815,20 @@ void PocketApp::lockWatchTick()
             const int layer = loopsScreen.nextLayer();
             if (layer < 0)
                 return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
-            if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars))
+            if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars, (int) pocket::LayerTool::pads))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            // the notes it's printed from, for QUANTIZE: the pattern, the drum machine if it plays along, the kit
+            auto part = std::make_shared<pocket::NotePart>();
+            part->kind = pocket::NotePart::pads;
+            part->pattern = beats.drums().padPattern;
+            part->drumsOn = b.isPlaying();
+            if (part->drumsOn)
+                part->drums = beats.drums();
+            for (int p = 0; p < kPads; ++p)
+                part->kit.push_back (beats.kit().pads[(size_t) p].setup());
+            part->lengthBeats = lockBars * 4.0;
+            part->startBeat = lockStart;
+            lockPart = part;
             lockLayer = layer;
             lockArmed = true;
             beats.setRecordingPads (false);
@@ -1856,6 +1880,8 @@ void PocketApp::lockWatchTick()
         lockKind = LockKind::none;
         finishSynthTake();
         loops.setTransport (true);
+        loopsScreen.attachPart (lockLayer, lockPart);
+        lockPart = nullptr;
         synthPart.clearKeepingUndo();
         synthUndoLayer = lockLayer;
         if (synthPart.knobs.echo > 0.0f)
@@ -1874,6 +1900,9 @@ void PocketApp::lockWatchTick()
         lockWatch.stopTimer();
         const bool pads = lockKind == LockKind::pads;
         const bool drumTake = lockKind == LockKind::drums || lockKind == LockKind::drumsLive;
+        if (pads && lockPart != nullptr)
+            loopsScreen.attachPart (lockLayer, lockPart);
+        lockPart = nullptr;
         lockKind = LockKind::none;
         loops.setTransport (true);     // the loop keeps the clock going once the pattern stops
         b.setPatternPlaying (false);
@@ -2356,7 +2385,7 @@ void PocketApp::endTour()
 {
     tour->setVisible (false);
     showIdeasList();
-    toast ("That's the tour. Open a song, pick a tool, press REC.");
+    toast ("That's the tour. + NEW SONG starts one: pick a tool, press REC.");
 }
 
 juce::Rectangle<int> PocketApp::tourStop (int stop)
@@ -2486,15 +2515,39 @@ void PocketApp::writeSnapshots (const juce::File& folder)
 
     auto take = lib.load (lib.items().front().id);
 
-    // Your songs, like Voice Memos
+    // Home: how it works, + NEW SONG, the lesson and the tour, then the songs with their layers' tools
     {
         const auto now = juce::Time::getCurrentTime();
         const auto day = juce::RelativeTime::days (1);
-        ideas.rename (ideas.current().id, "Porch rain groove");
-        ideas.setDemo (ideas.current().id, stepSing, false, U8("92 BPM · 6 pads · 3 loops"), now - juce::RelativeTime::minutes (20));
-        ideas.setDemo (ideas.create ("Train horn chop"), stepBeat, false, U8("92 BPM · 4 pads · beat recorded"), now - day);
-        ideas.setDemo (ideas.create ("Humming in the car"), stepRecord, false, U8("0:38 recording"), now - juce::RelativeTime::days (3));
-        ideas.setDemo (ideas.create ("Late night vocoder"), stepSend, true, U8("84 BPM · 5 loops"), now - juce::RelativeTime::days (4));
+        auto layersOf = [this] (const juce::String& id, double bpm, std::initializer_list<pocket::LayerTool> tools)
+        {
+            auto dir = ideas.folderFor (id).getChildFile ("Loops");
+            dir.createDirectory();
+            auto* root = new juce::DynamicObject();
+            juce::Array<juce::var> list;
+            int l = 0;
+            for (auto t : tools)
+            {
+                auto* o = new juce::DynamicObject();
+                o->setProperty ("layer", l++);
+                o->setProperty ("tool", (int) t);
+                list.add (juce::var (o));
+            }
+            root->setProperty ("bpm", bpm);
+            root->setProperty ("layers", list);
+            dir.getChildFile ("loops.json").replaceWithText (juce::JSON::toString (juce::var (root)));
+        };
+        using LT = pocket::LayerTool;
+        ideas.rename (ideas.current().id, "Train horn song");
+        ideas.setDemo (ideas.current().id, stepSing, false, {}, now - juce::RelativeTime::minutes (20));
+        layersOf (ideas.current().id, 92.0, { LT::drums, LT::synth, LT::vocoder });
+        auto porch = ideas.create ("Porch rain groove");
+        ideas.setDemo (porch, stepBeat, false, {}, now - day);
+        layersOf (porch, 84.0, { LT::pads, LT::drums, LT::chords, LT::mic });
+        auto hum = ideas.create ("Humming in the car");
+        ideas.setDemo (hum, stepRecord, false, {}, now - juce::RelativeTime::days (3));
+        layersOf (hum, 0.0, { LT::mic });
+        ideas.setDemo (ideas.create ("Late night vocoder"), stepSend, true, {}, now - juce::RelativeTime::days (4));
     }
     showIdeasList();
     savePng (folder.getChildFile ("00-songs.png"));
@@ -2521,18 +2574,26 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("02b-chop-markers.png"));
     closeSheet();
 
-    // LOOPS: layers 1-2 playing, 3 recording, 4 waiting for the next bar, 5 muted, 6-8 empty
+    // LOOPS: drums, a synth part (picked: the panel), a vocoder take, a pads pattern, a muted mic take, the next row
+    beats.setBpm (92.0);
     loopsScreen.showDemo();
     showTool (Tool::loops);
     savePng (folder.getChildFile ("03-tool-loops.png"));
+    loopsScreen.selectLayer (2);
+    savePng (folder.getChildFile ("03a-loops-audio-picked.png"));
     openTempo();
     savePng (folder.getChildFile ("03b-tempo.png"));
     closeTempo();
     openRecSetup();
     savePng (folder.getChildFile ("03c-rec-setup.png"));
     closeRecSetup();
-    loopsScreen.showEditorDemo();
-    savePng (folder.getChildFile ("03d-loop-editor.png"));
+    loopsScreen.showEditorDemo (0);
+    savePng (folder.getChildFile ("03d-loop-editor-shape-audio.png"));
+    loopsScreen.closeEditor();
+    loopsScreen.showEditorDemo (1);
+    savePng (folder.getChildFile ("03e-loop-editor-shape-notes.png"));
+    loopsScreen.showEditorDemo (2);
+    savePng (folder.getChildFile ("03f-loop-editor-effects.png"));
     loopsScreen.leave();
 
     // DRUMS: the drum machine with a beat in it (a new song's grid is empty: this one is filled for the picture)
@@ -2808,6 +2869,10 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = LoopsScreen::selfCheck (loopsReport); why.isNotEmpty())
         problems.add ("Loops: " + why);
 
+    juce::String toolsReport;
+    if (const auto why = loopToolsSelfCheck (toolsReport); why.isNotEmpty())
+        problems.add ("Loop editor: " + why);
+
     juce::String vocoderReport;
     if (const auto why = VocoderEngine::selfCheck (vocoderReport); why.isNotEmpty())
         problems.add ("Vocoder: " + why);
@@ -2816,6 +2881,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     juce::String recReport;
     if (const auto why = runRecChecks (recReport); why.isNotEmpty())
         problems.add (why);
+    juce::String editReport;
+    if (const auto why = runLoopEditChecks (editReport); why.isNotEmpty())
+        problems.add ("Loop editor in the app: " + why);
 
     // The count-in as it looks: REC on VOCODER with the song stopped, at beat 3 of the count
     {
@@ -2876,12 +2944,14 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     }
 
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: + NEW SONG makes an empty song open on LOOPS, SET IN / SET OUT at the playhead and TRIM give a loop of the snapped length that plays gap-free in time (a 7-beat trim pads to 2 bars), FIT TO n BARS is exact and keeps the pitch, QUANTIZE moves loosely played pad hits and synth notes onto the grid in the re-rendered layer and UNDO brings the original back, effects and moves survive trim, fit and quantize, a BPM change keeps every layer's pitch, each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, and the mic is silent in the speaker until it's allowed\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nPLAY LIVE early hit: " + beats.liveReport + "\n"
                           + "\nSynth self-check (120 BPM, 44.1 kHz):\n" + synthReport
                           + "\nChords self-check (120 BPM, 44.1 kHz):\n" + chordsReport
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
+                          + "\nLoop editor (offline):\n" + toolsReport
+                          + "\nLoop editor in the app (96 BPM, 44.1 kHz):\n" + editReport
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport
                           + "\nREC, count-in and mic checks (97 BPM, 44.1 kHz):\n" + recReport);
     for (auto& line : problems)
@@ -3408,6 +3478,309 @@ juce::String PocketApp::runRecChecks (juce::String& report)
     micOn = micHear = false;
     applyMic();
     stopEverything();
+    pump (2048);
+    return problems.joinIntoString ("\n");
+}
+
+//==============================================================================
+// The loop editor through the app: + NEW SONG is empty; SET IN / SET OUT at the playhead and TRIM give a loop of the
+// snapped length that plays with no gap, in time; FIT TO n BARS is exact and keeps the pitch; QUANTIZE puts loosely
+// played notes on the grid and UNDO brings them back; effects and moves survive all of it; a tempo change keeps the
+// layers' pitch.
+juce::String PocketApp::runLoopEditChecks (juce::String& report)
+{
+    juce::StringArray problems;
+    auto& L = loopsScreen.engine();
+    const double sr = 44100.0, bpm = 96.0, spb = 60.0 / bpm * sr;
+
+    // + NEW SONG
+    showIdeasList();
+    newIdea();
+    std::vector<float> in (512, 0.0f), outL (512), outR (512);
+    std::vector<double> blockBeat;
+    std::vector<float> out;
+    bool keep = false;
+    auto pump = [&] (int samples)
+    {
+        for (int done = 0; done < samples; done += 512)
+        {
+            const float* ptr = in.data();
+            L.setInput (&ptr, 1);
+            std::fill (outL.begin(), outL.end(), 0.0f);
+            std::fill (outR.begin(), outR.end(), 0.0f);
+            L.render (outL.data(), outR.data(), 512);
+            if (keep)
+            {
+                blockBeat.push_back (L.beatNow() - 256.0 / spb);   // the clock says where its last 256-sample chunk began
+                out.insert (out.end(), outL.begin(), outL.end());
+            }
+        }
+    };
+    pump (40 * 512);
+    {
+        bool emptyDrums = true;
+        for (auto& pair : beats.drums().patterns)
+            for (auto& p : pair)
+                emptyDrums = emptyDrums && p.isEmpty();
+        const bool onLoops = page == Page::tool && tool == Tool::loops;
+        report << "new song: " << ideas.current().name << ", " << loopsScreen.layerCount() << " layers, drum grid " << (emptyDrums ? "empty" : "NOT empty")
+               << ", pad pattern " << (int) beats.drums().padPattern.hits.size() << " hits, " << beats.kit().usedPads() << " pads with sounds, on "
+               << (onLoops ? "LOOPS" : "another page") << "\n";
+        if (loopsScreen.layerCount() != 0 || ! emptyDrums || ! beats.drums().padPattern.hits.empty() || ! onLoops || beats.kit().usedPads() == 0)
+            problems.add ("+ NEW SONG: the song wasn't empty with a kit loaded, open on LOOPS");
+    }
+
+    beats.setBpm (bpm);
+    L.prepare (sr);
+    L.setLatency (0);
+    loopsScreen.setSyncJobs (true);
+    micOn = false;
+    applyMic();
+
+    // layer 1: a ramp 4 bars long, so any gap or repeat shows
+    const double d = 1.0 / 300000.0;
+    const int n16 = (int) std::llround (16.0 * spb);
+    {
+        auto take = LoopsEngine::makeTake (n16, sr);
+        for (int i = 0; i < n16; ++i)
+            take->data[(size_t) i] = (float) ((double) i * d);
+        take->length = n16;
+        take->lengthBeats = 16.0;
+        L.setLayer (0, take, false);
+    }
+    // layer 2 (muted): a hum 4.2 bars long in a 5-bar FREE take, with effects and moves
+    const int sound = (int) std::llround (4.2 * 4.0 * spb), n20 = (int) std::llround (20.0 * spb);
+    LayerFxState fx;
+    fx.knob[fxReverb] = 0.3f;
+    fx.moves[fxFilter].resize ((size_t) kMoveBins);
+    for (int i = 0; i < kMoveBins; ++i)
+        fx.moves[fxFilter][(size_t) i] = 0.2f + 0.6f * (float) i / kMoveBins;
+    {
+        auto take = LoopsEngine::makeTake (n20, sr);
+        for (int i = 0; i < sound; ++i)
+            take->data[(size_t) i] = 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * i / sr);
+        take->length = n20;
+        take->lengthBeats = 20.0;
+        take->content = sound;
+        take->tool = (int) LayerTool::mic;
+        L.setLayer (1, take, true);
+    }
+    // layer 3 (muted): a synth part played loosely (REC SNAP off), printed as it was played
+    auto part = std::make_shared<NotePart>();
+    part->kind = NotePart::synth;
+    part->preset = juce::jmax (0, synthPresetIndex ("Rubber Funk"));
+    part->notes.bars = 2;
+    part->notes.notes = { { 0.09, 0.4, 45 }, { 4.11, 0.4, 45 } };
+    part->lengthBeats = 8.0;
+    SharedTake looseTake;
+    {
+        const int n8 = (int) std::llround (8.0 * spb);
+        looseTake = LoopsEngine::makeTake (n8, sr);
+        auto audio = renderPart (*part, {}, bpm, sr, n8);
+        std::copy (audio.begin(), audio.end(), looseTake->data.begin());
+        looseTake->length = n8;
+        looseTake->lengthBeats = 8.0;
+        looseTake->tool = (int) LayerTool::synth;
+        looseTake->source = (int) LoopSource::synth;
+        looseTake->part = part;
+        L.setLayer (2, looseTake, true);
+    }
+    pump (2048);
+    L.setFx (1, fx);
+    L.setFx (2, fx);
+    L.setTransport (true);
+    pump (4096);
+    auto fxSurvived = [&] (int layer, bool remapped)
+    {
+        const auto now = L.fxOf (layer);
+        if (std::abs (now.knob[fxReverb] - 0.3f) > 1.0e-4f || now.moves[fxFilter].size() != (size_t) kMoveBins)
+            return false;
+        return remapped || std::abs (now.moves[fxFilter][100] - fx.moves[fxFilter][100]) < 1.0e-4f;
+    };
+
+    // SET IN while it plays bar 2, SET OUT while it plays bar 4 (SNAP BAR), then TRIM
+    loopsScreen.openEditor (0);
+    auto& ed = loopsScreen.editorSheet();
+    ed.setSnap (0);
+    auto playheadBeat = [&] { return L.position (0) * 16.0; };
+    for (int g = 0; g < 2 * n16 && ! (playheadBeat() >= 5.0 && playheadBeat() < 6.0); g += 512)
+        pump (512);
+    ed.setAtPlayhead (true);
+    for (int g = 0; g < 2 * n16 && ! (playheadBeat() >= 12.3 && playheadBeat() < 13.5); g += 512)
+        pump (512);
+    ed.setAtPlayhead (false);
+    report << "SET IN at beat " << juce::String (ed.markerIn(), 2) << ", SET OUT at beat " << juce::String (ed.markerOut(), 2) << " (SNAP BAR)\n";
+    if (std::abs (ed.markerIn() - 4.0) > 1.0e-9 || std::abs (ed.markerOut() - 12.0) > 1.0e-9)
+        problems.add ("SET IN / SET OUT at the playhead didn't snap to bars 2 and 4 (" + juce::String (ed.markerIn(), 2) + ", " + juce::String (ed.markerOut(), 2) + ")");
+    ed.pressTrim();
+    pump (2048);
+    {
+        auto t = L.takeOf (0);
+        const int len = t != nullptr ? t->length.load() : 0;
+        const int want = (int) std::llround (8.0 * n16 / 16.0);
+        const double startVal = t != nullptr ? t->data[0] / d : -1.0;
+        // three passes: the loop point every 8 beats, on the beat it started (IN's place in the song), nothing else jumps
+        keep = true;
+        out.clear();
+        blockBeat.clear();
+        pump (len * 3 + 1024);
+        keep = false;
+        int wraps = 0, bad = 0;
+        long lastWrap = -1, minSpacing = 1L << 40, maxSpacing = 0;
+        double worstPhase = 0.0;
+        const double expectedDiff = 0.8 * d;
+        for (size_t k = 2000; k + 1 < out.size(); ++k)
+        {
+            const double diff = (double) out[k + 1] - (double) out[k];
+            if (diff < -0.01)
+            {
+                if (lastWrap >= 0 && (long) k - lastWrap < 4)
+                    continue;
+                ++wraps;
+                if (lastWrap >= 0)
+                {
+                    minSpacing = juce::jmin (minSpacing, (long) k - lastWrap);
+                    maxSpacing = juce::jmax (maxSpacing, (long) k - lastWrap);
+                }
+                lastWrap = (long) k;
+                const double beatThere = blockBeat[k / 512] + (double) ((k + 1) % 512) / spb;
+                double ph = std::fmod (beatThere - L.startBeat (0), 8.0);
+                ph = juce::jmin (ph, 8.0 - ph);
+                worstPhase = juce::jmax (worstPhase, ph);
+            }
+            else if (std::abs (diff - expectedDiff) > expectedDiff * 0.5)
+                ++bad;
+        }
+        report << "TRIM: " << (t != nullptr ? t->lengthBeats.load() : 0.0) << " beats, " << len << " samples (expected " << want << "), starts at sample "
+               << juce::String (startVal, 0) << " of the old take (IN = " << juce::String (4.0 * spb, 0) << "); plays " << wraps << " loop points " << minSpacing << "-"
+               << maxSpacing << " apart, " << bad << " gaps, loop point " << juce::String (worstPhase * 1000.0, 2) << " thousandths of a beat off the bar\n";
+        if (t == nullptr || std::abs (t->lengthBeats.load() - 8.0) > 1.0e-9 || std::abs (len - want) > 1 || std::abs (startVal - 4.0 * spb) > 2.0)
+            problems.add ("SET IN / SET OUT + TRIM did not give the 2 bars between them");
+        if (wraps < 2 || bad != 0 || minSpacing < len - 1 || maxSpacing > len + 1 || worstPhase > 2.0 / spb)
+            problems.add ("the trimmed loop doesn't play gap-free in time (" + juce::String (wraps) + " loop points, " + juce::String (bad) + " gaps)");
+    }
+    loopsScreen.undo();
+    pump (2048);
+    if (auto t = L.takeOf (0); t == nullptr || std::abs (t->lengthBeats.load() - 16.0) > 1.0e-9)
+        problems.add ("UNDO after TRIM didn't bring the 4 bars back");
+    // IN-OUT of 7 beats (SNAP BEAT): padded to 2 bars so it comes round on the bar
+    loopsScreen.openEditor (0);
+    ed.setSnap (1);
+    ed.setMarkers (4.0, 11.0);
+    ed.pressTrim();
+    pump (2048);
+    if (auto t = L.takeOf (0))
+    {
+        report << "TRIM of 7 beats: " << t->lengthBeats.load() << " beats long with " << juce::String ((double) t->contentSamples() / spb, 2) << " beats of sound\n";
+        if (std::abs (t->lengthBeats.load() - 8.0) > 1.0e-9 || std::abs ((double) t->contentSamples() / spb - 7.0) > 0.01)
+            problems.add ("a 7-beat TRIM didn't loop on the bar (padded to 2 bars)");
+    }
+    loopsScreen.undo();
+    pump (2048);
+    loopsScreen.closeEditor();
+
+    // BEAT MATCH: FIT TO 4 BARS on the 4.2-bar hum
+    loopsScreen.fitLayer (1, 4, 0.0, 20.0 * sound / n20);
+    pump (2048);
+    {
+        auto t = L.takeOf (1);
+        const int want = (int) std::llround (16.0 * spb);
+        double hz = 0.0;
+        if (t != nullptr)
+        {
+            int first = -1, last = -1, count = 0;
+            const int len = t->length.load();
+            for (int i = len / 4; i < len * 3 / 4; ++i)
+                if (t->data[(size_t) i] <= 0.0f && t->data[(size_t) i + 1] > 0.0f)
+                {
+                    if (first < 0) first = i;
+                    last = i;
+                    ++count;
+                }
+            hz = count > 1 ? (count - 1) * sr / (double) (last - first) : 0.0;
+        }
+        report << "FIT TO 4 BARS: " << (t != nullptr ? t->length.load() : 0) << " samples (expected " << want << "), " << juce::String (hz, 2)
+               << " Hz (was 440), effects and moves " << (fxSurvived (1, true) ? "kept" : "LOST") << "\n";
+        if (t == nullptr || t->length.load() != want || std::abs (t->lengthBeats.load() - 16.0) > 1.0e-9)
+            problems.add ("FIT TO 4 BARS did not give exactly 4 bars");
+        if (std::abs (hz - 440.0) > 4.4)
+            problems.add ("FIT TO 4 BARS changed the pitch (" + juce::String (hz, 1) + " Hz)");
+        if (! fxSurvived (1, true))
+            problems.add ("FIT lost the layer's effects or moves");
+    }
+
+    // QUANTIZE 1/4 on the loosely played synth part, then UNDO
+    {
+        LoopQuantize q;
+        q.grid = 1;
+        loopsScreen.quantizeLayer (2, q);
+        pump (2048);
+        auto t = L.takeOf (2);
+        int first = -1, second = -1;
+        if (t != nullptr)
+        {
+            for (int i = 0; i < t->length.load() && first < 0; ++i)
+                if (std::abs (t->data[(size_t) i]) > 0.01f) first = i;
+            for (int i = (int) (3.0 * spb); i < t->length.load() && second < 0; ++i)
+                if (std::abs (t->data[(size_t) i]) > 0.01f) second = i;
+        }
+        int looseFirst = -1;
+        for (int i = 0; i < looseTake->length.load() && looseFirst < 0; ++i)
+            if (std::abs (looseTake->data[(size_t) i]) > 0.01f) looseFirst = i;
+        report << "QUANTIZE 1/4: notes played at 0.09 and 4.11 now sound at " << juce::String (first / spb, 3) << " and " << juce::String (second / spb, 3)
+               << " (as played: " << juce::String (looseFirst / spb, 3) << "), effects and moves " << (fxSurvived (2, false) ? "kept" : "LOST") << "\n";
+        if (t == nullptr || t->quant.grid != 1 || first < 0 || first > 400 || std::abs (second - 4.0 * spb) > 400 || looseFirst < 0.05 * spb)
+            problems.add ("QUANTIZE didn't move the loosely played notes onto the beats in the layer");
+        if (! fxSurvived (2, false))
+            problems.add ("QUANTIZE lost the layer's effects or moves");
+        loopsScreen.undo();
+        pump (2048);
+        const bool back = L.takeOf (2) == looseTake;
+        report << "UNDO after QUANTIZE: " << (back ? "the layer as played again" : "NOT the original") << "\n";
+        if (! back)
+            problems.add ("UNDO after QUANTIZE didn't bring back the layer as played");
+    }
+
+    // a tempo change: every layer follows, keeping its pitch
+    {
+        beats.setBpm (120.0);
+        for (int g = 0; g < 12; ++g)
+        {
+            loopsScreen.followTempo();
+            pump (1024);
+        }
+        auto t = L.takeOf (1);
+        bool allThere = true;
+        for (int l = 0; l < 3; ++l)
+            if (auto x = L.takeOf (l))
+                allThere = allThere && std::abs (nativeBpm (*x) - 120.0) < 0.3;
+        double hz = 0.0;
+        if (t != nullptr)
+        {
+            int first = -1, last = -1, count = 0;
+            const int len = t->length.load();
+            for (int i = len / 4; i < len * 3 / 4; ++i)
+                if (t->data[(size_t) i] <= 0.0f && t->data[(size_t) i + 1] > 0.0f)
+                {
+                    if (first < 0) first = i;
+                    last = i;
+                    ++count;
+                }
+            hz = count > 1 ? (count - 1) * sr / (double) (last - first) : 0.0;
+        }
+        report << "96 -> 120 BPM: every layer at 120 " << (allThere ? "yes" : "NO") << ", the hum " << (t != nullptr ? t->lengthBeats.load() : 0.0) << " beats at "
+               << juce::String (hz, 2) << " Hz\n";
+        if (! allThere || t == nullptr || std::abs (t->lengthBeats.load() - 16.0) > 1.0e-9 || std::abs (hz - 440.0) > 4.4)
+            problems.add ("after a BPM change the layers didn't follow at their own pitch");
+        beats.setBpm (bpm);
+    }
+
+    loopsScreen.setSyncJobs (false);
+    loopsScreen.closeEditor();
+    togglePlay();
+    stopEverything();
+    for (int l = 0; l < kLoopLayers; ++l)
+        L.setLayer (l, nullptr, false);
     pump (2048);
     return problems.joinIntoString ("\n");
 }
