@@ -2,6 +2,8 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "core/synth/PatternLife.h"
+
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -53,6 +55,24 @@ struct Pattern
     std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> hits {};
     std::array<bool, kMaxSteps> accent {};
     int length = 16;   // 1..32 steps
+
+    // Pattern life (crate::life), for each hit: its chance (percent; 100 always plays), its
+    // condition (life::Cond) and its nudge (percent of a step, -50..50: early or late). And each
+    // sound's row can have a length of its own (0: the pattern's), so it comes round against the
+    // others (polymeter).
+    std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> chance = full (100);
+    std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> cond {};
+    std::array<std::array<std::int8_t, kMaxSteps>, kVoices> nudge {};
+    std::array<std::uint8_t, kVoices> rowLength {};
+    int rowLengthOf (int voice) const { return rowLength[(size_t) voice] > 0 ? (int) rowLength[(size_t) voice] : length; }
+    bool hasLife() const;   // anything besides the hits and accents
+    static std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> full (std::uint8_t v)
+    {
+        std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> a {};
+        for (auto& row : a)
+            row.fill (v);
+        return a;
+    }
 
     bool isEmpty() const;
     bool operator== (const Pattern&) const;
@@ -177,7 +197,11 @@ private:
     float renderVoice (int voice, VoiceState&);
     float noise();
     void handleMidi (const juce::MidiMessage&);
-    void hitStep (int step, const Pattern&, double stepStartBeat, double stepLength);
+    void hitStep (int step, const Pattern&, double stepStartBeat, double stepLength, long long index);
+    // A hit of `voice` at `step`, by the pattern's life: plays now, later (nudged), or not at all.
+    void hitVoice (int voice, int step, const Pattern&, double stepStartBeat, double stepLength, long long index, bool lookAhead);
+    bool lifeSays (int voice, int step, const Pattern&, long long index);
+    void schedule (int voice, double beat, int hits, double gap, float velocity, bool accent);
     const Pattern* byCode (int code) const;
     const Pattern* basePattern (long long loop, int& code) const;
     void resync (long long index);
@@ -211,6 +235,12 @@ private:
     bool wasPlaying = false;
     struct Roll { int left = 0; double next = 0, gap = 0; float velocity = 0; bool accent = false; };
     std::array<Roll, kVoices> rolls {};
+    // Nudged hits, waiting for their moment.
+    struct Pending { double beat = -1; int hits = 1; double gap = 0; float velocity = 1; bool accent = false; };
+    std::array<std::array<Pending, 2>, kVoices> pending {};
+    long long firstLoop = 0;        // the time round when Play was pressed (for First / Not first)
+    long long lookedAheadFor = -1;  // the step whose early hits were already started
+    juce::Random chanceRandom { 0x5eed };
     float driveState = 0;
 };
 }

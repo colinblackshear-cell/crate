@@ -481,6 +481,29 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
     for (auto a : p.accent)
         accent << (a ? "1" : "0");
     t.setProperty ("accent", accent, nullptr);
+    // Pattern life, only where it's been used (each a row of numbers per sound, comma-separated).
+    if (p.hasLife())
+    {
+        juce::ValueTree life ("Life");
+        for (int v = 0; v < drums::kVoices; ++v)
+        {
+            juce::StringArray chance, cond, nudge;
+            for (int s = 0; s < drums::kMaxSteps; ++s)
+            {
+                chance.add (juce::String ((int) p.chance[(size_t) v][(size_t) s]));
+                cond.add (juce::String ((int) p.cond[(size_t) v][(size_t) s]));
+                nudge.add (juce::String ((int) p.nudge[(size_t) v][(size_t) s]));
+            }
+            juce::ValueTree row ("Row");
+            row.setProperty ("voice", v, nullptr);
+            row.setProperty ("length", (int) p.rowLength[(size_t) v], nullptr);
+            row.setProperty ("chance", chance.joinIntoString (","), nullptr);
+            row.setProperty ("cond", cond.joinIntoString (","), nullptr);
+            row.setProperty ("nudge", nudge.joinIntoString (","), nullptr);
+            life.appendChild (row, nullptr);
+        }
+        t.appendChild (life, nullptr);
+    }
     return t;
 }
 
@@ -497,6 +520,25 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
     const auto accent = t.getProperty ("accent").toString();
     for (int s = 0; s < juce::jmin (drums::kMaxSteps, accent.length()); ++s)
         p.accent[(size_t) s] = accent[s] == '1';
+    for (const auto& row : t.getChildWithName ("Life"))
+    {
+        const int v = row.getProperty ("voice", -1);
+        if (! juce::isPositiveAndBelow (v, drums::kVoices))
+            continue;
+        p.rowLength[(size_t) v] = (std::uint8_t) juce::jlimit (0, drums::kMaxSteps, (int) row.getProperty ("length", 0));
+        const auto chance = juce::StringArray::fromTokens (row.getProperty ("chance").toString(), ",", "");
+        const auto cond = juce::StringArray::fromTokens (row.getProperty ("cond").toString(), ",", "");
+        const auto nudge = juce::StringArray::fromTokens (row.getProperty ("nudge").toString(), ",", "");
+        for (int s = 0; s < drums::kMaxSteps; ++s)
+        {
+            if (s < chance.size())
+                p.chance[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (1, 100, chance[s].getIntValue());
+            if (s < cond.size())
+                p.cond[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (0, (int) life::numConds - 1, cond[s].getIntValue());
+            if (s < nudge.size())
+                p.nudge[(size_t) v][(size_t) s] = (std::int8_t) juce::jlimit (-50, 50, nudge[s].getIntValue());
+        }
+    }
     return p;
 }
 

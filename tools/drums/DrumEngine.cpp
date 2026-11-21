@@ -140,7 +140,24 @@ bool Pattern::isEmpty() const
     return true;
 }
 
-bool Pattern::operator== (const Pattern& o) const { return hits == o.hits && accent == o.accent && length == o.length; }
+bool Pattern::operator== (const Pattern& o) const
+{
+    return hits == o.hits && accent == o.accent && length == o.length && chance == o.chance && cond == o.cond && nudge == o.nudge
+           && rowLength == o.rowLength;
+}
+
+bool Pattern::hasLife() const
+{
+    for (int v = 0; v < kVoices; ++v)
+    {
+        if (rowLength[(size_t) v] != 0)
+            return true;
+        for (int st = 0; st < kMaxSteps; ++st)
+            if (chance[(size_t) v][(size_t) st] != 100 || cond[(size_t) v][(size_t) st] != 0 || nudge[(size_t) v][(size_t) st] != 0)
+                return true;
+    }
+    return false;
+}
 
 double stepBeats (int rate)
 {
@@ -189,6 +206,7 @@ void Engine::reset()
     for (auto& s : state)
         s = VoiceState {};
     rolls = {};
+    pending = {};
     lastFired = -1;
     loopCount = 0;
     current = nullptr;
@@ -553,32 +571,67 @@ void Engine::handleMidi (const juce::MidiMessage& m)
         for (auto& s : state)
             s.active = false;
         rolls = {};
+        pending = {};
     }
 }
 
-void Engine::hitStep (int step, const Pattern& p, double stepStart, double stepLength)
+void Engine::hitStep (int step, const Pattern& p, double stepStart, double stepLength, long long index)
 {
-    const bool accent = p.accent[(size_t) step];
+    const bool early = lookedAheadFor == index;   // this step's early hits already started
     for (int v = 0; v < kVoices; ++v)
     {
-        const int h = p.hits[(size_t) v][(size_t) step];
-        if (h == 0)
+        // A row of its own length comes round on its own.
+        const int own = p.rowLength[(size_t) v];
+        const int vStep = own > 0 ? (int) (index % own) : step;
+        if (vStep >= kMaxSteps || p.hits[(size_t) v][(size_t) vStep] == 0)
             continue;
-        start (v, 1.0f, accent);
-        if (h >= 2)
-        {
-            auto& r = rolls[(size_t) v];
-            r.left = juce::jmin (3, h - 1);
-            r.gap = stepLength / juce::jmin (4, h);
-            r.next = stepStart + r.gap;
-            r.velocity = 0.8f;
-            r.accent = accent;
-        }
-        else
-        {
-            rolls[(size_t) v].left = 0;
-        }
+        if (early && p.nudge[(size_t) v][(size_t) vStep] < 0)
+            continue;
+        hitVoice (v, vStep, p, stepStart, stepLength, index, false);
     }
+    // The next step's early hits start in this one.
+    const long long next = index + 1;
+    for (int v = 0; v < kVoices; ++v)
+    {
+        const int own = p.rowLength[(size_t) v];
+        const int vStep = own > 0 ? (int) (next % own) : (step + 1) % juce::jlimit (1, kMaxSteps, p.length);
+        if (p.hits[(size_t) v][(size_t) vStep] != 0 && p.nudge[(size_t) v][(size_t) vStep] < 0)
+            hitVoice (v, vStep, p, stepStart + stepLength, stepLength, next, true);
+    }
+    lookedAheadFor = next;
+}
+
+bool Engine::lifeSays (int v, int step, const Pattern& p, long long index)
+{
+    const int own = p.rowLength[(size_t) v];
+    const long long loop = own > 0 ? index / own - firstLoop : loopCount - firstLoop;
+    if (! life::passes (p.cond[(size_t) v][(size_t) step], loop, inFill))
+        return false;
+    const int chance = p.chance[(size_t) v][(size_t) step];
+    return chance >= 100 || chanceRandom.nextInt (100) < chance;
+}
+
+void Engine::hitVoice (int v, int step, const Pattern& p, double stepStart, double stepLength, long long index, bool)
+{
+    if (! lifeSays (v, step, p, index))
+        return;
+    const bool accent = p.accent[(size_t) step];
+    const int h = p.hits[(size_t) v][(size_t) step];
+    const int hits = juce::jlimit (1, 4, (int) h);
+    const double gap = stepLength / hits;
+    const double at = stepStart + p.nudge[(size_t) v][(size_t) step] / 100.0 * stepLength;
+    schedule (v, at, hits, gap, 1.0f, accent);
+}
+
+void Engine::schedule (int v, double beat, int hits, double gap, float velocity, bool accent)
+{
+    for (auto& slot : pending[(size_t) v])
+        if (slot.beat < 0)
+        {
+            slot = { beat, hits, gap, velocity, accent };
+            return;
+        }
+    pending[(size_t) v][0] = { beat, hits, gap, velocity, accent };
 }
 
 const Pattern* Engine::byCode (int code) const
@@ -682,6 +735,7 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
         current = nullptr;
         inFill = inIntro = false;
         rolls = {};
+        pending = {};
     }
     wasPlaying = sequencing;
 
@@ -743,9 +797,33 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                     resync (index);
                 }
                 currentStep = position;
+                if (fresh)
+                {
+                    firstLoop = loopCount;
+                    lookedAheadFor = -1;
+                }
+                else if (! contiguous)
+                    lookedAheadFor = -1;   // (a jump: nothing was started early for here)
                 const double start = (double) index * sb + ((index & 1) != 0 ? swingOffset : 0.0);
-                hitStep (position, *current, start, (index & 1) != 0 ? sb - swingOffset : sb + swingOffset);
+                hitStep (position, *current, start, (index & 1) != 0 ? sb - swingOffset : sb + swingOffset, index);
             }
+            // Hits whose moment has come (on the step, or nudged a little later or earlier).
+            for (int v = 0; v < kVoices; ++v)
+                for (auto& slot : pending[(size_t) v])
+                    if (slot.beat >= 0 && beat >= slot.beat - 1.0e-9)
+                    {
+                        start (v, slot.velocity, slot.accent);
+                        auto& r = rolls[(size_t) v];
+                        r.left = slot.hits - 1;
+                        if (r.left > 0)
+                        {
+                            r.gap = slot.gap;
+                            r.next = slot.beat + slot.gap;
+                            r.velocity = 0.8f;
+                            r.accent = slot.accent;
+                        }
+                        slot.beat = -1;
+                    }
             for (int v = 0; v < kVoices; ++v)
             {
                 auto& r = rolls[(size_t) v];

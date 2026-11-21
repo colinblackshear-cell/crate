@@ -40,6 +40,7 @@ target_sources(CrateTests PRIVATE
     RigSongCaptureTests.cpp
     RigTakesTests.cpp
     RigNotesTests.cpp
+    PatternLifeTests.cpp
     RigAutomationTests.cpp
     RigLevelTests.cpp
     RigControllersTests.cpp

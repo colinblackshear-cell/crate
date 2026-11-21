@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/synth/SynthDsp.h"
+#include "core/synth/PatternLife.h"
 
 #include <array>
 #include <memory>
@@ -20,6 +21,9 @@ struct Step
     int note = 0;          // semitones above the root note (-12..24)
     bool accent = false;
     bool slide = false;    // glide into the next step instead of retriggering
+    // Pattern life (crate::life): the chance it plays (percent) and its condition.
+    std::uint8_t chance = 100;
+    std::uint8_t cond = 0;
 };
 
 struct Pattern
@@ -118,6 +122,9 @@ private:
 
     // Sequencer.
     long long lastStepIndex = -1;
+    long long firstStepIndex = 0;
+    bool wasSequencingStep = false;   // where Play was pressed (for First / Not first)
+    juce::Random chanceRandom { 0xba55 };
     int currentStep = -1;
     bool stepGateOpen = false;
     double stepEndBeat = 0;
