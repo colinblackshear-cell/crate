@@ -436,7 +436,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
     // The Setup page's parts.
     setupPage = new SetupPage (*this);
-    for (auto* c : std::initializer_list<juce::Component*> { &clickButton, &micButton, &learnPlay, &learnStop, &learnPlayLabel, &learnStopLabel,
+    for (auto* c : std::initializer_list<juce::Component*> { &clickButton, &micButton, &timingButton, &learnPlay, &learnStop, &learnPlayLabel, &learnStopLabel,
                                                              &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
                                                              &darkButton, &popOutButton, &pluginsButton, &pluginsLabel, &pluginsHint,
                                                              &padsLabel, &padBank, &keysLabel, &keysTo,
@@ -495,6 +495,11 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     clickButton.setClickingTogglesState (true);
     clickButton.onClick = [this, &transport] { transport.metronome = clickButton.getToggleState(); };
     clickButton.setTooltip ("A metronome click on every beat while playing.");
+    timingButton.setTooltip ("Recording timing: what you sing or play into the mic or line in comes in a little late (your interface's "
+                             "round trip), so loops and takes from it are moved earlier to land on the beat. If a sung loop still "
+                             "sits late or early, set it here.");
+    timingButton.onClick = [this] { showTimingMenu(); };
+    updateTimingButton();
     micButton.setClickingTogglesState (true);
     micButton.onClick = [this]
     {
@@ -774,10 +779,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     }
     for (auto* l : { &learnPlayLabel, &learnStopLabel })
         l->setFont (vintage::cond (15.0f, vintage::Weight::bold, 0.06f));
-    for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
+    for (auto* b : { &clickButton, &micButton, &timingButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
                      &darkButton, &popOutButton, &pluginsButton, &phoneUnlink })
         vintage::setInWell (*b, true);
-    for (auto* b : { &clickButton, &micButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
+    for (auto* b : { &clickButton, &micButton, &timingButton, &learnPlay, &learnStop, &sampleButton, &knobButton, &audioButton, &controllersButton, &saveButton, &openButton,
                      &darkButton, &popOutButton, &pluginsButton, &phoneUnlink })
         b->getProperties().set ("fontSize", 15.0f);
     vintage::setLit (sampleButton, vintage::Lit::arm);
@@ -874,6 +879,7 @@ void RigView::refresh()
         setDarkPanel ((bool) engine.screens.getProperty ("dark", false));
     auto& transport = engine.getTransport();
     clickButton.setToggleState (transport.metronome.load(), juce::dontSendNotification);
+    updateTimingButton();
     darkButton.setToggleState ((bool) engine.screens.getProperty ("dark", false), juce::dontSendNotification);
     micButton.setToggleState (engine.micOn.load(), juce::dontSendNotification);
     micButton.setButtonText (engine.micOn.load() ? "Mic on" : "Mic off");
@@ -2934,6 +2940,43 @@ void RigView::sayMicOn()
         say ("Mic on: use headphones, or your speakers can feed back into the mic.");
 }
 
+void RigView::updateTimingButton()
+{
+    const double rate = engine.getSampleRate() > 0 ? engine.getSampleRate() : 44100.0;
+    const int ms = (int) std::round (engine.getLiveDelaySamples() * 1000.0 / rate);
+    timingButton.setButtonText ("Timing: " + juce::String (ms) + " ms earlier");
+}
+
+void RigView::showTimingMenu()
+{
+    const double rate = engine.getSampleRate() > 0 ? engine.getSampleRate() : 44100.0;
+    const int trip = (int) std::round (engine.getDeviceRoundTrip() * 1000.0 / rate);
+    const float now = engine.getTimingOffsetMs();
+    juce::PopupMenu menu;
+    menu.addSectionHeader (devices != nullptr ? "Your interface's round trip: " + juce::String (trip) + " ms (always taken off)"
+                                              : "In Logic: add Logic's round trip (Logic > Settings > Audio shows it)");
+    menu.addSectionHeader ("What you sing still sits...");
+    const int offsets[] = { -20, -10, -5, -2, 0, 2, 5, 10, 15, 20, 30, 40, 60 };
+    for (int o : offsets)
+    {
+        juce::String text = o == 0 ? juce::String ("Right: no extra")
+                          : o > 0 ? "Late: move it " + juce::String (o) + " ms more earlier"
+                                  : "Early: move it " + juce::String (-o) + " ms less";
+        menu.addItem (1000 + o + 100, text, true, std::abs (now - (float) o) < 0.5f);
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (timingButton),
+                        [safe = juce::Component::SafePointer<RigView> (this)] (int r)
+                        {
+                            if (safe == nullptr || r <= 0)
+                                return;
+                            safe->engine.setTimingOffsetMs ((float) (r - 1100));
+                            safe->updateTimingButton();
+                            safe->say ("Recording timing: what you sing or play into the mic is moved "
+                                       + juce::String ((int) std::round (safe->engine.getLiveDelaySamples() * 1000.0 / juce::jmax (1.0, safe->engine.getSampleRate())))
+                                       + " ms earlier, for the next loops and takes.");
+                        });
+}
+
 void RigView::showAudioSettings()
 {
     if (devices == nullptr)
@@ -3725,8 +3768,10 @@ void RigView::layoutSetup (juce::Rectangle<int> page)
     line (in, nullptr, { { &clickButton, 120 } });
     if (devices != nullptr)
         line (in, nullptr, { { &micButton, 120 } });
-    sp.cards.back().hint = devices != nullptr ? "Click: a metronome on every beat while playing. Mic: hear your mic (use headphones)."
-                                              : "Click: a metronome on every beat while playing.";
+    line (in, nullptr, { { &timingButton, 190 } });
+    sp.cards.back().hint = devices != nullptr ? "Click: a metronome on every beat while playing. Mic: hear your mic (use headphones). "
+                                                "Timing: moves what you sing onto the beat."
+                                              : "Click: a metronome on every beat while playing. Timing: moves what you sing onto the beat.";
     hintBelow (in);
 
     // Audio & MIDI.

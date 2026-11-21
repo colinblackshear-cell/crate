@@ -297,7 +297,9 @@ private:
     class SetupPage;
     SetupPage* setupPage = nullptr;   // owned by its page
     void layoutSetup (juce::Rectangle<int>);
-    juce::TextButton clickButton { "Click" }, micButton { "Mic off" };
+    juce::TextButton clickButton { "Click" }, micButton { "Mic off" }, timingButton { "Timing" };
+    void showTimingMenu();
+    void updateTimingButton();
     juce::TextButton learnPlay { "Learn" }, learnStop { "Learn" };
     juce::Label learnPlayLabel { {}, "Play key" }, learnStopLabel { {}, "Stop key" };   // on Settings
     juce::TextButton sampleButton { "Sample" }, knobButton { "Knobs" };

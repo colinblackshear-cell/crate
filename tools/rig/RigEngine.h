@@ -112,6 +112,18 @@ public:
     // The first loop that's free for a new layer: empty, and not in the song. -1 when all are used.
     int freeLayerForSong() const;
 
+    // Notes that stay notes (RigNotes): a take from a tool played by notes is a clip of notes
+    // that plays the tool in its section. Message thread: change them, then notesChanged().
+    // A RigLooper::Source that records notes (the Bass, the Synth, the Sampler, the MPC, the
+    // Drum machine).
+    static bool isNotesSource (int source);
+    std::vector<rignotes::Clip>& getNoteClips() { return noteClips; }
+    // The clip of `strip` that starts at `startBar` (-1 for none).
+    int noteClipAt (int strip, double startBar) const;
+    void notesChanged();
+    // Sends the playing take of a notes layer to a free loop, as sound. The loop, or -1.
+    int takeToLoop (int notesLayer);
+
     // Record the set (message thread): every strip and the mix as WAVs, and what's played on
     // the keys and pads as MIDI, into `folder`; it starts at the next bar. Call stopRecording()
     // to end it, and serviceRecorder() often (it returns true when a take has been saved).
@@ -272,6 +284,18 @@ public:
 
     // Plays a note into the Rig as if it came from a keyboard (tests, the window).
     void addMidi (const juce::MidiMessage&);
+
+    // Recording timing. What you sing or play into the mic or line in reaches Kaleidobox late by
+    // the interface's round trip (what you hear comes out late, what you sing comes in late), so
+    // loops and takes from them are moved that much earlier to land on the beat. The app knows
+    // its interface's round trip; the offset (Settings > Click & mic > Timing) adds to it, for
+    // what it can't know (in Logic, Logic's own buffers). Saved on this Mac, apart for the app and
+    // for Logic.
+    void setTimingOffsetMs (float ms, bool save = true);
+    float getTimingOffsetMs() const { return timingOffsetMs; }
+    int getDeviceRoundTrip() const { return deviceRoundTrip.load(); }   // samples (0 in Logic)
+    int getLiveDelaySamples() const;
+    static juce::File timingFile();
 
     //==========================================================================
     // Audio. `prepare` and `process` are what the audio device calls; tests call them directly.
@@ -448,6 +472,9 @@ private:
     RigChords chords;
     RigAutomation automation;
     RigTakes takes;
+    RigNotePlayer notePlayer;
+    std::vector<rignotes::Clip> noteClips;
+    juce::MidiBuffer takeMidi;   // the notes played into the tool a take records (audio thread)
     std::vector<LoopBank> loopBanks;
     int currentLoopBank = -1;
     // A switch waiting for its bar: each layer's effects, put on when its loop comes in.
@@ -511,6 +538,10 @@ private:
     const juce::MidiBuffer* hostMidi = nullptr;
     std::atomic<int> onlyTool { -1 };
     std::array<juce::String, RigLooper::kLayers> loopNames, loadedLoopNames;
+    std::vector<RigTakes::Set> loadedTakeSets;
+    float timingOffsetMs = 0;
+    std::atomic<int> deviceRoundTrip { 0 };
+    void applyTiming();   // from loadShow, until readLoopAudio brings their sound
     std::array<int, RigLooper::kLayers> loopNameVersions {};
     std::atomic<bool> notesOffRequested { false };
     std::array<float* const*, numStems> stemOut {};

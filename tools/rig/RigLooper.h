@@ -171,6 +171,13 @@ public:
     void setEffects (int layer, StripFx* fx) { effects[(size_t) layer] = fx; }
     // The song timeline's level for a layer over the next block, from `from` to `to` (1 when
     // the timeline isn't playing it). Before its effects, so an echo rings out after a fade.
+    // How late a live source (the mic, the vocoder, the line in) comes in, in samples: the
+    // interface's round trip, so what you sing in time with what you hear lands on the beat.
+    // A loop recorded from one is moved this much earlier as it closes, and an overdub is
+    // written this much earlier.
+    void setLiveDelay (int samples) { liveDelay = juce::jmax (0, samples); }
+    int getLiveDelay() const { return liveDelay.load(); }
+    static bool isLiveSource (int source) { return source == input || source == vocoder || source == line; }
     void setArrangeGain (int layer, float from, float to) { arrangeFrom[(size_t) layer] = from; arrangeTo[(size_t) layer] = to; }
 
     struct Clock
@@ -198,6 +205,7 @@ private:
     std::atomic<int> undoLayer { -1 };
     int undoLength = 0;
     std::array<StripFx*, kLayers> effects {};
+    std::atomic<int> liveDelay { 0 };
     std::array<float, kLayers> arrangeFrom { 1, 1, 1, 1, 1, 1, 1, 1 }, arrangeTo { 1, 1, 1, 1, 1, 1, 1, 1 };
     std::array<juce::AudioBuffer<float>, kLayers> layerOut;   // a layer's sound, before its effects
     std::array<int, kLayers> fxTail {};                        // samples left of an effect's tail

@@ -1,5 +1,7 @@
 #include "RigLooper.h"
 
+#include <algorithm>
+
 namespace
 {
 constexpr int kFade = 96;   // samples of fade at each end of a new loop, so it doesn't click
@@ -385,6 +387,13 @@ void RigLooper::finishRecording (Layer& layer)
 {
     layer.length = juce::jmax (1, layer.writeIndex);
     layer.lengthBeats = layer.stopBeat - layer.startBeat;
+    // A live source came in late by the round trip: what was sung on the beat is that far in.
+    if (const int delay = isLiveSource (layer.source.load()) ? liveDelay.load() : 0; delay > 0 && delay < layer.length / 4)
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto* d = layer.audio.getWritePointer (ch);
+            std::rotate (d, d + delay, d + layer.length);
+        }
     const int fade = juce::jmin (kFade, layer.length / 4);
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -538,6 +547,13 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         float target = layer.mute.load() ? 0.0f : layer.level.load();
         float peak = 0;
         bool changed = false;
+        // An overdub from a live source is written earlier by its delay (in the loop's samples).
+        int dubDelay = 0;
+        if (isLiveSource (layer.source.load()) && layer.length > 1 && layer.lengthBeats.load() > 0)
+        {
+            const double loopPerDevice = layer.length / (layer.lengthBeats.load() * sampleRate * 60.0 / juce::jmax (1.0, clock.bpm));
+            dubDelay = juce::jlimit (0, layer.length / 4, (int) std::round (liveDelay.load() * loopPerDevice));
+        }
 
         for (int i = 0; i < n; ++i)
         {
@@ -648,10 +664,11 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
 
                 if (state == State::overdubbing)
                 {
+                    const int w = (i0 - dubDelay + layer.length) % layer.length;
                     if (srcL != nullptr)
-                        audioL[i0] += srcL[i];
+                        audioL[w] += srcL[i];
                     if (srcR != nullptr)
-                        audioR[i0] += srcR[i];
+                        audioR[w] += srcR[i];
                     changed = true;
                 }
             }

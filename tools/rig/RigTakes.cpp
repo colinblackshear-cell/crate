@@ -38,6 +38,8 @@ bool RigTakes::start (int layer, int source, double startBar, double bars, bool 
         jassert (status[(size_t) i].load() == 0);
         if (pool[(size_t) i].getNumSamples() < capacity || pool[(size_t) i].getNumSamples() > capacity * 2)
             pool[(size_t) i].setSize (2, capacity, false, false, true);
+        events[(size_t) i].clear();
+        events[(size_t) i].reserve (isNotesLayer (layer) ? (size_t) kMaxEvents : 0);
         status[(size_t) i] = 0;
     }
 
@@ -99,7 +101,7 @@ double RigTakes::passProgress() const
 
 //==============================================================================
 void RigTakes::process (const juce::AudioBuffer<float>* source, int n, double beat, double bpm,
-                        bool playing, double sampleRate)
+                        bool playing, double sampleRate, const juce::MidiBuffer* midi)
 {
     int st = state.load (std::memory_order_acquire);
     if (st == (int) State::idle || n <= 0)
@@ -126,6 +128,7 @@ void RigTakes::process (const juce::AudioBuffer<float>* source, int n, double be
     }
 
     const double bps = bpm / (60.0 * juce::jmax (1.0, sampleRate));
+    beat -= delay.load() * bps;   // (where what's coming in was played)
     const double end = beat + n * bps;
     const bool jumped = lastEnd >= 0 && std::abs (beat - lastEnd) > 1.0e-4;
     lastEnd = end;
@@ -164,6 +167,7 @@ void RigTakes::process (const juce::AudioBuffer<float>* source, int n, double be
         status[(size_t) free].store (1, std::memory_order_relaxed);
         current = free;
         writeIndex = 0;
+        events[(size_t) free].clear();
         order[(size_t) free] = ++passCount;
         passesStarted = passCount;
         st = (int) State::recording;
@@ -191,6 +195,19 @@ void RigTakes::process (const juce::AudioBuffer<float>* source, int n, double be
                 buffer.copyFrom (ch, writeIndex, *source, juce::jmin (ch, source->getNumChannels() - 1), offset, count);
             else
                 buffer.clear (ch, writeIndex, count);
+        }
+        if (midi != nullptr)
+        {
+            auto& list = events[(size_t) current];
+            for (const auto m : *midi)
+            {
+                if (m.samplePosition < offset || m.samplePosition >= offset + count || list.size() >= list.capacity())
+                    continue;
+                const auto msg = m.getMessage();
+                if (msg.isNoteOnOrOff())
+                    list.push_back ({ writeIndex + m.samplePosition - offset, msg.getNoteNumber(), msg.getFloatVelocity(),
+                                      msg.getChannel(), msg.isNoteOn() });
+            }
         }
         writeIndex += count;
         progressSamples = writeIndex;
@@ -243,6 +260,8 @@ int RigTakes::collect()
                 take.audio.applyGainRamp (ch, keep - fade, fade, 1.0f, 0.0f);
             }
             take.beats = activeBars * beatsPerBar;
+            if (isNotesLayer (set->layer))
+                take.notes = rignotes::notesFrom (events[(size_t) pick], expected, take.beats);
             take.partial = w < expected - juce::jmax (64, expected / 200);
             take.number = set->nextNumber++;
             set->takes.push_back (std::move (take));
@@ -259,6 +278,7 @@ int RigTakes::collect()
             ++made;
             ++takesMade;
         }
+        events[(size_t) pick].clear();
         status[(size_t) pick].store (0, std::memory_order_release);
     }
     // Done recording (one pass, the clock stopped, or stopped), and every pass collected.
@@ -337,4 +357,16 @@ void RigTakes::clear()
             status[(size_t) i] = 0;
     sets.clear();
     activeLayer = -1;
+}
+
+void RigTakes::restore (Set set)
+{
+    if (set.layer < 0 || set.takes.empty())
+        return;
+    set.playing = juce::jlimit (0, (int) set.takes.size() - 1, set.playing);
+    for (auto& t : set.takes)
+        set.nextNumber = juce::jmax (set.nextNumber, t.number + 1);
+    set.fresh = false;
+    forget (set.layer);
+    sets.push_back (std::move (set));
 }
