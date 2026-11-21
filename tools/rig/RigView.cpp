@@ -1,4 +1,5 @@
 #include "RigView.h"
+#include "NoteEditor.h"
 #include "AutomationPanel.h"
 #include "RigExport.h"
 #include "RigLogicImport.h"
@@ -1493,6 +1494,9 @@ int RigView::recTargetLayer() const
         return groove != nullptr ? groove->getPickedLayer() : -1;
     if (juce::isPositiveAndBelow (recLayer, RigLooper::kLayers))
         return recLayer;
+    // A tool played by notes records its notes (unless asked for its sound, onto a loop).
+    if (const int source = takeSourceFor (t); RigEngine::isNotesSource (source) && ! recAsSound)
+        return RigTakes::notesLayer (RigEngine::stripForSource (source));
     const auto list = rigsong::sections (engine.getTimeline());
     const int sec = recTargetSection();
     if (juce::isPositiveAndBelow (sec, (int) list.size()))
@@ -1536,8 +1540,9 @@ int RigView::pressRecInto()
         takes.stop();
         engine.serviceTakes();
         if (recording)
-            say ("Stopped. Your takes are on loop " + juce::String (layer + 1) + ": the newest plays in the song (a take cut short too, if it had a bar in it). "
-                 "Takes picks another.");
+            say ((RigTakes::isNotesLayer (layer) ? juce::String ("Stopped. Your takes are notes") : "Stopped. Your takes are on loop " + juce::String (layer + 1))
+                 + ": the newest plays in the song (a take cut short too, if it had a bar in it). Takes picks another"
+                 + (RigTakes::isNotesLayer (layer) ? juce::String (", or edits its notes.") : juce::String (".")));
         else
             say ("Rec into called off: nothing was recorded.");
         updateRecInto();
@@ -1559,6 +1564,7 @@ int RigView::pressRecInto()
         return -1;
     }
     const int source = t == GrooveView::loops ? engine.getLooper().getLayer (layer).source.load() : takeSourceFor (t);
+    const bool notes = RigTakes::isNotesLayer (layer);
     juce::String why;
     if (! engine.recordInto (sec, layer, source, recCycle, &why))
     {
@@ -1572,7 +1578,8 @@ int RigView::pressRecInto()
     else if (t == GrooveView::vocoder && ! engine.vocoderOn.load())
         note = " The vocoder is off: switch it on to be heard.";
     const auto& s = list[(size_t) sec];
-    say ("Rec into " + rigsong::letterFor (sec) + " " + s.name + ": " + GrooveView::trackName (t) + " onto loop " + juce::String (layer + 1)
+    say ("Rec into " + rigsong::letterFor (sec) + " " + s.name + ": " + GrooveView::trackName (t)
+         + (notes ? juce::String (" as notes you can edit") : " onto loop " + juce::String (layer + 1))
          + " from the top of the section. "
          + (recCycle ? juce::String ("It plays round: every time round is a new take. Stop take when it's right.") : juce::String ("One time through.")) + note);
     updateRecInto();
@@ -1611,6 +1618,42 @@ void RigView::showRecTargetMenu (juce::Component& from)
                       [safe = juce::Component::SafePointer<RigView> (this), i] { if (safe != nullptr) safe->setRecTarget (i, -1); });
     menu.addSeparator();
     menu.addSectionHeader ("Onto");
+    if (const int source = takeSourceFor (getTrack()); RigEngine::isNotesSource (source))
+    {
+        const auto name = GrooveView::trackName (getTrack());
+        menu.addItem ("Notes: plays the " + name + " in the song, and you can edit them", true, ! recAsSound,
+                      [safe = juce::Component::SafePointer<RigView> (this), sec]
+                      {
+                          if (safe == nullptr)
+                              return;
+                          safe->recAsSound = false;
+                          safe->setRecTarget (sec, -1);
+                      });
+        menu.addItem ("Sound: onto a loop layer, as you hear it", true, recAsSound,
+                      [safe = juce::Component::SafePointer<RigView> (this), sec]
+                      {
+                          if (safe == nullptr)
+                              return;
+                          safe->recAsSound = true;
+                          safe->setRecTarget (sec, -1);
+                      });
+        if (! recAsSound)
+        {
+            menu.addSeparator();
+            menu.addItem ("Free take: onto the next empty loop until you press again (the old way)", true, recFree,
+                          [safe = juce::Component::SafePointer<RigView> (this)]
+                          {
+                              if (safe == nullptr)
+                                  return;
+                              safe->recFree = true;
+                              safe->say ("The next Rec take is a free one: onto the next empty loop from the next bar, until you press again. To Song puts it in the song.");
+                              safe->updateCaptureButtons();
+                          });
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (from));
+            return;
+        }
+        menu.addSeparator();
+    }
     const int free = engine.freeLayerForSong();
     menu.addItem (free >= 0 ? "A new layer (loop " + juce::String (free + 1) + ")" : juce::String ("A new layer (no loop free)"), free >= 0,
                   recLayer < 0 && layer == free,
@@ -1651,7 +1694,9 @@ void RigView::showTakesMenu (juce::Component& from)
         return;
     }
     juce::PopupMenu menu, del;
-    menu.addSectionHeader ("Loop " + juce::String (layer + 1) + juce::String::fromUTF8 (" \xc2\xb7 pick the take that plays"));
+    const bool notes = RigTakes::isNotesLayer (layer);
+    menu.addSectionHeader ((notes ? GrooveView::trackName (getTrack()) + " notes" : "Loop " + juce::String (layer + 1))
+                           + juce::String::fromUTF8 (" \xc2\xb7 pick the take that plays"));
     for (int i = (int) set->takes.size(); --i >= 0;)
     {
         const auto& take = set->takes[(size_t) i];
@@ -1667,7 +1712,8 @@ void RigView::showTakesMenu (juce::Component& from)
                               return;
                           }
                           safe->engine.useTake (layer, i);
-                          safe->say (name + " plays on loop " + juce::String (layer + 1) + " now.");
+                          safe->say (name + (RigTakes::isNotesLayer (layer) ? juce::String (" plays now (its notes, as played: your edits to the last one are gone).")
+                                                                            : " plays on loop " + juce::String (layer + 1) + " now."));
                       });
         if (i != set->playing)
             del.addItem (name, [safe = juce::Component::SafePointer<RigView> (this), layer, i, name]
@@ -1677,6 +1723,27 @@ void RigView::showTakesMenu (juce::Component& from)
                          });
     }
     menu.addSeparator();
+    if (notes)
+    {
+        const int strip = RigTakes::stripOfNotesLayer (layer);
+        const double startBar = set->startBar;
+        menu.addItem ("Edit notes...", engine.noteClipAt (strip, startBar) >= 0, false,
+                      [safe = juce::Component::SafePointer<RigView> (this), strip, startBar]
+                      {
+                          if (safe != nullptr)
+                              safe->openNoteEditor (strip, startBar);
+                      });
+        menu.addItem ("Make it sound: the take as it sounded, onto a loop", ! engine.getTakes().isActive(), false,
+                      [safe = juce::Component::SafePointer<RigView> (this), layer]
+                      {
+                          if (safe == nullptr)
+                              return;
+                          const int l = safe->engine.takeToLoop (layer);
+                          safe->say (l >= 0 ? "The take plays as sound on loop " + juce::String (l + 1) + " now, in place of its notes."
+                                            : juce::String ("No loop is free (or the take's sound wasn't kept with the show). Clear a loop first."));
+                      });
+        menu.addSeparator();
+    }
     menu.addSubMenu ("Delete a take", del, del.getNumItems() > 0);
     menu.addItem ("Keep only the one playing", set->takes.size() > 1, false,
                   [safe = juce::Component::SafePointer<RigView> (this), layer]
@@ -1687,6 +1754,26 @@ void RigView::showTakesMenu (juce::Component& from)
                       safe->say ("Kept the take that plays; the others are gone.");
                   });
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (from));
+}
+
+void RigView::openNoteEditor (int strip, double startBar)
+{
+    if (engine.noteClipAt (strip, startBar) < 0)
+    {
+        say ("There are no notes there yet: Rec into records some.");
+        return;
+    }
+    if (noteEditorWindow != nullptr)
+        delete noteEditorWindow.getComponent();
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned (new NoteEditor (engine, strip, startBar));
+    options.dialogTitle = "Edit notes";
+    options.dialogBackgroundColour = vintage::pal().face;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    options.componentToCentreAround = this;
+    noteEditorWindow = options.launchAsync();
 }
 
 void RigView::addLayerWith (int track)
@@ -1744,7 +1831,8 @@ void RigView::updateRecInto()
         const auto& s = list[(size_t) r.section];
         r.cycle = tl.cycle.load() && std::abs (tl.cycleStart.load() - s.start) < 1.0e-6 && std::abs (tl.cycleEnd.load() - s.end()) < 1.0e-6;
         const auto where = rigsong::letterFor (r.section) + " " + s.name;
-        const auto loop = r.layer >= 0 ? "loop " + juce::String (r.layer + 1) : juce::String ("no loop free");
+        const auto loop = RigTakes::isNotesLayer (r.layer) ? GrooveView::trackName (t) + " notes"
+                          : r.layer >= 0 ? "loop " + juce::String (r.layer + 1) : juce::String ("no loop free");
         const auto* set = takes.setFor (r.layer);
         r.takes = set != nullptr ? (int) set->takes.size() : 0;
         const auto dot = juce::String::fromUTF8 (" \xc2\xb7 ");
@@ -1761,7 +1849,10 @@ void RigView::updateRecInto()
         else
         {
             const auto bars = "bars " + juce::String ((int) s.start + 1) + juce::String::fromUTF8 ("\xe2\x80\x93") + juce::String ((int) std::ceil (s.end() - 1.0e-6));
-            const auto onto = set != nullptr && ! set->takes.empty() ? "more takes on " + loop
+            const bool notesLayer = RigTakes::isNotesLayer (r.layer);
+            const bool notesThere = notesLayer && engine.noteClipAt (RigTakes::stripOfNotesLayer (r.layer), s.start) >= 0;
+            const auto onto = set != nullptr && ! set->takes.empty() && (! notesLayer || std::abs (set->startBar - s.start) < 1.0e-6) ? "more takes of " + loop
+                              : notesLayer ? (notesThere ? "new " + loop + " (in place of these)" : loop)
                               : r.layer >= 0 && engine.getLooper().getState (r.layer) != RigLooper::State::empty ? "over " + loop
                               : "new layer on " + loop;
             r.text = "Rec into " + where + dot + bars + dot + GrooveView::trackName (t) + juce::String::fromUTF8 (" \xe2\x86\x92 ") + onto;
@@ -1775,7 +1866,8 @@ void RigView::updateRecInto()
         if (const auto* set = takes.setFor (layer); set != nullptr && juce::isPositiveAndBelow (set->playing, (int) set->takes.size()))
         {
             const auto& take = set->takes[(size_t) set->playing];
-            say ("Take " + juce::String (take.number) + (take.partial ? " (cut short)" : "") + " is in, on loop " + juce::String (layer + 1)
+            say ("Take " + juce::String (take.number) + (take.partial ? " (cut short)" : "") + " is in, "
+                 + (RigTakes::isNotesLayer (layer) ? juce::String (take.notes.size()) + " notes" : "on loop " + juce::String (layer + 1))
                  + (takes.isActive() ? ". Keep going for another, or Stop take." : ". Takes picks another."));
         }
     }

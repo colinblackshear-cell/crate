@@ -893,7 +893,8 @@ void Footer::paintStrip (juce::Graphics& g)
 
     // The lanes used by the song (and the one being recorded onto).
     std::vector<int> lanes;
-    const int targetLane = recInto.layer >= 0 ? RigTimeline::laneForLoop (recInto.layer) : -1;
+    const int targetLane = RigTakes::isNotesLayer (recInto.layer) ? RigTimeline::laneForStrip (RigTakes::stripOfNotesLayer (recInto.layer))
+                         : recInto.layer >= 0 ? RigTimeline::laneForLoop (recInto.layer) : -1;
     for (int lane = 0; lane < RigTimeline::kLanes; ++lane)
         if (tl.laneUsed (lane) || lane == targetLane)
             lanes.push_back (lane);

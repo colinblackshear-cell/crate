@@ -2296,8 +2296,7 @@ int RigEngine::noteClipAt (int strip, double startBar) const
 
 void RigEngine::notesChanged()
 {
-    for (auto& c : noteClips)
-        c.sort();
+    // (Kept in the order they're in: Edit notes picks them by place while you drag.)
     notePlayer.publish (noteClips);
 }
 

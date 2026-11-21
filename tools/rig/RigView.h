@@ -225,7 +225,9 @@ private:
     std::array<int, 8> lastTake { -1, -1, -1, -1, -1, -1, -1, -1 };
     void updateCaptureButtons();
     int recSection = -1, recLayer = -1;   // the Rec into target as picked (-1: follow the song)
-    bool recCycle = true, recFree = false;
+    bool recCycle = true, recFree = false, recAsSound = false;
+    void openNoteEditor (int strip, double startBar);
+    juce::Component::SafePointer<juce::DialogWindow> noteEditorWindow;
     int takesSeen = 0;
     void updateRecInto();
     juce::Component::SafePointer<juce::Component> automationPanel;

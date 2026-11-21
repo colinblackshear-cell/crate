@@ -223,7 +223,9 @@ public:
             // gets a new layer.
             expectEquals (view.recTargetLayer(), 0);
             view.pickTrack (GrooveView::synth);
-            expectEquals (view.recTargetLayer(), 1, "a new layer for the synth");
+            expectEquals (view.recTargetLayer(), RigTakes::notesLayer (RigEngine::synthStrip), "the synth records its notes");
+            view.pickTrack (GrooveView::lineIn);
+            expectEquals (view.recTargetLayer(), 1, "a new layer for the line in");
             snapshot (view, "-takes");
         }
 
@@ -238,7 +240,7 @@ public:
             auto& tl = engine.getTimeline();
             rigsong::addSection (tl, "Verse", 4);
             tl.changed();
-            expectEquals (view.pressRecTake(), 0);
+            expectEquals (view.pressRecTake(), RigTakes::notesLayer (RigEngine::bassStrip), "the bass's notes");
             expect (engine.getTakes().isActive(), "into the song");
             expectEquals (engine.getTakes().getSource(), (int) RigLooper::bass);
             view.pressRecTake();
