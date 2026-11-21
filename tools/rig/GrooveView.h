@@ -133,6 +133,30 @@ private:
         crate::bass::Pattern bass;
         crate::synthtool::Rhythm synth;
     } clearUndo;
+
+    // Pattern life (crate::life) on the step grids: what a click on a lit step changes (the hit
+    // itself, its chance, its condition or its nudge), Mutate, and each row's menu (its own
+    // length, Euclid, turn).
+public:
+    enum LifeMode { lifeHits, lifeChance, lifeCond, lifeNudge, numLifeModes };
+    void setLifeMode (int);
+    int getLifeMode() const { return lifeMode; }
+    bool hasLife() const { return track == machine || track == bass || track == drums; }
+    void mutate (float amount);   // 0..1
+    bool undoMutate();
+    void euclidRow (int row, int hits, int steps, int rotate = 0);
+    void turnRow (int row, int by);
+    void setRowLength (int row, int steps);   // the drum machine (0: the pattern's)
+    void showRowMenu (int row);
+private:
+    bool pressLife (int row, int i, bool back);
+    void showMutateMenu();
+    int lifeMode = lifeHits;
+    juce::OwnedArray<juce::TextButton> lifeButtons;
+    juce::TextButton mutateButton { "Mutate" };
+    juce::Rectangle<int> lifeArea;
+    ClearUndo lifeUndo;
+    juce::Random lifeRandom;
     class PluginSlot* slotFor (int track) const;
     void buildTrack();
     void layoutPartKnobs();

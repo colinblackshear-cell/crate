@@ -202,6 +202,8 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
         currentStep = -1;
         lastStepIndex = -1;
     }
+    if (! sequencing)
+        wasSequencingStep = false;
     wasPlaying = sequencing;
 
     const double stepBeats = synth::SyncRates::beats (settings.stepRate);
@@ -227,9 +229,16 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 const int prev = (s + length - 1) % length;
                 const auto& step = pattern->steps[(size_t) s];
                 currentStep = s;
+                if (index < firstStepIndex || ! wasSequencingStep)
+                    firstStepIndex = index - s;   // (the time round this one is in counts as the first)
+                wasSequencingStep = true;
+                // Pattern life: some times round, or by chance.
+                const long long loop = (index - firstStepIndex) / length;
+                const bool lives = life::passes (step.cond, loop, false)
+                                   && (step.chance >= 100 || chanceRandom.nextInt (100) < step.chance);
 
                 const bool slideIn = stepGateOpen && pattern->steps[(size_t) prev].slide;
-                if (step.on)
+                if (step.on && lives)
                 {
                     noteOn (settings.root + step.note + transpose, 1.0f, step.accent, slideIn);
                     keyNote = false;
@@ -249,7 +258,7 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 const int length = juce::jlimit (1, kSteps, pattern->length);
                 const auto& step = pattern->steps[(size_t) currentStep];
                 const auto& next = pattern->steps[(size_t) ((currentStep + 1) % length)];
-                if (! (step.slide && next.on))
+                if (! (step.slide && next.on && next.chance >= 100 && next.cond == 0))
                 {
                     noteOff();
                     stepGateOpen = false;

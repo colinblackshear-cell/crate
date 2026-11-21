@@ -433,6 +433,31 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
                         &quantizeButton);
     };
 
+    // Pattern life: what a click on a lit step changes.
+    {
+        const char* names[] = { "Hits", "Chance", "Condition", "Nudge" };
+        const char* tips[] = { "A click lights or clears a step (as always).",
+                               "A click on a lit step sets how often it plays: 100%, 75%, 50%, 25%, 10% of the times round (Shift goes back). "
+                               "The beat breathes: never quite the same twice.",
+                               "A click on a lit step sets which times round it plays: 1:2 the first of every two, 3:4 the third of every "
+                               "four, Fill only in a fill, First only the first time after Play (Shift goes back).",
+                               "A click on a lit step pushes it a little early or drags it a little late (part of a step), for a "
+                               "human, swung or rushing feel (Shift goes back)." };
+        for (int m = 0; m < numLifeModes; ++m)
+        {
+            auto* b = lifeButtons.add (new juce::TextButton (names[m]));
+            wellButton (*b, Lit::current, 14.0f);
+            b->setClickingTogglesState (false);
+            b->setTooltip (tips[m]);
+            b->onClick = [this, m] { setLifeMode (m); };
+            addChildComponent (b);
+        }
+        wellButton (mutateButton, Lit::current, 14.0f);
+        mutateButton.setTooltip ("Changes the pattern a little (or a lot): moves, adds and drops a few hits, so it grows. Undo puts it back.");
+        mutateButton.onClick = [this] { showMutateMenu(); };
+        addChildComponent (mutateButton);
+    }
+
     // Start on the track the keys already play, so nothing changes until you pick one.
     for (int t = 0; t < numTracks; ++t)
         if (destFor (t) == engine.getRouting().keysTo.load())
@@ -1163,6 +1188,13 @@ void GrooveView::updateButtons()
             b->repaint();
     };
     const bool pulse = (juce::Time::getMillisecondCounter() / 350) % 2 == 0;
+    for (int m = 0; m < lifeButtons.size(); ++m)
+    {
+        const bool shown = (track == machine) || (track == bass && m != lifeNudge);
+        lifeButtons[m]->setVisible (shown);
+        setLit (lifeButtons[m], lifeMode == m, Lit::current);
+    }
+    mutateButton.setVisible (hasLife());
     if (track != loops)
     {
         const auto text = canUndoClear() ? juce::String ("Undo clear") : juce::String ("Clear");
@@ -1696,12 +1728,29 @@ GrooveView::Cell GrooveView::cellAt (int row, int i) const
                 c.lit = p.accent[(size_t) step];
                 break;
             }
-            const int h = p.hits[(size_t) machineVoice (row)][(size_t) step];
+            const int voice = machineVoice (row);
+            const int h = p.hits[(size_t) voice][(size_t) step];
             c.lit = h > 0;
             if (h >= 2)
                 c.label = juce::String::fromUTF8 ("\xc3\x97") + juce::String (h);
             else if (h == 1 && p.accent[(size_t) step])
                 c.label = ">";
+            // Its life, where it has one (and always in that mode).
+            if (h > 0)
+            {
+                const int chance = p.chance[(size_t) voice][(size_t) step], cond = p.cond[(size_t) voice][(size_t) step];
+                const int nudge = p.nudge[(size_t) voice][(size_t) step];
+                if (lifeMode == lifeChance || (lifeMode == lifeHits && chance < 100))
+                    c.sub = juce::String (chance) + "%";
+                else if (lifeMode == lifeCond || (lifeMode == lifeHits && cond != 0))
+                    c.sub = crate::life::condName (cond);
+                else if (lifeMode == lifeNudge || (lifeMode == lifeHits && nudge != 0))
+                    c.sub = (nudge > 0 ? "+" : "") + juce::String (nudge);
+                c.dim = c.dim || chance < 100 || cond != 0;
+            }
+            // A row of its own length: past its end the steps are greyed.
+            if (const int own = p.rowLength[(size_t) voice]; own > 0 && step >= own)
+                c.dim = true;
             break;
         }
         case bass:
@@ -1712,7 +1761,13 @@ GrooveView::Cell GrooveView::cellAt (int row, int i) const
             c.dim = i >= p.length;
             switch (row)
             {
-                case 0: c.lit = s.on; break;
+                case 0:
+                    c.lit = s.on;
+                    if (s.on && (lifeMode == lifeChance || (lifeMode == lifeHits && s.chance < 100)))
+                        c.sub = juce::String ((int) s.chance) + "%";
+                    else if (s.on && (lifeMode == lifeCond || (lifeMode == lifeHits && s.cond != 0)))
+                        c.sub = crate::life::condName (s.cond);
+                    break;
                 case 1:
                     c.label = juce::MidiMessage::getMidiNoteName ((int) getParam (b.params, "root") + s.note, true, true, 3);
                     c.lit = s.on;
@@ -1819,6 +1874,8 @@ void GrooveView::pressStep (int i) { pressCell (0, i); }
 void GrooveView::pressCell (int row, int i)
 {
     if (! juce::isPositiveAndBelow (i, numSteps()) || ! juce::isPositiveAndBelow (row, numRows()))
+        return;
+    if (lifeMode != lifeHits && pressLife (row, i, false))
         return;
     if (canUndoClear())
         clearUndo = {};   // a new step after a Clear: that's the new pattern now
@@ -2235,6 +2292,11 @@ void GrooveView::mouseDown (const juce::MouseEvent& e)
 {
     if (const int row = rowLabelAt (e.getPosition()); row >= 0)
     {
+        if (e.mods.isPopupMenu() && hasLife())
+        {
+            showRowMenu (row);
+            return;
+        }
         if (track == drums)
             showDrumRowMenu (row);
         else if (track == machine)
@@ -2243,6 +2305,8 @@ void GrooveView::mouseDown (const juce::MouseEvent& e)
     }
     const auto [row, step] = cellAt (e.getPosition());
     if (step < 0)
+        return;
+    if (lifeMode != lifeHits && e.mods.isShiftDown() && pressLife (row, step, true))
         return;
     if ((e.mods.isPopupMenu() || e.mods.isAltDown()) && track == machine)
     {
@@ -2422,11 +2486,24 @@ void GrooveView::paint (juce::Graphics& g)
                 g.setFont (vintage::cond (14.0f, Weight::bold, 0.12f));
                 g.drawFittedText (c.sub.toUpperCase(), text, juce::Justification::centredBottom, 2, 0.7f);
             }
-            else if (c.label.isNotEmpty())
+            else
             {
-                g.setColour (p.wellInk.withAlpha (c.dim ? 0.5f : 0.95f));
-                g.setFont (vintage::cond (16.0f, Weight::extra));
-                g.drawFittedText (c.label, text, juce::Justification::centred, 1, 0.6f);
+                if (c.label.isNotEmpty())
+                {
+                    g.setColour (p.wellInk.withAlpha (c.dim ? 0.5f : 0.95f));
+                    g.setFont (vintage::cond (16.0f, Weight::extra));
+                    g.drawFittedText (c.label, c.sub.isNotEmpty() ? text.withTrimmedBottom (text.getHeight() / 2) : text,
+                                      juce::Justification::centred, 1, 0.6f);
+                }
+                // Its life (chance, condition, nudge) small along its bottom.
+                if (c.sub.isNotEmpty())
+                {
+                    const auto face = r.withTrimmedBottom (3.0f).toNearestInt();
+                    // (On a dimmed step, a light ink, so 50% still reads on the darker red.)
+                    g.setColour (c.lit && ! c.dim ? juce::Colour (0xff1e1a16) : p.wellInk);
+                    g.setFont (vintage::cond (juce::jlimit (9.0f, 13.0f, face.getHeight() * 0.42f), Weight::extra));
+                    g.drawFittedText (c.sub, face.reduced (1, 1), c.label.isNotEmpty() ? juce::Justification::centredBottom : juce::Justification::centred, 1, 0.5f);
+                }
             }
         }
     }
@@ -2558,6 +2635,20 @@ void GrooveView::resized()
             row.removeFromLeft (gap);
         }
     }
+    lifeArea = {};
+    if (hasLife())
+    {
+        lifeArea = c.removeFromTop (30);
+        c.removeFromTop (6);
+        auto row = lifeArea.withTrimmedLeft (kLabelWidth);
+        for (auto* b : lifeButtons)
+            if (b->isVisible())
+            {
+                b->setBounds (row.removeFromLeft (b->getButtonText() == "Condition" ? 104 : 84));
+                row.removeFromLeft (6);
+            }
+        mutateButton.setBounds (lifeArea.removeFromRight (100));
+    }
     numbersArea = bigCells() ? juce::Rectangle<int>() : c.removeFromTop (20);
     if (! bigCells())
         c.removeFromTop (4);
@@ -2617,4 +2708,411 @@ vintage::Knob* GrooveView::partKnob (int part, int index) const
         if (partOfKnob[k] == part && index-- == 0)
             return partKnobs[k].get();
     return nullptr;
+}
+
+//==============================================================================
+// Pattern life.
+void GrooveView::setLifeMode (int m)
+{
+    lifeMode = juce::jlimit (0, (int) numLifeModes - 1, m);
+    if (track == bass && lifeMode == lifeNudge)
+        lifeMode = lifeHits;
+    static const char* says[] = { "Hits: a click lights or clears a step.",
+                                  "Chance: click a lit step for how often it plays (100, 75, 50, 25, 10%). Shift+click goes back.",
+                                  "Condition: click a lit step for which times round it plays (1:2, 3:4, Fill, First...). Shift+click goes back.",
+                                  "Nudge: click a lit step to push it early or drag it late. Shift+click goes back." };
+    say (says[lifeMode]);
+    updateButtons();
+    repaint();
+}
+
+bool GrooveView::pressLife (int row, int i, bool back)
+{
+    namespace life = crate::life;
+    if (track == machine)
+    {
+        if (row == 0)
+            return false;   // (the accents are just on or off)
+        auto p = machinePattern();
+        const int step = i + machinePage * 16;
+        const int voice = machineVoice (row);
+        if (step >= crate::drums::kMaxSteps || p.hits[(size_t) voice][(size_t) step] == 0)
+            return false;   // an unlit step lights as usual
+        auto& chance = p.chance[(size_t) voice][(size_t) step];
+        auto& cond = p.cond[(size_t) voice][(size_t) step];
+        auto& nudge = p.nudge[(size_t) voice][(size_t) step];
+        juce::String text;
+        if (lifeMode == lifeChance)
+        {
+            chance = life::nextIn (life::chanceSteps(), chance, back);
+            text = juce::String ((int) chance) + "% of the times round";
+        }
+        else if (lifeMode == lifeCond)
+        {
+            cond = (std::uint8_t) ((cond + (back ? life::numConds - 1 : 1)) % life::numConds);
+            text = juce::String ("plays ") + life::condName (cond);
+        }
+        else if (lifeMode == lifeNudge)
+        {
+            nudge = life::nextIn (life::nudgeSteps(), nudge, back);
+            text = nudge == 0 ? juce::String ("right on the step")
+                              : juce::String (std::abs ((int) nudge)) + "% of a step " + (nudge < 0 ? "early" : "late");
+        }
+        setMachinePattern (p);
+        say (rowName (row) + ", step " + juce::String (step + 1) + ": " + text + ".");
+        repaint();
+        return true;
+    }
+    if (track == bass && row == 0)
+    {
+        auto& b = engine.getBass();
+        const int index = b.getSelectedPattern();
+        auto p = b.getPattern (index);
+        auto& st = p.steps[(size_t) i];
+        if (! st.on)
+            return false;
+        juce::String text;
+        if (lifeMode == lifeChance)
+        {
+            st.chance = life::nextIn (life::chanceSteps(), st.chance, back);
+            text = juce::String ((int) st.chance) + "% of the times round";
+        }
+        else if (lifeMode == lifeCond)
+        {
+            st.cond = (std::uint8_t) ((st.cond + (back ? life::numConds - 1 : 1)) % life::numConds);
+            text = juce::String ("plays ") + life::condName (st.cond);
+        }
+        else
+            return false;
+        b.setPattern (index, p);
+        say ("Bass step " + juce::String (i + 1) + ": " + text + ".");
+        repaint();
+        return true;
+    }
+    return false;
+}
+
+void GrooveView::showMutateMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem ("Mutate a little (a hit or two)", [this] { mutate (0.25f); });
+    menu.addItem ("Mutate more", [this] { mutate (0.55f); });
+    menu.addItem ("Mutate a lot", [this] { mutate (1.0f); });
+    menu.addSeparator();
+    menu.addItem ("Undo the last mutate", lifeUndo.track == track, false, [this] { undoMutate(); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (mutateButton));
+}
+
+void GrooveView::mutate (float amount)
+{
+    amount = juce::jlimit (0.0f, 1.0f, amount);
+    auto& r = lifeRandom;
+    lifeUndo = {};
+    lifeUndo.track = track;
+    int changes = 0;
+    if (track == machine)
+    {
+        auto& d = engine.getDrums();
+        lifeUndo.index = d.getSelectedPattern();
+        lifeUndo.variation = d.editVariation;
+        lifeUndo.machine = machinePattern();
+        auto p = machinePattern();
+        const int len = juce::jlimit (1, crate::drums::kMaxSteps, p.length);
+        const int moves = 1 + (int) std::round (amount * 6);
+        for (int k = 0; k < moves; ++k)
+        {
+            // A sound that plays: move one of its hits, add a ghost, or let one breathe.
+            std::vector<int> voices;
+            for (int v = 0; v < crate::drums::kVoices; ++v)
+                for (int st = 0; st < len; ++st)
+                    if (p.hits[(size_t) v][(size_t) st] > 0)
+                    {
+                        voices.push_back (v);
+                        break;
+                    }
+            if (voices.empty())
+                break;
+            const int v = voices[(size_t) r.nextInt ((int) voices.size())];
+            std::vector<int> lit, unlit;
+            for (int st = 0; st < len; ++st)
+                (p.hits[(size_t) v][(size_t) st] > 0 ? lit : unlit).push_back (st);
+            const int what = r.nextInt (4);
+            if (what == 0 && ! lit.empty())
+            {
+                // Move a hit a step (not the downbeat of the kick: it holds the floor).
+                const int from = lit[(size_t) r.nextInt ((int) lit.size())];
+                if (v == crate::drums::kick && from % 4 == 0)
+                    continue;
+                const int to = (from + (r.nextBool() ? 1 : len - 1)) % len;
+                if (p.hits[(size_t) v][(size_t) to] == 0)
+                {
+                    std::swap (p.hits[(size_t) v][(size_t) from], p.hits[(size_t) v][(size_t) to]);
+                    std::swap (p.chance[(size_t) v][(size_t) from], p.chance[(size_t) v][(size_t) to]);
+                    ++changes;
+                }
+            }
+            else if (what == 1 && ! unlit.empty())
+            {
+                // A ghost hit that plays some of the time.
+                const int at = unlit[(size_t) r.nextInt ((int) unlit.size())];
+                p.hits[(size_t) v][(size_t) at] = 1;
+                p.chance[(size_t) v][(size_t) at] = (std::uint8_t) (r.nextBool() ? 50 : 25);
+                ++changes;
+            }
+            else if (what == 2 && lit.size() > 1)
+            {
+                // One that breathes: plays only some times round.
+                const int at = lit[(size_t) r.nextInt ((int) lit.size())];
+                if (! (v == crate::drums::kick && at % 4 == 0))
+                {
+                    p.chance[(size_t) v][(size_t) at] = (std::uint8_t) (r.nextBool() ? 75 : 50);
+                    ++changes;
+                }
+            }
+            else if (! lit.empty())
+            {
+                // A roll on a hat or a tom, or a nudge for feel.
+                const int at = lit[(size_t) r.nextInt ((int) lit.size())];
+                if (v == crate::drums::closedHat || v == crate::drums::lowTom || v == crate::drums::midTom || v == crate::drums::highTom || v == crate::drums::rim)
+                    p.hits[(size_t) v][(size_t) at] = (std::uint8_t) (2 + r.nextInt (2));
+                else
+                    p.nudge[(size_t) v][(size_t) at] = (std::int8_t) (r.nextBool() ? 10 : -10);
+                ++changes;
+            }
+        }
+        setMachinePattern (p);
+        setParam (d.params, "sequencer", 1.0f);
+    }
+    else if (track == bass)
+    {
+        auto& b = engine.getBass();
+        lifeUndo.index = b.getSelectedPattern();
+        lifeUndo.bass = b.getPattern (lifeUndo.index);
+        auto p = lifeUndo.bass;
+        const int len = juce::jlimit (1, crate::bass::kSteps, p.length);
+        static const int scale[] = { 0, 3, 5, 7, 10, 12, -2, -5 };   // minor pentatonic-ish moves
+        const int moves = 1 + (int) std::round (amount * 5);
+        for (int k = 0; k < moves; ++k)
+        {
+            auto& st = p.steps[(size_t) r.nextInt (len)];
+            switch (r.nextInt (4))
+            {
+                case 0: if (st.on) st.note = juce::jlimit (-12, 24, scale[r.nextInt (8)]); break;
+                case 1: st.on = ! st.on; break;
+                case 2: if (st.on) st.slide = ! st.slide; break;
+                default: if (st.on) st.chance = (std::uint8_t) (r.nextBool() ? 75 : 50); break;
+            }
+            ++changes;
+        }
+        b.setPattern (lifeUndo.index, p);
+        setParam (b.params, "sequencer", 1.0f);
+    }
+    else if (track == drums)
+    {
+        auto& mpc = engine.getMpc();
+        lifeUndo.index = mpc.getProject().getCurrentSequenceIndex();
+        lifeUndo.mpcTracks = mpc.getProject().currentSequence().tracks;
+        const int steps = numSteps();
+        const int moves = 1 + (int) std::round (amount * 5);
+        for (int k = 0; k < moves; ++k)
+        {
+            const int row = r.nextInt (kDrumRows);
+            const int pad = drumPad (row);
+            std::vector<int> lit, unlit;
+            for (int st = 0; st < steps; ++st)
+                (drumHit (pad, st) ? lit : unlit).push_back (st);
+            if (lit.empty())
+                continue;
+            if (r.nextBool() && ! unlit.empty())
+                setDrumHit (pad, unlit[(size_t) r.nextInt ((int) unlit.size())], true);
+            else if (lit.size() > 1)
+            {
+                const int from = lit[(size_t) r.nextInt ((int) lit.size())];
+                const int to = (from + (r.nextBool() ? 1 : steps - 1)) % steps;
+                if (! drumHit (pad, to))
+                {
+                    setDrumHit (pad, from, false);
+                    setDrumHit (pad, to, true);
+                }
+            }
+            ++changes;
+        }
+    }
+    else
+    {
+        lifeUndo = {};
+        return;
+    }
+    say (changes > 0 ? "Mutated: " + juce::String (changes) + (changes == 1 ? " change" : " changes") + ". Mutate again to grow it, or Undo the last mutate."
+                     : juce::String ("Nothing to mutate yet: light a few steps first."));
+    updateButtons();
+    repaint();
+}
+
+bool GrooveView::undoMutate()
+{
+    if (lifeUndo.track != track)
+        return false;
+    const auto u = std::exchange (lifeUndo, {});
+    switch (u.track)
+    {
+        case machine: engine.getDrums().setPattern (u.index, u.machine, u.variation); break;
+        case bass:    engine.getBass().setPattern (u.index, u.bass); break;
+        case drums:
+        {
+            auto& mpc = engine.getMpc();
+            auto& seqs = mpc.getProject().getSequences();
+            if (juce::isPositiveAndBelow (u.index, (int) seqs.size()))
+            {
+                mpc.beginEdit();
+                seqs[(size_t) u.index].tracks = u.mpcTracks;
+                mpc.getProject().sequenceChanged();
+            }
+            break;
+        }
+        default: return false;
+    }
+    say ("Put back what Mutate changed.");
+    repaint();
+    return true;
+}
+
+void GrooveView::euclidRow (int row, int hits, int steps, int rotate)
+{
+    const auto spread = crate::life::euclid (hits, steps, rotate);
+    if (track == machine && row >= 1)
+    {
+        auto p = machinePattern();
+        const int voice = machineVoice (row);
+        auto& d = engine.getDrums();
+        // Fewer steps than the pattern: the row gets its own length, so it comes round against it.
+        p.rowLength[(size_t) voice] = (std::uint8_t) (steps == p.length ? 0 : juce::jlimit (1, crate::drums::kMaxSteps, steps));
+        if (steps > p.length)
+            p.length = juce::jlimit (1, crate::drums::kMaxSteps, steps);
+        for (int st = 0; st < crate::drums::kMaxSteps; ++st)
+        {
+            const bool on = st < steps && spread[(size_t) st];
+            p.hits[(size_t) voice][(size_t) st] = (std::uint8_t) (on ? juce::jmax<std::uint8_t> (1, p.hits[(size_t) voice][(size_t) st]) : 0);
+            if (! on)
+            {
+                p.chance[(size_t) voice][(size_t) st] = 100;
+                p.cond[(size_t) voice][(size_t) st] = 0;
+                p.nudge[(size_t) voice][(size_t) st] = 0;
+            }
+        }
+        setMachinePattern (p);
+        setParam (d.params, "sequencer", 1.0f);
+    }
+    else if (track == bass && row == 0)
+    {
+        auto& b = engine.getBass();
+        auto p = b.getPattern (b.getSelectedPattern());
+        p.length = juce::jlimit (1, crate::bass::kSteps, steps);
+        for (int st = 0; st < crate::bass::kSteps; ++st)
+            p.steps[(size_t) st].on = st < steps && spread[(size_t) st];
+        b.setPattern (b.getSelectedPattern(), p);
+        setParam (b.params, "sequencer", 1.0f);
+    }
+    else if (track == drums)
+    {
+        const int pad = drumPad (row);
+        const int n = numSteps();
+        for (int st = 0; st < n; ++st)
+        {
+            const bool on = spread[(size_t) (st % juce::jmax (1, steps))];
+            if (drumHit (pad, st) != on)
+                setDrumHit (pad, st, on);
+        }
+    }
+    say ("Euclid: " + juce::String (hits) + " hits spread over " + juce::String (steps) + " steps on " + rowName (row) + ".");
+    repaint();
+}
+
+void GrooveView::turnRow (int row, int by)
+{
+    if (track == machine && row >= 1)
+    {
+        auto p = machinePattern();
+        const int voice = machineVoice (row);
+        const int len = p.rowLengthOf (voice);
+        auto turn = [&] (auto& a)
+        {
+            auto copy = a;
+            for (int st = 0; st < len; ++st)
+                a[(size_t) (((st + by) % len + len) % len)] = copy[(size_t) st];
+        };
+        turn (p.hits[(size_t) voice]);
+        turn (p.chance[(size_t) voice]);
+        turn (p.cond[(size_t) voice]);
+        turn (p.nudge[(size_t) voice]);
+        setMachinePattern (p);
+    }
+    else if (track == bass)
+    {
+        auto& b = engine.getBass();
+        auto p = b.getPattern (b.getSelectedPattern());
+        const int len = juce::jlimit (1, crate::bass::kSteps, p.length);
+        auto copy = p.steps;
+        for (int st = 0; st < len; ++st)
+            p.steps[(size_t) (((st + by) % len + len) % len)] = copy[(size_t) st];
+        b.setPattern (b.getSelectedPattern(), p);
+    }
+    else if (track == drums)
+    {
+        const int pad = drumPad (row);
+        const int n = numSteps();
+        std::vector<bool> was ((size_t) n);
+        for (int st = 0; st < n; ++st)
+            was[(size_t) st] = drumHit (pad, st);
+        for (int st = 0; st < n; ++st)
+        {
+            const bool on = was[(size_t) (((st - by) % n + n) % n)];
+            if (drumHit (pad, st) != on)
+                setDrumHit (pad, st, on);
+        }
+    }
+    repaint();
+}
+
+void GrooveView::setRowLength (int row, int steps)
+{
+    if (track != machine || row < 1)
+        return;
+    auto p = machinePattern();
+    p.rowLength[(size_t) machineVoice (row)] = (std::uint8_t) (steps == p.length ? 0 : juce::jlimit (0, crate::drums::kMaxSteps, steps));
+    setMachinePattern (p);
+    say (steps > 0 && steps != p.length
+             ? rowName (row) + " goes round every " + juce::String (steps) + " steps now, against the beat's " + juce::String (p.length) + ": it lands somewhere new each bar."
+             : rowName (row) + " goes round with the beat again.");
+    repaint();
+}
+
+void GrooveView::showRowMenu (int row)
+{
+    if (! hasLife() || (track == machine && row == 0) || (track == bass && row != 0))
+    {
+        say (track == bass ? "Right-click the Steps row's name for Euclid and Turn." : "Right-click a sound's name for its rhythm tools.");
+        return;
+    }
+    juce::PopupMenu menu, euclid, length;
+    menu.addSectionHeader (rowName (row) + ": rhythm");
+    const int pattern = track == machine ? machinePattern().length : track == bass ? engine.getBass().getPattern (engine.getBass().getSelectedPattern()).length : numSteps();
+    for (const auto& preset : crate::life::euclidPresets())
+        if (track != bass || preset.steps <= crate::bass::kSteps)
+            euclid.addItem (preset.name, [this, row, preset] { euclidRow (row, preset.hits, preset.steps); });
+    euclid.addSeparator();
+    for (int hits = 2; hits <= 9; ++hits)
+        euclid.addItem (juce::String (hits) + " in " + juce::String (pattern), [this, row, hits, pattern] { euclidRow (row, hits, pattern); });
+    menu.addSubMenu ("Euclid: spread hits evenly", euclid);
+    menu.addItem ("Turn left (a step earlier)", [this, row] { turnRow (row, -1); });
+    menu.addItem ("Turn right (a step later)", [this, row] { turnRow (row, 1); });
+    if (track == machine)
+    {
+        const int own = machinePattern().rowLength[(size_t) machineVoice (row)];
+        length.addItem ("With the beat (" + juce::String (pattern) + " steps)", true, own == 0, [this, row] { setRowLength (row, 0); });
+        for (int n : { 3, 5, 6, 7, 9, 10, 11, 12, 13, 15, 24 })
+            length.addItem (juce::String (n) + " steps", true, own == n, [this, row, n] { setRowLength (row, n); });
+        menu.addSubMenu ("Its own length (polymeter)", length);
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (cellRect (row, 0).toNearestInt().withX (gridArea.getX()))));
 }

@@ -237,7 +237,8 @@ juce::ValueTree BassProcessor::patternToTree (const bass::Pattern& p)
     t.setProperty ("length", p.length, nullptr);
     juce::String steps;
     for (const auto& s : p.steps)
-        steps << (s.on ? 1 : 0) << ":" << s.note << ":" << (s.accent ? 1 : 0) << ":" << (s.slide ? 1 : 0) << " ";
+        steps << (s.on ? 1 : 0) << ":" << s.note << ":" << (s.accent ? 1 : 0) << ":" << (s.slide ? 1 : 0)
+              << ":" << (int) s.chance << ":" << (int) s.cond << " ";
     t.setProperty ("steps", steps.trim(), nullptr);
     return t;
 }
@@ -255,6 +256,8 @@ bass::Pattern BassProcessor::patternFromTree (const juce::ValueTree& t)
         s.note = juce::jlimit (-12, 24, f[1].getIntValue());
         s.accent = f[2].getIntValue() != 0;
         s.slide = f[3].getIntValue() != 0;
+        s.chance = (std::uint8_t) (f.size() > 4 ? juce::jlimit (1, 100, f[4].getIntValue()) : 100);
+        s.cond = (std::uint8_t) (f.size() > 5 ? juce::jlimit (0, (int) crate::life::numConds - 1, f[5].getIntValue()) : 0);
     }
     return p;
 }
