@@ -6,7 +6,6 @@ using namespace pocket;
 
 namespace
 {
-const int kLengthBars[5] = { 1, 2, 4, 8, 0 };
 const char* const kModes[3] = { "MY VOICE", "VOCODER", "BOTH" };
 const juce::Colour kPadLit { 0xffb9a3dc }, kPadDark { 0xff4a4037 }, kPadText { 0xfff1e7d1 }, kGreenBg { 0xffe6f2e2 }, kGreenEdge { 0xff8fc06a },
                    kAmberBg { 0xfffbe9c4 };
@@ -35,7 +34,6 @@ void SingScreen::visibilityChanged()
 {
     if (isVisible() && ! demo)
     {
-        headphones = headphonesConnected();
         applyMode();
         if (settings.singPadSound)
             pickPadSound();
@@ -54,7 +52,13 @@ int SingScreen::recLayer() const
 
 void SingScreen::applyMode()
 {
-    voc.setMonitor (settings.singMode != 0);   // the vocoder in your ears for VOCODER and BOTH
+    voc.setMonitor (settings.singMode != 0);   // the vocoder in your ears for VOCODER and BOTH (once the mic is heard)
+    host.micUseChanged();                      // your dry voice for MY VOICE and BOTH
+}
+
+bool SingScreen::hearShown() const
+{
+    return host.micReady() && host.micRoute() != Route::none && (host.micRoute() == Route::bluetooth || ! host.hearingMyself());
 }
 
 void SingScreen::pickPadSound()
@@ -77,8 +81,6 @@ void SingScreen::timerCallback()
     ++ticks;
     if (! isVisible() || demo)
         return;
-    if ((ticks % 30) == 0)
-        headphones = headphonesConnected();
     float level = voc.takeMicLevel();
     if (settings.singMode != 0)
         level = juce::jmax (level, voc.outputLevel());
@@ -103,6 +105,8 @@ juce::Rectangle<float> SingScreen::padRect (int i) const
 
 int SingScreen::idAt (juce::Point<float> p) const
 {
+    if (micRect().expanded (3).contains (p)) return micId;
+    if (hearShown() && hearRect().expanded (3).contains (p)) return hearId;
     for (int i = 0; i < 3; ++i)
         if (modeCell (i).contains (p))
             return modeBase + i;
@@ -113,9 +117,6 @@ int SingScreen::idAt (juce::Point<float> p) const
     for (int i = 0; i < VocoderEngine::kChordPads; ++i)
         if (padRect (i).contains (p))
             return padBase + i;
-    if (recRect().expanded (6).contains (p)) return recId;
-    if (countRect().contains (p)) return countId;
-    if (lengthRect().contains (p)) return lengthId;
     if (settingsRect().contains (p)) return settingsId;
     if (layersRect().contains (p)) return layersId;
     return 0;
@@ -174,9 +175,16 @@ void SingScreen::press (int id)
         settings.singMode = id - modeBase;
         settings.save();
         applyMode();
-        if (settings.singMode != 0 && ! headphones)
-            host.toast ("Plug in headphones first, or the speaker feeds back into the mic.");
     }
+    else if (id == micId)
+    {
+        if (host.micReady())
+            host.micOff();
+        else
+            host.askForMic ({});
+    }
+    else if (id == hearId)
+        host.setHearMyself (! host.hearingMyself());
     else if (id == lcdId || id == settingsId)
         host.showVocoder();
     else if (id == layersId)
@@ -209,39 +217,15 @@ void SingScreen::press (int id)
         host.toast (settings.singHold ? "HOLD on: a chord rings until you tap it again or another one."
                                       : "HOLD off: a chord plays while your finger is on it.");
     }
-    else if (id == countId)
-    {
-        settings.countIn = ! settings.countIn;
-        settings.save();
-        loopsScreen.engine().setCountIn (settings.countIn);
-    }
-    else if (id == lengthId)
-    {
-        settings.singLength = (settings.singLength + 1) % 5;
-        settings.save();
-    }
-    else if (id == recId)
-        toggleRec();
 }
 
-void SingScreen::toggleRec()
+int SingScreen::recordTake (int bars)
 {
-    auto& loops = loopsScreen.engine();
-    if (const int l = recLayer(); l >= 0)
-    {
-        loops.stop (l);   // recording: ends at the bar line; waiting: called off
-        return;
-    }
     static const LoopSource sources[3] = { LoopSource::mic, LoopSource::vocoder, LoopSource::both };
-    const bool wasRunning = loops.transportRunning();
-    const int layer = loopsScreen.recordFrom ((int) sources[juce::jlimit (0, 2, settings.singMode)], kLengthBars[juce::jlimit (0, 4, settings.singLength)]);
-    if (layer < 0)
-        return;
-    takeLayer = layer;
-    if (! wasRunning)
-        host.togglePlay();   // the beat starts; the take starts after the count-in (or at once without one)
-    if (! headphones)
-        host.toast ("No headphones: the speaker's beat will be in the take too.");
+    const int layer = loopsScreen.recordFrom ((int) sources[juce::jlimit (0, 2, settings.singMode)], bars);
+    if (layer >= 0)
+        takeLayer = layer;
+    return layer;
 }
 
 void SingScreen::showKeyMenu()
@@ -269,26 +253,46 @@ void SingScreen::showKeyMenu()
 //==============================================================================
 void SingScreen::paint (juce::Graphics& g)
 {
-    // headphones
+    // what the mic is doing
     {
         auto b = bannerRect();
-        g.setColour (headphones ? kGreenBg : kAmberBg);
+        const bool on = host.micReady();
+        const auto route = host.micRoute();
+        const bool hear = host.hearingMyself();
+        const bool good = on && route == Route::wired && hear;
+        g.setColour (good ? kGreenBg : kAmberBg);
         g.fillRoundedRectangle (b, 12.0f);
-        g.setColour (headphones ? kGreenEdge : col::amber);
+        g.setColour (good ? kGreenEdge : col::amber);
         g.drawRoundedRectangle (b.reduced (1.0f), 12.0f, 2.0f);
-        auto icon = b.withWidth (40).reduced (8, 12);
-        juce::Path p;
-        p.addCentredArc (icon.getCentreX(), icon.getCentreY() + 4, 11, 11, 0, -juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi, true);
-        g.setColour (col::ink);
-        g.strokePath (p, juce::PathStrokeType (2.4f));
-        g.fillRoundedRectangle (icon.getCentreX() - 13, icon.getCentreY() + 2, 6, 10, 2);
-        g.fillRoundedRectangle (icon.getCentreX() + 7, icon.getCentreY() + 2, 6, 10, 2);
+        juce::String head, tail;
+        if (! on)
+        {
+            head = "Mic off. ";
+            tail = "Turn it on to sing.";
+        }
+        else
+        {
+            head = route == Route::wired ? "Wired headphones. " : route == Route::bluetooth ? "AirPods / Bluetooth. " : "No headphones. ";
+            tail = route == Route::none ? U8("Mic records \xc2\xb7 you don't hear it.") : hear ? U8("Mic on \xc2\xb7 you hear yourself.") : U8("Mic on \xc2\xb7 hear myself off.");
+        }
         juce::AttributedString a;
-        a.append (headphones ? "Headphones on. " : "No headphones. ", small (14.0f).boldened(), col::ink);
-        a.append (headphones ? "The beat plays in your ears, only your voice goes into the take."
-                             : "Plug some in: the speaker's beat would go into the take.", small (14.0f), col::ink);
+        a.append (head, small (14.0f).boldened(), col::ink);
+        a.append (tail, small (14.0f), col::ink);
         a.setWordWrap (juce::AttributedString::byWord);
-        a.draw (g, b.withTrimmedLeft (42).withTrimmedRight (10).reduced (0, 5));
+        a.setJustification (juce::Justification::centredLeft);
+        const float right = hearShown() ? hearRect().getX() : micRect().getX();
+        a.draw (g, b.withTrimmedLeft (12).withRight (right - 6).reduced (0, 3));
+
+        auto button = [&] (juce::Rectangle<float> r, const juce::String& text, bool lit, int id)
+        {
+            drawRaised (g, r, lit ? Look::amber : Look::cream, pressed == id, 10.0f);
+            g.setColour (col::ink);
+            g.setFont (spaced (condensedBold (13.0f), 0.08f));
+            g.drawFittedText (text, r.withTrimmedBottom (3).reduced (4, 0).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+        };
+        button (micRect(), on ? "MIC OFF" : "MIC ON", ! on, micId);
+        if (hearShown())
+            button (hearRect(), hear ? "HEAR: ON" : "HEAR: OFF", hear, hearId);
     }
 
     // MY VOICE / VOCODER / BOTH
@@ -356,7 +360,7 @@ void SingScreen::paint (juce::Graphics& g)
     // CHORDS · A MINOR, KEY, SOUND, HOLD
     g.setColour (col::ink);
     g.setFont (spaced (condensedBold (17.0f), 0.08f));
-    g.drawFittedText ("CHORDS " + juce::String (U8("\xc2\xb7 ")) + voc.keyLabel(), juce::Rectangle<int> (16, 210, (int) keyRect().getX() - 22, 34),
+    g.drawFittedText ("CHORDS " + juce::String (U8("\xc2\xb7 ")) + voc.keyLabel(), juce::Rectangle<int> (16, (int) keyRect().getY(), (int) keyRect().getX() - 22, (int) keyRect().getHeight()),
                       juce::Justification::centredLeft, 1, 0.7f);
     auto smallButton = [&] (juce::Rectangle<float> b, const juce::String& text, bool lit, int id)
     {
@@ -387,51 +391,18 @@ void SingScreen::paint (juce::Graphics& g)
         g.drawText (voc.padNumeral (i), p.translated (0, down).withTrimmedTop (p.getHeight() * 0.6f), juce::Justification::centredTop);
     }
 
-    // COUNT-IN, REC, LENGTH
-    auto twoLine = [&] (juce::Rectangle<float> b, const juce::String& top, const juce::String& bottom, int id)
-    {
-        drawRaised (g, b, Look::cream, pressed == id, 12.0f);
-        g.setColour (col::ink);
-        g.setFont (spaced (condensedBold (14.0f), 0.08f));
-        g.drawText (top, b.withHeight (b.getHeight() * 0.5f).translated (0, 5), juce::Justification::centred);
-        g.setFont (spaced (condensed (14.0f), 0.08f));
-        g.drawText (bottom, b.withTrimmedTop (b.getHeight() * 0.5f).translated (0, -2), juce::Justification::centred);
-    };
-    twoLine (countRect(), "COUNT-IN", settings.countIn ? "1 BAR" : "OFF", countId);
-    const int bars = kLengthBars[juce::jlimit (0, 4, settings.singLength)];
-    twoLine (lengthRect(), "LENGTH", bars > 0 ? juce::String (bars) + (bars == 1 ? " BAR" : " BARS") : juce::String ("FREE"), lengthId);
-    {
-        auto b = recRect();
-        const float d = pressed == recId ? 2.0f : 0.0f;
-        g.setColour (juce::Colour (0xffd9cdb4));
-        g.fillEllipse (b.expanded (6));
-        g.setColour (juce::Colour (0xff922a1c));
-        g.fillEllipse (b.translated (0, 3));
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff58b78), 0, b.getY(), juce::Colour (0xffd8452f), 0, b.getBottom(), false));
-        g.fillEllipse (b.translated (0, d));
-        auto c = b.getCentre().translated (0, d);
-        g.setColour (juce::Colour (0xff2b1410));
-        if (rec >= 0)
-        {
-            if (loops.state (rec) != LoopState::recording && (ticks / 6) % 2 == 0)
-                g.setColour (juce::Colour (0xff2b1410).withAlpha (0.4f));   // waiting: blinks
-            g.fillRoundedRectangle (c.x - 13, c.y - 13, 26, 26, 4.0f);
-        }
-        else
-            g.fillEllipse (c.x - 11, c.y - 11, 22, 22);
-    }
-
     // what happens
     g.setColour (col::inkDim);
-    g.setFont (small (14.0f));
+    g.setFont (small (13.5f));
     juce::String hint;
     if (rec >= 0)
-        hint = loops.state (rec) == LoopState::recording ? "Recording. Tap the square to end it at the end of the bar."
+        hint = loops.state (rec) == LoopState::recording ? "Recording. STOP ends it at the end of the bar."
                                                          : "Getting ready: the take starts on the next bar.";
     else
-        hint = juce::String ("REC lays the take on the next loop layer, in time with the beat. ")
-               + (settings.singMode == 0 ? "Chord pads guide you; only your voice is recorded." : "Chord pads set the notes the vocoder sings.");
-    g.drawFittedText (hint, juce::Rectangle<int> (20, 486, getWidth() - 40, 44), juce::Justification::centred, 2, 0.9f);
+        hint = settings.singMode == 0 ? "REC records your voice on the next layer. The chords guide you."
+                                      : "REC records it on the next layer. The chords set the notes it sings.";
+    g.drawFittedText (hint, juce::Rectangle<int> (16, (int) settingsRect().getBottom() + 4, getWidth() - 32, (int) padWell().getY() - (int) settingsRect().getBottom() - 6),
+                      juce::Justification::centredLeft, 1, 0.8f);
 
     smallButton (settingsRect(), "VOCODER SETTINGS", false, settingsId);
     smallButton (layersRect(), U8("LOOP LAYERS \xe2\x80\xba"), false, layersId);
@@ -441,7 +412,6 @@ void SingScreen::paint (juce::Graphics& g)
 void SingScreen::showDemo()
 {
     demo = true;
-    headphones = true;
     settings.singMode = 1;
     if (voc.activeChord() != 2)
         voc.pressPad (2);

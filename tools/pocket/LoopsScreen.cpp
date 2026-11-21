@@ -7,11 +7,9 @@ using namespace pocket;
 
 namespace
 {
-constexpr float kRowTop = 205.0f, kRowPitch = 46.7f, kRowHeight = 42.0f;
+constexpr float kRowTop = 60.0f;
 constexpr int kPeakBins = 34;
-const int kBarChoices[4] = { 1, 2, 4, 8 };
 const char* const kSourceNames[4] = { "MIC", "DRUMS", "VOCODER", "MIX" };
-const char* const kLengthNames[5] = { "1", "2", "4", "8", "FREE" };
 
 const juce::Colour kRowGreen { 0xff82cf6a }, kRowRed { 0xfff0674f }, kRowAmber { 0xfff5b13d }, kRowBlue { 0xff56b3d6 },
                    kRowGrey { 0xff8a8174 }, kRowText { 0xffe8dfc9 };
@@ -41,7 +39,7 @@ juce::String stateLabel (LoopState s, bool muted)
         case LoopState::overdubWait: return "PLAYING";
         case LoopState::recording: return "REC";
         case LoopState::overdubbing: return "DUBBING";
-        case LoopState::waiting: return "NEXT BAR";
+        case LoopState::waiting: return "WAITING";
         default: return "EMPTY";
     }
 }
@@ -54,7 +52,7 @@ bool isBusy (LoopState s) { return s == LoopState::waiting || s == LoopState::re
 LoopsScreen::LoopsScreen (PocketHost& h, Library& l, BeatsEngine& b, AppSettings& s)
     : host (h), library (l), beats (b), settings (s), loops (b)
 {
-    loops.setCountIn (settings.countIn);
+    loops.setCountInBars (settings.countInBars);
     restore();
     addChildComponent (editor);
     editor.onDone = [this] { closeEditor(); };
@@ -87,21 +85,49 @@ void LoopsScreen::leave()
     beats.setPlaying (false);
 }
 
-juce::Rectangle<float> LoopsScreen::rowRect (int l) const { return { 16.0f, kRowTop + (float) l * kRowPitch, (float) getWidth() - 32.0f, kRowHeight }; }
-juce::Rectangle<float> LoopsScreen::actRect (int l) const { auto r = rowRect (l); return { r.getRight() - 106.0f, r.getY() + 3, 58, 36 }; }
-juce::Rectangle<float> LoopsScreen::editRect (int l) const { auto r = rowRect (l); return { r.getRight() - 160.0f, r.getY() + 3, 48, 36 }; }
-juce::Rectangle<float> LoopsScreen::muteRect (int l) const { auto r = rowRect (l); return { r.getRight() - 40.0f, r.getY() + 3, 34, 36 }; }
+// The eight layers fill the room between the FROM chips and the bottom buttons.
+juce::Rectangle<float> LoopsScreen::rowRect (int l) const
+{
+    const float pitch = juce::jmax (46.0f, (buttonsY() - 8.0f - kRowTop) / (float) kLoopLayers);
+    return { 16.0f, kRowTop + (float) l * pitch, (float) getWidth() - 32.0f, pitch - 5.0f };
+}
+juce::Rectangle<float> LoopsScreen::actRect (int l) const { auto r = rowRect (l); return { r.getRight() - 112.0f, r.getY() + 4, 62, r.getHeight() - 8 }; }
+juce::Rectangle<float> LoopsScreen::editRect (int l) const { auto r = rowRect (l); return { r.getRight() - 172.0f, r.getY() + 4, 54, r.getHeight() - 8 }; }
+juce::Rectangle<float> LoopsScreen::muteRect (int l) const { auto r = rowRect (l); return { r.getRight() - 44.0f, r.getY() + 4, 38, r.getHeight() - 8 }; }
 
 juce::Rectangle<float> LoopsScreen::sourceCell (int i) const
 {
-    const float x0 = 85.0f, w = ((float) getWidth() - 15.0f - x0) / 4.0f;
-    return { x0 + (float) i * w, 99.0f, w, 42.0f };
+    const float x0 = 72.0f, w = ((float) getWidth() - 13.0f - x0) / 4.0f;
+    return { x0 + (float) i * w, 8.0f, w, 44.0f };
 }
 
-juce::Rectangle<float> LoopsScreen::lengthCell (int i) const
+int LoopsScreen::nextLayer() const
 {
-    const float x0 = 82.0f, w = ((float) getWidth() - 15.0f - x0) / 5.0f;
-    return { x0 + (float) i * w, 152.0f, w, 42.0f };
+    if (selected >= 0 && loops.state (selected) == LoopState::empty && ! loops.settling (selected))
+        return selected;
+    for (int l = 0; l < kLoopLayers; ++l)
+        if (loops.state (l) == LoopState::empty && ! loops.settling (l))
+            return l;
+    return -1;
+}
+
+int LoopsScreen::busyLayer() const
+{
+    for (int l = 0; l < kLoopLayers; ++l)
+        if (loops.state (l) == LoopState::recording || loops.state (l) == LoopState::waiting)
+            return l;
+    return -1;
+}
+
+void LoopsScreen::stopTake (int l)
+{
+    if (l < 0)
+        return;
+    // Called off while it waited for its bar: its undo step goes with it.
+    if (loops.state (l) == LoopState::waiting && ! undoStack.empty() && undoStack.back().items.size() == 1
+        && undoStack.back().items[0].layer == l && undoStack.back().items[0].before == nullptr)
+        undoStack.pop_back();
+    loops.stop (l);
 }
 
 //==============================================================================
@@ -142,14 +168,6 @@ void LoopsScreen::timerCallback()
     repaint();
 }
 
-int LoopsScreen::barsForNext() const
-{
-    if (lengthChoice < 4)
-        return kBarChoices[lengthChoice];
-    const double master = loops.masterBeats();
-    return master > 0 ? juce::jmax (1, juce::roundToInt (master / 4.0)) : 0;   // FREE: the first layer sets it, later ones snap
-}
-
 bool LoopsScreen::startRecording (int layer, int source, int bars)
 {
     const auto src = (LoopSource) (source >= 0 ? source : sourceChoice);
@@ -162,9 +180,11 @@ bool LoopsScreen::startRecording (int layer, int source, int bars)
         return false;
     Undo u;
     u.items.push_back ({ layer, nullptr, false });
-    if (bars == 0)
+    if (bars < 0)
+        bars = settings.recBars();
+    if (bars == 0)   // FREE: the first layer sets the length, later ones snap to it
         bars = loops.masterBeats() > 0 ? juce::jmax (1, juce::roundToInt (loops.masterBeats() / 4.0)) : 0;
-    if (! loops.arm (layer, src, bars >= 0 ? bars : barsForNext()))
+    if (! loops.arm (layer, src, bars))
     {
         host.toast ("That layer is busy. Try again in a moment.");
         return false;
@@ -193,10 +213,7 @@ int LoopsScreen::recordVocoder()
 
 int LoopsScreen::recordFrom (int source, int bars)
 {
-    int layer = -1;
-    for (int l = 0; l < kLoopLayers && layer < 0; ++l)
-        if (loops.state (l) == LoopState::empty && ! loops.settling (l))
-            layer = l;
+    const int layer = nextLayer();
     if (layer < 0)
     {
         host.toast ("All 8 layers are used. Clear one in Loops to record.");
@@ -289,45 +306,15 @@ void LoopsScreen::clearAll()
 
 void LoopsScreen::press (int id)
 {
-    if (id == rec)
-    {
-        int busy = -1;
-        for (int l = 0; l < kLoopLayers && busy < 0; ++l)
-            if (loops.state (l) == LoopState::recording || loops.state (l) == LoopState::waiting)
-                busy = l;
-        if (busy >= 0)
-        {
-            loops.stop (busy);
-            return;
-        }
-        int layer = selected >= 0 && loops.state (selected) == LoopState::empty ? selected : -1;
-        for (int l = 0; l < kLoopLayers && layer < 0; ++l)
-            if (loops.state (l) == LoopState::empty)
-                layer = l;
-        if (layer < 0)
-            return host.toast ("All 8 layers are used. Clear one to record.");
-        startRecording (layer);
-    }
-    else if (id >= srcBase && id < srcBase + 4)
+    if (id >= srcBase && id < srcBase + 4)
     {
         if ((LoopSource) (id - srcBase) == LoopSource::vocoder && ! loops.hasVocoder())
             return host.toast ("The vocoder source comes with the Vocoder");
         sourceChoice = id - srcBase;
         settingsDirty = true;
+        if (onSourceChanged)
+            onSourceChanged();
     }
-    else if (id >= lenBase && id < lenBase + 5)
-    {
-        lengthChoice = id - lenBase;
-        settingsDirty = true;
-    }
-    else if (id == lcd || id == playId)
-    {
-        if (! loops.transportRunning() && layerCount() == 0)
-            host.toast ("Nothing recorded yet: playing the beat. REC records a layer over it.");
-        host.togglePlay();
-    }
-    else if (id == undoId)
-        undo();
     else if (id == clearId)
     {
         int layer = selected >= 0 && loops.state (selected) != LoopState::empty ? selected : -1;
@@ -353,12 +340,8 @@ void LoopsScreen::press (int id)
         selected = lastLayer = l;
         switch (loops.state (l))
         {
-            case LoopState::empty: startRecording (l); break;
-            case LoopState::waiting:
-                if (! undoStack.empty() && undoStack.back().items.size() == 1 && undoStack.back().items[0].layer == l && undoStack.back().items[0].before == nullptr)
-                    undoStack.pop_back();
-                loops.stop (l);
-                break;
+            case LoopState::empty: break;   // picked: the next take lands here
+            case LoopState::waiting: stopTake (l); break;
             case LoopState::recording:
             case LoopState::overdubWait:
             case LoopState::overdubbing: loops.stop (l); break;
@@ -393,20 +376,17 @@ void LoopsScreen::press (int id)
 
 int LoopsScreen::idAt (juce::Point<float> p) const
 {
-    if (recRect().expanded (4).contains (p))
-        return rec;
-    if (playRect().expanded (4).contains (p))
-        return playId;
-    if (lcdRect().contains (p))
-        return lcd;
     for (int i = 0; i < 4; ++i)
         if (sourceCell (i).contains (p))
             return srcBase + i;
-    for (int i = 0; i < 5; ++i)
-        if (lengthCell (i).contains (p))
-            return lenBase + i;
     for (int l = 0; l < kLoopLayers; ++l)
     {
+        if (loops.state (l) == LoopState::empty)
+        {
+            if (rowRect (l).contains (p))
+                return rowSelect + l;
+            continue;
+        }
         if (muteRect (l).expanded (3, 3).contains (p))
             return rowMute + l;
         if (editRect (l).expanded (2, 3).contains (p))
@@ -416,7 +396,6 @@ int LoopsScreen::idAt (juce::Point<float> p) const
         if (rowRect (l).contains (p))
             return rowSelect + l;
     }
-    if (undoRect().contains (p)) return undoId;
     if (clearRect().contains (p)) return clearId;
     if (clearAllRect().contains (p)) return clearAllId;
     if (toMacRect().contains (p)) return toMacId;
@@ -442,13 +421,13 @@ void LoopsScreen::mouseUp (const juce::MouseEvent& e)
 void LoopsScreen::resized()
 {
     if (editor.isVisible())
-        editor.setBounds (0, 196, getWidth(), getHeight() - 196);
+        editor.setBounds (0, editorTop(), getWidth(), getHeight() - editorTop());
 }
 
 void LoopsScreen::openEditor (int layer)
 {
     editor.open (layer);
-    const juce::Rectangle<int> to (0, 196, getWidth(), getHeight() - 196);
+    const juce::Rectangle<int> to (0, editorTop(), getWidth(), getHeight() - editorTop());
     if (! editor.isVisible())
     {
         editor.setBounds (to.withY (getHeight()));
@@ -566,96 +545,6 @@ juce::uint32 LoopsScreen::fxHash (const LayerFxState& fx)
 }
 
 //==============================================================================
-void LoopsScreen::drawLcd (juce::Graphics& g)
-{
-    auto r = lcdRect();
-    drawWell (g, r, 14.0f);
-
-    int active = -1;
-    int waiting = -1;
-    for (int l = 0; l < kLoopLayers; ++l)
-    {
-        const auto st = rows[(size_t) l].st;
-        if (st == LoopState::recording || st == LoopState::overdubbing)
-            active = l;
-        else if (st == LoopState::waiting)
-            waiting = l;
-    }
-
-    const bool running = loops.transportRunning();
-    const double beat = loops.beatNow();
-    const double bpm = loops.bpm();
-    juce::String line1, line2;
-    float progress = 0.0f;
-    auto bar = [] (double rel) { return juce::String ((int) std::floor (rel / 4.0) + 1) + "." + juce::String ((int) std::fmod (std::floor (rel), 4.0) + 1); };
-    const juce::String tempo = juce::String (juce::roundToInt (bpm)) + " BPM";
-
-    if (active >= 0)
-    {
-        const double rel = juce::jmax (0.0, beat - loops.startBeat (active));
-        const int bars = loops.state (active) == LoopState::overdubbing ? juce::jmax (1, juce::roundToInt (loops.masterBeats() / 4.0))
-                                                                         : loops.recordingBars (active);
-        line1 = (loops.state (active) == LoopState::overdubbing ? "DUB LAYER " : "REC LAYER ") + juce::String (active + 1);
-        line2 = "BAR " + bar (rel) + " / " + (bars > 0 ? juce::String (bars) : juce::String ("FREE")) + U8(" · ") + tempo;
-        progress = bars > 0 ? (float) (std::fmod (rel, bars * 4.0) / (bars * 4.0)) : (float) (std::fmod (rel, 16.0) / 16.0);
-    }
-    else if (waiting >= 0)
-    {
-        line1 = (loops.countingIn() ? "COUNT-IN " : "READY ") + juce::String (U8("· LAYER ")) + juce::String (waiting + 1);
-        line2 = running ? "BAR " + bar (beat) + " / 1" + U8(" · ") + tempo : "STARTING" + juce::String (U8(" · ")) + tempo;
-        progress = running ? (float) (std::fmod (beat, 4.0) / 4.0) : 0.0f;
-    }
-    else
-    {
-        line1 = "LOOPS " + juce::String (U8("· ")) + juce::String (layerCount()) + " OF 8";
-        const double master = loops.masterBeats();
-        if (running && master > 0)
-        {
-            line2 = "BAR " + bar (std::fmod (beat, master)) + " / " + juce::String (juce::roundToInt (master / 4.0)) + U8(" · ") + tempo;
-            progress = (float) (std::fmod (beat, master) / master);
-        }
-        else if (running)
-            line2 = "BAR " + bar (beat) + U8(" · ") + tempo;
-        else
-            line2 = (layerCount() > 0 ? juce::String ("READY") : juce::String ("STOPPED")) + U8(" · ") + tempo;
-    }
-
-    g.setColour (col::lcdText);
-    g.setFont (spaced (lcdFont (31.0f), 0.03f));
-    g.drawFittedText (line1, r.withTrimmedLeft (14).withTrimmedRight (70).withHeight (34).translated (0, 6).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
-    g.setColour (juce::Colour (0xffe8a24a));
-    g.setFont (spaced (lcdFont (17.0f), 0.04f));
-    g.drawFittedText (line2, r.withTrimmedLeft (15).withTrimmedRight (70).withHeight (20).translated (0, 38).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
-
-    // PLAY / STOP: the whole song, the same as the header's button
-    {
-        const bool on = beats.clockRunning();
-        auto pr = playRect();
-        drawRaised (g, pr, on ? Look::red : Look::green, pressed == playId, 10.0f);
-        auto c = pr.getCentre().translated (0, -8);
-        g.setColour (on ? juce::Colours::white : col::ink);
-        if (on)
-            g.fillRoundedRectangle (c.x - 6, c.y - 6, 12, 12, 2.0f);
-        else
-        {
-            juce::Path tri;
-            tri.addTriangle (c.x - 5, c.y - 7, c.x - 5, c.y + 7, c.x + 7, c.y);
-            g.fillPath (tri);
-        }
-        g.setFont (spaced (condensedBold (12.0f), 0.08f));
-        g.drawText (on ? "STOP" : "PLAY", pr.withTrimmedTop (24).withTrimmedBottom (4), juce::Justification::centred);
-    }
-
-    const int segs = 16;
-    const float x0 = r.getX() + 14.0f, segW = (r.getWidth() - 28.0f - 3.0f * (float) (segs - 1)) / (float) segs;
-    const int lit = juce::roundToInt (progress * (float) segs);
-    for (int i = 0; i < segs; ++i)
-    {
-        g.setColour (i < lit ? col::lcdText : juce::Colour (0xff3b2f25));
-        g.fillRoundedRectangle (x0 + (float) i * (segW + 3.0f), r.getBottom() - 15.0f, segW, 6.0f, 1.5f);
-    }
-}
-
 void LoopsScreen::drawChoice (juce::Graphics& g, juce::Rectangle<float> cell, const juce::String& text, bool on, bool dim)
 {
     if (on)
@@ -680,19 +569,43 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
     const auto colour = stateColour (st, row.muted);
     g.setColour (kRowText);
     g.setFont (condensed (21.0f));
-    g.drawText (juce::String (l + 1), juce::Rectangle<float> (r.getX() + 7, r.getY(), 22, r.getHeight()), juce::Justification::centredLeft);
+    g.drawText (juce::String (l + 1), juce::Rectangle<float> (r.getX() + 9, r.getY(), 22, r.getHeight()), juce::Justification::centredLeft);
+
+    if (st == LoopState::empty)
+    {
+        // Empty: the one the next take lands on says so (tap another empty row to pick it instead).
+        const bool next = l == nextLayer();
+        auto box = juce::Rectangle<float> (r.getX() + 34, r.getCentreY() - 14, 28, 28);
+        juce::Path outline, dash;
+        outline.addRoundedRectangle (box, 7.0f);
+        const float dashes[] = { 4.0f, 3.0f };
+        juce::PathStrokeType (1.6f).createDashedStroke (dash, outline, dashes, 2);
+        g.setColour (next ? kRowRed : kRowGrey.withAlpha (0.6f));
+        g.fillPath (dash);
+        g.setFont (spaced (condensedBold (15.0f), 0.1f));
+        if (next)
+        {
+            g.fillEllipse (box.getRight() + 12, r.getCentreY() - 3.5f, 7, 7);
+            g.drawFittedText ("NEXT RECORDING LANDS HERE", juce::Rectangle<float> (box.getRight() + 25, r.getY(), r.getRight() - box.getRight() - 35, r.getHeight()).toNearestInt(),
+                              juce::Justification::centredLeft, 1, 0.8f);
+        }
+        else
+            g.drawText ("EMPTY", juce::Rectangle<float> (box.getRight() + 12, r.getY(), 120, r.getHeight()), juce::Justification::centredLeft);
+        return;
+    }
+
     g.setColour (colour);
     g.setFont (spaced (condensedBold (14.0f), 0.08f));
-    g.drawFittedText (stateLabel (st, row.muted), juce::Rectangle<float> (r.getX() + 28, r.getY(), 64, r.getHeight()).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+    g.drawFittedText (stateLabel (st, row.muted), juce::Rectangle<float> (r.getX() + 30, r.getY(), 62, r.getHeight()).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
 
-    auto wave = juce::Rectangle<float> (r.getX() + 96, r.getY() + 4, r.getWidth() - 96 - 168, r.getHeight() - 8);
+    auto wave = juce::Rectangle<float> (r.getX() + 94, r.getY() + 5, editRect (l).getX() - 8 - (r.getX() + 94), r.getHeight() - 10);
     if (st == LoopState::waiting)
     {
         g.setColour (kRowAmber);
         g.setFont (spaced (condensedBold (15.0f), 0.1f));
-        g.drawText (loops.countingIn() ? "COUNT-IN, THEN REC" : "STARTS NEXT BAR", wave, juce::Justification::centred);
+        g.drawFittedText (loops.countingIn() ? "COUNT-IN, THEN REC" : "STARTS NEXT BAR", wave.toNearestInt(), juce::Justification::centred, 1, 0.75f);
     }
-    else if (st != LoopState::empty && ! row.peaks.empty())
+    else if (! row.peaks.empty())
     {
         const float pitch = wave.getWidth() / (float) row.peaks.size();
         const int shown = (int) row.peaks.size();
@@ -705,12 +618,11 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
         }
     }
 
-    // the action button
+    // the action button: DUB a playing layer, STOP a recording or dub, WAIT (tap to call off)
     juce::String text;
     Look look = Look::dark;
     switch (st)
     {
-        case LoopState::empty: text = "REC"; break;
         case LoopState::waiting: text = "WAIT"; look = Look::amber; break;
         case LoopState::recording:
         case LoopState::overdubbing: text = "STOP"; look = Look::red; break;
@@ -720,14 +632,8 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
     auto act = actRect (l);
     drawRaised (g, act, look, pressed == rowAct + l, 10.0f);
     g.setColour (look == Look::amber ? col::ink : juce::Colour (0xfff1e7d1));
-    g.setFont (spaced (condensed (15.0f), 0.08f));
-    if (st == LoopState::empty)
-    {
-        g.drawText (text, act.withTrimmedBottom (3).withTrimmedLeft (10), juce::Justification::centred);
-        g.fillEllipse (act.getX() + 11, act.getCentreY() - 4.5f, 6, 6);
-    }
-    else
-        g.drawText (text, act.withTrimmedBottom (3), juce::Justification::centred);
+    g.setFont (spaced (condensed (16.0f), 0.08f));
+    g.drawText (text, act.withTrimmedBottom (3), juce::Justification::centred);
 
     // EDIT: trim and effects (amber when the layer has effects on)
     if (hasLoop (st))
@@ -736,7 +642,7 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
         const bool fxOn = ! loops.fxOf (l).isNeutral();
         drawRaised (g, ed, fxOn ? Look::amber : Look::cream, pressed == rowEdit + l, 10.0f);
         g.setColour (col::ink);
-        g.setFont (spaced (condensed (14.0f), 0.08f));
+        g.setFont (spaced (condensed (15.0f), 0.08f));
         g.drawText ("EDIT", ed.withTrimmedBottom (3), juce::Justification::centred);
         if (loops.hasAnyMoves (l))
         {
@@ -746,67 +652,30 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
     }
 
     auto mute = muteRect (l);
-    drawRaised (g, mute, row.muted && st != LoopState::empty ? Look::blue : Look::dark, pressed == rowMute + l, 10.0f);
-    g.setColour (row.muted && st != LoopState::empty ? col::ink : juce::Colour (0xfff1e7d1));
-    g.setFont (condensed (16.0f));
+    drawRaised (g, mute, row.muted ? Look::blue : Look::dark, pressed == rowMute + l, 10.0f);
+    g.setColour (row.muted ? col::ink : juce::Colour (0xfff1e7d1));
+    g.setFont (condensed (17.0f));
     g.drawText ("M", mute.withTrimmedBottom (3), juce::Justification::centred);
 }
 
 void LoopsScreen::paint (juce::Graphics& g)
 {
-    drawLcd (g);
-
-    // the big REC / STOP button, with the dark tab that joins it to the display
-    bool busy = false;
-    for (auto& r : rows)
-        busy = busy || r.st == LoopState::recording || r.st == LoopState::waiting;
-    {
-        auto b = recRect();
-        g.setColour (juce::Colour (0xffa8301f));
-        juce::Path tab;
-        tab.addRoundedRectangle (b.getRight() - 14, b.getY() + 10, 30.0f, b.getHeight() - 20, 6.0f);
-        g.fillPath (tab);
-        auto body = b.withTrimmedBottom (3);
-        g.setColour (juce::Colour (0xff922a1c));
-        g.fillEllipse (body.translated (0, pressed == rec ? 1.0f : 3.0f));
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff58b78), 0, body.getY(), juce::Colour (0xffd8452f), 0, body.getBottom(), false));
-        g.fillEllipse (body.translated (0, pressed == rec ? 2.0f : 0.0f));
-        g.setColour (juce::Colours::white.withAlpha (0.3f));
-        g.drawEllipse (body.reduced (1), 1.0f);
-        auto c = body.getCentre().translated (0, pressed == rec ? 2.0f : 0.0f);
-        g.setColour (juce::Colour (0xff2b1410));
-        if (busy)
-            g.fillRoundedRectangle (c.x - 7, c.y - 19, 14, 14, 2.0f);
-        else
-            g.fillEllipse (c.x - 8, c.y - 19, 16, 16);
-        g.setFont (spaced (condensed (13.0f), 0.1f));
-        g.drawText (busy ? "STOP" : "REC", juce::Rectangle<float> (c.x - 30, c.y + 1, 60, 18), juce::Justification::centred);
-    }
-
     g.setColour (col::ink);
     g.setFont (spaced (condensed (14.0f), 0.12f));
-    g.drawText ("FROM", juce::Rectangle<float> (16, 99, 60, 42), juce::Justification::centredLeft);
+    g.drawText ("FROM", juce::Rectangle<float> (16, 8, 56, 44), juce::Justification::centredLeft);
     for (int i = 0; i < 4; ++i)
         drawChoice (g, sourceCell (i), kSourceNames[i], sourceChoice == i);
-    g.setColour (col::ink);
-    g.setFont (spaced (condensed (14.0f), 0.12f));
-    g.drawText ("LENGTH", juce::Rectangle<float> (16, 152, 66, 42), juce::Justification::centredLeft);
-    for (int i = 0; i < 5; ++i)
-        drawChoice (g, lengthCell (i), kLengthNames[i], lengthChoice == i);
 
     for (int l = 0; l < kLoopLayers; ++l)
         drawRow (g, l);
 
-    drawRaised (g, undoRect(), Look::cream, pressed == undoId, 12.0f);
     drawRaised (g, clearRect(), Look::cream, pressed == clearId, 12.0f);
-    g.setColour (col::ink);
-    g.setFont (spaced (condensed (18.0f), 0.08f));
-    g.drawText ("UNDO", undoRect().withTrimmedBottom (3), juce::Justification::centred);
-    g.drawText ("CLEAR", clearRect().withTrimmedBottom (3), juce::Justification::centred);
-    g.setColour (pressed == clearAllId ? col::ink : col::inkDim);
-    g.drawText ("CLEAR ALL", clearAllRect().withTrimmedBottom (3), juce::Justification::centred);
+    drawRaised (g, clearAllRect(), Look::cream, pressed == clearAllId, 12.0f);
     drawRaised (g, toMacRect(), Look::amber, pressed == toMacId, 12.0f);
     g.setColour (col::ink);
+    g.setFont (spaced (condensed (18.0f), 0.08f));
+    g.drawText ("CLEAR", clearRect().withTrimmedBottom (3), juce::Justification::centred);
+    g.drawText ("CLEAR ALL", clearAllRect().withTrimmedBottom (3), juce::Justification::centred);
     g.drawText ("TO MAC", toMacRect().withTrimmedBottom (3), juce::Justification::centred);
 }
 
@@ -893,7 +762,6 @@ void LoopsScreen::save()
     }
     root->setProperty ("bpm", loops.bpm());
     root->setProperty ("from", sourceChoice);
-    root->setProperty ("length", lengthChoice);
     root->setProperty ("layers", list);
     dir.getChildFile ("loops.json").replaceWithText (juce::JSON::toString (juce::var (root)));
     settingsDirty = false;
@@ -946,6 +814,7 @@ void LoopsScreen::reloadIdea()
         saved[(size_t) l] = {};
     }
     undoStack.clear();
+    selected = lastLayer = vocLayer = -1;   // the new song's next take goes on its first empty layer
     restore();
     repaint();
 }
@@ -959,7 +828,6 @@ void LoopsScreen::restore()
     sourceChoice = juce::jlimit (0, 3, (int) root->getProperty ("from"));
     if (sourceChoice == (int) LoopSource::vocoder)
         sourceChoice = 0;
-    lengthChoice = juce::jlimit (0, 4, root->hasProperty ("length") ? (int) root->getProperty ("length") : 2);
 
     juce::AudioFormatManager& formats = library.formats();
     if (auto* layers = root->getProperty ("layers").getArray())
@@ -1060,7 +928,8 @@ void LoopsScreen::showDemo()
     beats.setBpm (bpm);
     loops.prepare (44100.0);
     loops.setLatency (0);
-    loops.setCountIn (false);
+    loops.setCountInBars (0);
+    loops.setMic (true, false);
     Pump pump (beats, loops);
     juce::Random rng (11);
     pump.input = [&rng] (juce::int64 n)
@@ -1083,7 +952,6 @@ void LoopsScreen::showDemo()
     loops.arm (3, LoopSource::mic, 4);                 // layer 4 waits for the next bar
     pump.run (512);
     sourceChoice = 0;
-    lengthChoice = 2;
     selected = -1;
     refresh();
     repaint();
@@ -1101,7 +969,8 @@ juce::String LoopsScreen::selfCheck (juce::String& report)
         auto engine = std::make_unique<LoopsEngine> (*beatsEngine);
         engine->prepare (sr);
         engine->setLatency (latency);
-        engine->setCountIn (false);
+        engine->setCountInBars (0);
+        engine->setMic (true, false);
         beatsEngine->setBpm (bpm);
         Pump pump (*beatsEngine, *engine);
         pump.input = [d] (juce::int64 n) { return (float) ((double) n * d); };
@@ -1191,7 +1060,8 @@ juce::String LoopsScreen::selfCheck (juce::String& report)
         auto engine = std::make_unique<LoopsEngine> (*beatsEngine);
         engine->prepare (sr);
         engine->setLatency (0);
-        engine->setCountIn (false);
+        engine->setCountInBars (0);
+        engine->setMic (true, false);
         beatsEngine->setBpm (bpm);
         Pump pump (*beatsEngine, *engine);
         const int n = (int) (4.0 * 60.0 / bpm * sr);
@@ -1269,7 +1139,8 @@ juce::String LoopsScreen::selfCheck (juce::String& report)
         engine->setChordSource (&player);
         engine->prepare (sr);
         engine->setLatency (0);
-        engine->setCountIn (false);
+        engine->setCountInBars (0);
+        engine->setMic (true, false);
         beatsEngine->setBpm (bpm);
         Pump pump (*beatsEngine, *engine);
         pump.input = [] (juce::int64) { return 0.1f; };
@@ -1314,7 +1185,7 @@ void LoopsScreen::showEditorDemo()
     selected = 1;
     openEditor (1);
     juce::Desktop::getInstance().getAnimator().cancelAllAnimations (true);
-    editor.setBounds (0, 196, getWidth(), getHeight() - 196);
+    editor.setBounds (0, editorTop(), getWidth(), getHeight() - editorTop());
     refresh();
     repaint();
 }

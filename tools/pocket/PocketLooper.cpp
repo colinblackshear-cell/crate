@@ -73,7 +73,7 @@ bool LoopsEngine::arm (int layer, LoopSource source, int bars)
     c.layer = layer;
     c.a = (int) source;
     c.b = bars;
-    c.c = countIn ? 1 : 0;
+    c.c = countInBars;
     c.take = take.get();
     push (c);
     return true;
@@ -331,7 +331,7 @@ void LoopsEngine::prepare (double rate)
     sampleRate = rate;
     for (auto& v : layerOut)
         v.assign ((size_t) kChunk, 0.0f);
-    for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &srcBoth, &vocL, &vocR, &busDelay, &busReverb, &busL, &busR })
+    for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &srcBoth, &vocL, &vocR, &clickBuf, &busDelay, &busReverb, &busL, &busR })
         v->assign ((size_t) kChunk, 0.0f);
     bus.prepare (rate);
     for (auto& l : layers)
@@ -362,7 +362,7 @@ void LoopsEngine::handle (const Cmd& c)
             l.source = (LoopSource) juce::jlimit (0, (int) LoopSource::count - 1, c.a);
             l.bars = c.b;
             l.uiBars = c.b;
-            l.withCountIn = c.c != 0;
+            l.withCountIn = juce::jlimit (0, 2, c.c);
             l.fresh = ! wasRunning;
             l.armBeat = -1;
             l.endBeat = -1;
@@ -464,7 +464,15 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         transportOn = false;   // everything was cleared: let go of the clock
     beats.holdClock (transportOn.load());
 
-    beats.render (left, right, n);
+    // A take that starts the clock after a count-in: the click sounds through the count-in, even with
+    // the click off. It goes into its own buffer, so no take records it.
+    double countEnd = -1.0;
+    for (auto& l : layers)
+        if (l.st == LoopState::waiting && l.fresh && l.withCountIn > 0)
+            countEnd = juce::jmax (countEnd, l.armBeat >= 0 ? l.armBeat : l.withCountIn * 4.0);
+    beats.setCountInClick (countEnd);
+    std::fill (clickBuf.begin(), clickBuf.begin() + n, 0.0f);
+    beats.renderWithClick (left, right, n, clickBuf.data());
 
     const bool running = beats.clockRunning();
     const double blockBeat = beats.clockBeat();
@@ -500,14 +508,16 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         wasRunning = running;
     }
 
-    // what each source hears this block
+    // what each source hears this block (the mic only while it's allowed)
+    const bool mic = micOn.load();
+    const bool heard = mic && micHeard.load();
     {
         float p = 0;
         for (int i = 0; i < n; ++i)
         {
             float s = 0;
             int used = 0;
-            for (int c = 0; c < inChannels && c < 2; ++c)
+            for (int c = 0; mic && c < inChannels && c < 2; ++c)
                 if (inPtr != nullptr && inPtr[c] != nullptr)
                 {
                     s += inPtr[c][chunkOffset + i];
@@ -525,11 +535,11 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     {
         std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
         std::fill (vocR.begin(), vocR.begin() + n, 0.0f);
-        const float* shifted[2] = { inChannels > 0 && inPtr != nullptr ? inPtr[0] + chunkOffset : nullptr,
-                                    inChannels > 1 && inPtr != nullptr ? inPtr[1] + chunkOffset : nullptr };
-        vocoder->setInput (shifted, juce::jmin (2, inChannels));
+        const float* shifted[2] = { mic && inChannels > 0 && inPtr != nullptr ? inPtr[0] + chunkOffset : nullptr,
+                                    mic && inChannels > 1 && inPtr != nullptr ? inPtr[1] + chunkOffset : nullptr };
+        vocoder->setInput (shifted, mic ? juce::jmin (2, inChannels) : 0);
         vocoder->render (vocL.data(), vocR.data(), n);
-        vocoderHeard = vocoderMonitor == nullptr || vocoderMonitor->load();
+        vocoderHeard = heard && (vocoderMonitor == nullptr || vocoderMonitor->load());
         for (int i = 0; i < n; ++i)
         {
             if (vocoderHeard)
@@ -581,7 +591,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         recordLayer (layers[(size_t) l], l, blockBeat, bps, n);
 
     for (auto& l : layers)
-        l.uiCounting = l.st == LoopState::waiting && l.fresh && l.armBeat > blockBeat && l.withCountIn;
+        l.uiCounting = l.st == LoopState::waiting && l.fresh && l.armBeat > blockBeat && l.withCountIn > 0;
+    uiCountEnd = running && countEnd > blockBeat ? countEnd : -1.0;
 
     for (auto& l : layers)
         l.uiStart = l.startBeat;
@@ -594,11 +605,14 @@ void LoopsEngine::chunk (float* left, float* right, int n)
             if (right != nullptr)
                 right[i] += s;
         }
+    // the click, and your dry voice while you hear yourself: heard, never recorded
+    const bool dry = heard && dryWanted.load();
     for (int i = 0; i < n; ++i)
     {
-        left[i] += busL[(size_t) i];
+        const float extra = clickBuf[(size_t) i] + (dry ? srcMic[(size_t) i] : 0.0f);
+        left[i] += busL[(size_t) i] + extra;
         if (right != nullptr)
-            right[i] += busR[(size_t) i];
+            right[i] += busR[(size_t) i] + extra;
     }
 
     nextBeat = running ? blockBeat + n * bps : 0.0;
@@ -668,7 +682,7 @@ void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps
         return;
 
     if (l.st == LoopState::waiting && l.armBeat < 0)
-        l.armBeat = l.fresh ? (l.withCountIn ? 4.0 : 0.0) : std::ceil (blockBeat / 4.0 - kEps) * 4.0;
+        l.armBeat = l.fresh ? l.withCountIn * 4.0 : std::ceil (blockBeat / 4.0 - kEps) * 4.0;
     if (l.st == LoopState::overdubWait && l.dubBeat < 0 && l.lenBeats > 0)
         l.dubBeat = l.startBeat + std::ceil ((blockBeat - l.startBeat) / l.lenBeats - kEps) * l.lenBeats;
 

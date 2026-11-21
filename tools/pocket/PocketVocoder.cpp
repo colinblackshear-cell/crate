@@ -770,7 +770,8 @@ juce::String VocoderEngine::selfCheck (juce::String& report)
         loops->setVocoderSource (voc.get(), &voc->monitorFlag());
         loops->prepare (sr);
         loops->setLatency (0);
-        loops->setCountIn (false);
+        loops->setCountInBars (0);
+        loops->setMic (true, true);   // heard: only HEAR ME (the monitor) decides below
         beatsEngine->setBpm (bpm);
         voc->setPreset (1);
 

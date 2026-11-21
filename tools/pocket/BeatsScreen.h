@@ -6,7 +6,8 @@
 #include "PocketLibrary.h"
 #include "PocketTheme.h"
 
-// The Beats tab: a switch at the top between the drum machine (the Mac's 808 engine) and the MPC pads.
+// Two tools in one: DRUMS (the Mac's 808 engine, mode 0) and PADS (the MPC pads, mode 1). The tool row
+// picks the mode. The thumb bar's REC records either onto the next loop layer (PocketApp drives it).
 class BeatsScreen : public juce::Component, private juce::Timer
 {
 public:
@@ -38,16 +39,16 @@ public:
     void exportForMpc();
     void renameKit();
 
-    // The pad pattern (REC PADS). Recording runs the clock with a click; pads played go into the
-    // pattern, snapped to the grid. LOCK BEAT records the beat onto the next empty loop layer.
-    void toggleRecordPads();
+    // The pad pattern. While recording, pads played from `fromBeat` on go into the pattern, snapped to the
+    // grid (REC on PADS turns it on, with the pattern playing; PocketApp then locks it onto a layer).
+    void setRecordingPads (bool on, double fromBeat = 0.0);
     bool recordingPads() const { return recPads; }
+    std::function<bool()> clickWanted;   // the app's CLICK, for when the pattern stops
     void togglePatternPlay();
     void setPatternBars (int bars);
     void cycleQuantize();
     void undoPatternHit();
     void clearPattern();
-    void lockBeat();
     void patternChanged();
     double patternPosition() const;   // beats into the pattern, -1 when it isn't playing
     void recordHit (int pad, float velocity);
@@ -64,12 +65,10 @@ public:
     void fillDemoPattern();
     // A ready beat for a new song: a 2-bar boom-bap pattern on the Street kit's pads at 90 BPM.
     void fillStarterBeat();
-    // The tour's spotlights, in this screen's coordinates: 0 = pad A13, 1 = the REC PADS ... LOCK BEAT row.
+    // The tour's spotlights, in this screen's coordinates: 0 = pad A13, 1 = the pattern and its controls.
     juce::Rectangle<int> tourSpot (int which) const;
 
-    void paint (juce::Graphics&) override;
     void resized() override;
-    void mouseUp (const juce::MouseEvent&) override;
 
 private:
     class DrumView;
@@ -77,7 +76,6 @@ private:
     void timerCallback() override;
     void saveSoon() { saveCountdown = 30; }
     void pushPads();
-    juce::Rectangle<float> segment (int i) const;
 
     PocketHost& host;
     pocket::Library& library;
@@ -89,6 +87,7 @@ private:
 
     int screenMode = 0, bank = 0, selected = -1, voice = 0, demoStep = -1, saveCountdown = 0;
     bool recPads = false;
+    double recFrom = 0.0;
     std::vector<pocket::PadPattern> patternUndo;
     bool drumsDirty = false, kitDirty = false;
    #if JUCE_IOS || JUCE_ANDROID

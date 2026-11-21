@@ -3,7 +3,7 @@
 #include "PocketTheme.h"
 
 // The Tempo sheet (tap the BPM in the header): one tempo for the whole song. -/+, drag the bar,
-// TAP TEMPO, HALF, DOUBLE, the click and the count-in.
+// TAP TEMPO, HALF, DOUBLE, the click and the count-in (the same ones as the thumb bar and Rec setup).
 class TempoSheet : public juce::Component
 {
 public:
@@ -11,8 +11,10 @@ public:
 
     std::function<double()> getBpm;
     std::function<void (double)> setBpm;
-    std::function<bool()> getClick, getCountIn;
-    std::function<void (bool)> setClick, setCountIn;
+    std::function<bool()> getClick;
+    std::function<void (bool)> setClick;
+    std::function<int()> getCountIn;          // bars: 0, 1 or 2 (the Rec setup's)
+    std::function<void (int)> setCountIn;
     std::function<void()> onDone;
 
     void refresh();

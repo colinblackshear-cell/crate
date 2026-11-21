@@ -411,7 +411,7 @@ void BeatsEngine::renderPads (float* left, float* right, int n)
     sounding = mask;
 }
 
-void BeatsEngine::render (float* left, float* right, int numSamples)
+void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, float* clickOut)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -502,8 +502,8 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
         }
         std::sort (triggers.begin(), triggers.begin() + numTriggers, [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
     }
-    if (running && clickOn.load())
-        renderClick (left, right, numSamples, ppq, beatsPerSample);
+    if (running)
+        renderClick (left, right, clickOut, numSamples, ppq, beatsPerSample);
 
     if (running)
         ppq += numSamples * beatsPerSample;
@@ -527,9 +527,13 @@ void BeatsEngine::render (float* left, float* right, int numSamples)
     }
 }
 
-// A click on each beat (higher on the bar), while REC PADS records.
-void BeatsEngine::renderClick (float* left, float* right, int n, double startBeat, double beatsPerSample)
+// A click on each beat (higher on the bar): while the click is on, and through a count-in.
+void BeatsEngine::renderClick (float* left, float* right, float* clickOut, int n, double startBeat, double beatsPerSample)
 {
+    const bool on = clickOn.load();
+    const double until = countInUntil.load();
+    if (! on && until <= startBeat - 1.0 && clickEnv <= 1.0e-4f)
+        return;   // nothing to sound
     const float decay = std::exp (-1.0f / (0.012f * (float) sampleRate));
     double beat = startBeat;
     for (int i = 0; i < n; ++i)
@@ -538,18 +542,26 @@ void BeatsEngine::renderClick (float* left, float* right, int n, double startBea
         if (std::floor (next) != std::floor (beat) || (i == 0 && beat == 0.0))
         {
             const auto whole = (long long) std::floor (beat == 0.0 && i == 0 ? 0.0 : next);
-            clickFreq = whole % 4 == 0 ? 1500.0f : 1000.0f;
-            clickEnv = 0.35f;
-            clickPhase = 0;
+            if (on || (double) whole < until - 1.0e-6)
+            {
+                clickFreq = whole % 4 == 0 ? 1500.0f : 1000.0f;
+                clickEnv = 0.35f;
+                clickPhase = 0;
+            }
         }
         if (clickEnv > 1.0e-4f)
         {
             const float s = std::sin (clickPhase) * clickEnv;
             clickPhase += juce::MathConstants<float>::twoPi * clickFreq / (float) sampleRate;
             clickEnv *= decay;
-            left[i] += s;
-            if (right != nullptr)
-                right[i] += s;
+            if (clickOut != nullptr)
+                clickOut[i] += s;
+            else
+            {
+                left[i] += s;
+                if (right != nullptr)
+                    right[i] += s;
+            }
         }
         beat = next;
     }

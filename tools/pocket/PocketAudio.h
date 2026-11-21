@@ -39,6 +39,9 @@ public:
     float takeLevel() { return peak.exchange (0.0f); }   // loudest sample since the last call, 0..1
     double deviceRate() const { return sampleRate; }
     int latencySamples() const { return latency.load(); }   // input + output, as the device reports
+    // After the route changed (AirPods in, headphones out): the audio session's new input + output
+    // latency, in samples, for the takes' latency compensation. Ignored when <= 0. Message thread.
+    void updateLatency (int samples);
     bool hasOutputDevice() const { return running; }
 
     // Playback of `audio` from sample `start` up to `end`.

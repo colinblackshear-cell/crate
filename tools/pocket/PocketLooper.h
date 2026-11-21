@@ -51,10 +51,21 @@ public:
     bool hasVocoder() const { return vocoder != nullptr; }
     // Sing's chord pads in your own sound: always heard, and part of the VOCODER and BOTH sources. Not owned.
     void setChordSource (PocketAudio::Renderer* r) { chordSource = r; }
-    void setCountIn (bool on) { countIn = on; }
+    // The count-in, in bars (0, 1 or 2), for a recording that starts the clock. The click plays through it.
+    void setCountInBars (int bars) { countInBars = juce::jlimit (0, 2, bars); }
 
-    // Arms an empty layer: it starts at the next bar (or after a one-bar count-in when the clock is
-    // stopped and the count-in is on) and runs `bars` bars (0 = until stop()).
+    // The mic, for the whole app. Off at every launch: with `on` false the mic is silence everywhere (no
+    // take, no vocoder, nothing in the speaker). `heard` lets what comes from the mic (the vocoder while
+    // its monitor is on, and your dry voice while setDryMonitor is on) reach the speaker; off, it is still
+    // recorded but never heard, so a phone speaker can't feed back into the mic.
+    void setMic (bool on, bool heard) { micOn = on; micHeard = on && heard; }
+    bool micIsOn() const { return micOn.load(); }
+    bool micIsHeard() const { return micHeard.load(); }
+    // Your own voice, dry, in the speaker (only while the mic is heard).
+    void setDryMonitor (bool on) { dryWanted = on; }
+
+    // Arms an empty layer: it starts at the next bar (or after the count-in when the clock is stopped
+    // and the count-in is on) and runs `bars` bars (0 = until stop()).
     bool arm (int layer, LoopSource, int bars);
     // Recording: ends at the end of the bar. Waiting for the next bar: cancels.
     void stop (int layer);
@@ -84,6 +95,8 @@ public:
     double beatNow() const { return beats.clockBeat(); }
     double bpm() const { return beats.getBpm(); }
     bool countingIn() const { for (auto& l : layers) if (l.uiCounting.load()) return true; return false; }
+    // The beat a count-in ends on (where the take starts), -1 when there is no count-in going.
+    double countInEnd() const { return uiCountEnd.load(); }
     // Message thread, often: lets go of sounds the audio thread no longer uses.
     void maintain();
     //==========================================================================
@@ -146,7 +159,8 @@ private:
         LoopSource source = LoopSource::mic;
         int bars = 0, writeIdx = 0;
         double armBeat = -1, startBeat = 0, lenBeats = 0, endBeat = -1, dubBeat = 0;
-        bool fresh = false, withCountIn = false;   // armed while the clock was stopped
+        bool fresh = false;   // armed while the clock was stopped
+        int withCountIn = 0;  // bars
         float gain = 0.0f;
         FxDsp dsp;
     };
@@ -182,7 +196,9 @@ private:
     FxBus bus;
     std::array<SharedTake, kLoopLayers> takes;                          // the message thread's
     std::vector<std::pair<SharedTake, juce::uint32>> retired;           // kept a while after the audio thread lets go
-    bool countIn = true;
+    int countInBars = 1;
+    std::atomic<bool> micOn { false }, micHeard { false }, dryWanted { false };
+    std::atomic<double> uiCountEnd { -1.0 };
 
     juce::AbstractFifo fifo { 128 };
     std::array<Cmd, 128> cmds;
@@ -201,6 +217,6 @@ private:
     int chunkOffset = 0;
     std::array<std::vector<float>, kLoopLayers> layerOut;
     std::vector<float> busDelay, busReverb, busL, busR;
-    std::vector<float> srcMic, srcDrums, srcVoc, srcMix, srcBoth, vocL, vocR;
+    std::vector<float> srcMic, srcDrums, srcVoc, srcMix, srcBoth, vocL, vocR, clickBuf;
 };
 }

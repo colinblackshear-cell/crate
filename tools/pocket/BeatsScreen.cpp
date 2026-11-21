@@ -5,69 +5,12 @@ using namespace pocket;
 
 namespace
 {
-constexpr int kSwitchBottom = 58;   // below this the drum machine and the pads own the screen
-
 const char* const voiceLabels[crate::drums::kVoices] = { "Kick", "Snare", "Clap", "Rim", "Lo tom", "Mid tom", "Hi tom", "Clave", "Cowbell", "Cl hat", "Op hat", "Cymbal" };
 const char* const voiceTags[crate::drums::kVoices] = { "KK", "SN", "CP", "RS", "LT", "MT", "HT", "CL", "CB", "CH", "OH", "CY" };
 
-juce::String twoDigits (int v) { return juce::String (v).paddedLeft ('0', 2); }
 
-// A view that leaves the switch at the top of the screen to its parent.
-struct BelowSwitch : juce::Component
-{
-    bool hitTest (int x, int y) override { return y >= kSwitchBottom && juce::Component::hitTest (x, y); }
-};
+struct BelowSwitch : juce::Component {};   // (the tool row picks the view now)
 }
-
-//==============================================================================
-// The BPM display: tap it to tap the tempo, drag it up or down to change it.
-class BpmLcd : public juce::Component
-{
-public:
-    std::function<double()> get;
-    std::function<void (double)> set;
-
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().toFloat();
-        drawWell (g, r, 12.0f);
-        g.setColour (col::lcdAmber);
-        g.setFont (lcdFont (44.0f));
-        g.drawText (juce::String (get(), 1), r.withTrimmedBottom (12), juce::Justification::centred);
-        g.setColour (col::inkFaint);
-        g.setFont (spaced (condensedBold (11.0f), 0.18f));
-        g.drawText ("BPM", r.withTrimmedTop (r.getHeight() - 17), juce::Justification::centred);
-    }
-
-    void mouseDown (const juce::MouseEvent&) override { startBpm = get(); dragging = false; }
-
-    void mouseDrag (const juce::MouseEvent& e) override
-    {
-        if (std::abs (e.getDistanceFromDragStartY()) > 3)
-            dragging = true;
-        if (dragging)
-            set (std::round ((startBpm - (double) e.getDistanceFromDragStartY() * 0.25) * 10.0) / 10.0);
-    }
-
-    void mouseUp (const juce::MouseEvent&) override
-    {
-        if (dragging)
-            return;
-        const auto now = juce::Time::getMillisecondCounterHiRes();
-        if (! taps.empty() && now - taps.back() > 2000.0)
-            taps.clear();
-        taps.push_back (now);
-        if (taps.size() > 5)
-            taps.erase (taps.begin());
-        if (taps.size() >= 2)
-            set (std::round (60000.0 / ((taps.back() - taps.front()) / (double) (taps.size() - 1)) * 10.0) / 10.0);
-    }
-
-private:
-    std::vector<double> taps;
-    double startBpm = 0;
-    bool dragging = false;
-};
 
 //==============================================================================
 // The 16 steps of the picked voice, in two rows of 8. Tap to set a hit, hold to set the accent.
@@ -216,29 +159,31 @@ public:
     explicit DrumView (BeatsScreen& o) : owner (o), d (o.drumData)
     {
         play.setLook (Look::green);
+        // The drum machine on its own, live (over the loops too): the thumb bar's PLAY is the whole song.
         play.glyph = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour ink)
         {
-            auto c = r.getCentre();
+            auto c = juce::Point<float> (r.getX() + 24, r.getCentreY());
             g.setColour (ink);
-            if (owner.beatsEngine.isPlaying())
-                g.fillRoundedRectangle (c.x - 8, c.y - 8, 16, 16, 2.5f);
+            const bool on = owner.beatsEngine.isPlaying();
+            if (on)
+                g.fillRoundedRectangle (c.x - 7, c.y - 7, 14, 14, 2.5f);
             else
             {
                 juce::Path t;
-                t.addTriangle (c.x - 7, c.y - 10, c.x - 7, c.y + 10, c.x + 10, c.y);
+                t.addTriangle (c.x - 6, c.y - 9, c.x - 6, c.y + 9, c.x + 9, c.y);
                 g.fillPath (t);
             }
+            g.setFont (spaced (condensed (16.0f), 0.08f));
+            g.drawText (on ? "STOP DRUMS" : "PLAY DRUMS", r.withTrimmedLeft (40).withTrimmedRight (6), juce::Justification::centredLeft);
         };
         play.onClick = [this]
         {
             owner.beatsEngine.setPlaying (! owner.beatsEngine.isPlaying());
+            if (owner.beatsEngine.isPlaying() && owner.clickWanted != nullptr)
+                owner.beatsEngine.setClick (owner.clickWanted());
             play.repaint();
         };
         addAndMakeVisible (play);
-
-        bpm.get = [this] { return d.bpm; };
-        bpm.set = [this] (double b) { owner.setBpm (b); };
-        addAndMakeVisible (bpm);
 
         for (int i = 0; i < kPatternSlots; ++i)
         {
@@ -255,10 +200,10 @@ public:
 
         variation.glyph = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour ink)
         {
-            static const char* text[] = { "A", "B", "A/B" };
+            static const char* text[] = { "VAR A", "VAR B", "A THEN B" };
             g.setColour (ink);
             g.setFont (spaced (condensed (16.0f)));
-            g.drawText (text[d.variation], r.withTrimmedRight (18), juce::Justification::centred);
+            g.drawFittedText (text[d.variation], r.withTrimmedRight (24).withTrimmedLeft (6).toNearestInt(), juce::Justification::centred, 1, 0.8f);
             juce::Path t;
             t.addTriangle (r.getRight() - 22, r.getCentreY() - 3, r.getRight() - 13, r.getCentreY() - 3, r.getRight() - 17.5f, r.getCentreY() + 3);
             g.fillPath (t);
@@ -371,8 +316,11 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        auto well = juce::Rectangle<float> (16, 122, 358, 100);
+        auto well = juce::Rectangle<float> (16, (float) wellY, (float) getWidth() - 32, 100);
         drawWell (g, well, 16.0f);
+        g.setColour (col::inkDim);
+        g.setFont (spaced (condensed (13.0f), 0.1f));
+        g.drawFittedText ("PATTERN", juce::Rectangle<int> (play.getRight() + 8, 8, variation.getX() - play.getRight() - 16, 44), juce::Justification::centred, 1, 0.8f);
         const int v = owner.voice;
         const auto& pat = d.edited();
         for (int i = 0; i < 12; ++i)
@@ -389,28 +337,33 @@ public:
 
         g.setColour (col::inkDim);
         g.setFont (spaced (condensed (12.5f), 0.1f));
-        g.drawText (juce::String (juce::String (voiceLabels[v]).toUpperCase()) + (d.editB ? U8(" · B") : juce::String()) + U8(" · 16 STEPS · TAP TO SET, HOLD FOR ACCENT"),
-                    juce::Rectangle<float> (16, 234, 300, 22), juce::Justification::centredLeft);
+        const float ly = (float) grid.getY() - 26.0f, rx = (float) getWidth() - 16.0f;
+        g.drawFittedText (juce::String (juce::String (voiceLabels[v]).toUpperCase()) + (d.editB ? U8(" · B") : juce::String()) + U8(" · 16 STEPS · TAP TO SET, HOLD FOR ACCENT"),
+                          juce::Rectangle<float> (16, ly, rx - 16 - 74, 22).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
         g.setColour (col::red);
-        g.fillEllipse (322, 240, 9, 9);
+        g.fillEllipse (rx - 66, ly + 6, 9, 9);
         g.setColour (juce::Colours::black.withAlpha (0.3f));
-        g.drawEllipse (322, 240, 9, 9, 1.0f);
+        g.drawEllipse (rx - 66, ly + 6, 9, 9, 1.0f);
         g.setColour (col::inkDim);
-        g.drawText ("ACCENT", juce::Rectangle<float> (334, 234, 44, 22), juce::Justification::centredLeft);
+        g.drawText ("ACCENT", juce::Rectangle<float> (rx - 54, ly, 54, 22), juce::Justification::centredLeft);
     }
 
     void resized() override
     {
-        play.setBounds (16, 66, 52, 46);
-        bpm.setBounds (75, 66, 92, 46);
+        // Settings up top, the steps and knobs low (under the thumb).
+        const int W = getWidth() - 32, H = getHeight();
+        play.setBounds (16, 8, 150, 44);
+        variation.setBounds (getWidth() - 16 - 104, 8, 104, 44);
+        const float slotW = ((float) W - 5.0f * 6.0f) / 6.0f;
         for (int i = 0; i < kPatternSlots; ++i)
-            patterns[i].setBounds (176 + (int) std::round ((double) i * 23.7), 66, 22, 46);
-        variation.setBounds (322, 66, 52, 46);
-        grid.setBounds (16, 258, 358, 98);
-        overview.setBounds (16, 368, 358, 108);
-        const int w = 358 / 5;
+            patterns[i].setBounds (juce::roundToInt (16.0f + (float) i * (slotW + 6.0f)), 60, juce::roundToInt (slotW), 44);
+        wellY = 112;
+        const int knobY = H - 112;
+        grid.setBounds (16, wellY + 136, W, 98);
+        overview.setBounds (16, grid.getBottom() + 10, W, juce::jmax (96, knobY - 8 - grid.getBottom() - 10));
+        const int w = W / 5;
         for (int i = 0; i < knobs.size(); ++i)
-            knobs[i]->setBounds (16 + i * w + (i == 4 ? 0 : 0), 486, w, 108);
+            knobs[i]->setBounds (16 + i * w, knobY, w, 108);
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -422,14 +375,14 @@ public:
 
     juce::Rectangle<float> voiceCell (int i) const
     {
-        const float w = (358.0f - 16.0f - 5.0f * 6.0f) / 6.0f;
-        return { 24.0f + (float) (i % 6) * (w + 6.0f), 130.0f + (float) (i / 6) * 44.0f, w, 40.0f };
+        const float w = ((float) getWidth() - 32.0f - 16.0f - 5.0f * 6.0f) / 6.0f;
+        return { 24.0f + (float) (i % 6) * (w + 6.0f), (float) wellY + 8.0f + (float) (i / 6) * 44.0f, w, 40.0f };
     }
 
     BeatsScreen& owner;
     DrumData& d;
     PButton play, patterns[kPatternSlots], variation;
-    BpmLcd bpm;
+    int wellY = 112;
     StepGrid grid;
     StepOverview overview;
     juce::OwnedArray<KnobView> knobs;
@@ -486,17 +439,17 @@ public:
         };
         addAndMakeVisible (toMac);
 
-        for (auto* b : { &recButton, &barsButton, &quantButton, &undoButton, &lockButton })
+        for (auto* b : { &barsButton, &quantButton, &undoButton, &recordSound })
         {
             b->setFontHeight (15.0f);
             addAndMakeVisible (*b);
         }
-        recButton.onClick = [this] { owner.toggleRecordPads(); };
         barsButton.onClick = [this]
         {
             const int b = owner.drumData.padPattern.bars;
-            owner.setPatternBars (b == 1 ? 2 : b == 2 ? 4 : 1);
+            owner.setPatternBars (b == 1 ? 2 : b == 2 ? 4 : b == 4 ? 8 : 1);
         };
+        recordSound.onClick = [this] { owner.host.openRecorder(); };
         quantButton.onClick = [this] { owner.cycleQuantize(); };
         undoButton.onClick = [this]
         {
@@ -505,7 +458,6 @@ public:
             m.addItem ("Clear the whole pattern", ! owner.drumData.padPattern.hits.empty(), false, [this] { owner.clearPattern(); });
             m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&undoButton));
         };
-        lockButton.onClick = [this] { owner.lockBeat(); };
         refresh();
     }
 
@@ -514,11 +466,8 @@ public:
         for (int i = 0; i < 4; ++i)
             banks[i].setLook (owner.bank == i ? Look::amber : Look::ghost);
         const auto& p = owner.drumData.padPattern;
-        recButton.setLook (owner.recPads ? Look::red : Look::cream);
-        recButton.setText (owner.recPads ? U8("\xe2\x97\x8f Rec on") : U8("\xe2\x97\x8f Rec pads"));
         barsButton.setText (juce::String (p.bars) + (p.bars == 1 ? " bar" : " bars"));
-        quantButton.setText (p.quantize == 4 ? "1/16" : p.quantize == 2 ? "1/8" : "Free");
-        lockButton.setLook (p.hits.empty() ? Look::cream : Look::amber);
+        quantButton.setText (p.quantize == 4 ? "Snap 1/16" : p.quantize == 2 ? "Snap 1/8" : "Snap off");
         repaint();
     }
 
@@ -537,8 +486,10 @@ public:
         }
     }
 
-    juce::Rectangle<float> stripBounds() const { return { 16, 172, 358, 50 }; }
-    juce::Rectangle<float> wellBounds() const { return { 16, 280, 358, 316 }; }
+    // Settings up top, the pads low (under the thumb).
+    juce::Rectangle<float> lcdBounds() const { return { 16, 8, 116, 44 }; }
+    juce::Rectangle<float> stripBounds() const { return { 16, 112, (float) getWidth() - 32, 46 }; }
+    juce::Rectangle<float> wellBounds() const { return { 16, 218, (float) getWidth() - 32, (float) getHeight() - 226 }; }
 
     void paintPattern (juce::Graphics& g)
     {
@@ -548,7 +499,7 @@ public:
         const auto& p = owner.drumData.padPattern;
         const double len = p.lengthBeats();
         // the beats and bars
-        for (int b = 0; b <= (int) len; ++b)
+        for (int b = 0; ! p.hits.empty() && b <= (int) len; ++b)   // (an empty one shows its hint instead)
         {
             const float x = inner.getX() + inner.getWidth() * (float) (b / len);
             g.setColour (juce::Colour (b % 4 == 0 ? 0x55f1e7d1 : 0x22f1e7d1));
@@ -573,7 +524,7 @@ public:
         {
             g.setColour (juce::Colour (0x99f1e7d1));
             g.setFont (small (13.5f));
-            g.drawText (owner.recPads ? "Play the pads: they go into the pattern" : U8("REC PADS, then play: a beat to loop and lock"),
+            g.drawText (owner.recPads ? "Play the pads: they go into the pattern" : U8("Press REC, then play the pads: a beat that loops"),
                         inner, juce::Justification::centred);
         }
         // where it's playing
@@ -604,12 +555,12 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        // the kit name
-        auto lcd = juce::Rectangle<float> (16, 67, 158, 44);
+        // the kit name (tap to rename)
+        auto lcd = lcdBounds();
         drawWell (g, lcd, 12.0f);
         g.setColour (col::lcdAmber);
-        g.setFont (spaced (lcdFont (28.0f), 0.04f));
-        g.drawFittedText (owner.padKit.name, lcd.reduced (12, 0).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+        g.setFont (spaced (lcdFont (26.0f), 0.04f));
+        g.drawFittedText (owner.padKit.name, lcd.reduced (10, 0).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
 
         paintPattern (g);
 
@@ -631,40 +582,39 @@ public:
             g.drawFittedText (pad.empty() ? juce::String (U8("—")) : pad.name, inner.reduced (9, 7).toNearestInt(), juce::Justification::bottomLeft, 2, 0.9f);
         }
 
-        // the footer: how much of the MPC's memory the kit takes
+        // how much of the MPC's memory the kit takes, between the banks and EDIT PADS
         const int used = owner.padKit.usedPads();
         const double mb = (double) owner.padKit.memoryBytes() / 1048576.0;
         const auto bytes = owner.padKit.memoryBytes();
         const auto dot = bytes > Kit::mpcMemoryBytes ? col::red : bytes > Kit::mpcMemoryBytes * 8 / 10 ? col::amber : col::green;
+        const float mx = (float) banks[3].getRight() + 8.0f, mw = (float) editPads.getX() - 6.0f - mx;
         g.setColour (dot);
-        g.fillEllipse (24, 620, 10, 10);
-        g.setColour (juce::Colours::black.withAlpha (0.3f));
-        g.drawEllipse (24, 620, 10, 10, 1.0f);
+        g.fillEllipse (mx, 77, 9, 9);
         g.setColour (col::inkDim);
-        g.setFont (small (14.5f));
-        g.drawText (juce::String (used) + (used == 1 ? " pad" : " pads") + U8(" · ") + juce::String (mb, 1) + U8(" MB of the MPC's 32 MB"),
-                    juce::Rectangle<float> (42, 608, 240, 34), juce::Justification::centredLeft);
+        g.setFont (small (12.5f));
+        g.drawFittedText (juce::String (used) + (used == 1 ? " pad" : " pads") + "\n" + juce::String (mb, 1) + " / 32 MB",
+                          juce::Rectangle<float> (mx + 13, 60, mw - 13, 44).toNearestInt(), juce::Justification::centredLeft, 2, 0.8f);
     }
 
     void resized() override
     {
-        soundsButton.setBounds (180, 67, 92, 44);
-        exportButton.setBounds (278, 67, 96, 44);
+        const int w = getWidth();
+        soundsButton.setBounds (138, 8, 72, 44);
+        exportButton.setBounds (216, 8, 84, 44);
+        toMac.setBounds (306, 8, w - 16 - 306, 44);
         for (int i = 0; i < 4; ++i)
-            banks[i].setBounds (16 + i * 66, 122, 66, 40);
-        editPads.setBounds (292, 122, 82, 40);
-        toMac.setBounds (292, 606, 82, 40);
-        recButton.setBounds (16, 230, 84, 40);
-        barsButton.setBounds (106, 230, 58, 40);
-        quantButton.setBounds (170, 230, 54, 40);
-        undoButton.setBounds (230, 230, 56, 40);
-        lockButton.setBounds (292, 230, 82, 40);
+            banks[i].setBounds (16 + i * 44, 60, 42, 44);
+        editPads.setBounds (w - 16 - 88, 60, 88, 44);
+        barsButton.setBounds (16, 166, 70, 44);
+        quantButton.setBounds (92, 166, 84, 44);
+        undoButton.setBounds (182, 166, 60, 44);
+        recordSound.setBounds (248, 166, w - 16 - 248, 44);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
         held = -1;
-        if (juce::Rectangle<float> (16, 67, 158, 44).contains (e.position))
+        if (lcdBounds().contains (e.position))
         {
             renaming = true;
             return;
@@ -696,7 +646,7 @@ public:
         if (renaming)
         {
             renaming = false;
-            if (juce::Rectangle<float> (16, 67, 158, 44).contains (e.position))
+            if (lcdBounds().contains (e.position))
                 owner.renameKit();
             return;
         }
@@ -719,7 +669,7 @@ private:
 
     BeatsScreen& owner;
     PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit pads" }, toMac { "To mac" };
-    PButton recButton { "Rec pads" }, barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, lockButton { "Lock beat" };
+    PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Record a sound") };
     bool wasPlaying = false;
     juce::uint64 lastMask = 0;
     int held = -1;
@@ -764,9 +714,7 @@ void BeatsScreen::showMode (int m)
 {
     screenMode = m;
     drumView->setVisible (m == 0);
-    padsView->setVisible (m == 1);
-    if (m != 0)
-        beatsEngine.setPlaying (false);
+    padsView->setVisible (m == 1);   // the drum machine keeps going: moving between tools never stops the clock
     repaint();
 }
 
@@ -899,14 +847,12 @@ void BeatsScreen::patternChanged()
         padsView->refresh();
 }
 
-void BeatsScreen::toggleRecordPads()
+void BeatsScreen::setRecordingPads (bool on, double fromBeat)
 {
-    recPads = ! recPads;
+    recPads = on;
+    recFrom = fromBeat;
     if (recPads)
         beatsEngine.setPatternPlaying (true);
-    beatsEngine.setClick (recPads);
-    if (recPads)
-        host.toast ("Recording: play the pads in time with the click");
     padsView->refresh();
 }
 
@@ -914,11 +860,10 @@ void BeatsScreen::togglePatternPlay()
 {
     const bool on = ! beatsEngine.patternPlaying();
     beatsEngine.setPatternPlaying (on);
+    if (on && clickWanted != nullptr)
+        beatsEngine.setClick (clickWanted());
     if (! on)
-    {
         recPads = false;
-        beatsEngine.setClick (false);
-    }
     padsView->refresh();
 }
 
@@ -978,8 +923,8 @@ void BeatsScreen::clearPattern()
 
 void BeatsScreen::recordHit (int pad, float velocity)
 {
-    if (! recPads || ! beatsEngine.clockRunning())
-        return;
+    if (! recPads || ! beatsEngine.clockRunning() || beatsEngine.clockBeat() < recFrom - 0.25)
+        return;   // (not during the count-in)
     auto& p = drumData.padPattern;
     if ((int) p.hits.size() >= kMaxPadHits)
         return host.toast ("The pattern is full");
@@ -1007,16 +952,6 @@ void BeatsScreen::recordHit (int pad, float velocity)
     h.skipUntil = now + 0.5;
     p.hits.push_back (h);
     patternChanged();
-}
-
-void BeatsScreen::lockBeat()
-{
-    if (drumData.padPattern.hits.empty() && ! beatsEngine.isPlaying())
-        return host.toast ("Record a pattern first: REC PADS, then play the pads");
-    recPads = false;
-    beatsEngine.setClick (false);
-    padsView->refresh();
-    host.lockBeat (drumData.padPattern.bars);
 }
 
 void BeatsScreen::timerCallback()
@@ -1223,7 +1158,7 @@ juce::Rectangle<int> BeatsScreen::tourSpot (int which) const
 {
     if (padsView == nullptr)
         return {};
-    const auto r = which == 0 ? padsView->padBounds (12).toNearestInt() : juce::Rectangle<int> (12, 226, padsView->getWidth() - 24, 48);
+    const auto r = which == 0 ? padsView->padBounds (12).toNearestInt() : juce::Rectangle<int> (12, 108, padsView->getWidth() - 24, 106);
     return getLocalArea (padsView.get(), r);
 }
 
@@ -1261,35 +1196,8 @@ void BeatsScreen::fillDemoKit()
 }
 
 //==============================================================================
-juce::Rectangle<float> BeatsScreen::segment (int i) const
-{
-    const float w = ((float) getWidth() - 32.0f) / 2.0f;
-    return { 16.0f + (float) i * w, 12.0f, w, 44.0f };
-}
-
-void BeatsScreen::paint (juce::Graphics& g)
-{
-    static const char* names[] = { "DRUM MACHINE", "MPC PADS" };
-    for (int i = 0; i < 2; ++i)
-    {
-        auto r = segment (i);
-        if (i == screenMode)
-            drawRaised (g, r.reduced (3, 0), Look::amber, false, 13.0f);
-        g.setColour (i == screenMode ? col::ink : col::inkDim);
-        g.setFont (spaced (condensed (17.0f), 0.08f));
-        g.drawText (names[i], r.withTrimmedBottom (3), juce::Justification::centred);
-    }
-}
-
 void BeatsScreen::resized()
 {
     drumView->setBounds (getLocalBounds());
     padsView->setBounds (getLocalBounds());
-}
-
-void BeatsScreen::mouseUp (const juce::MouseEvent& e)
-{
-    for (int i = 0; i < 2; ++i)
-        if (segment (i).contains (e.position))
-            showMode (i);
 }
