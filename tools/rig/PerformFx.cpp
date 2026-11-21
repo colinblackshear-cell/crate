@@ -7,11 +7,12 @@ constexpr double kHistorySeconds = 6.0;
 const double repeatBeats[] = { 1.0, 0.5, 0.25, 0.125 };
 const double gateBeats[] = { 0.5, 0.25, 0.125 };
 const double riseBeats[] = { 4.0, 8.0, 16.0 };
+const double reverseBeats[] = { 0.5, 1.0, 2.0 };
 }
 
 juce::String PerformFx::modeName (int m)
 {
-    static const char* names[] = { "Filter", "Repeat", "Tape stop", "Gate", "Riser" };
+    static const char* names[] = { "Filter", "Repeat", "Tape stop", "Gate", "Riser", "Drop", "Freeze", "Grain", "Reverse" };
     return names[juce::jlimit (0, numModes - 1, m)];
 }
 
@@ -24,6 +25,10 @@ juce::String PerformFx::axisText (int m, bool xAxis)
         case tapeStop: return xAxis ? juce::String() : juce::String::fromUTF8 ("slow stop \xe2\x86\x91 \xc2\xb7 quick stop \xe2\x86\x93");
         case gate:     return xAxis ? juce::String::fromUTF8 ("1/8 \xc2\xb7 1/16 \xc2\xb7 1/32") : juce::String ("depth");
         case riser:    return xAxis ? juce::String::fromUTF8 ("1 bar \xc2\xb7 2 bars \xc2\xb7 4 bars") : juce::String ("level");
+        case drop:     return xAxis ? juce::String::fromUTF8 ("lows thin \xe2\x86\x92 all but the top") : juce::String::fromUTF8 ("how much \xc2\xb7 back in on the next bar");
+        case freeze:   return xAxis ? juce::String::fromUTF8 ("glitchy \xe2\x86\x92 smooth") : juce::String ("live mix under it");
+        case grain:    return xAxis ? juce::String::fromUTF8 ("octave down \xc2\xb7 up an octave") : juce::String ("thick");
+        case reverse:  return xAxis ? juce::String::fromUTF8 ("1/2 \xc2\xb7 1 \xc2\xb7 2 beats") : juce::String ("how much");
         default:       return {};
     }
 }
@@ -40,9 +45,12 @@ void PerformFx::prepare (double sampleRate)
     history.setSize (2, (int) (rate * kHistorySeconds));
     history.clear();
     writePos = 0;
-    for (auto* f : { &filters[0], &filters[1], &thin[0], &thin[1], &noiseFilter })
+    for (auto* f : { &filters[0], &filters[1], &thin[0], &thin[1], &noiseFilter, &dropFilters[0], &dropFilters[1] })
         f->clear();
     wasEngaged = false;
+    dropBackBeat = -1;
+    cloud.prepare (rate);
+    cloudOut.setSize (2, 8192);
 }
 
 void PerformFx::process (juce::AudioBuffer<float>& mix, double ppq, double bpm, bool playing)
@@ -54,8 +62,24 @@ void PerformFx::process (juce::AudioBuffer<float>& mix, double ppq, double bpm, 
     const double beatsPerSample = bpm / 60.0 / rate;
     double beat = playing ? ppq : freeBeat;
 
-    const bool on = engaged.load();
+    bool on = engaged.load();
     const int m = juce::jlimit (0, numModes - 1, mode.load());
+    if (m == drop)
+    {
+        // Let go of a Drop and it holds on until the next bar, then everything slams back in.
+        const int bpb = juce::jmax (1, beatsPerBar.load());
+        if (on)
+            dropBackBeat = -1;
+        else if (wasEngaged && lastMode == drop)
+            dropBackBeat = (std::floor (beat / bpb + 1.0e-9) + 1.0) * bpb;
+        if (! on && dropBackBeat >= 0)
+        {
+            if (playing && beat + n * beatsPerSample < dropBackBeat)
+                on = true;   // still waiting for the bar
+            else
+                dropBackBeat = -1;
+        }
+    }
     if (m != lastMode)
     {
         // A new mode starts fresh.
@@ -64,6 +88,8 @@ void PerformFx::process (juce::AudioBuffer<float>& mix, double ppq, double bpm, 
         riseStartBeat = -1;
         for (auto& f : filters)
             f.clear();
+        for (auto& f : dropFilters)
+            f.clear();
     }
     wet.setTargetValue (on ? 1.0f : 0.0f);
     xs.setTargetValue (x.load());
@@ -71,14 +97,47 @@ void PerformFx::process (juce::AudioBuffer<float>& mix, double ppq, double bpm, 
 
     const int size = history.getNumSamples();
     const bool starting = on && ! wasEngaged;
-    wasEngaged = on;
+    wasEngaged = engaged.load() || (m == drop && on);
     if (starting)
     {
         repeatChoice = -1;
         tapePos = writePos;
         tapeSpeed = 1.0;
         riseStartBeat = beat;
+        reverseFrom = writePos;
+        reversePos = 0;
     }
+
+    // Freeze and Grain: the cloud's part of the block, made first (it always listens).
+    const bool clouded = (m == freeze || m == grain) && (on || wet.getCurrentValue() > 0.0001f || wet.isSmoothing());
+    if (clouded && cloudOut.getNumSamples() >= n)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            cloudOut.copyFrom (ch, 0, mix, ch, 0, n);
+        GrainCloud::Settings s;
+        const float xv = x.load(), yv = y.load();
+        if (m == freeze)
+        {
+            s.freeze = on;
+            s.sizeMs = 40.0f + xv * 360.0f;
+            s.density = 0.75f;
+            s.spray = 0.08f;
+            s.pitchSpread = 0.0f;
+        }
+        else
+        {
+            s.pitch = std::round ((xv - 0.5f) * 24.0f);
+            s.density = 0.2f + 0.8f * yv;
+            s.sizeMs = 90.0f;
+            s.spray = 0.35f;
+            s.pitchSpread = 0.15f;
+            s.reverse = 0.2f;
+        }
+        juce::AudioBuffer<float> block (cloudOut.getArrayOfWritePointers(), 2, n);
+        cloud.process (block, s);
+    }
+    else
+        cloud.listen (mix);
     if (! on && wet.getCurrentValue() <= 0.0001f && ! wet.isSmoothing())
     {
         // Off: just keep the history going.
@@ -206,6 +265,59 @@ void PerformFx::process (juce::AudioBuffer<float>& mix, double ppq, double bpm, 
                 const float tg = std::tan (juce::MathConstants<float>::pi * thinHz / (float) rate);
                 outL = thin[0].run (dryL, tg, 1.2f)[2] + noise;
                 outR = thin[1].run (dryR, tg, 1.2f)[2] + noise;
+                break;
+            }
+            case drop:
+            {
+                // The floor pulled out: a high-pass sweeping up with X, and a little duck.
+                if ((i & 15) == 0)
+                {
+                    const float hz = 120.0f * std::pow (25.0f, xv);
+                    g = std::tan (juce::MathConstants<float>::pi * juce::jmin (hz, (float) rate * 0.45f) / (float) rate);
+                    k = 1.2f;
+                }
+                const float hpL = dropFilters[0].run (dryL, g, k)[2], hpR = dropFilters[1].run (dryR, g, k)[2];
+                const float amount = 0.4f + 0.6f * yv;
+                outL = dryL + (hpL * 0.8f - dryL) * amount;
+                outR = dryR + (hpR * 0.8f - dryR) * amount;
+                break;
+            }
+            case freeze:
+            {
+                if (clouded)
+                {
+                    const float under = yv;
+                    outL = cloudOut.getSample (0, i) + dryL * under;
+                    outR = cloudOut.getSample (1, i) + dryR * under;
+                }
+                break;
+            }
+            case grain:
+            {
+                if (clouded)
+                {
+                    outL = cloudOut.getSample (0, i);
+                    outR = cloudOut.getSample (1, i);
+                }
+                break;
+            }
+            case reverse:
+            {
+                // Backwards from where it was touched, round the last 1/2, 1 or 2 beats.
+                const double length = juce::jmin ((double) size / 2, reverseBeats[juce::jlimit (0, 2, (int) (xv * 3.0f))] * 60.0 / bpm * rate);
+                if (reversePos >= length)
+                    reversePos = 0;
+                const int at = ((reverseFrom - 1 - (int) reversePos) % size + size) % size;
+                const int fadeLen = (int) juce::jmin (96.0, length / 4);
+                float fade = 1.0f;
+                if (reversePos < fadeLen)
+                    fade = (float) reversePos / (float) fadeLen;
+                else if (reversePos > length - fadeLen)
+                    fade = (float) ((length - reversePos) / fadeLen);
+                const float amount = 0.4f + 0.6f * yv;
+                outL = dryL * (1.0f - amount) + history.getSample (0, at) * fade * amount;
+                outR = dryR * (1.0f - amount) + history.getSample (1, at) * fade * amount;
+                reversePos += 1.0;
                 break;
             }
             default: break;

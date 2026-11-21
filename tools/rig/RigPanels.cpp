@@ -114,7 +114,7 @@ void PanelButton::paintButton (juce::Graphics& g, bool over, bool down)
 //==============================================================================
 bool Header::Shown::operator== (const Shown& o) const
 {
-    return std::abs (bpm - o.bpm) < 0.01 && partLetter == o.partLetter && partName == o.partName && barBeat == o.barBeat
+    return std::abs (bpm - o.bpm) < 0.01 && rampTo == o.rampTo && partLetter == o.partLetter && partName == o.partName && barBeat == o.barBeat
         && partQueued == o.partQueued && std::abs (vuLeft - o.vuLeft) < 0.004f && std::abs (vuRight - o.vuRight) < 0.004f
         && keyboard == o.keyboard && keyboardFound == o.keyboardFound && keyboardActive == o.keyboardActive && macKeys == o.macKeys
         && micOn == o.micOn && recording == o.recording && songOn == o.songOn;
@@ -254,7 +254,9 @@ void Header::paint (juce::Graphics& g)
         auto r = tempoArea.toFloat();
         drawLcd (g, r);
         lcdText (g, juce::String (shown.bpm, 1), r.withTrimmedBottom (20).withTrimmedTop (4), 50.0f);
-        lcdText (g, "BPM", r.withTrimmedTop (r.getHeight() - 22).withTrimmedBottom (4), 16.0f);
+        lcdText (g, shown.rampTo > 0 ? juce::String::fromUTF8 ("\xe2\x86\x92 ") + juce::String (shown.rampTo, 0) + " BPM" : juce::String ("BPM"),
+                 r.withTrimmedTop (r.getHeight() - 22).withTrimmedBottom (4), 16.0f, juce::Justification::centred,
+                 shown.rampTo > 0 ? colours::lcdGreen : colours::lcdAmber);
     }
 
     // Where the song is: the part playing, the bar and beat.
@@ -319,6 +321,8 @@ void Header::mouseUp (const juce::MouseEvent& e)
 {
     if (e.mouseWasClicked() && wordmarkArea.contains (e.getPosition()) && onWordmark)
         return onWordmark();
+    if (e.mouseWasClicked() && tempoArea.contains (e.getPosition()) && onTempo)
+        return onTempo();
     if (e.mouseWasClicked() && partArea.contains (e.getPosition()) && shown.recording.isNotEmpty() && onRecording)
         return onRecording();
     if (standalone && e.mouseWasClicked() && micLampArea.contains (e.getPosition()) && onMic)

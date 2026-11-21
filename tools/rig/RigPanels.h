@@ -48,11 +48,13 @@ public:
     std::function<void()> onKeyboard;   // a click on the keyboard lamp: MIDI controllers (in the app)
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
     std::function<void()> onRecording;  // a click on the red "recording" line: go to what records
+    std::function<void()> onTempo;      // a click on the tempo: Ramp to...
 
     // What it shows; RigView sets these on its timer, then calls update().
     struct Shown
     {
         double bpm = 120;
+        double rampTo = 0;          // a tempo ramp's target, 0 for none
         juce::String partLetter, partName, barBeat;
         bool partQueued = false;
         float vuLeft = 0, vuRight = 0;

@@ -2,6 +2,8 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include "core/GrainCloud.h"
+
 // The performance effects on the whole mix, played from an XY pad: touch to bring one in,
 // let go and it's gone (or Hold it). All in time with the Rig.
 //
@@ -11,10 +13,18 @@
 //   Gate      chops the mix in rhythm. X: 1/8, 1/16 or 1/32. Y: how deep.
 //   Riser     a noise build that rises while you hold, the mix thinning under it.
 //             X: how long it takes to rise (1, 2 or 4 bars). Y: how loud.
+//   Drop      pulls the floor out (the lows and the punch thin away) while you hold; let go
+//             and it all slams back in on the next bar. X: how far the lows go. Y: how much.
+//   Freeze    holds the moment you touch, ringing on as a texture over the mix.
+//             X: small glitchy grains to big smooth ones. Y: how much of the live mix stays under.
+//   Grain     the mix as a live cloud of tiny pieces. X: pitch (down an octave .. up one). Y: how thick.
+//   Reverse   the beat just played, backwards, round and round. X: 1/2, 1 or 2 beats. Y: how much.
 class PerformFx
 {
 public:
-    enum Mode { filter, repeat, tapeStop, gate, riser, numModes };
+    enum Mode { filter, repeat, tapeStop, gate, riser, drop, freeze, grain, reverse, numModes };
+    // The bar, for Drop's slam back in (the engine keeps it up to date).
+    std::atomic<int> beatsPerBar { 4 };
     static juce::String modeName (int);
     static juce::String axisText (int mode, bool xAxis);
 
@@ -65,4 +75,13 @@ private:
     std::atomic<float> rise { 0 };
     bool wasEngaged = false;
     int lastMode = -1;
+    // Drop: let go, and it waits for this beat (the next bar) to come back.
+    double dropBackBeat = -1;
+    std::array<Svf, 2> dropFilters;
+    // Freeze and Grain: a cloud that always listens.
+    GrainCloud cloud;
+    juce::AudioBuffer<float> cloudOut;
+    // Reverse.
+    double reversePos = 0;
+    int reverseFrom = 0;
 };

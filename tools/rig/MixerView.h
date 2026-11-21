@@ -5,6 +5,7 @@
 #include "RigEngine.h"
 #include "RigPanels.h"
 #include "PerformPad.h"
+#include "MacroStrip.h"
 
 // The Mixer (F5): a mixing desk for everything Kaleidobox plays, and the way into every tool.
 //
@@ -66,6 +67,7 @@ public:
     void showPad (bool);
     bool isShowingPad() const { return padShown; }
     PerformPad& getPad() { return pad; }
+    MacroStrip& getMacroStrip() { return macroStrip; }
 
     class Channel;
     // A strip by its id (RigEngine::StripId), a return (`returnId`), or a layer; null if not shown.
@@ -90,6 +92,7 @@ private:
     juce::Component::SafePointer<juce::Component> panel;
     bool layersShown = false, padShown = false;
     PerformPad pad;
+    MacroStrip macroStrip;
     juce::Rectangle<int> hubArea, deskArea, legendArea;
     juce::String shownHub;
 

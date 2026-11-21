@@ -2,7 +2,14 @@
 
 void RigTransport::play()                { request = 1; }
 void RigTransport::stop()                { request = 2; }
-void RigTransport::setBpm (double b)     { bpm = juce::jlimit (kMinBpm, kMaxBpm, b); }
+void RigTransport::setBpm (double b)     { cancelRamp(); bpm = juce::jlimit (kMinBpm, kMaxBpm, b); }
+
+void RigTransport::rampTo (double target, double beats)
+{
+    rampBeats = juce::jmax (0.25, beats);
+    rampTarget = juce::jlimit (kMinBpm, kMaxBpm, target);
+    rampPending = true;
+}
 void RigTransport::setBeatsPerBar (int b) { beatsPerBar = juce::jlimit (1, 16, b); }
 
 void RigTransport::prepare (double rate)
@@ -47,6 +54,20 @@ void RigTransport::beginBlock()
             samplePosition = 0;
         }
         hostWasPlaying = hostPlaying;
+    }
+
+    // A tempo ramp, along the beat.
+    if (const double target = rampTarget.load(); target > 0 && ! hostValid && playing)
+    {
+        if (rampPending.exchange (false))
+        {
+            rampFrom = bpm.load();
+            rampStart = ppq;
+        }
+        const double t = juce::jlimit (0.0, 1.0, (ppq - rampStart) / juce::jmax (0.25, rampBeats.load()));
+        bpm = rampFrom + (target - rampFrom) * t;
+        if (t >= 1.0)
+            rampTarget = 0.0;
     }
     playingNow = playing;
 }
