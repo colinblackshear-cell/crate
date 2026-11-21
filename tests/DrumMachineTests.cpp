@@ -301,7 +301,9 @@ struct DrumMachineTests : juce::UnitTest
                         s.voices[(size_t) v].decay = 1.0f;
                         e.setSettings (s);
                         e.trigger (v, 1.0f, true);
-                        const auto h = listen (e, 7.0);
+                        // (The gong and the temple bell ring for a long while at full Decay.)
+                        const bool rings = drums::isHandDrum (v, sound) && (v == drums::cowbell || v == drums::cymbal);
+                        const auto h = listen (e, rings ? 26.0 : 7.0);
                         const auto what = juce::String (drums::voiceName (v)) + " " + drums::soundNames (v)[sound];
                         expect (h.finite, what);
                         expectGreaterThan (h.peak, 0.04f, what);
@@ -320,6 +322,126 @@ struct DrumMachineTests : juce::UnitTest
             expect (drums::soundNames (drums::clap).contains ("Maracas"));
             expect (drums::soundNames (drums::kick).contains ("Long boom"));
             expectWithinAbsoluteError (drums::stepBeats (4), 1.0 / 3.0, 1.0e-9);
+        }
+
+        beginTest ("the hand drums: a ritual kit on the same twelve sounds");
+        {
+            // Mono, one hit of a voice's sound.
+            auto hit = [] (int v, int sound, double seconds, float tune = 0.0f, float tone = 0.5f, float velocity = 1.0f)
+            {
+                drums::Engine e;
+                e.prepare (kRate);
+                drums::Settings s;
+                s.voices[(size_t) v].sound = sound;
+                s.voices[(size_t) v].tune = tune;
+                s.voices[(size_t) v].tone = tone;
+                s.voices[(size_t) v].pan = 0.0f;
+                e.setSettings (s);
+                e.trigger (v, velocity, false);
+                std::vector<float> out;
+                juce::AudioBuffer<float> b (2, kBlock);
+                juce::MidiBuffer none;
+                for (int done = 0; done < (int) (seconds * kRate); done += kBlock)
+                {
+                    b.clear();
+                    e.render (b.getWritePointer (0), b.getWritePointer (1), kBlock, none, {});
+                    for (int i = 0; i < kBlock; ++i)
+                        out.push_back (b.getSample (0, i));
+                }
+                return out;
+            };
+            // The strongest pitch between two times, by counting how often it crosses zero going up.
+            auto pitchOf = [] (const std::vector<float>& x, double from, double to)
+            {
+                int crossings = 0;
+                const int a = (int) (from * kRate), b = juce::jmin ((int) x.size(), (int) (to * kRate));
+                for (int i = a + 1; i < b; ++i)
+                    crossings += x[(size_t) i - 1] <= 0 && x[(size_t) i] > 0 ? 1 : 0;
+                return crossings / (to - from);
+            };
+            auto rms = [] (const std::vector<float>& x, double from, double to)
+            {
+                double sum = 0;
+                const int a = (int) (from * kRate), b = juce::jmin ((int) x.size(), (int) (to * kRate));
+                for (int i = a; i < b; ++i)
+                    sum += x[(size_t) i] * x[(size_t) i];
+                return (float) std::sqrt (sum / juce::jmax (1, b - a));
+            };
+
+            for (const char* name : { "Tabla", "Djembe", "Udu", "Talking drum" })
+                for (int v : { drums::lowTom, drums::midTom, drums::highTom })
+                    expect (drums::soundNames (v).contains (name), name);
+            expect (drums::soundNames (drums::kick).contains ("Frame drum") && drums::soundNames (drums::snare).contains ("Bendir"));
+            expect (drums::soundNames (drums::cymbal).contains ("Gong") && drums::soundNames (drums::openHat).contains ("Ankle bells"));
+            // The machine's own sounds are where they were (saved songs pick them by number).
+            expectEquals (drums::soundNames (drums::kick).indexOf ("Distorted"), 3);
+            expectEquals (drums::soundNames (drums::lowTom).indexOf ("Conga"), 1);
+            expectEquals (drums::soundNames (drums::closedHat).indexOf ("Shaker"), 2);
+            expect (! drums::isHandDrum (drums::kick, 3) && drums::isHandDrum (drums::kick, 4));
+            expect (! drums::isHandDrum (drums::clap, 1) && drums::isHandDrum (drums::lowTom, 2));
+
+            // The tabla's low drum slides up to its note; more Tone, further.
+            const int tabla = drums::soundNames (drums::lowTom).indexOf ("Tabla");
+            {
+                const auto x = hit (drums::lowTom, tabla, 1.0, 0.0f, 1.0f);
+                const double early = pitchOf (x, 0.0, 0.08), late = pitchOf (x, 0.4, 0.8);
+                expectWithinAbsoluteError (late, 80.0, 4.0, "it settles on its note");
+                expect (early < late * 0.85, "it starts under it: " + juce::String (early) + " then " + juce::String (late));
+            }
+            // "Tin" rings on its note; Tune moves it (so a step's pitch lock plays a melody).
+            {
+                const auto x = hit (drums::midTom, tabla, 1.0), up = hit (drums::midTom, tabla, 1.0, 7.0f);
+                expectWithinAbsoluteError (pitchOf (x, 0.3, 0.8), 277.0, 8.0);
+                expectWithinAbsoluteError (pitchOf (up, 0.3, 0.8), 277.0 * std::pow (2.0, 7.0 / 12.0), 12.0);
+                expect (rms (x, 0.5, 0.6) > rms (x, 0.05, 0.15) * 0.03f, "still ringing after half a second");
+            }
+            // The talking drum bends up too; the djembe doesn't.
+            {
+                const int talking = drums::soundNames (drums::midTom).indexOf ("Talking drum"), djembe = drums::soundNames (drums::midTom).indexOf ("Djembe");
+                const auto t = hit (drums::midTom, talking, 0.6, 0.0f, 1.0f), d = hit (drums::midTom, djembe, 0.6, 0.0f, 1.0f);
+                expect (pitchOf (t, 0.0, 0.06) < pitchOf (t, 0.3, 0.5) * 0.8);
+                expect (pitchOf (d, 0.01, 0.06) > pitchOf (d, 0.1, 0.2) * 0.95);
+            }
+            // The gong blooms: brighter a moment after the stroke than at it. And it rings long.
+            {
+                const int gong = drums::soundNames (drums::cymbal).indexOf ("Gong");
+                const auto x = hit (drums::cymbal, gong, 4.0);
+                expect (pitchOf (x, 0.4, 0.8) > pitchOf (x, 0.0, 0.08) * 1.15, "bloom: " + juce::String (pitchOf (x, 0.0, 0.08)) + " then " + juce::String (pitchOf (x, 0.4, 0.8)));
+                expect (rms (x, 3.0, 4.0) > rms (x, 0.1, 0.5) * 0.02f, "still ringing after 3 seconds");
+            }
+            // A soft stroke is duller than a hard one, not just quieter.
+            {
+                const int slap = drums::soundNames (drums::snare).indexOf ("Djembe slap");
+                const auto hard = hit (drums::snare, slap, 0.3, 0.0f, 0.5f, 1.0f), soft = hit (drums::snare, slap, 0.3, 0.0f, 0.5f, 0.3f);
+                expect (pitchOf (soft, 0.0, 0.1) < pitchOf (hard, 0.0, 0.1) * 0.9, juce::String (pitchOf (soft, 0.0, 0.1)) + " / " + juce::String (pitchOf (hard, 0.0, 0.1)));
+            }
+            // The caxixi goes out and comes back: two bursts.
+            {
+                const auto x = hit (drums::closedHat, drums::soundNames (drums::closedHat).indexOf ("Caxixi"), 0.3);
+                expect (rms (x, 0.058, 0.075) > rms (x, 0.040, 0.054) * 1.5f, "the beads come back");
+            }
+            // A classic closed hat still cuts the ankle bells off.
+            {
+                drums::Engine e;
+                e.prepare (kRate);
+                drums::Settings s;
+                s.voices[drums::openHat].sound = drums::soundNames (drums::openHat).indexOf ("Ankle bells");
+                s.voices[drums::openHat].decay = 1.0f;
+                e.setSettings (s);
+                e.trigger (drums::openHat, 1.0f, false);
+                listen (e, 0.1);
+                e.trigger (drums::closedHat, 0.01f, false);
+                listen (e, 0.3);
+                expectLessThan (listen (e, 0.2).peak, 0.01f);
+            }
+            // The kits and their beats.
+            expect (DrumProcessor::kitNames().contains ("Djembe circle") && DrumProcessor::grooveNames().contains ("Circle"));
+            DrumProcessor p;
+            p.loadKit (DrumProcessor::kitNames().indexOf ("Djembe circle"));
+            expectEquals (p.params.getParameter (DrumProcessor::voiceParam (drums::midTom, "Sound"))->getCurrentValueAsText(), juce::String ("Djembe"));
+            expectEquals (p.params.getParameter (DrumProcessor::voiceParam (drums::kick, "Sound"))->getCurrentValueAsText(), juce::String ("Djembe bass"));
+            p.loadKit (0);
+            expectEquals (p.params.getParameter (DrumProcessor::voiceParam (drums::midTom, "Sound"))->getCurrentValueAsText(), juce::String ("Tom"));
         }
 
         beginTest ("snappy brings up the snare's snares");

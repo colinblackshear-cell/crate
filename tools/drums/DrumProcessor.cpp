@@ -57,6 +57,11 @@ const Written written[] = {
                       "x.x.x.x.x.x.x.x.", "", "x..............." }, "x...>...x...>..." },
     { "Conga groove", { "x.......x.......", "", "....x.......x...", "..x.....x.x.....", "......x..x....x.", "...x.......x....",
                         "x.x.......x.....", "", "", "x.x.x.x.x.x.x.x.", "", "" }, "x...x...x...x..." },
+    // For the hand drums (the Ritual kits).
+    { "Circle", { "x.....x...x.....", "....x..x....x..x", "", "", "..x.......x.....", "...x.x.....x.x..", "......x.......x.",
+                  "x..x..x...x.x...", "", "x.xxx.xxx.xxx.xx", "", "" }, "x...>...x...>..." },
+    { "Procession", { "x.......x..x....", "............x...", "", "", "x..x..x.....x...", "....x.....x.....", "......x.x.....x.",
+                      "", "x...............", "..x...x...x...x.", "....x.......x...", "x..............." }, "x.......x......." },
 };
 
 // Kits: the same machine set up for different styles. Each is the starting settings plus these.
@@ -77,6 +82,15 @@ const Kit kits[] = {
                          { "snare", "Sound", 1 }, { "closedHat", "Sound", 1 } }, 0.0f },
     { "Big room", { { "kick", "Decay", 0.75f }, { "snare", "Sound", 2 }, { "snare", "Decay", 0.7f }, { "clap", "Decay", 0.7f },
                     { "cymbal", "Decay", 0.8f }, { "openHat", "Decay", 0.6f } }, 0.2f },
+    // The hand drums.
+    { "Ritual (frame drum, tabla, bells)", { { "kick", "Sound", 4 }, { "snare", "Sound", 4 }, { "lowTom", "Sound", 2 }, { "midTom", "Sound", 2 },
+                                             { "highTom", "Sound", 2 }, { "clap", "Sound", 1 }, { "clave", "Sound", 2 }, { "cowbell", "Sound", 2 },
+                                             { "closedHat", "Sound", 3 }, { "openHat", "Sound", 2 }, { "cymbal", "Sound", 2 } }, 0.0f },
+    { "Djembe circle", { { "kick", "Sound", 5 }, { "snare", "Sound", 3 }, { "lowTom", "Sound", 3 }, { "midTom", "Sound", 3 }, { "highTom", "Sound", 3 },
+                         { "clave", "Sound", 2 }, { "cowbell", "Sound", 1 }, { "closedHat", "Sound", 3 }, { "clap", "Sound", 1 } }, 0.05f },
+    { "Clay and skin (udu, talking drum)", { { "kick", "Sound", 4 }, { "snare", "Sound", 4 }, { "lowTom", "Sound", 4 }, { "midTom", "Sound", 5 },
+                                             { "highTom", "Sound", 5 }, { "clave", "Sound", 2 }, { "cowbell", "Sound", 2 }, { "closedHat", "Sound", 3 },
+                                             { "openHat", "Sound", 2 }, { "cymbal", "Sound", 2 } }, 0.0f },
 };
 }
 
