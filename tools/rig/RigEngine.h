@@ -9,6 +9,7 @@
 #include "BassProcessor.h"
 #include "SynthProcessor.h"
 #include "DrumProcessor.h"
+#include "DroneProcessor.h"
 #include "RigRouting.h"
 #include "RigTransport.h"
 #include "StripFx.h"
@@ -56,12 +57,20 @@ public:
     SynthProcessor& getSynth() { return synthTool; }
     // The analog drum machine: its own sounds, patterns and track, beside the MPC.
     DrumProcessor& getDrums() { return drums; }
+    // The Drone box: a tanpura (and reeds) on the song's note, and strings that ring to what's
+    // fed into them. It isn't on the clock: it sounds whenever it's on.
+    DroneProcessor& getDrone() { return drone; }
+    // Plucks one of its strings (0-3) from the screen, on or off (an off drone wakes for it).
+    void pluckDrone (int string) { drone.pluck (string); dronePlucked = true; }
 
     // Every tool, by the number knob Learn and shows use for it.
     // Each mixer strip's effects rack is a tool too (fxTool + the strip's StripId), so its knobs
-    // can be learned and it's saved with the show.
-    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, drumsTool, fxTool, numTools = fxTool + 9 };
+    // can be learned and it's saved with the show. The Drone came after the racks, so it's after
+    // them (shows keep their numbers).
+    enum ToolId { mpcTool, samplerTool, vocoderTool, bassTool, synthTool_, drumsTool, fxTool, droneTool = fxTool + 10, numTools = droneTool + 1 };
     juce::AudioProcessor& getTool (int id);
+    // True for a strip's effects rack (fxTool + a StripId).
+    static bool isFxTool (int id) { return id >= fxTool && id < droneTool; }
     static juce::String toolName (int id);
     RigTransport& getTransport() { return transport; }
     RigLooper& getLooper() { return looper; }
@@ -196,9 +205,10 @@ public:
     // this Mac (their own file), not to the show.
     crate::controllers::Setup& getControllers() { return controllers; }
 
-    // (The vocoder came later, so it's last: saved shows keep their strip order.)
-    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, loopsStrip, drumsStrip, numStrips };
-    static_assert (numTools == fxTool + numStrips);
+    // (The vocoder came later, so it's last: saved shows keep their strip order. The drone came
+    // last of all.)
+    enum StripId { mpcStrip, samplerStrip, masterStrip, vocoderStrip, bassStrip, synthStrip, inputStrip, loopsStrip, drumsStrip, droneStrip, numStrips };
+    static_assert (droneTool == fxTool + numStrips && numTools == droneTool + 1, "every strip's rack, then the drone");
     struct Strip
     {
         std::atomic<float> level { 0.8f };   // fader position 0..1
@@ -463,6 +473,9 @@ private:
     BassProcessor bass;
     SynthProcessor synthTool;
     DrumProcessor drums;
+    DroneProcessor drone;
+    juce::MemoryBlock droneDefaults;   // a new drone's settings, for shows from before it
+    std::atomic<bool> dronePlucked { false };
     RigTransport transport;
     RigRouting routing;
     crate::controllers::Setup controllers { crate::controllers::Setup::defaultFile() };
@@ -567,8 +580,10 @@ private:
     juce::MidiBuffer nowMidi;          // addMidiNow, under nowLock
 
     // Audio-thread buffers, sized in prepare().
-    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, drumsBuffer, inputBuffer, rawInputBuffer, loopsBuffer, mixBuffer, clickBuffer;
-    juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi, drumsMidi;
+    juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, drumsBuffer, inputBuffer, rawInputBuffer, loopsBuffer, mixBuffer, clickBuffer,
+        droneBuffer, droneFeedBuffer;
+    // (droneMidi: what the keys play, for the drone's Follow keys; empty while that's off.)
+    juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi, drumsMidi, droneMidi;
     double sampleRate = 0;
     int maxBlock = 0;
     bool prepared = false;

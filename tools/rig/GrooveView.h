@@ -7,7 +7,7 @@
 
 // The Groove screen (F1): the Rig as one groovebox.
 //
-// Down the left are the eight tracks (MPC, Machine, Bass, Synth, Vocoder, Sampler, Loops, Line in),
+// Down the left are the nine tracks (MPC, Machine, Bass, Synth, Vocoder, Sampler, Loops, Line in, Drone),
 // every instrument Kaleidobox has, each a dark card with its colour stripe, a lamp and a word for
 // what it's doing (Playing, Muted, Ready...), its own Play / Stop (or On / Off, or Rec), a mute and
 // a solo. Tap one to pick it: the middle then shows that track, the keys play it, and
@@ -26,8 +26,8 @@ public:
     ~GrooveView() override;
 
     // Drums are the MPC (its card says MPC); Machine is the analog drum machine; Line in is the
-    // Input strip (a guitar, keytar or second mic on your interface).
-    enum Track { drums, machine, bass, synth, vocoder, sampler, loops, lineIn, numTracks };
+    // Input strip (a guitar, keytar or second mic on your interface). The Drone came last.
+    enum Track { drums, machine, bass, synth, vocoder, sampler, loops, lineIn, drone, numTracks };
     static juce::String trackName (int);
     static juce::Colour trackColour (int);
     static int stripFor (int track);
@@ -179,7 +179,11 @@ private:
     Cell cellAt (int row, int step) const;
     juce::String rowName (int row) const;
     int playheadStep() const;
-    bool bigCells() const { return track == vocoder || track == sampler || track == loops || track == lineIn; }
+    bool bigCells() const { return track == vocoder || track == sampler || track == loops || track == lineIn || track == drone; }
+    // The drone: its On, and a string's name ("Pa", "Sa", "Low Sa").
+    bool droneOn() const;
+    void setDroneOn (bool);
+    juce::String droneStringName (int string) const;
     juce::Rectangle<float> cellRect (int row, int step) const;
     std::pair<int, int> cellAt (juce::Point<int>) const;
     int rowLabelAt (juce::Point<int>) const;

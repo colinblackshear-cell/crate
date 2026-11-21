@@ -20,6 +20,7 @@ juce::String RigLooper::sourceName (int s)
         case mix:     return "Whole mix";
         case line:    return "Line in";
         case drums:   return "Drum machine";
+        case drone:   return "Drone";
         default:      return {};
     }
 }

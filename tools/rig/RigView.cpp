@@ -20,6 +20,7 @@
 #include "SynthScreens.h"
 #include "GuideView.h"
 #include "EffectsView.h"
+#include "DroneView.h"
 #include "RigSongStart.h"
 #include "QuantizePanel.h"
 #include "ControllersPanel.h"
@@ -682,6 +683,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     if (samplerView != nullptr)
         addPage ("Sampler", samplerColour, samplerView);
     addPage ("Drum machine", RigColours::drums, engine.getDrums().createEditorAndMakeActive());
+    {
+        // The Drone box: its strings, tuning, playing and what its strings ring to.
+        auto* view = new DroneView (engine);
+        view->setLookAndFeel (&vintageLook);
+        view->onSay = [this] (const juce::String& text) { say (text); };
+        addPage ("Drone", RigColours::drone, view);
+    }
     // The Bass and Synth as old analog synths, each with its instrument shell (your Arturia synths).
     for (auto* screen : std::initializer_list<AnalogScreen*> { new BassScreen (engine), new SynthScreen (engine) })
     {
@@ -1039,6 +1047,8 @@ int RigView::trackOfPlace (const juce::String& place) const
         return GrooveView::loops;
     if (place == "Effects" && effects != nullptr && effects->getSource() == EffectsView::lineIn)
         return GrooveView::lineIn;
+    if (place == "Drone")
+        return GrooveView::drone;
     return -1;
 }
 
@@ -1150,6 +1160,7 @@ void RigView::showTourPlace (const juce::String& place)
 
 int RigView::lastTakeOf (int track) const
 {
+    static_assert (std::tuple_size_v<decltype (lastTake)> == GrooveView::numTracks, "a last take for each track");
     if (! juce::isPositiveAndBelow (track, (int) lastTake.size()))
         return -1;
     const int l = lastTake[(size_t) track];
@@ -1169,6 +1180,7 @@ int takeSourceFor (int track)
         case GrooveView::vocoder: return RigLooper::vocoder;
         case GrooveView::sampler: return RigLooper::sampler;
         case GrooveView::lineIn:  return RigLooper::line;
+        case GrooveView::drone:   return RigLooper::drone;
         default:                  return -1;   // Loops: the layer's own
     }
 }
@@ -1878,11 +1890,13 @@ void RigView::showToSongMenu()
 {
     const int t = getTrack();
     const int lane = laneForTrack (t);
-    if (lane < 0)
+    // The drone has no lane of its own in the song: its takes (loops) go in.
+    if (lane < 0 && t == GrooveView::drone && lastTakeOf (t) < 0)
+        say ("The drone has no lane of its own in the song: Rec take records it onto a loop, then To Song puts that loop in.");
+    if (lane < 0 && (t != GrooveView::drone || lastTakeOf (t) < 0))
         return;
     const auto list = rigsong::sections (engine.getTimeline());
     const int picked = song != nullptr ? song->getSelectedSection() : -1;
-    const auto what = rigsong::laneName (lane) + " " + rigsong::clipName (engine, lane, rigsong::currentClip (engine, lane));
 
     // The same choices, for what the track plays and for its take.
     auto fill = [&] (juce::PopupMenu& m, bool take)
@@ -1905,6 +1919,14 @@ void RigView::showToSongMenu()
     };
 
     juce::PopupMenu menu;
+    if (lane < 0)
+    {
+        menu.addSectionHeader ("Lock your drone take (loop " + juce::String (lastTakeOf (t) + 1) + ") into the song");
+        fill (menu, true);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (rail.toSong));
+        return;
+    }
+    const auto what = rigsong::laneName (lane) + " " + rigsong::clipName (engine, lane, rigsong::currentClip (engine, lane));
     menu.addSectionHeader ("Lock " + what + " into the song");
     fill (menu, false);
     if (const int layer = lastTakeOf (t); layer >= 0 && t != GrooveView::loops)
@@ -1938,6 +1960,7 @@ int RigView::trackForLane (int lane)
         case RigEngine::vocoderStrip: return GrooveView::vocoder;
         case RigEngine::samplerStrip: return GrooveView::sampler;
         case RigEngine::inputStrip:   return GrooveView::lineIn;
+        case RigEngine::droneStrip:   return GrooveView::drone;
         default:                      return -1;
     }
 }

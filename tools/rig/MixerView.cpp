@@ -50,7 +50,8 @@ float meterFill (float peak)
 const std::vector<int>& MixerView::toolStrips()
 {
     static const std::vector<int> strips { RigEngine::mpcStrip, RigEngine::drumsStrip, RigEngine::bassStrip, RigEngine::synthStrip,
-                                           RigEngine::vocoderStrip, RigEngine::samplerStrip, RigEngine::inputStrip, RigEngine::loopsStrip };
+                                           RigEngine::vocoderStrip, RigEngine::samplerStrip, RigEngine::inputStrip, RigEngine::droneStrip,
+                                           RigEngine::loopsStrip };   // (the Loops strip last)
     return strips;
 }
 
@@ -83,6 +84,7 @@ juce::String MixerView::pageFor (int strip)
         case RigEngine::samplerStrip: return "Sampler";
         case RigEngine::loopsStrip:   return "Looper";
         case RigEngine::inputStrip:   return "Setup";
+        case RigEngine::droneStrip:   return "Drone";
         default:                      return {};
     }
 }
@@ -183,7 +185,8 @@ MixerView::Channel::Channel (MixerView& d, Kind k, int i) : kind (k), index (i),
         addAndMakeVisible (fx);
     }
 
-    if (kind == Kind::tool || kind == Kind::master)
+    // (The drone's level has no keyboard control of its own: its knobs learn on its own screen.)
+    if ((kind == Kind::tool || kind == Kind::master) && faderControl (index) >= 0)
     {
         setUpButton (learn, Lit::none, "Press, then move a fader or knob on your keyboard to control this level with it.");
         learn.getProperties().set ("fontSize", 12.0f);
@@ -222,6 +225,22 @@ MixerView::Channel::Channel (MixerView& d, Kind k, int i) : kind (k), index (i),
                                           "Off until you turn it on, so a mic doesn't feed back."
                                         : "Turns the vocoder on or off. Off, it's silent and uses no processor time.");
         on.onClick = [this, onFlag] { *onFlag = ! onFlag->load(); refresh(); };
+        addAndMakeVisible (on);
+    }
+    if (kind == Kind::tool && index == RigEngine::droneStrip)
+    {
+        // The drone's On is its own setting (so automation and macros can switch it too).
+        setUpButton (on, Lit::play, "Turns the drone on or off. Off, its strings still ring to what's fed in, if Resonate is up.");
+        on.onClick = [this]
+        {
+            if (auto* p = engine().getDrone().params.getParameter ("droneOn"))
+            {
+                p->beginChangeGesture();
+                p->setValueNotifyingHost (engine().getDrone().isOn() ? 0.0f : 1.0f);
+                p->endChangeGesture();
+            }
+            refresh();
+        };
         addAndMakeVisible (on);
     }
     if (kind == Kind::tool && index == RigEngine::inputStrip)
@@ -308,6 +327,8 @@ std::pair<juce::String, Lit> MixerView::Channel::status() const
         return { "Off", Lit::none };
     if (index == RigEngine::inputStrip && ! e.inputOn.load())
         return { "Off", Lit::none };
+    if (index == RigEngine::droneStrip && ! e.getDrone().isOn() && ! sounding)
+        return { "Off", Lit::none };
     if (e.isSilenced (index))
         return { "Silenced", Lit::none };
     if (strip.solo.load())
@@ -354,7 +375,9 @@ void MixerView::Channel::refresh()
         }
         if (on.isVisible())
         {
-            const bool isOn = index == RigEngine::vocoderStrip ? e.vocoderOn.load() : e.inputOn.load();
+            const bool isOn = index == RigEngine::vocoderStrip ? e.vocoderOn.load()
+                            : index == RigEngine::droneStrip   ? e.getDrone().isOn()
+                                                               : e.inputOn.load();
             light (on, isOn);
             on.setButtonText (isOn ? "On" : "Off");
         }
@@ -511,8 +534,8 @@ void MixerView::Channel::resized()
         on.setBounds (row1);
     if (jack.isVisible())
     {
-        // The Input's jack shares the FX row, so its name fits.
-        jack.setBounds (row2.removeFromRight (row2.getWidth() / 2 - 1));
+        // The Input's jack shares the FX row, so its name fits (FX needs only a little).
+        jack.setBounds (row2.removeFromRight (juce::jmax (row2.getWidth() / 2 - 1, juce::jmin (58, row2.getWidth() - 32))));
         row2.removeFromRight (2);
     }
     if (rec.isVisible())
@@ -707,7 +730,8 @@ std::vector<std::pair<juce::Button*, int>> MixerView::learnButtons() const
 {
     std::vector<std::pair<juce::Button*, int>> list;
     for (auto* c : tools)
-        list.emplace_back (&c->learn, faderControl (c->index));
+        if (faderControl (c->index) >= 0)
+            list.emplace_back (&c->learn, faderControl (c->index));
     list.emplace_back (&returnsAndMaster[2]->learn, faderControl (RigEngine::masterStrip));
     return list;
 }

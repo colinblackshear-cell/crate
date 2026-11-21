@@ -50,6 +50,7 @@ target_sources(CrateTests PRIVATE
     RigClearTests.cpp
     RigPhoneLinkTests.cpp
     RigLayers16Tests.cpp
+    DroneRigTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/pocket/PocketLinkClient.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
     SoundBankTests.cpp

@@ -43,6 +43,7 @@ juce::String RigEngine::stripName (int id)
         case inputStrip:   return "Input";
         case loopsStrip:   return "Loops";
         case drumsStrip:   return "Drum machine";
+        case droneStrip:   return "Drone";
         default:           return {};
     }
 }
@@ -57,7 +58,8 @@ juce::String RigEngine::toolName (int id)
         case bassTool:    return "Bass";
         case synthTool_:  return "Synth";
         case drumsTool:   return "Drum machine";
-        default:          return id >= fxTool && id < numTools ? "FX " + stripName (id - fxTool) : juce::String();
+        case droneTool:   return "Drone";
+        default:          return isFxTool (id) ? "FX " + stripName (id - fxTool) : juce::String();
     }
 }
 
@@ -70,7 +72,8 @@ juce::AudioProcessor& RigEngine::getTool (int id)
         case bassTool:    return bass;
         case synthTool_:  return synthTool;
         case drumsTool:   return drums;
-        default:          return id >= fxTool && id < numTools ? (juce::AudioProcessor&) fx[(size_t) (id - fxTool)] : mpc;
+        case droneTool:   return drone;
+        default:          return isFxTool (id) ? (juce::AudioProcessor&) fx[(size_t) (id - fxTool)] : mpc;
     }
 }
 
@@ -171,6 +174,8 @@ RigEngine::RigEngine()
     bass.setPlayHead (&transport);
     synthTool.setPlayHead (&transport);
     drums.setPlayHead (&transport);
+    drone.setPlayHead (&transport);   // (for a pluck on every beat; it sounds with the clock stopped too)
+    drone.getStateInformation (droneDefaults);
     for (auto& f : fx)
         f.setPlayHead (&transport);
     for (int i = 0; i < RigLooper::kLayers; ++i)
@@ -334,6 +339,7 @@ RigEngine::~RigEngine()
     bass.setPlayHead (nullptr);
     synthTool.setPlayHead (nullptr);
     drums.setPlayHead (nullptr);
+    drone.setPlayHead (nullptr);
     for (auto& f : fx)
         f.setPlayHead (nullptr);
     for (auto& f : loopFx)
@@ -363,7 +369,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     for (auto& l : stemLimiters)
         l.prepare (sampleRate);
 
-    for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder, &bass, &synthTool, &drums })
+    for (auto* p : std::initializer_list<juce::AudioProcessor*> { &mpc, &sampler, &vocoder, &bass, &synthTool, &drums, &drone })
     {
         p->setRateAndBufferSizeDetails (sampleRate, maxBlock);
         p->prepareToPlay (sampleRate, maxBlock);
@@ -389,6 +395,8 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     bassBuffer.setSize (2, maxBlock);
     synthBuffer.setSize (2, maxBlock);
     drumsBuffer.setSize (2, maxBlock);
+    droneBuffer.setSize (2, maxBlock);
+    droneFeedBuffer.setSize (2, maxBlock);
     inputBuffer.setSize (2, maxBlock);
     rawInputBuffer.setSize (2, maxBlock);
     loopsBuffer.setSize (2, maxBlock);
@@ -398,7 +406,7 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
     capture.prepare (sampleRate);
-    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi, &vocoderMissed, &midiScratch, &takeMidi })
+    for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi, &droneMidi, &vocoderMissed, &midiScratch, &takeMidi })
         m->ensureSize (4096);
     vocoderFade.reset (sampleRate, 0.015);
     vocoderFade.setCurrentAndTargetValue (vocoderOn.load() ? 1.0f : 0.0f);
@@ -701,6 +709,12 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         allToOnlyTool();
     }
 
+    // The drone's Follow keys: what the keys play, whichever tool they play.
+    droneMidi.clear();
+    if (drone.params.getRawParameterValue ("droneFollow")->load() > 0.5f)
+        if (auto* keys = destinations[(size_t) juce::jlimit (0, RigRouting::kNumDests - 1, routing.keysTo.load())])
+            droneMidi.addEvents (*keys, 0, -1, 0);
+
     // Recording the set: what's played, by tool, before the tools see it.
     RigRecorder::Clock recClock;
     recClock.beat = transport.getBlockPosition();
@@ -919,6 +933,38 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         samplerBlock.clear();
     applyStrip (samplerStrip, samplerBlock);
 
+    // The drone, last of the tools: its strings can ring to any of them (as you hear them, after
+    // their strips), or to all of them together.
+    juce::AudioBuffer<float> droneBlock (droneBuffer.getArrayOfWritePointers(), 2, n);
+    droneBlock.clear();
+    if (const bool plucked = dronePlucked.exchange (false); runsStrip (droneStrip) && (plucked || drone.wantsToPlay()))
+    {
+        const juce::AudioBuffer<float>* feed = nullptr;
+        switch (drone.getFeed())
+        {
+            case DroneProcessor::feedInput:   feed = &inputBlock; break;
+            case DroneProcessor::feedVocoder: feed = &vocoderBlock; break;
+            case DroneProcessor::feedBass:    feed = &bassBlock; break;
+            case DroneProcessor::feedSynth:   feed = &synthBlock; break;
+            case DroneProcessor::feedPads:    feed = &mpcBlock; break;
+            case DroneProcessor::feedSampler: feed = &samplerBlock; break;
+            case DroneProcessor::feedDrums:   feed = &drumsBlock; break;
+            case DroneProcessor::feedAll:
+            {
+                juce::AudioBuffer<float> all (droneFeedBuffer.getArrayOfWritePointers(), 2, n);
+                all.clear();
+                for (auto* b : { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &drumsBlock, &inputBlock, &samplerBlock })
+                    for (int ch = 0; ch < 2; ++ch)
+                        all.addFrom (ch, 0, *b, ch, 0, n);
+                feed = &droneFeedBuffer;
+                break;
+            }
+            default: break;
+        }
+        drone.process (droneBlock, feed, droneMidi);
+    }
+    applyStrip (droneStrip, droneBlock);
+
     // Each tool's strip (in Stem order), for its own output in Logic.
     const std::array<juce::AudioBuffer<float>*, numStems> stems { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, nullptr, &drumsBlock };
 
@@ -934,6 +980,9 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         if (st != loopsStem && outs[(size_t) st] == nullptr)
             for (int ch = 0; ch < 2; ++ch)
                 mix.addFrom (ch, 0, *stems[(size_t) st], ch, 0, n);
+    // (The drone has no output of its own in Logic: it's always in the main mix.)
+    for (int ch = 0; ch < 2; ++ch)
+        mix.addFrom (ch, 0, droneBlock, ch, 0, n);
 
     // The looper records from the input, a tool, or the mix so far (never itself), and plays
     // its layers through the Loops strip.
@@ -955,6 +1004,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     sources[RigLooper::mix] = &mix;
     sources[RigLooper::line] = &inputBlock;
     sources[RigLooper::drums] = &drumsBlock;
+    sources[RigLooper::drone] = &droneBlock;
     if (looper.process (clock, sources, loopsBlock))
     {
         transport.play();
@@ -1555,7 +1605,8 @@ juce::ValueTree RigEngine::saveShow() const
     auto& self = const_cast<RigEngine&> (*this);
     const std::pair<const char*, juce::AudioProcessor*> tools[] = { { "MPC", &self.mpc }, { "Sampler", &self.sampler },
                                                                     { "Vocoder", &self.vocoder }, { "Bass", &self.bass },
-                                                                    { "Synth", &self.synthTool }, { "Drum machine", &self.drums } };
+                                                                    { "Synth", &self.synthTool }, { "Drum machine", &self.drums },
+                                                                    { "Drone", &self.drone } };
     std::vector<std::pair<juce::String, juce::AudioProcessor*>> all (std::begin (tools), std::end (tools));
     for (int st = 0; st < numStrips; ++st)
         all.emplace_back (toolName (fxTool + st), &self.fx[(size_t) st]);
@@ -1668,9 +1719,11 @@ void RigEngine::loadShow (const juce::ValueTree& show)
         if (! loopBanks.empty())
             currentLoopBank = juce::jlimit (0, (int) loopBanks.size() - 1, (int) banks.getProperty ("current", 0));
     }
-    // Shows from before the effects have none.
+    // Shows from before the effects have none, and shows from before the drone have it as a new
+    // Rig has it (off).
     for (auto& f : fx)
         f.reset();
+    drone.setStateInformation (droneDefaults.getData(), (int) droneDefaults.getSize());
     for (auto& f : loopFx)
         f.reset();
 
@@ -1794,6 +1847,8 @@ void RigEngine::loadShow (const juce::ValueTree& show)
                 synthTool.setStateInformation (state.getData(), (int) state.getSize());
             else if (name == "Drum machine")
                 drums.setStateInformation (state.getData(), (int) state.getSize());
+            else if (name == "Drone")
+                drone.setStateInformation (state.getData(), (int) state.getSize());
             else
                 for (int st = 0; st < numStrips; ++st)
                     if (name == toolName (fxTool + st))
@@ -2182,6 +2237,7 @@ int RigEngine::stripForSource (int source)
         case RigLooper::sampler: return samplerStrip;
         case RigLooper::line:    return inputStrip;
         case RigLooper::drums:   return drumsStrip;
+        case RigLooper::drone:   return droneStrip;
         default:                 return -1;
     }
 }
