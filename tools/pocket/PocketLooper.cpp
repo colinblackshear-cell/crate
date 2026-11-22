@@ -506,6 +506,11 @@ void LoopsEngine::render (float* left, float* right, int numSamples)
         chunkOffset = off;
         chunk (left + off, right != nullptr ? right + off : nullptr, juce::jmin (kChunk, numSamples - off));
     }
+
+    // The input belongs to this block only: the caller's buffers may be gone by the next render (the audio
+    // callback sets it again every block). A render without setInput then hears silence, not freed memory.
+    inPtr = nullptr;
+    inChannels = 0;
 }
 
 void LoopsEngine::chunk (float* left, float* right, int n)
@@ -662,6 +667,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
                                     mic && inChannels > 1 && inPtr != nullptr ? inPtr[1] + chunkOffset : nullptr };
         vocoder->setInput (shifted, mic ? juce::jmin (2, inChannels) : 0);
         vocoder->render (vocL.data(), vocR.data(), n);
+        vocoder->setInput (nullptr, 0);   // `shifted` lives on this stack frame only
         if (stereo)
             boards[(size_t) boardVocoder].process (vocL.data(), vocR.data(), n);
         vocoderHeard = heard && (vocoderMonitor == nullptr || vocoderMonitor->load());

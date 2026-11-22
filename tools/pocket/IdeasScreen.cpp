@@ -58,6 +58,14 @@ struct IdeasScreen::List : public juce::Component
     juce::Rectangle<float> card (int row) const { return { 16.0f, (float) (row * (kCardH + kGap)) + 2.0f, (float) getWidth() - 32.0f, (float) kCardH }; }
     juce::Rectangle<float> playButton (int row) const { auto c = card (row); return { c.getRight() - 62, c.getCentreY() - 24, 48, 48 }; }
     juce::Rectangle<float> moreButton (int row) const { auto c = card (row); return { c.getRight() - 112, c.getCentreY() - 22, 44, 44 }; }
+    // What a finger on ··· may hit: the card's full height, from a little left of the dots to the play button (a near miss
+    // used to open the song, and an open song couldn't be deleted)
+    juce::Rectangle<float> moreHit (int row) const
+    {
+        auto c = card (row);
+        const float left = moreButton (row).getX() - 14.0f;
+        return { left, c.getY(), playButton (row).getX() - 2.0f - left, c.getHeight() };
+    }
     int rowAt (juce::Point<float> p) const
     {
         for (int i = 0; i < (int) owner.ideas.list().size(); ++i)
@@ -151,7 +159,7 @@ struct IdeasScreen::List : public juce::Component
     {
         pressed = rowAt (e.position);
         pressedPlay = pressed >= 0 && playButton (pressed).expanded (4).contains (e.position) ? pressed : -1;
-        pressedMore = pressed >= 0 && pressedPlay < 0 && moreButton (pressed).contains (e.position) ? pressed : -1;
+        pressedMore = pressed >= 0 && pressedPlay < 0 && moreHit (pressed).contains (e.position) ? pressed : -1;
         moved = false;
         downAt = e.position;
         if (pressed >= 0 && pressedPlay < 0 && pressedMore < 0)
@@ -186,7 +194,7 @@ struct IdeasScreen::List : public juce::Component
                 owner.onPlay (id);
             return;
         }
-        if (moreRow == row && moreButton (row).contains (e.position))
+        if (moreRow == row && moreHit (row).contains (e.position))
             return showMenu (row, moreButton (row).getCentre());
         if (owner.onOpen)
             owner.onOpen (id);
@@ -250,6 +258,12 @@ void IdeasScreen::holdRow (int row)
 {
     if (juce::isPositiveAndBelow (row, (int) ideas.list().size()))
         list->showMenu (row, list->card (row).getCentre());
+}
+
+juce::String IdeasScreen::songIdAtRow (int row) const
+{
+    const auto o = order();
+    return juce::isPositiveAndBelow (row, (int) o.size()) ? ideas.list()[(size_t) o[(size_t) row]].id : juce::String();
 }
 
 void IdeasScreen::refresh()

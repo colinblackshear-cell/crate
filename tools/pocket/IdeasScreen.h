@@ -34,6 +34,7 @@ public:
     static juce::String whenText (juce::Time);   // "Today 3:20 PM", "Yesterday", "Mon", "Oct 12"
     juce::Rectangle<int> tourSpot() const { return newButton.getBounds(); }
     void holdRow (int row);   // what a long press on that row does (the self-checks and screenshots)
+    juce::String songIdAtRow (int row) const;   // the song on that row, in the picked sort
 
 private:
     struct List;

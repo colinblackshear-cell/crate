@@ -41,7 +41,7 @@ public:
     // Points the library at another idea. The caller saves what's open first and reloads after.
     void open (const juce::String& id);
     void rename (const juce::String& id, const juce::String& name);
-    // Deletes an idea and its folder. The current one can't be deleted (switch first).
+    // Deletes an idea and its folder. The current one can't be deleted: the app switches to another one first.
     bool remove (const juce::String& id);
 
     // The current idea moved on: notes the step and the time.

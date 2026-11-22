@@ -61,6 +61,7 @@ public:
     void testTouchPad (int pad);
     void testHoldElapsed();
     void testLiftPad();
+    juce::Rectangle<float> testPadBounds (int pad) const;   // a pad of the shown bank, in this screen's coordinates (POCKET_STRESS taps it)
 
     // The pad pattern. While recording, pads played from `fromBeat` on go into the pattern, snapped to the
     // grid (REC on PADS turns it on, with the pattern playing; PocketApp then locks it onto a layer).

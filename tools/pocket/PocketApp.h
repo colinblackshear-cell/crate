@@ -22,6 +22,7 @@
 #include "SoundBankSheet.h"
 #include "VocoderScreen.h"
 #include "SingScreen.h"
+#include "SamplerScreen.h"
 #include "SynthScreen.h"
 #include "ChordsScreen.h"
 #include "PocketKey.h"
@@ -30,7 +31,8 @@
 
 // The whole phone app, tool first: a slim header (the menu icon and the song, the bar and where the next take goes,
 // the Mac link), the tool on screen, the thumb bar (BPM, CLICK, REC, PLAY, UNDO) and the tool row (LOOPS,
-// DRUMS, PADS, SYNTH, CHORDS, VOCODER, EFFECTS). REC records whatever tool is on screen onto the next empty loop layer, in time.
+// DRUMS, PADS, SAMPLER, SYNTH, CHORDS, VOCODER, EFFECTS). REC records whatever tool is on screen onto the next empty loop
+// layer, in time (on SAMPLER it samples a sound from the mic for the pads).
 // Your songs, the sound recorder, every vocoder setting and the pages the drawer opens (Sounds, Remote, Mac link,
 // Settings) are pages without the thumb bar. The song drawer slides in from the left (menu icon, the song's name, or a
 // swipe from the left edge). A long press on a loop layer, a pad, a chord pad or a song opens a hold menu.
@@ -41,6 +43,7 @@ public:
     {
         juce::File libraryRoot;       // empty = the app's Documents folder
         bool audio = true;            // false = no sound card (screenshots)
+        bool phoneUi = false;         // with audio false: still the phone's title, first kit and animations (POCKET_STRESS)
     };
 
     PocketApp() : PocketApp (Options()) {}
@@ -59,6 +62,8 @@ public:
     pocket::Library& library() { return lib; }
 
 private:
+    friend class PocketStress;   // POCKET_STRESS (PocketStress.cpp): drives the real handlers with an audio thread running
+
     // The phone's keyboard goes away with a swipe down anywhere, or a tap outside the text box
     // (the number pad has no Return key).
     struct KeyboardDismisser : juce::MouseListener
@@ -120,12 +125,14 @@ private:
     void openSamplePage (int pad) override;
     void togglePlay() override;
     void padSoundEdited (const juce::String& soundId) override;
+    void padSoundSwapped (const juce::String& oldId, const juce::String& newId) override;
     void backToPads (int pad) override;
     void openSoundBank() override;
     void showLoops() override { showTool (Tool::loops); }
     void showVocoder() override { showPage (Page::vocoderSettings); }
     void closeVocoderSettings() override { showTool (Tool::vocoder); }
     void openRecorder() override;
+    void openSampler (int pad) override;
     bool micReady() override { return micOn; }
     void askForMic (std::function<void()> then) override;
     pocket::Route micRoute() override { return route; }
@@ -152,7 +159,8 @@ private:
     void newIdea();          // + NEW SONG
     void switchIdea (const juce::String& id);
     void renameIdea (const juce::String& id);
-    void deleteIdea (const juce::String& id);
+    void deleteIdea (const juce::String& id);    // asks first (a card where the song's menu was), then removeIdea
+    void removeIdea (const juce::String& id);    // any song, the open one too: that one makes way for your last other song (or a new one)
     void makeABeat();        // Your songs' MAKE A BEAT: a new song with an empty grid, and the lesson
     void lessonFromMenu();   // the drawer's TOUR · LESSON > Show me: make a beat
     juce::String phoneSummary() const;   // "8 sounds · 3 loop layers in this song · 12 MB", on Settings
@@ -179,6 +187,15 @@ private:
     void recVocoder();
     void recSynth();
     void recChords();
+    // SAMPLER (PocketAppSampler.cpp): the pads that play a sound after it was trimmed or the trim undone (`shift`: how far
+    // their parts move), and the 4 x 4 pad picker.
+    void repadSound (const juce::String& oldId, const juce::String& newId, int shift);
+    void setupSampler();
+    // A bottom sheet over the dim, sliding up (shown) or down: the pad picker, the chord editor.
+    void showDragSheet (pocket::DragSheet&, juce::Rectangle<int> bounds, bool& openFlag, bool shown);
+    void openPadPicker();
+    void closePadPicker();
+    juce::Rectangle<int> padPickerBounds() const;
     // EFFECTS (PocketAppEffects.cpp): a pedalboard for every sound. REC on EFFECTS records the picked sound through its
     // board the way that sound's own tool does (VOICE: the mic source); LAYER, ALL and MASTER are resampled.
     void setupEffects();
@@ -271,6 +288,8 @@ private:
     juce::String runRecChecks (juce::String& report);
     juce::String runLoopEditChecks (juce::String& report);
     juce::String runNavigationChecks (juce::String& report, const juce::File& folder);
+    juce::String runSamplerChecks (juce::String& report);
+    juce::String runSongDeleteChecks (juce::String& report, const juce::File& folder);   // PocketAppNav.cpp   // PocketAppSampler.cpp: a trimmed sound is what the pad plays
 
     struct PocketLook : juce::LookAndFeel_V4 { PocketLook(); juce::Font getPopupMenuFont() override; juce::Font getTextButtonFont (juce::TextButton&, int) override; };
     PocketLook look;
@@ -300,6 +319,8 @@ private:
     pocket::CountInPanel countPanel;
     std::unique_ptr<juce::FileChooser> chooser;
     RecordScreen record;
+    SamplerScreen sampler;
+    SamplerPadPicker padPicker;
     SoundsScreen sounds;
     std::unique_ptr<RemoteScreen> remote;
     std::unique_ptr<MacLinkScreen> macLink;
@@ -308,6 +329,7 @@ private:
     std::unique_ptr<IdeasScreen> ideasScreen;
     SongDrawer drawer { ideas, link };
     pocket::HoldMenu holdCard;
+    juce::Rectangle<float> lastHoldTarget;   // what the last hold menu kept bright (in the app's coordinates): a confirm goes there too
     std::unique_ptr<TitleScreen> title;
     std::unique_ptr<TourOverlay> tour;
     // The Make a beat lesson: a coach card over DRUMS (see PocketLesson.h)
@@ -369,7 +391,8 @@ private:
     Tool backTool = Tool::pads;
     Tool tool = Tool::pads;
     int morePageShown = -1;
-    bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false, bankOpen = false, recSetupOpen = false, phonesOpen = false;
+    bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false, bankOpen = false, recSetupOpen = false, phonesOpen = false,
+         padPickOpen = false;
     juce::String shownHeader;
     bool shownBusy = false, shownPlaying = false;
     void headerTickNow();

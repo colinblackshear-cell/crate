@@ -1,10 +1,14 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PocketApp.h"
+#if ! JUCE_IOS
+ #include "PocketStress.h"
+#endif
 
 // Kaleidobox Pocket: the iPhone companion. On the phone it fills the screen; on a computer
 // (the CRATE_POCKET_DESKTOP preview build) it's a fixed 390x844 window. Set POCKET_SNAPSHOT to a
-// folder to write a PNG of each screen with demo sounds and quit.
+// folder to write a PNG of each screen with demo sounds and quit. Set POCKET_STRESS to a folder to run the
+// stress mode (PocketStress.cpp: the renderer on its own real-time thread while a script taps the UI) and quit.
 class PocketApplication : public juce::JUCEApplication
 {
 public:
@@ -15,8 +19,15 @@ public:
     void initialise (const juce::String&) override
     {
         PocketApp::Options options;
-        juce::File snapshotDir;
+        juce::File snapshotDir, stressDir;
        #if ! JUCE_IOS
+        if (const auto stressEnv = juce::SystemStats::getEnvironmentVariable ("POCKET_STRESS", {}); stressEnv.isNotEmpty())
+        {
+            stressDir = juce::File (stressEnv);
+            options.libraryRoot = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("pocket-stress-" + juce::String (juce::Time::currentTimeMillis()));
+            options.audio = false;     // no sound card: the stress mode is the sound card
+            options.phoneUi = true;
+        }
         const auto folder = juce::SystemStats::getEnvironmentVariable ("POCKET_SNAPSHOT", {});
         if (folder.isNotEmpty())
         {
@@ -27,6 +38,26 @@ public:
        #endif
 
         window = std::make_unique<Window> (getApplicationName(), options);
+       #if ! JUCE_IOS
+        // POCKET_SIZE=375x667: another phone's screen (in points), for POCKET_STRESS
+        if (const auto size = juce::StringArray::fromTokens (juce::SystemStats::getEnvironmentVariable ("POCKET_SIZE", {}), "x", {}); size.size() == 2)
+            window->app().setSize (juce::jlimit (200, 1400, size[0].getIntValue()), juce::jlimit (300, 1400, size[1].getIntValue()));
+       #endif
+
+       #if ! JUCE_IOS
+        if (stressDir != juce::File())
+        {
+            const int seconds = juce::jlimit (0, 3600, juce::SystemStats::getEnvironmentVariable ("POCKET_STRESS_SECONDS", "60").getIntValue());
+            juce::MessageManager::callAsync ([this, stressDir, seconds]
+            {
+                stress = startPocketStress (window->app(), stressDir, seconds, [this] (bool ok)
+                {
+                    setApplicationReturnValue (ok ? 0 : 1);
+                    juce::MessageManager::callAsync ([this] { stress.reset(); quit(); });
+                });
+            });
+        }
+       #endif
 
         if (snapshotDir != juce::File())
         {
@@ -40,7 +71,11 @@ public:
         }
     }
 
-    void shutdown() override { window.reset(); }
+    void shutdown() override
+    {
+        stress.reset();
+        window.reset();
+    }
 
 private:
     class Window : public juce::DocumentWindow
@@ -68,6 +103,7 @@ private:
     };
 
     std::unique_ptr<Window> window;
+    std::shared_ptr<void> stress;
 };
 
 START_JUCE_APPLICATION (PocketApplication)

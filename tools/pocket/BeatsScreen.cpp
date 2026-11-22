@@ -10,7 +10,12 @@ const char* const voiceTags[crate::drums::kVoices] = { "KK", "SN", "CP", "RS", "
 
 
 struct BelowSwitch : juce::Component {};   // (the tool row picks the view now)
-}
+
+// StepGrid, StepOverview and LivePads stay inside this unnamed namespace on purpose.
+// The iPhone build also links tools/mpc, which has its own global StepGrid with
+// out-of-line paint/mouse methods. Two global classes with one name break the
+// one-definition rule: the linker kept the MPC vtable, so the DRUMS grid ran the MPC
+// paint on the wrong object and froze or crashed the app. Internal names cannot clash.
 
 //==============================================================================
 // The 16 steps of the picked voice, in two rows of 8. Tap to set a hit, hold to set the accent.
@@ -242,6 +247,7 @@ public:
 private:
     std::array<juce::uint32, 12> flashUntil {};
 };
+} // namespace
 
 //==============================================================================
 class BeatsScreen::DrumView : public BelowSwitch
@@ -629,7 +635,7 @@ public:
             const int b = owner.drumData.padPattern.bars;
             owner.setPatternBars (b == 1 ? 2 : b == 2 ? 4 : b == 4 ? 8 : 1);
         };
-        recordSound.onClick = [this] { owner.host.openRecorder(); };
+        recordSound.onClick = [this] { owner.host.openSampler (owner.selected >= 0 && owner.padKit.pads[(size_t) owner.selected].empty() ? owner.selected : owner.padKit.nextEmpty (owner.bank)); };
         modeExit.setFontHeight (15.0f);
         modeExit.onClick = [this] { owner.endPadMode(); };
         addChildComponent (modeExit);
@@ -926,7 +932,7 @@ private:
 
     BeatsScreen& owner;
     PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit pads" }, toMac { "To mac" };
-    PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Record a sound") },
+    PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Sample a sound") },
             modeExit { "Exit", Look::amber };
     pocket::HoldDetector hold { [this] { holdFired(); } };
     bool wasPlaying = false;
@@ -1002,12 +1008,12 @@ HoldSpec BeatsScreen::padMenuSpec (int pad)
     if (p.empty())
     {
         s.items.push_back ({ U8("PUT A SOUND ON IT\xe2\x80\xa6"), {}, false, true, swap });
-        s.items.push_back ({ "RECORD A NEW SOUND", {}, false, true, [this] { host.openRecorder(); } });
+        s.items.push_back ({ "RECORD A NEW SOUND", "sampler", false, true, [this, pad] { host.openSampler (pad); } });
         return s;
     }
-    s.items.push_back ({ "SOUND PAGE", U8("trim \xc2\xb7 effects \xc2\xb7 chop"), false, true, [this, pad] { host.openSamplePage (pad); } });
+    s.items.push_back ({ "SOUND PAGE", U8("sampler \xc2\xb7 in / out \xc2\xb7 trim"), false, true, [this, pad] { host.openSamplePage (pad); } });
     s.items.push_back ({ U8("SWAP SOUND\xe2\x80\xa6"), {}, false, true, swap });
-    s.items.push_back ({ "RECORD A NEW SOUND", {}, false, true, [this] { host.openRecorder(); } });
+    s.items.push_back ({ "RECORD A NEW SOUND", "sampler", false, true, [this, pad] { host.openSampler (pad); } });
     s.items.push_back ({ U8("VOLUME \xc2\xb7 PAN \xc2\xb7 TUNE"), {}, false, true, [this, pad] { host.openPadSheet (pad); } });
     s.items.push_back ({ "16 LEVELS", {}, false, true, [this, pad] { startLevels (pad); } });
     s.items.push_back ({ "COPY TO ANOTHER PAD", {}, false, true, [this, pad] { startCopy (pad); } });
@@ -1139,6 +1145,7 @@ void BeatsScreen::endPadMode()
 void BeatsScreen::testTouchPad (int pad) { padsView->touchPad (pad, padsView->padRectFor (pad).getCentre()); }
 void BeatsScreen::testHoldElapsed() { padsView->fireHoldNow(); }
 void BeatsScreen::testLiftPad() { padsView->liftPad(); }
+juce::Rectangle<float> BeatsScreen::testPadBounds (int pad) const { return padsView->padRectFor (pad) + padsView->getPosition().toFloat(); }
 
 void BeatsScreen::holdPad (int pad)
 {

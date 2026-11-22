@@ -10,7 +10,8 @@ int PocketApp::boardForTool (Tool t) const
     switch (t)
     {
         case Tool::drums: return boardDrums;
-        case Tool::pads: return boardPads;
+        case Tool::pads:
+        case Tool::sampler: return boardPads;   // (what it samples plays on the pads)
         case Tool::synth: return boardSynth;
         case Tool::chords: return boardChords;
         case Tool::vocoder: return appSettings.singMode == 0 ? boardVoice : boardVocoder;
@@ -164,7 +165,7 @@ juce::String PocketApp::runEffectsChecks (juce::String& report)
     {
         const auto untouched = mixFingerprint();
         const auto made = mixFingerprint ([] (LoopsEngine& L) { for (int b = 0; b < kBoards; ++b) L.board (b).fx(); });
-        report << "untouched song: " << juce::String ((juce::int64) (untouched & 0x7fffffffffffffffull)) << (untouched == kUntouchedFingerprint ? " (as before the boards)" : " (CHANGED)")
+        report << "untouched song: " << juce::String (untouched) << (untouched == kUntouchedFingerprint ? " (as before the boards)" : " (CHANGED)")
                << ", every board made but left alone: " << (made == untouched ? "identical" : "DIFFERENT") << "\n";
         if (untouched != kUntouchedFingerprint)
             problems.add ("Effects: an untouched song no longer renders bit for bit as before the boards");
