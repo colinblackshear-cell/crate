@@ -53,6 +53,7 @@ private:
     const int onlyTool;
 
     juce::File loopsFile() const;
+    juce::MemoryBlock lastSavedState;   // the last state given to (or from) the host whose loops were saved whole
     void setOldToolState (const void*, int);
 
     std::unique_ptr<RigEngine> engine;

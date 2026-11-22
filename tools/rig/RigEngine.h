@@ -24,6 +24,7 @@
 #include "RigChords.h"
 #include "RigTakes.h"
 #include "RigAutomation.h"
+#include "RigShowFiles.h"
 #include "RigSounds.h"
 #include "core/SafetyLimiter.h"
 #include "core/control/Controllers.h"
@@ -449,13 +450,28 @@ public:
     void serviceLoopBanks();
 
     // The loops' sound is too big for the show file, so it goes in WAV files in a folder next
-    // to it ("My show loops"). Call after writing the show file, and after loading it.
+    // to it ("My show loops"; see RigShowFiles.h for how a save keeps the last one safe).
     static juce::File loopsFolder (const juce::File& showFile);
+    // Saves the show and its loops' sound to `showFile` as one revision: the WAVs are written and
+    // checked first, then the show file (which names them) replaces the old one. If anything
+    // fails, the last saved show and its sound are left as they were and the result says why.
+    // Message thread.
+    rigshow::Result saveShowFile (const juce::File& showFile);
+    // The plugin's state (the host keeps it): the show, naming the loops' revision saved for it
+    // under `loopsShowFile`. An invalid tree (with why in `result`) when the loops couldn't be
+    // saved; the caller then gives the host its last saved state instead.
+    juce::ValueTree saveShowForHost (const juce::File& loopsShowFile, rigshow::Result& result);
+    // Why the last readLoopAudio couldn't find the show's loops (empty when it did).
+    juce::String getLoopAudioProblem() const { return loopAudioProblem; }
+    // A save's warning or error for the window to show (the plugin saves when the host asks).
+    // Any thread; takes it.
+    void noteShowFilesMessage (const juce::String&, bool error);
+    juce::String takeShowFilesMessage (bool& error);
     // A loop's name ("Drums", a stem from Logic), shown on the Song screen. It goes with the sound:
     // once the layer records or gets another loop, it has none. Saved with the show. Message thread.
     void setLoopName (int layer, const juce::String&);
     juce::String getLoopName (int layer) const;
-    bool writeLoopAudio (const juce::File& showFile) const;
+    // After loadShow: brings in the loops' sound saved with that show (its revision).
     void readLoopAudio (const juce::File& showFile);
 
 private:
@@ -567,6 +583,12 @@ private:
     std::atomic<int> onlyTool { -1 };
     std::array<juce::String, RigLooper::kLayers> loopNames, loadedLoopNames;
     std::vector<RigTakes::Set> loadedTakeSets;
+    juce::String loadedAudioRevision, loopAudioProblem;   // from loadShow / readLoopAudio
+    rigshow::Committed committedAudio;                   // the loops' sound saved for this show
+    std::vector<rigshow::Asset> loopAssets() const;
+    juce::CriticalSection messageLock;
+    juce::String showFilesMessage;
+    bool showFilesMessageIsError = false;
     float timingOffsetMs = 0;
     std::atomic<int> deviceRoundTrip { 0 };
     void applyTiming();   // from loadShow, until readLoopAudio brings their sound
