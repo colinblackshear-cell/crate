@@ -72,22 +72,6 @@ public:
         friend class TriggerLine;
     };
 
-    // One learned drum trigger: its lamp, its note, what it plays, and Forget.
-    class Row::TriggerLine : public juce::Component
-    {
-    public:
-        TriggerLine (Row&, int note);
-        void paint (juce::Graphics&) override;
-        void resized() override;
-        void tick();
-        const int note;
-        juce::ComboBox target;
-        juce::TextButton forget { "Forget" };
-        bool lit = false;
-    private:
-        Row& row;
-        juce::Rectangle<int> lampArea, textArea;
-    };
 
 private:
     void timerCallback() override;
@@ -105,4 +89,21 @@ private:
     int checkTicks = 0;
     void layoutList();
     friend class Row;
+};
+
+// One learned drum trigger: its lamp, its note, what it plays, and Forget.
+class ControllersPanel::Row::TriggerLine : public juce::Component
+{
+public:
+    TriggerLine (Row&, int note);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void tick();
+    const int note;
+    juce::ComboBox target;
+    juce::TextButton forget { "Forget" };
+    bool lit = false;
+private:
+    Row& row;
+    juce::Rectangle<int> lampArea, textArea;
 };
