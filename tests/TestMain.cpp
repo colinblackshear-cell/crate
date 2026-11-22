@@ -20,9 +20,13 @@ int main (int argc, char** argv)
     else
         runner.runAllTests();
 
-    int failures = 0;
+    int failures = 0, passes = 0;
     for (int i = 0; i < runner.getNumResults(); ++i)
+    {
         failures += runner.getResult (i)->failures;
+        passes += runner.getResult (i)->passes;
+    }
+    std::cout << runner.getNumResults() << " test sections, " << passes << " checks passed, " << failures << " failed" << std::endl;
 
     std::cout << (failures == 0 ? "All tests passed" : juce::String (failures) + " failure(s)") << std::endl;
     return failures == 0 ? 0 : 1;

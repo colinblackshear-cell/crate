@@ -2,6 +2,7 @@
 
 #include "RigEngine.h"
 #include "RigView.h"
+#include "RigLastShow.h"
 
 // The Rig: a standalone app that plays the Crate tools live, together, on one clock.
 class RigApplication : public juce::JUCEApplication
@@ -47,13 +48,19 @@ public:
         });
 
         window = std::make_unique<Window> (*engine, devices);
+
+        // A Last show that couldn't be saved at the last quit: say so (this is the one from before).
+        const auto lastQuit = riglastshow::takeFailureFromLastQuit (*settings);
+        if (lastQuit.isNotEmpty())
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Your show wasn't saved last time", lastQuit);
     }
 
     void shutdown() override
     {
         if (engine != nullptr)
         {
-            saveLastShow();
+            if (! lastShowSaved)
+                saveLastShow();   // (if it fails here, the next launch says so)
             devices.removeMidiInputDeviceCallback ({}, engine.get());
             devices.removeAudioCallback (engine.get());
         }
@@ -66,7 +73,33 @@ public:
         engine = nullptr;
     }
 
-    void systemRequestedQuit() override { quit(); }
+    // Saves the Last show first, so a failure can be shown while there's still a window: quit
+    // anyway (the Last show from before stays) or keep the app open to save elsewhere.
+    void systemRequestedQuit() override
+    {
+        if (engine == nullptr || lastShowSaved || askingToQuit)
+        {
+            quit();
+            return;
+        }
+        const auto result = saveLastShow();
+        if (result.ok)
+        {
+            quit();
+            return;
+        }
+        askingToQuit = true;
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "Couldn't save your show",
+                                            riglastshow::quitMessage (result), "Quit anyway", "Keep Kaleidobox open", nullptr,
+                                            juce::ModalCallbackFunction::create ([this] (int quitAnyway)
+                                            {
+                                                askingToQuit = false;
+                                                if (quitAnyway != 0)
+                                                    quit();   // (shutdown doesn't try again; the next launch says it wasn't saved)
+                                                else
+                                                    lastShowSaved = false;
+                                            }));
+    }
 
 private:
     // The saved audio set-up can have no input in it (from a time the mic was blocked, or a
@@ -97,15 +130,14 @@ private:
             .getChildFile ("Crate").getChildFile ("Rig").getChildFile ("Last show.crateshow");
     }
 
-    void saveLastShow()
+    // A failed save leaves the Last show from before as it was, and is kept in the settings so
+    // the next launch says so (RigLastShow.h).
+    rigshow::Result saveLastShow()
     {
-        const auto file = lastShowFile();
-        file.getParentDirectory().createDirectory();
-        // (On quit there's no one to tell; a failed save leaves the last one as it was.)
-        const auto result = engine->saveShowFile (file);
-        if (! result.ok)
-            DBG ("Kaleidobox: " << result.error);
+        lastShowSaved = true;
+        return riglastshow::save (*engine, lastShowFile(), *settings);
     }
+    bool lastShowSaved = false, askingToQuit = false;
 
     class Window : public juce::DocumentWindow
     {
