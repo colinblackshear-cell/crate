@@ -2556,6 +2556,16 @@ void RigView::timerCallback()
     }
     screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
     pageChanged();
+    {
+        bool error = false;
+        const auto text = engine.takeShowFilesMessage (error);
+        if (text.isNotEmpty())
+        {
+            say (text);
+            if (error)
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Kaleidobox couldn't save its loops", text);
+        }
+    }
     if (auto& q = engine.getQuantizer(); q.lastAutoMessage.isNotEmpty())
     {
         const auto text = std::exchange (q.lastAutoMessage, {});
@@ -3157,12 +3167,12 @@ void RigView::saveShowAs()
 
 bool RigView::writeShowTo (const juce::File& file)
 {
-    bool ok = false;
-    if (auto xml = engine.saveShow().createXml())
-        ok = xml->writeTo (file) && engine.writeLoopAudio (file);
-    if (! ok)
+    const auto result = engine.saveShowFile (file);
+    if (! result.ok)
     {
-        say ("Couldn't save all of " + file.getFileName() + ".");
+        say ("Couldn't save " + file.getFileName() + ": " + result.error);
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Couldn't save " + file.getFileNameWithoutExtension(),
+                                                result.error);
         return false;
     }
     currentShow = file;
@@ -3171,7 +3181,8 @@ bool RigView::writeShowTo (const juce::File& file)
         if (engine.getLooper().copyLayerAudio (i).getNumSamples() > 0)
             ++loops;
     say ("Saved " + file.getFileNameWithoutExtension() + ": the show" + (loops > 0 ? " and " + juce::String (loops) + (loops == 1 ? " loop" : " loops") : juce::String())
-         + ", in " + file.getParentDirectory().getFullPathName() + ". Cmd+S saves it again.");
+         + ", in " + file.getParentDirectory().getFullPathName() + ". Cmd+S saves it again."
+         + (result.warning.isNotEmpty() ? " " + result.warning : juce::String()));
     return true;
 }
 
@@ -3243,6 +3254,8 @@ void RigView::openShow()
                                   engine.readLoopAudio (file);
                                   currentShow = file;
                                   refresh();
+                                  if (engine.getLoopAudioProblem().isNotEmpty())
+                                      say (engine.getLoopAudioProblem());
                                   if (song != nullptr)
                                       song->forgetUndo();
                                   restoreWindows();

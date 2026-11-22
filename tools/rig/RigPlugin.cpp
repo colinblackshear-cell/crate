@@ -163,12 +163,38 @@ void RigPlugin::getStateInformation (juce::MemoryBlock& data)
 {
     if (songId.isEmpty())
         songId = juce::Uuid().toString();
-    auto show = engine->saveShow();
-    show.setProperty ("logicSong", songId, nullptr);
-    if (auto xml = show.createXml())
+    // The loops are saved (and checked) first, and the state names the revision it goes with.
+    // getStateInformation can't fail, and the host keeps whatever it's given, so when the loops
+    // can't be saved the host gets the last state that was saved whole (its show and its loops
+    // together), never this show paired with other sound.
+    rigshow::Result result;
+    auto show = engine->saveShowForHost (loopsFile(), result);
+    if (show.isValid())
+    {
+        show.setProperty ("logicSong", songId, nullptr);
+        if (auto xml = show.createXml())
+        {
+            copyXmlToBinary (*xml, data);
+            lastSavedState = data;
+            return;
+        }
+    }
+    if (lastSavedState.getSize() > 0)
+    {
+        data = lastSavedState;
+        engine->noteShowFilesMessage ("Kaleidobox couldn't save its loops (" + result.error + ") Logic was given this plugin's last saved state, "
+                                      "so changes since then aren't in this save. Free some disk space, then save the Logic project again.", true);
+        return;
+    }
+    // Nothing saved yet to fall back on: the show without its loops, marked so, which loads
+    // with empty loops and says why (never another song's sound).
+    auto bare = engine->saveShow();
+    bare.setProperty (rigshow::kRevisionAttribute, rigshow::kUnsavedRevision, nullptr);
+    bare.setProperty ("logicSong", songId, nullptr);
+    if (auto xml = bare.createXml())
         copyXmlToBinary (*xml, data);
-    loopsFile().getParentDirectory().createDirectory();
-    engine->writeLoopAudio (loopsFile());
+    engine->noteShowFilesMessage ("Kaleidobox couldn't save its loops (" + result.error + ") This Logic save has the plugin's settings but "
+                                  "no loops. Free some disk space, then save the Logic project again.", true);
 }
 
 void RigPlugin::setStateInformation (const void* data, int size)
@@ -185,6 +211,10 @@ void RigPlugin::setStateInformation (const void* data, int size)
         songId = tree.getProperty ("logicSong").toString();
         if (songId.isNotEmpty())
             engine->readLoopAudio (loopsFile());
+        // What the host had is a whole saved state (to give back if a later save can't save its loops).
+        lastSavedState.replaceAll (data, (size_t) size);
+        if (engine->getLoopAudioProblem().isNotEmpty())
+            engine->noteShowFilesMessage (engine->getLoopAudioProblem(), false);
     }
     else
     {

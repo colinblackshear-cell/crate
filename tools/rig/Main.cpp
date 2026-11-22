@@ -101,9 +101,10 @@ private:
     {
         const auto file = lastShowFile();
         file.getParentDirectory().createDirectory();
-        if (auto xml = engine->saveShow().createXml())
-            if (xml->writeTo (file))
-                engine->writeLoopAudio (file);
+        // (On quit there's no one to tell; a failed save leaves the last one as it was.)
+        const auto result = engine->saveShowFile (file);
+        if (! result.ok)
+            DBG ("Kaleidobox: " << result.error);
     }
 
     class Window : public juce::DocumentWindow

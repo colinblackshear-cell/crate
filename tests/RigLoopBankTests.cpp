@@ -169,7 +169,7 @@ struct RigLoopBankTests : juce::UnitTest
             const auto showFile = folder.getChildFile ("Bank show.crateshow");
             const auto xml = engine.saveShow().createXml();
             expect (xml->writeTo (showFile));
-            expect (engine.writeLoopAudio (showFile));
+            expect (engine.saveShowFile (showFile).ok);
             expect (RigEngine::loopsFolder (showFile).getChildFile ("Loop 4.wav").existsAsFile(), "the current bank as before");
             expect (RigEngine::loopsFolder (showFile).getChildFile ("Bank 1").getChildFile ("Loop 1.wav").existsAsFile());
 

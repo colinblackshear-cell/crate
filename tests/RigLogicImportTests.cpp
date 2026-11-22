@@ -197,7 +197,7 @@ struct RigLogicImportTests : juce::UnitTest
 
             // It saves with the show like any loops, names and all.
             juce::TemporaryFile showFile (".crateshow");
-            expect (engine.writeLoopAudio (showFile.getFile()));
+            expect (engine.saveShowFile (showFile.getFile()).ok);
             expect (RigEngine::loopsFolder (showFile.getFile()).getChildFile ("Loop 2.wav").existsAsFile());
             {
                 RigEngine again;

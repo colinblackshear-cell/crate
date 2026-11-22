@@ -460,7 +460,7 @@ struct RigLooperTests : juce::UnitTest
             const auto showFile = folder.getChildFile ("Test show.crateshow");
             const auto xml = engine.saveShow().createXml();
             expect (xml->writeTo (showFile));
-            expect (engine.writeLoopAudio (showFile));
+            expect (engine.saveShowFile (showFile).ok);
             expect (RigEngine::loopsFolder (showFile).getChildFile ("Loop 1.wav").existsAsFile());
 
             RigEngine other;

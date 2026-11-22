@@ -146,7 +146,7 @@ struct RigLayers16Tests : juce::UnitTest
                 engine.getTimeline().changed();
                 auto xml = engine.saveShow().createXml();
                 expect (xml != nullptr && xml->writeTo (showFile.getFile()));
-                expect (engine.writeLoopAudio (showFile.getFile()));
+                expect (engine.saveShowFile (showFile.getFile()).ok);
             }
             {
                 RigEngine engine;

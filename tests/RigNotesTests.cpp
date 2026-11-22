@@ -193,7 +193,7 @@ public:
                 // Saved: the clip in the show, the takes beside it.
                 auto xml = engine.saveShow().createXml();
                 expect (xml != nullptr && xml->writeTo (showFile.getFile()));
-                expect (engine.writeLoopAudio (showFile.getFile()));
+                expect (engine.saveShowFile (showFile.getFile()).ok);
             }
             {
                 RigEngine engine;
@@ -250,7 +250,7 @@ public:
                 engine.useTake (2, 1);
                 auto xml = engine.saveShow().createXml();
                 expect (xml->writeTo (showFile.getFile()));
-                expect (engine.writeLoopAudio (showFile.getFile()));
+                expect (engine.saveShowFile (showFile.getFile()).ok);
             }
             {
                 RigEngine engine;

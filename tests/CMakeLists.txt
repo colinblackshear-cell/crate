@@ -50,6 +50,7 @@ target_sources(CrateTests PRIVATE
     RigClearTests.cpp
     RigPhoneLinkTests.cpp
     RigLayers16Tests.cpp
+    RigShowFilesTests.cpp
     DroneRigTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/pocket/PocketLinkClient.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
@@ -72,7 +73,8 @@ target_include_directories(CrateTests PRIVATE ${PROJECT_SOURCE_DIR}/tools/editor
 target_compile_definitions(CrateTests PRIVATE
     JucePlugin_Name="Sample Editor"
     JUCE_APPLICATION_NAME_STRING="CrateTests"
-    JUCE_APPLICATION_VERSION_STRING="0.1.0")
+    JUCE_APPLICATION_VERSION_STRING="0.1.0"
+    KALEIDOBOX_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 target_link_libraries(CrateTests PRIVATE
     crate_core
     mpc_format

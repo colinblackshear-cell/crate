@@ -1664,6 +1664,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     timeline.fromTree (show.getChildWithName (RigTimeline::kTreeType));
     takes.clear();
     loadedTakeSets.clear();
+    loadedAudioRevision = show.getProperty (rigshow::kRevisionAttribute).toString();
     noteClips = rignotes::fromTree (show.getChildWithName (rignotes::kTreeType));
     notesChanged();
     notePlayer.releaseAll();
@@ -2583,61 +2584,22 @@ static juce::String takesFolderName (int layer)
                                           : "Loop " + juce::String (layer + 1);
 }
 
-bool RigEngine::writeLoopAudio (const juce::File& showFile) const
+// Every WAV of the show, at the paths shows have always used: "Loop 3.wav" (the current bank),
+// "Takes/Loop 5/Take 2.wav" and "Takes/Notes 4/Take 1.wav", "Bank 2/Loop 1.wav" (other banks).
+std::vector<rigshow::Asset> RigEngine::loopAssets() const
 {
-    const auto folder = loopsFolder (showFile);
-    folder.deleteRecursively();
-    bool ok = true, any = false;
-    auto writeWav = [this] (const juce::File& file, const juce::AudioBuffer<float>& audio)
-    {
-        std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
-        if (stream == nullptr)
-            return false;
-        juce::WavAudioFormat wav;
-        auto options = juce::AudioFormatWriterOptions().withSampleRate (sampleRate > 0 ? sampleRate : 44100.0)
-                                                       .withNumChannels (2).withBitsPerSample (24);
-        if (auto writer = wav.createWriterFor (stream, options))
-            return writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
-        return false;
-    };
+    std::vector<rigshow::Asset> assets;
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
-        const auto audio = looper.copyLayerAudio (i);
-        if (audio.getNumSamples() == 0)
-            continue;
-        if (! any)
-            folder.createDirectory();
-        any = true;
-        const auto file = folder.getChildFile ("Loop " + juce::String (i + 1) + ".wav");
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
-        if (stream == nullptr)
-        {
-            ok = false;
-            continue;
-        }
-        const double rate = sampleRate > 0 ? sampleRate : 44100.0;
-        auto options = juce::AudioFormatWriterOptions().withSampleRate (rate).withNumChannels (2).withBitsPerSample (24);
-        if (auto writer = wav.createWriterFor (stream, options))
-            ok = writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()) && ok;
-        else
-            ok = false;
+        auto audio = std::make_shared<juce::AudioBuffer<float>> (looper.copyLayerAudio (i));
+        if (audio->getNumSamples() > 0)
+            assets.push_back ({ "Loop " + juce::String (i + 1) + ".wav", std::move (audio) });
     }
-
-    // The takes: "Takes/Loop 3/Take 2.wav".
     for (const auto& set : takes.getSets())
-    {
         for (const auto& take : set.takes)
-        {
-            if (take.audio.getNumSamples() == 0)
-                continue;
-            const auto sub = folder.getChildFile ("Takes").getChildFile (takesFolderName (set.layer));
-            sub.createDirectory();
-            ok = writeWav (sub.getChildFile ("Take " + juce::String (take.number) + ".wav"), take.audio) && ok;
-        }
-    }
-
-    // The other loop banks, each in its own folder ("Bank 2/Loop 1.wav").
+            if (take.audio.getNumSamples() > 0)
+                assets.push_back ({ "Takes/" + takesFolderName (set.layer) + "/Take " + juce::String (take.number) + ".wav",
+                                    std::shared_ptr<const juce::AudioBuffer<float>> (&take.audio, [] (const juce::AudioBuffer<float>*) {}) });
     for (int b = 0; b < (int) loopBanks.size(); ++b)
     {
         if (b == getCurrentLoopBank())
@@ -2647,32 +2609,104 @@ bool RigEngine::writeLoopAudio (const juce::File& showFile) const
             const auto& l = loopBanks[(size_t) b].layers[(size_t) i];
             if (l.audio == nullptr || l.beats <= 0 || l.audio->getNumSamples() == 0)
                 continue;
-            const auto sub = folder.getChildFile ("Bank " + juce::String (b + 1));
-            sub.createDirectory();
-            std::unique_ptr<juce::OutputStream> stream (sub.getChildFile ("Loop " + juce::String (i + 1) + ".wav").createOutputStream());
-            juce::WavAudioFormat wav;
-            const double rate = sampleRate > 0 ? sampleRate : 44100.0;
-            auto options = juce::AudioFormatWriterOptions().withSampleRate (rate).withNumChannels (2).withBitsPerSample (24);
-            if (stream == nullptr)
-                ok = false;
-            else if (auto writer = wav.createWriterFor (stream, options))
-                ok = writer->writeFromAudioSampleBuffer (*l.audio, 0, l.audio->getNumSamples()) && ok;
-            else
-                ok = false;
+            assets.push_back ({ "Bank " + juce::String (b + 1) + "/Loop " + juce::String (i + 1) + ".wav", l.audio });
         }
     }
-    return ok;
+    return assets;
+}
+
+rigshow::Result RigEngine::saveShowFile (const juce::File& showFile)
+{
+    const juce::ScopedLock sl (rigshow::saveLock());
+    rigshow::Result result;
+    rigshow::Staged staged;
+    if (! rigshow::stage (showFile, loopAssets(), sampleRate, committedAudio, staged, result))
+        return result;
+
+    auto show = saveShow();
+    show.setProperty (rigshow::kRevisionAttribute, staged.revision, nullptr);
+    auto xml = show.createXml();
+    rigshow::reach ("beforeCommit");
+    if (xml == nullptr || ! rigshow::commitXml (*xml, showFile))
+    {
+        rigshow::discard (staged);
+        result.ok = false;
+        result.error = "Couldn't write " + showFile.getFileName() + " (is the disk full or the folder read-only?). The last saved show is unchanged.";
+        return result;
+    }
+    rigshow::reach ("afterCommit");
+    committedAudio = rigshow::committedFrom (staged);
+    rigshow::finish (staged, result);
+    result.ok = true;
+    return result;
+}
+
+juce::ValueTree RigEngine::saveShowForHost (const juce::File& loopsShowFile, rigshow::Result& result)
+{
+    // The host keeps the state; its "commit" is out of our hands. So the loops are staged and
+    // tidied first, and the state only names a revision that is complete on disk. Nothing here
+    // deletes a revision, so whichever state the host ends up keeping (this one, an older one,
+    // an undo step) still finds its own sound.
+    const juce::ScopedLock sl (rigshow::saveLock());
+    result = {};
+    rigshow::Staged staged;
+    if (! rigshow::stage (loopsShowFile, loopAssets(), sampleRate, committedAudio, staged, result))
+        return {};
+    auto show = saveShow();
+    show.setProperty (rigshow::kRevisionAttribute, staged.revision, nullptr);
+    committedAudio = rigshow::committedFrom (staged);
+    rigshow::finish (staged, result);
+    result.ok = true;
+    return show;
+}
+
+void RigEngine::noteShowFilesMessage (const juce::String& text, bool error)
+{
+    const juce::ScopedLock sl (messageLock);
+    showFilesMessage = text;
+    showFilesMessageIsError = error;
+}
+
+juce::String RigEngine::takeShowFilesMessage (bool& error)
+{
+    const juce::ScopedLock sl (messageLock);
+    error = showFilesMessageIsError;
+    showFilesMessageIsError = false;
+    return std::exchange (showFilesMessage, {});
 }
 
 void RigEngine::readLoopAudio (const juce::File& showFile)
 {
-    const auto folder = loopsFolder (showFile);
+    // The folder of the revision the show names ("<show> loops" for an older build's show). If
+    // it can't be found, no loop sound comes in (never another revision's), and why is kept.
+    loopAudioProblem = {};
+    const auto folder = rigshow::resolve (showFile, loadedAudioRevision, &loopAudioProblem);
+    const bool haveFolder = folder != juce::File();
+    auto fileAt = [&] (const juce::String& path) { return haveFolder ? folder.getChildFile (path) : juce::File(); };
+
+    // What's on disk for this show, so the next save can link the files that haven't changed.
+    rigshow::Committed loaded;
+    loaded.showFile = showFile;
+    loaded.revision = loadedAudioRevision;
+    auto remember = [&loaded] (const juce::String& path, const juce::File& file, const juce::AudioBuffer<float>& audio)
+    {
+        rigshow::Entry e;
+        e.path = path;
+        e.frames = audio.getNumSamples();
+        e.channels = audio.getNumChannels();
+        e.bytes = file.getSize();
+        e.modified = file.getLastModificationTime().toMilliseconds();
+        e.sourceKey = e.decodedKey = rigshow::hashAudio (audio);
+        loaded.entries.push_back (e);
+    };
+
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
         const double beats = loadedLoopBeats[(size_t) i];
-        const auto file = folder.getChildFile ("Loop " + juce::String (i + 1) + ".wav");
+        const juce::String path ("Loop " + juce::String (i + 1) + ".wav");
+        const auto file = fileAt (path);
         if (beats <= 0 || ! file.existsAsFile())
         {
             looper.makeRoom (i);
@@ -2683,6 +2717,7 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
         {
             juce::AudioBuffer<float> audio (2, (int) reader->lengthInSamples);
             reader->read (&audio, 0, audio.getNumSamples(), 0, true, true);
+            remember (path, file, audio);
             looper.setLayerAudio (i, std::move (audio), beats);
             setLoopName (i, loadedLoopNames[(size_t) i]);
         }
@@ -2694,15 +2729,18 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
         const bool notes = RigTakes::isNotesLayer (set.layer);
         if (! notes && looper.getState (set.layer) == RigLooper::State::empty && loadedLoopBeats[(size_t) set.layer] <= 0)
             continue;
-        const auto sub = folder.getChildFile ("Takes").getChildFile (takesFolderName (set.layer));
+        const juce::String sub ("Takes/" + takesFolderName (set.layer) + "/");
         std::vector<RigTakes::Take> kept;
         int playingNumber = juce::isPositiveAndBelow (set.playing, (int) set.takes.size()) ? set.takes[(size_t) set.playing].number : -1;
         for (auto& take : set.takes)
         {
-            if (std::unique_ptr<juce::AudioFormatReader> reader { formats.createReaderFor (sub.getChildFile ("Take " + juce::String (take.number) + ".wav")) })
+            const auto path = sub + "Take " + juce::String (take.number) + ".wav";
+            const auto file = fileAt (path);
+            if (std::unique_ptr<juce::AudioFormatReader> reader { file.existsAsFile() ? formats.createReaderFor (file) : nullptr })
             {
                 take.audio.setSize (2, (int) reader->lengthInSamples);
                 reader->read (&take.audio, 0, take.audio.getNumSamples(), 0, true, true);
+                remember (path, file, take.audio);
                 kept.push_back (std::move (take));
             }
             else if (notes && ! take.notes.empty())
@@ -2725,18 +2763,21 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
         {
             auto& l = loopBanks[(size_t) b].layers[(size_t) i];
             l.audio = nullptr;
-            const auto file = folder.getChildFile ("Bank " + juce::String (b + 1)).getChildFile ("Loop " + juce::String (i + 1) + ".wav");
+            const juce::String path ("Bank " + juce::String (b + 1) + "/Loop " + juce::String (i + 1) + ".wav");
+            const auto file = fileAt (path);
             if (l.beats > 0 && file.existsAsFile())
                 if (std::unique_ptr<juce::AudioFormatReader> reader { formats.createReaderFor (file) })
                 {
                     auto audio = std::make_shared<juce::AudioBuffer<float>> (2, (int) reader->lengthInSamples);
                     reader->read (audio.get(), 0, audio->getNumSamples(), 0, true, true);
+                    remember (path, file, *audio);
                     l.audio = std::move (audio);
                 }
             if (l.audio == nullptr)
                 l.beats = 0;
         }
     }
+    committedAudio = std::move (loaded);
 }
 
 //==============================================================================
