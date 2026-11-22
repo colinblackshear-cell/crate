@@ -41,6 +41,7 @@ public:
     {
         juce::File libraryRoot;       // empty = the app's Documents folder
         bool audio = true;            // false = no sound card (screenshots)
+        bool phoneUi = false;         // with audio false: still the phone's title, first kit and animations (POCKET_STRESS)
     };
 
     PocketApp() : PocketApp (Options()) {}
@@ -59,6 +60,8 @@ public:
     pocket::Library& library() { return lib; }
 
 private:
+    friend class PocketStress;   // POCKET_STRESS (PocketStress.cpp): drives the real handlers with an audio thread running
+
     // The phone's keyboard goes away with a swipe down anywhere, or a tap outside the text box
     // (the number pad has no Return key).
     struct KeyboardDismisser : juce::MouseListener

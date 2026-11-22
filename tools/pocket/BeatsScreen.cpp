@@ -10,7 +10,12 @@ const char* const voiceTags[crate::drums::kVoices] = { "KK", "SN", "CP", "RS", "
 
 
 struct BelowSwitch : juce::Component {};   // (the tool row picks the view now)
-}
+
+// StepGrid, StepOverview and LivePads stay inside this unnamed namespace on purpose.
+// The iPhone build also links tools/mpc, which has its own global StepGrid with
+// out-of-line paint/mouse methods. Two global classes with one name break the
+// one-definition rule: the linker kept the MPC vtable, so the DRUMS grid ran the MPC
+// paint on the wrong object and froze or crashed the app. Internal names cannot clash.
 
 //==============================================================================
 // The 16 steps of the picked voice, in two rows of 8. Tap to set a hit, hold to set the accent.
@@ -242,6 +247,7 @@ public:
 private:
     std::array<juce::uint32, 12> flashUntil {};
 };
+} // namespace
 
 //==============================================================================
 class BeatsScreen::DrumView : public BelowSwitch
@@ -1139,6 +1145,7 @@ void BeatsScreen::endPadMode()
 void BeatsScreen::testTouchPad (int pad) { padsView->touchPad (pad, padsView->padRectFor (pad).getCentre()); }
 void BeatsScreen::testHoldElapsed() { padsView->fireHoldNow(); }
 void BeatsScreen::testLiftPad() { padsView->liftPad(); }
+juce::Rectangle<float> BeatsScreen::testPadBounds (int pad) const { return padsView->padRectFor (pad) + padsView->getPosition().toFloat(); }
 
 void BeatsScreen::holdPad (int pad)
 {

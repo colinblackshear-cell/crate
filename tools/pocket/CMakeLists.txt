@@ -89,7 +89,8 @@ target_include_directories(KaleidoboxPocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(KaleidoboxPocket PRIVATE PocketRoute.mm)
 else()
-    target_sources(KaleidoboxPocket PRIVATE PocketRoute.cpp)
+    # (and POCKET_STRESS, the desktop preview's stress mode)
+    target_sources(KaleidoboxPocket PRIVATE PocketRoute.cpp PocketStress.cpp)
 endif()
 
 target_compile_definitions(KaleidoboxPocket PRIVATE
@@ -117,7 +118,10 @@ if(NOT TARGET mpc_format)
 endif()
 target_link_libraries(KaleidoboxPocket PRIVATE mpc_format)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+# -DCRATE_POCKET_PHONE_EXTRAS=ON links these into the desktop preview too, so it links exactly what the phone links
+# (a class defined twice under one name only breaks the build that has both: see BeatsScreen.cpp's StepGrid).
+option(CRATE_POCKET_PHONE_EXTRAS "Desktop preview: also link the engine sources only the iPhone build links" OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CRATE_POCKET_PHONE_EXTRAS)
     # The sound engines for later steps (the pad player). They only need to compile for now.
 
     target_sources(KaleidoboxPocket PRIVATE

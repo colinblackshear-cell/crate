@@ -470,12 +470,13 @@ PocketApp::PocketApp (Options o)
     addChildComponent (*title);
 
     setSize (390, 844);
-    if (o.audio)
+    const bool phone = o.audio || o.phoneUi;
+    if (phone)
         fillEmptyIdea();   // the first launch: the pads start with the Street kit
-    if (o.audio)
+    if (phone)
         title->setVisible (true);   // the opening title, each time the app opens
     sounds.selectFirst();
-    animate = o.audio;
+    animate = phone;
     applyAnimate();
 
     // The mic starts off and unheard, every launch.
@@ -2508,7 +2509,11 @@ juce::BorderSize<int> PocketApp::safeInsets()
     // Never under the clock, even before the phone has said where it is.
     return { juce::jmax (b.getTop(), 59), b.getLeft(), juce::jmax (b.getBottom(), 0), b.getRight() };
    #else
-    return { 47, 0, 34, 0 };   // pretend to be an iPhone with a notch
+    // pretend to be an iPhone with a notch (POCKET_INSETS=top,bottom pretends to be another one, for POCKET_STRESS)
+    const auto env = juce::StringArray::fromTokens (juce::SystemStats::getEnvironmentVariable ("POCKET_INSETS", {}), ",", {});
+    if (env.size() == 2)
+        return { env[0].getIntValue(), 0, env[1].getIntValue(), 0 };
+    return { 47, 0, 34, 0 };
    #endif
 }
 

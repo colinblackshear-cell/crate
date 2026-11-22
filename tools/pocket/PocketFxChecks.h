@@ -15,5 +15,7 @@ class LoopsEngine;
 // before the boards existed gave kUntouchedFingerprint.
 // synthNotes false: the synth plays nothing (to show a SYNTH board changes nothing else).
 juce::uint64 mixFingerprint (std::function<void (LoopsEngine&)> tweak = {}, bool synthNotes = true);
-constexpr juce::uint64 kUntouchedFingerprint = 9569679416668035882ull;
+// Re-recorded 2026-11 after the drum and synth sounds changed on main (the old value no longer matched
+// even with no board touched). The report prints it in full now, so it can be copied straight from it.
+constexpr juce::uint64 kUntouchedFingerprint = 14133004927360232518ull;
 }
