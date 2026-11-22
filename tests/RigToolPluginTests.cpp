@@ -271,13 +271,14 @@ struct RigToolPrintTests : juce::UnitTest
             collect (*editor, views);
             auto& view = *views.front();
 
-            std::vector<rigpanels::PanelButton*> buttons;
-            collect (*editor, buttons);
-            rigpanels::PanelButton* rec = nullptr;
-            for (auto* b : buttons)
-                if (b->text == "Rec")
-                    rec = b;
-            expect (rec != nullptr);
+            // Rec, along the bottom.
+            std::vector<rigpanels::Dock*> docks;
+            collect (*editor, docks);
+            expect (docks.size() == 1);
+            if (docks.empty())
+                return;
+            auto* rec = &docks.front()->rec;
+            expect (rec->isVisible() && rec->text == "Rec");
             rec->onClick();
             expect (bass.getEngine().getRecorder().getState() == RigRecorder::State::armed);
 

@@ -333,7 +333,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     setOpaque (true);
     vintage::setStage ((bool) engine.screens.getProperty ("dark", false));
 
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &rail })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &dock, &rail })
     {
         c->setLookAndFeel (&vintageLook);
         addAndMakeVisible (c);
@@ -351,28 +351,30 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
     auto& transport = engine.getTransport();
 
-    // The top bar.
-    header.play.onClick = [this] { engine.playOrStop(); };
-    header.stop.onClick = [this, &transport]
+    // The bottom bar (as the phone's thumb bar): tempo, click, count-in, length, one Rec, Play,
+    // Undo last take, Rec moves, Automation, Quantize.
+    dock.play.onClick = [this, &transport]
     {
-        transport.stop();
-        engine.allNotesOff();   // Stop always means quiet: no hanging notes or latched arps
+        if (transport.isPlaying())
+        {
+            transport.stop();
+            engine.allNotesOff();   // Stop always means quiet: no hanging notes or latched arps
+        }
+        else
+            engine.playOrStop();
     };
-    header.rec.onClick = [this] { toggleRecordSet(); };
-    header.up.onClick = [this] { nudgeTempo (juce::ModifierKeys::getCurrentModifiers().isShiftDown() ? 0.1 : 1.0); };
-    header.down.onClick = [this] { nudgeTempo (juce::ModifierKeys::getCurrentModifiers().isShiftDown() ? -0.1 : -1.0); };
-    header.up.setRepeatSpeed (400, 80);
-    header.down.setRepeatSpeed (400, 80);
-    header.onMic = [this]
+    dock.rec.onClick = [this]
     {
-        engine.micOn = ! engine.micOn.load();
-        refresh();
-        if (engine.micOn.load())
-            sayMicOn();
+        if (dock.rec.arrowHit)
+            showRecMenu();
+        else
+            pressRec();
     };
-    header.onKeyboard = [this] { showControllers(); };
-    header.onTempo = [this] { showTempoMenu(); };
-    header.tap.onClick = [this]
+    dock.up.onClick = [this] { nudgeTempo (juce::ModifierKeys::getCurrentModifiers().isShiftDown() ? 0.1 : 1.0); };
+    dock.down.onClick = [this] { nudgeTempo (juce::ModifierKeys::getCurrentModifiers().isShiftDown() ? -0.1 : -1.0); };
+    dock.tempo.onNudge = [this] (double delta) { nudgeTempo (delta); };
+    dock.tempo.onMenu = [this] { showTempoMenu(); };
+    dock.tempo.onTap = [this]
     {
         const auto now = juce::Time::getMillisecondCounterHiRes();
         if (! taps.empty() && now - taps.back() > 2000.0)
@@ -386,6 +388,42 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
             engine.getTransport().setBpm (std::round (60000.0 / beat * 2.0) / 2.0);
         }
     };
+    dock.click.onClick = [this, &transport]
+    {
+        transport.metronome = ! transport.metronome.load();
+        updateDock();
+    };
+    dock.countIn.onClick = [this]
+    {
+        recCountIn = (recCountIn + 1) % 3;
+        saveRecSetup();
+        updateDock();
+    };
+    dock.length.onClick = [this]
+    {
+        static const int lengths[] = { 1, 2, 4, 8, 16, 0 };
+        int i = 0;
+        while (i < 6 && lengths[i] != recLength)
+            ++i;
+        recLength = lengths[(i + 1) % 6];
+        saveRecSetup();
+        updateDock();
+    };
+    dock.undo.onClick = [this] { undoLastTake(); };
+    dock.recMoves.onClick = [this] { pressRecMoves(); };
+    dock.moves.onClick = [this] { showAutomation(); };
+    dock.quantize.onClick = [this] { showQuantize (quantizeTarget(), &dock.quantize); };
+    loadRecSetup();
+
+    // The top bar.
+    header.onMic = [this]
+    {
+        engine.micOn = ! engine.micOn.load();
+        refresh();
+        if (engine.micOn.load())
+            sayMicOn();
+    };
+    header.onKeyboard = [this] { showControllers(); };
 
     // The views, the Sounds drawer and Settings.
     screenBar.onView = [this] (const juce::String& view) { showView (view); };
@@ -404,23 +442,19 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     screenBar.back.onClick = [this] { goBack(); };
     screenBar.forward.onClick = [this] { goForward(); };
 
+    // Chords and Effects, as tools on the rail.
+    rail.chords.onClick = [this] { showChords (! chordsOpen); };
+    rail.effects.onClick = [this]
+    {
+        if (currentPage() == "Effects")
+            goBack();
+        else
+            showTab ("Effects");
+    };
+
     // Your show, and starting a song from nothing.
     header.show.onClick = [this] { if (toolMode()) showToolMenu(); else showShowMenu(); };
-    rail.newPattern.onClick = [this] { showPatternMenu(); };
-    rail.recTake.onClick = [this] { pressRecTake(); };
-    rail.toSong.onClick = [this] { showToSongMenu(); };
-    rail.recMoves.onClick = [this] { pressRecMoves(); };
-    rail.moves.onClick = [this] { showAutomation(); };
-    rail.recMoves.setTooltip ("Records the knobs you turn while it plays, from the next bar: the bass's Cutoff sweeping, an effect's Mix, "
-                              "any setting on any tool or its effects (on screen or with a learned knob). Press again to stop at the end of the bar. "
-                              "Each setting gets a lane that plays back on the beat.");
-    rail.moves.setTooltip ("The automation lanes: what each one moves, Loop or Once, its length; draw on a lane to change it, "
-                           "clear one or all (with Undo). Cmd+Shift+A.");
-    rail.recTake.setTooltip ("Records the picked track as you play it (the vocoder over the beat, a bass line, a guitar...) onto the next "
-                             "empty loop, from the next bar. Press again to stop at the end of that bar. Then To Song puts the take in the song.");
-    rail.toSong.setTooltip ("Locks the picked track into the song: what it plays now (its pattern or sequence), or your last take, into a "
-                            "section, every section, or a new one. Undo on the Song screen (Cmd+Z) takes it back.");
-    header.quantize.onClick = [this] { showQuantize (quantizeTarget(), &header.quantize); };
+    header.menu.onClick = [this] { if (toolMode()) showToolMenu(); else showShowMenu(); };
     header.jam.onClick = [this]
     {
         engine.jam();
@@ -577,7 +611,19 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     {
         // A one-tool plugin's rail has just its own track (the MPC with its Sampler).
         auto cards = grooveView->takeTrackCards();
-        if (toolMode())
+        if (! toolMode())
+        {
+            // In the order of the phone's tool row, with Chords and Effects as tools too.
+            juce::Array<juce::Component*> ordered;
+            for (int t : { GrooveView::loops, GrooveView::machine, GrooveView::drums, GrooveView::sampler, GrooveView::bass, GrooveView::synth })
+                ordered.add (cards[t]);
+            ordered.add (&rail.chords);
+            for (int t : { GrooveView::vocoder, GrooveView::lineIn, GrooveView::drone })
+                ordered.add (cards[t]);
+            ordered.add (&rail.effects);
+            cards = ordered;
+        }
+        else
         {
             juce::Array<juce::Component*> mine;
             for (int t = 0; t < cards.size(); ++t)
@@ -855,6 +901,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         startToolMode();
     updateRecordButton();   // its name ("Rec set") from the start
     footer.tick();          // the song bar's sections (thin until there's a song)
+    updateCaptureButtons(); // the bottom bar, from the start
+    updateHeader();
     startTimerHz (30);
     // Put popped-out tools back on their screens, once this window is up.
     juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
@@ -999,12 +1047,13 @@ void RigView::pageChanged()
     vintage::setStage (onStage || (bool) engine.screens.getProperty ("dark", false));
     header.setVisible (! onStage);
     footer.setVisible (! onStage);
+    dock.setVisible (! onStage);
     rail.setVisible (railShown());
     if (onStage)
         showSounds (false);
     resized();
     repaint();
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &rail })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &dock, &rail })
         c->repaint();
     if (groove != nullptr)
         groove->repaint();
@@ -1228,9 +1277,12 @@ int RigView::pressRecTake()
     }
     if (const int source = takeSourceFor (t); source >= 0)
         looper.getLayer (layer).source = source;
-    looper.getLayer (layer).bars = 0;   // until you press again
+    // The bottom bar's length (0: until you press again) and count-in.
+    looper.getLayer (layer).bars = juce::jmax (0, recLength);
+    looper.getLayer (layer).countIn = juce::jlimit (0, 2, recCountIn);
     looper.pressRecord (layer);
     takeLayer = layer;
+    lastTakeLayer = layer;
     takeTrack = t;
     takeStarted = false;
     takeKeptSaid = false;
@@ -1239,10 +1291,255 @@ int RigView::pressRecTake()
         note = " Your mic is off: switch it on (Mic, top right) to be heard.";
     else if (t == GrooveView::vocoder && ! engine.vocoderOn.load())
         note = " The vocoder is off: switch it on to be heard.";
-    say ("Rec take: " + GrooveView::trackName (t) + " onto loop " + juce::String (layer + 1)
-         + " from the next bar. Play it over the beat; press Rec take again to stop at the end of the bar." + note);
+    const bool counting = recCountIn > (engine.getTransport().isPlaying() ? 1 : 0);
+    say ("Rec: " + GrooveView::trackName (t) + " onto loop " + juce::String (layer + 1)
+         + (counting ? " after " + juce::String (recCountIn) + (recCountIn == 1 ? " bar" : " bars") + " of count-in" : juce::String (" from the next bar"))
+         + (recLength > 0 ? ", " + juce::String (recLength) + (recLength == 1 ? " bar" : " bars") + ", then it loops."
+                          : ". Play it over the beat; press Rec again to stop at the end of the bar.") + note);
     updateCaptureButtons();
     return layer;
+}
+
+void RigView::pressRec()
+{
+    if (toolMode())
+        return toggleRecordSet();   // a tool plugin records itself, to drag into Logic
+    // Whatever is recording from here stops first.
+    if (engine.getRecorder().getState() != RigRecorder::State::idle)
+        return toggleRecordSet();
+    if (engine.getCapture().getState() != RigCapture::State::idle)
+        return toggleSampling();
+    if (takeLayer >= 0 || engine.getTakes().isActive())
+    {
+        pressRecTake();
+        return updateDock();
+    }
+    switch (recLands)
+    {
+        case RecLands::layer:  recFree = true; pressRecTake(); break;
+        case RecLands::song:   recFree = false; pressRecTake(); break;   // with a song, into it (Rec into)
+        case RecLands::sample: toggleSampling(); break;
+        case RecLands::set:    toggleRecordSet(); break;
+    }
+    updateDock();
+}
+
+void RigView::setRecSetup (int countInBars, int lengthBars)
+{
+    recCountIn = juce::jlimit (0, 2, countInBars);
+    recLength = juce::jlimit (0, 16, lengthBars);
+    saveRecSetup();
+    updateDock();
+}
+
+bool RigView::undoLastTake()
+{
+    auto& looper = engine.getLooper();
+    auto forget = [this] (int layer)
+    {
+        for (auto& l : lastTake)
+            if (l == layer)
+                l = -1;
+        if (lastTakeLayer == layer)
+            lastTakeLayer = -1;
+    };
+    if (takeLayer >= 0)
+    {
+        const int layer = std::exchange (takeLayer, -1);
+        if (looper.getState (layer) == RigLooper::State::armed)
+            looper.pressRecord (layer);   // not started: called off
+        else
+            looper.clear (layer);
+        forget (layer);
+        say ("Take on loop " + juce::String (layer + 1) + " thrown away.");
+        updateCaptureButtons();
+        return true;
+    }
+    if (juce::isPositiveAndBelow (lastTakeLayer, RigLooper::kLayers) && looper.getState (lastTakeLayer) != RigLooper::State::empty)
+    {
+        const int layer = lastTakeLayer;
+        looper.clear (layer);
+        forget (layer);
+        say ("Undo: the last take (loop " + juce::String (layer + 1) + ") is cleared. Rec records onto it again next.");
+        updateCaptureButtons();
+        return true;
+    }
+    if (undoLast())
+        return true;
+    say ("Nothing to undo yet.");
+    return false;
+}
+
+juce::String RigView::recTargetText() const
+{
+    if (toolMode())
+        return "TO DRAG INTO LOGIC";
+    auto& looper = engine.getLooper();
+    const auto lengthText = recLength > 0 ? juce::String (recLength) + (recLength == 1 ? " BAR" : " BARS") : juce::String ("FREE");
+    const auto dot = juce::String::fromUTF8 (" \xc2\xb7 ");
+    if (takeLayer >= 0)
+        return "LAYER " + juce::String (takeLayer + 1) + dot + lengthText;
+    switch (recLands)
+    {
+        case RecLands::song:
+        {
+            const auto list = rigsong::sections (engine.getTimeline());
+            if (const int sec = recTargetSection(); juce::isPositiveAndBelow (sec, (int) list.size()) && getTrack() != GrooveView::loops)
+                return ("INTO " + rigsong::letterFor (sec) + " " + list[(size_t) sec].name).toUpperCase();
+            break;   // no song yet: a free take, onto the next layer
+        }
+        case RecLands::sample: return "SAMPLER OR PAD";
+        case RecLands::set:    return "WHOLE SET" + dot + "STEMS";
+        case RecLands::layer:  break;
+    }
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+        if (looper.getState (l) == RigLooper::State::empty)
+            return "LAYER " + juce::String (l + 1) + dot + lengthText;
+    return "LOOPS FULL";
+}
+
+juce::String RigView::countInText() const
+{
+    auto& transport = engine.getTransport();
+    if (! transport.isPlaying() || takeLayer < 0)
+        return {};
+    auto& looper = engine.getLooper();
+    if (looper.getState (takeLayer) != RigLooper::State::armed || looper.getLayer (takeLayer).countIn.load() <= 0)
+        return {};
+    const double left = looper.getLayer (takeLayer).startsAt.load() - transport.getPositionInBeats();
+    if (left <= 0)
+        return {};
+    return "COUNT-IN " + juce::String ((int) std::ceil (left - 1.0e-6));
+}
+
+void RigView::updateDock()
+{
+    auto setButton = [] (rigpanels::PanelButton& b, const juce::String& text, const juce::String& sub, vintage::Lit lit)
+    {
+        if (b.text != text || b.sub != sub || b.lit != lit)
+        {
+            b.text = text;
+            b.sub = sub;
+            b.lit = lit;
+            b.repaint();
+        }
+    };
+    auto& transport = engine.getTransport();
+    const bool click = transport.metronome.load();
+    setButton (dock.click, "Click", click ? "on" : "off", click ? vintage::Lit::current : vintage::Lit::none);
+    setButton (dock.countIn, "Count-in", recCountIn == 0 ? juce::String ("off") : juce::String (recCountIn) + (recCountIn == 1 ? " bar" : " bars"),
+               vintage::Lit::none);
+    setButton (dock.length, "Length", recLength > 0 ? juce::String (recLength) + (recLength == 1 ? " bar" : " bars") : juce::String ("free"),
+               vintage::Lit::none);
+    if (std::abs (dock.tempo.bpm - transport.getBpm()) > 0.001 || dock.tempo.rampTo != (transport.isHosted() ? 0.0 : transport.getRampTarget()))
+    {
+        dock.tempo.bpm = transport.getBpm();
+        dock.tempo.rampTo = transport.isHosted() ? 0.0 : transport.getRampTarget();
+        dock.tempo.repaint();
+    }
+
+    // Rec: what's recording from here, or where the next take goes.
+    int state = 0;
+    juce::String text = "Rec", sub = juce::String::fromUTF8 ("\xe2\x86\x92 ") + recTargetText();
+    const auto recorder = engine.getRecorder().getState();
+    const auto capture = engine.getCapture().getState();
+    if (recorder != RigRecorder::State::idle)
+    {
+        state = recorder == RigRecorder::State::armed ? 1 : 2;
+        text = shownSet.text;
+        sub = toolMode() ? juce::String ("to drag into Logic") : juce::String ("the whole set, to stems");
+    }
+    else if (capture == RigCapture::State::armed || capture == RigCapture::State::recording)
+    {
+        state = capture == RigCapture::State::armed ? 1 : 2;
+        text = "Stop sample";
+        sub = "into the sampler or a pad";
+    }
+    else if (takeLayer >= 0 || engine.getTakes().isActive())
+    {
+        const bool armed = takeLayer >= 0 && engine.getLooper().getState (takeLayer) == RigLooper::State::armed;
+        state = armed ? 1 : 2;
+        text = armed ? "Rec" : "Stop rec";
+        if (const auto counting = countInText(); counting.isNotEmpty())
+            sub = counting + juce::String::fromUTF8 (" \xc2\xb7 ") + recTargetText();
+        else
+            sub = shownTake.sub;
+    }
+    if (dock.rec.text != text || dock.rec.sub != sub || dock.rec.state != state)
+    {
+        dock.rec.text = text;
+        dock.rec.sub = sub;
+        dock.rec.state = state;
+        dock.rec.repaint();
+    }
+    else if (state == 1)
+        dock.rec.repaint();   // (it blinks while it waits)
+}
+
+void RigView::showRecMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Rec setup (the same as on the phone)");
+    {
+        juce::PopupMenu sub;
+        for (int bars : { 0, 1, 2 })
+            sub.addItem (bars == 0 ? juce::String ("Off") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), true, recCountIn == bars,
+                         [this, bars] { setRecSetup (bars, recLength); });
+        menu.addSubMenu ("Count-in: " + dock.countIn.sub, sub);
+    }
+    {
+        juce::PopupMenu sub;
+        for (int bars : { 1, 2, 4, 8, 16, 0 })
+            sub.addItem (bars == 0 ? juce::String ("Free (until you press Rec again)") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), true,
+                         recLength == bars, [this, bars] { setRecSetup (recCountIn, bars); });
+        menu.addSubMenu ("Length: " + dock.length.sub, sub);
+    }
+    menu.addItem ("Click", true, engine.getTransport().metronome.load(), [this]
+    {
+        engine.getTransport().metronome = ! engine.getTransport().metronome.load();
+        updateDock();
+    });
+    if (! toolMode())
+    {
+        menu.addSeparator();
+        menu.addSectionHeader ("Where Rec lands");
+        menu.addItem ("The next loop layer (as on the phone)", true, recLands == RecLands::layer, [this] { setRecLands (RecLands::layer); });
+        menu.addItem ("A take on the song, into a section (Rec into)", true, recLands == RecLands::song, [this] { setRecLands (RecLands::song); });
+        menu.addItem ("Into the Sampler or an MPC pad (resample what plays)", true, recLands == RecLands::sample,
+                      [this] { setRecLands (RecLands::sample); });
+        menu.addItem ("The whole set: stems, mix and MIDI for Logic", true, recLands == RecLands::set, [this] { setRecLands (RecLands::set); });
+        menu.addSeparator();
+        menu.addItem (juce::String::fromUTF8 ("To Song \xe2\x80\xba ") + toSongSub, [this] { showToSongMenu(); });
+        menu.addItem (juce::String::fromUTF8 ("Rec into: section, cycle, notes or sound \xe2\x80\xba"), [this] { showRecTargetMenu (dock.rec); });
+        menu.addItem (juce::String::fromUTF8 ("Takes \xe2\x80\xba"), [this] { showTakesMenu (dock.rec); });
+        menu.addItem (juce::String::fromUTF8 ("Automation lanes \xe2\x80\xba"), [this] { showAutomation(); });
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (dock.rec));
+}
+
+void RigView::loadRecSetup()
+{
+    if (devices == nullptr)
+        return;   // (in Logic, and in the tests: the defaults)
+    std::unique_ptr<juce::XmlElement> xml (juce::XmlDocument::parse (RigEngine::timingFile()));
+    if (xml == nullptr)
+        return;
+    recCountIn = juce::jlimit (0, 2, xml->getIntAttribute ("recCountIn", recCountIn));
+    recLength = juce::jlimit (0, 16, xml->getIntAttribute ("recLength", recLength));
+}
+
+void RigView::saveRecSetup()
+{
+    if (devices == nullptr)
+        return;
+    const auto file = RigEngine::timingFile();
+    std::unique_ptr<juce::XmlElement> xml (juce::XmlDocument::parse (file));
+    if (xml == nullptr || ! xml->hasTagName ("Timing"))
+        xml = std::make_unique<juce::XmlElement> ("Timing");
+    xml->setAttribute ("recCountIn", recCountIn);
+    xml->setAttribute ("recLength", recLength);
+    file.getParentDirectory().createDirectory();
+    xml->writeTo (file);
 }
 
 void RigView::pressRecMoves()
@@ -1277,7 +1574,7 @@ void RigView::showAutomation()
     panel->setLookAndFeel (&vintageLook);
     panel->onSay = [this] (const juce::String& text) { say (text); };
     automationPanel = panel.get();
-    juce::Component* anchor = rail.moves.isShowing() ? static_cast<juce::Component*> (&rail.moves) : this;
+    juce::Component* anchor = dock.moves.isShowing() ? static_cast<juce::Component*> (&dock.moves) : static_cast<juce::Component*> (&dock.recMoves);
     const auto area = anchor == this ? getLocalBounds().withSizeKeepingCentre (10, 10) : getLocalArea (anchor, anchor->getLocalBounds());
     juce::CallOutBox::launchAsynchronously (std::move (panel), area, this);
 }
@@ -1352,14 +1649,7 @@ void RigView::updateCaptureButtons()
         if (const int sec = recTargetSection(); juce::isPositiveAndBelow (sec, (int) list.size()))
             takeSub = "into " + rigsong::letterFor (sec) + " " + list[(size_t) sec].name;
     }
-    auto& rec = rail.recTake;
-    if (rec.text != takeText || rec.sub != takeSub || rec.lit != takeLit)
-    {
-        rec.text = takeText;
-        rec.sub = takeSub;
-        rec.lit = takeLit;
-        rec.repaint();
-    }
+    shownTake = { takeText, takeSub, takeLit };
 
     // Automation.
     {
@@ -1383,7 +1673,7 @@ void RigView::updateCaptureButtons()
         const int lanes = a.getNumLanes();
         const juce::String movesSub = lanes == 0 ? juce::String ("no lanes yet")
                                                  : juce::String (lanes) + (lanes == 1 ? " lane" : " lanes") + (a.reading.load() ? "" : ", read off");
-        auto& b = rail.recMoves;
+        auto& b = dock.recMoves;
         if (b.text != text || b.sub != sub || b.lit != lit)
         {
             b.text = text;
@@ -1391,10 +1681,10 @@ void RigView::updateCaptureButtons()
             b.lit = lit;
             b.repaint();
         }
-        if (rail.moves.sub != movesSub)
+        if (dock.moves.sub != movesSub)
         {
-            rail.moves.sub = movesSub;
-            rail.moves.repaint();
+            dock.moves.sub = movesSub;
+            dock.moves.repaint();
         }
     }
 
@@ -1404,11 +1694,8 @@ void RigView::updateCaptureButtons()
         songSub = "into " + rigsong::letterFor (sel) + " " + list[(size_t) sel].name;
     else
         songSub = list.empty() ? "a first section" : "into a section";
-    if (rail.toSong.sub != songSub)
-    {
-        rail.toSong.sub = songSub;
-        rail.toSong.repaint();
-    }
+    toSongSub = songSub;
+    updateDock();
 }
 
 int RigView::toSong (int section, bool take)
@@ -1923,7 +2210,7 @@ void RigView::showToSongMenu()
     {
         menu.addSectionHeader ("Lock your drone take (loop " + juce::String (lastTakeOf (t) + 1) + ") into the song");
         fill (menu, true);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (rail.toSong));
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (dock.rec));
         return;
     }
     const auto what = rigsong::laneName (lane) + " " + rigsong::clipName (engine, lane, rigsong::currentClip (engine, lane));
@@ -1941,7 +2228,7 @@ void RigView::showToSongMenu()
                   [safe = juce::Component::SafePointer<RigView> (this)] { if (safe != nullptr) safe->keepAsSongPart(); });
     menu.addItem (juce::String::fromUTF8 ("Open the Song screen \xe2\x80\xba"), [safe = juce::Component::SafePointer<RigView> (this)]
                   { if (safe != nullptr) safe->showView ("Song"); });
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (rail.toSong));
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (dock.rec));
 }
 
 int RigView::trackForLane (int lane)
@@ -2093,8 +2380,11 @@ void RigView::showShowMenu()
         menu.addItem (8, "Open a tool sound...");
     }
     menu.addSeparator();
+    menu.addItem (10, "New pattern: start the next thing, or start over...");
+    menu.addItem (11, "Settings   (F6)");
+    menu.addItem (12, "How to: guides for this screen");
     menu.addItem (6, "The Guide: every tool, and where to start");
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.show),
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.menu),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                         {
                             if (safe == nullptr)
@@ -2110,6 +2400,9 @@ void RigView::showShowMenu()
                                 case 7: safe->keepToolSound (safe->toolSoundStrip()); break;
                                 case 8: safe->openToolSound(); break;
                                 case 9: safe->askImportFromLogic(); break;
+                                case 10: safe->showPatternMenu(); break;
+                                case 11: safe->showTab ("Setup"); break;
+                                case 12: safe->showHelp (safe->helpPanel == nullptr); break;
                                 default: break;
                             }
                         });
@@ -2140,10 +2433,11 @@ void RigView::startToolMode()
         if (b->text == "Play" || b->text == "Song")
             b->setVisible (false);
     screenBar.resized();
-    rail.newPattern.setVisible (false);
-    rail.recTake.setVisible (false);
-    rail.toSong.setVisible (false);
     footer.partsShown = false;
+    // Rec records the tool as Logic plays it: no count-in or length of its own.
+    dock.countIn.setVisible (false);
+    dock.length.setVisible (false);
+    dock.resized();
     // The take's two files, to drag into Logic (Rec at the top records them).
     dragMidi = std::make_unique<DragFileChip> ("Drag MIDI onto this track", [this] { return printedMidi; });
     dragAudio = std::make_unique<DragFileChip> ("Drag audio into Logic", [this] { return printedAudio; });
@@ -2548,12 +2842,19 @@ void RigView::timerCallback()
 {
     auto& transport = engine.getTransport();
     const bool playing = transport.isPlaying();
-    if (header.play.lit != (playing ? vintage::Lit::play : vintage::Lit::none))
+    if (dock.play.lit != (playing ? vintage::Lit::play : vintage::Lit::none))
     {
-        header.play.lit = playing ? vintage::Lit::play : vintage::Lit::none;
-        header.play.text = playing ? "Playing" : "Play";
-        header.play.repaint();
+        dock.play.lit = playing ? vintage::Lit::play : vintage::Lit::none;
+        dock.play.text = playing ? "Stop" : "Play";
+        dock.play.icon = playing ? rigpanels::PanelButton::Icon::stop : rigpanels::PanelButton::Icon::play;
+        dock.play.repaint();
     }
+    rail.chords.selected = chordsOpen;
+    rail.chords.status = chordsOpen ? "Open" : "Ready";
+    rail.effects.selected = currentPage() == "Effects";
+    rail.effects.status = rail.effects.selected ? "Open" : "Ready";
+    rail.chords.repaint();
+    rail.effects.repaint();
     screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
     pageChanged();
     {
@@ -2637,16 +2938,49 @@ void RigView::timerCallback()
     const bool recent = juce::Time::getMillisecondCounter() - engine.lastMidiTime.load() < 150;
     keyboardActive = recent;
 
-    // The top bar: tempo, where the song is, the master meters, what's plugged in.
+    updateHeader();
+    footer.tick();
+    updateRecInto();
+    {
+        // Your show's name, and whether it has been saved yet. A one-tool plugin's is its tool, and
+        // its menu gets the sound from a box or sends it back.
+        const auto name = currentShow.getFileNameWithoutExtension();
+        auto text = name.isNotEmpty() ? name : juce::String ("Unsaved show");
+        auto sub = juce::String::fromUTF8 (name.isNotEmpty() ? "Show \xc2\xb7 menu" : "Not saved yet \xc2\xb7 menu");
+        if (toolMode())
+        {
+            text = RigEngine::onlyToolName (engine.getOnlyTool());
+            sub = juce::String::fromUTF8 ("Get from box \xc2\xb7 Send to box");
+        }
+        const auto lit = vintage::Lit::none;
+        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit)
+        {
+            header.show.text = text;
+            header.show.sub = sub;
+            header.show.lit = lit;
+            header.show.repaint();
+        }
+    }
+
+    if (++ticks % 60 == 0)
+        openMidiInputs();
+}
+
+void RigView::updateHeader()
+{
+    // The top bar: where the song is and where the next take goes, the master meters, what's
+    // plugged in.
+    auto& transport = engine.getTransport();
+    const bool recent = juce::Time::getMillisecondCounter() - engine.lastMidiTime.load() < 150;
     {
         rigpanels::Header::Shown shown;
-        shown.bpm = transport.getBpm();
-        shown.rampTo = transport.isHosted() ? 0.0 : transport.getRampTarget();
         const int beatsPerBar = transport.getBeatsPerBar();
         const double beats = transport.getPositionInBeats();
         const int bar = (int) std::floor (beats / beatsPerBar) + 1;
         const int beat = (int) std::floor (std::fmod (beats, (double) beatsPerBar)) + 1;
-        shown.barBeat = juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat);
+        shown.barBeat = "BAR " + juce::String (bar) + "." + juce::String (beat);
+        shown.target = recTargetText();
+        shown.countIn = countInText();
         // The song's section: where it plays now (with the song on), and the one it goes to next.
         const auto& tl = engine.getTimeline();
         const auto list = rigsong::sections (tl);
@@ -2686,31 +3020,6 @@ void RigView::timerCallback()
         shown.songOn = engine.songInCharge();
         header.update (shown);
     }
-    footer.tick();
-    updateRecInto();
-    {
-        // Your show's name, and whether it has been saved yet. A one-tool plugin's is its tool, and
-        // its menu gets the sound from a box or sends it back.
-        const auto name = currentShow.getFileNameWithoutExtension();
-        auto text = name.isNotEmpty() ? name : juce::String ("Unsaved show");
-        auto sub = juce::String::fromUTF8 (name.isNotEmpty() ? "Show \xc2\xb7 menu" : "Not saved yet \xc2\xb7 menu");
-        if (toolMode())
-        {
-            text = RigEngine::onlyToolName (engine.getOnlyTool());
-            sub = juce::String::fromUTF8 ("Get from box \xc2\xb7 Send to box");
-        }
-        const auto lit = vintage::Lit::none;
-        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit)
-        {
-            header.show.text = text;
-            header.show.sub = sub;
-            header.show.lit = lit;
-            header.show.repaint();
-        }
-    }
-
-    if (++ticks % 60 == 0)
-        openMidiInputs();
 }
 
 void RigView::toggleSampling()
@@ -2847,13 +3156,9 @@ void RigView::updateRecordButton()
     // Armed: a red ring (it records from the next bar). Recording: lit red.
     const auto lit = state == RigRecorder::State::recording ? vintage::Lit::arm : vintage::Lit::none;
     const bool ring = state == RigRecorder::State::armed;
-    if (header.rec.text != text || header.rec.lit != lit || header.rec.redRing != ring)
-    {
-        header.rec.text = text;
-        header.rec.lit = lit;
-        header.rec.redRing = ring;
-        header.rec.repaint();
-    }
+    shownSet = { text, ring ? juce::String ("armed, next bar") : juce::String(), lit };
+    setArmed = ring;
+    updateDock();
 }
 
 void RigView::say (const juce::String& text)
@@ -3222,8 +3527,7 @@ void RigView::showHelp (bool show)
             helpPanel->startTour (tourStop);
         helpPanel->grabKeyboardFocus();
     }
-    screenBar.help.lit = show ? vintage::Lit::current : vintage::Lit::none;
-    screenBar.help.repaint();
+
     resized();
 }
 
@@ -3643,7 +3947,7 @@ void RigView::showPatternMenu()
     menu.addItem (101, "Open the Song screen");
     menu.addSeparator();
     menu.addItem (102, "Start over: a new, empty song...");
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (rail.newPattern),
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.menu),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                         {
                             if (safe == nullptr || result <= 0)
@@ -3746,7 +4050,7 @@ void RigView::startTempoRamp (double target, int bars)
     target = juce::jlimit (RigTransport::kMinBpm, RigTransport::kMaxBpm, target);
     transport.rampTo (target, bars * (double) transport.getBeatsPerBar());
     say ("The tempo glides to " + juce::String (target, 0) + " BPM over " + juce::String (bars) + (bars == 1 ? " bar" : " bars")
-         + (transport.isPlaying() ? "." : ", from when you press Play.") + " Click the tempo to stop it.");
+         + (transport.isPlaying() ? "." : ", from when you press Play.") + " Right-click the tempo to stop it.");
 }
 
 void RigView::setDarkPanel (bool dark)
@@ -3754,7 +4058,7 @@ void RigView::setDarkPanel (bool dark)
     vintage::setStage (dark || stageShown);
     engine.screens.setProperty ("dark", dark, nullptr);
     repaint();
-    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &rail, soundsDrawer.get(), chordsDrawer.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &dock, &rail, soundsDrawer.get(), chordsDrawer.get() })
         c->repaint();
     if (groove != nullptr)
         groove->repaint();
@@ -3772,7 +4076,7 @@ void RigView::showPopOutMenu()
                                      + (pages[(size_t) i].window != nullptr ? " (out: bring to front)" : ""));
     auto* anchor = currentPage() == "More" ? static_cast<juce::Component*> (moreView)
                  : popOutButton.isShowing()  ? static_cast<juce::Component*> (&popOutButton)
-                                             : static_cast<juce::Component*> (&screenBar.settings);
+                                             : static_cast<juce::Component*> (&header.menu);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor),
                         [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                         {
@@ -3811,7 +4115,7 @@ void RigView::showMoreMenu()
     if (devices != nullptr)
         menu.addItem (7, "Audio and MIDI set-up...");
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (screenBar.settings),
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.menu),
                         [safe = juce::Component::SafePointer<RigView> (this), names = std::vector<juce::String> { "MPC", "Drum machine", "Sampler editor", "Bass", "Synth", "Song", "Sounds", "Mixer", "Setup" }] (int result)
                         {
                             if (safe == nullptr || result == 0)
@@ -3869,10 +4173,14 @@ void RigView::resized()
     // Shorter windows squeeze the top bar and the footer a little.
     const bool compact = getHeight() < 820;
     if (! stageShown)
-        header.setBounds (area.removeFromTop (compact ? 88 : 100));
-    screenBar.setBounds (area.removeFromTop (compact ? 56 : 62));
+        header.setBounds (area.removeFromTop (compact ? 76 : 84));
+    screenBar.setBounds (area.removeFromTop (compact ? 54 : 60));
     if (! stageShown)
-        footer.setBounds (area.removeFromBottom (footer.isSlim() ? (compact ? 72 : 78) : (compact ? 112 : 128)));
+    {
+        // Rec and the transport along the bottom (as on the phone), the song's strip over them.
+        dock.setBounds (area.removeFromBottom (compact ? rigpanels::Dock::kCompactHeight : rigpanels::Dock::kHeight));
+        footer.setBounds (area.removeFromBottom (footer.isSlim() ? (compact ? 52 : 56) : (compact ? 112 : 128)));
+    }
     if (railShown())
     {
         auto railArea = area.removeFromLeft (rigpanels::TrackRail::kWidth + 22).withTrimmedLeft (22).reduced (0, 8);
@@ -4169,7 +4477,7 @@ void RigView::showQuantize (int target, juce::Component* from)
     panel->setLookAndFeel (&vintageLook);
     panel->onSay = [this] (const juce::String& text) { say (text); };
     quantizePanel = panel.get();
-    auto* anchor = from != nullptr ? from : static_cast<juce::Component*> (&header.quantize);
+    auto* anchor = from != nullptr ? from : static_cast<juce::Component*> (&dock.quantize);
     const auto area = getLocalArea (anchor, anchor->getLocalBounds());
     juce::CallOutBox::launchAsynchronously (std::move (panel), area, this);
 }

@@ -1011,6 +1011,14 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         controlsMoved = true;
     }
     {
+        // A loop counting in: the click counts the bars until it records.
+        double until = -1.0;
+        for (int l = 0; l < RigLooper::kLayers; ++l)
+            if (looper.getState (l) == RigLooper::State::armed && looper.getLayer (l).countIn.load() > 0)
+                until = juce::jmax (until, looper.getLayer (l).startsAt.load());
+        transport.countInUntil = until;
+    }
+    {
         // A take for the song (Rec into), from the same sources.
         const int source = takes.getSource();
         takes.process (juce::isPositiveAndBelow (source, (int) RigLooper::numSources) ? sources[(size_t) source] : nullptr,

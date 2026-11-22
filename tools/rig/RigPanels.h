@@ -14,7 +14,7 @@ namespace rigpanels
 class PanelButton : public juce::Button
 {
 public:
-    enum class Icon { none, play, stop, rec, back, forward };
+    enum class Icon { none, play, stop, rec, back, forward, menu };
 
     explicit PanelButton (const juce::String& text = {});
     void paintButton (juce::Graphics&, bool over, bool down) override;
@@ -27,6 +27,9 @@ public:
 };
 
 //==============================================================================
+// The top bar, as on Kaleidobox Pocket: the menu, your song's name, and one LCD that says where
+// the song is and where your next take goes ("BAR 2.3 > LAYER 6 · 4 BARS"), with the master VU
+// meters and what's plugged in. The transport and Rec are along the bottom (the Dock).
 class Header : public juce::Component,
                public juce::SettableTooltipClient
 {
@@ -36,36 +39,34 @@ public:
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
 
-    PanelButton play { "Play" }, stop { "Stop" }, rec { "Rec" }, up { "+" }, down { juce::String::fromUTF8 ("\xe2\x88\x92") }, tap { "Tap" };
-    // Your show: its name, whether it's saved, and a menu (New song, Open, Save, Save as, Export
+    // The menu (three lines, like the phone's): your song, Settings, the Guide...
+    PanelButton menu { "Menu" };
+    // Your show: its name, whether it's saved, and its menu (New song, Open, Save, Save as, Export
     // for Logic, the Guide).
     PanelButton show { "Unsaved show" };
-    // Quantize what's on screen (under Tap): opens the Quantize panel. Cmd+U does it straight away.
-    PanelButton quantize { "Quantize" };
-    // Shown in the song's window only while the song decides what plays: hands control back.
+    // Shown in the LCD only while the song decides what plays: hands control back.
     PanelButton jam { "Jam" };
     std::function<void()> onMic;
     std::function<void()> onKeyboard;   // a click on the keyboard lamp: MIDI controllers (in the app)
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
     std::function<void()> onRecording;  // a click on the red "recording" line: go to what records
-    std::function<void()> onTempo;      // a click on the tempo: Ramp to...
 
     // What it shows; RigView sets these on its timer, then calls update().
     struct Shown
     {
-        double bpm = 120;
-        double rampTo = 0;          // a tempo ramp's target, 0 for none
         juce::String partLetter, partName, barBeat;
         bool partQueued = false;
+        // Where Rec lands next ("LAYER 6 · 4 BARS"), and a count-in under way ("COUNT-IN 3 OF 4").
+        juce::String target, countIn;
         float vuLeft = 0, vuRight = 0;
         juce::String keyboard;      // "Launchkey 61", "No keyboard", "MIDI from Logic"
         bool keyboardFound = false, keyboardActive = false;
         bool macKeys = true;
         bool micOn = false;
         // What's recording right now ("Overdub loop 3", "Rec MPC beat"...), empty when nothing:
-        // shown in red where the song's place is, so nothing records without you seeing it.
+        // shown in red in the LCD, so nothing records without you seeing it.
         juce::String recording;
-        // The song is in charge (song mode): the window says so, with Jam to take over.
+        // The song is in charge (song mode): the LCD says so, with Jam to take over.
         bool songOn = false;
         bool operator== (const Shown&) const;
     } shown;
@@ -73,8 +74,62 @@ public:
 
 private:
     const bool standalone;
-    juce::Rectangle<int> wordmarkArea, tempoArea, partArea, vuArea, lampsArea, micLampArea, keyboardLampArea;
+    juce::Rectangle<int> wordmarkArea, partArea, vuArea, lampsArea, micLampArea, keyboardLampArea;
     bool showVu = true, showWordmark = true;
+};
+
+//==============================================================================
+// Along the bottom of every screen, as the phone's thumb bar: the tempo (click to tap, drag or
+// scroll to change, the arrows for a tenth with Shift), the click, the count-in and length for
+// the next take, one big Rec (its arrow: where Rec lands, and the rest of the record options),
+// Play, Undo last take, then Rec moves (and Automation) and Quantize.
+class Dock : public juce::Component
+{
+public:
+    Dock();
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+    // The tempo box: an LCD of the BPM. A click taps the tempo, a drag or the wheel changes it,
+    // a right-click (or Ctrl) opens Ramp to...
+    class TempoBox : public juce::Component, public juce::SettableTooltipClient
+    {
+    public:
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+        double bpm = 120, rampTo = 0;
+        std::function<void()> onTap, onMenu;
+        std::function<void (double delta)> onNudge;
+    private:
+        int dragStartY = 0, dragSteps = 0;
+        bool dragged = false;
+    };
+
+    // The big Rec: a red pill saying where the take goes, with a small arrow on its right end for
+    // the options. `arrowHit` says which part the last click was on.
+    class RecButton : public juce::Button
+    {
+    public:
+        RecButton() : juce::Button ("Rec") { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+        void paintButton (juce::Graphics&, bool over, bool down) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        juce::Rectangle<int> arrowArea() const;
+        juce::String text { "Rec" }, sub;
+        int state = 0;   // 0 ready, 1 armed or counting in, 2 recording
+        bool arrowHit = false;
+    };
+
+    TempoBox tempo;
+    PanelButton up { "+" }, down { juce::String::fromUTF8 ("\xe2\x88\x92") };
+    PanelButton click { "Click" }, countIn { "Count-in" }, length { "Length" };
+    RecButton rec;
+    PanelButton play { "Play" }, undo { "Undo" };
+    PanelButton recMoves { "Rec moves" }, moves { juce::String::fromUTF8 ("Automation \xe2\x80\xba") }, quantize { "Quantize" };
+
+    static constexpr int kHeight = 96, kCompactHeight = 84;
 };
 
 //==============================================================================
@@ -101,28 +156,34 @@ public:
 };
 
 //==============================================================================
-// The tracks, down the left of every view: every instrument Kaleidobox has (the Groove's track
-// cards), each with what it's playing, its own Play, Mute and Solo. Picking one makes the keys
-// and knobs play it, and Edit shows it in full.
+// The tools, down the left of every view, in the order of Kaleidobox Pocket's tool row: Loops,
+// Drums, Pads (the MPC), Sampler, Bass, Synth, Chords, Vocoder, Line in, Drone, Effects. The
+// instruments are the Groove's track cards, each with what it's playing, its own Play, Mute and
+// Solo; picking one makes the keys and knobs play it, Rec records it, and Edit shows it in full.
+// Chords and Effects are tools too (a click opens them).
 class TrackRail : public juce::Component
 {
 public:
     TrackRail();
+    // The cards and tool buttons, top to bottom.
     void setCards (const juce::Array<juce::Component*>&);
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    // The next thing in the song, on an empty pattern (a beat, a bass line, keys...).
-    PanelButton newPattern { "+ New / start over" };
-    // Capture, under the tracks, for the picked one on every view: Rec take records it (as you
-    // play it, over the beat) onto the next empty loop from the next bar, until pressed again;
-    // To Song puts what it plays (or the take) into the song's sections.
-    PanelButton recTake { "Rec take" }, toSong { juce::String::fromUTF8 ("To Song \xe2\x80\xba") };
-    // Automation, under those: Rec moves records the knobs you turn (any tool, any effect) from the
-    // next bar, until pressed again; Automation opens the lanes (play, draw, clear).
-    PanelButton recMoves { "Rec moves" }, moves { juce::String::fromUTF8 ("Automation \xe2\x80\xba") };
+    // Chords and Effects, as tools on the rail.
+    class ToolButton : public PanelButton
+    {
+    public:
+        ToolButton (const juce::String& name, int icon, juce::Colour);
+        void paintButton (juce::Graphics&, bool over, bool down) override;
+        const int icon;
+        const juce::Colour colour;
+        juce::String status { "Ready" };
+        bool selected = false;
+    };
+    ToolButton chords, effects;
 
-    static constexpr int kWidth = 232;
+    static constexpr int kWidth = 256;
 
 private:
     juce::Array<juce::Component::SafePointer<juce::Component>> cards;

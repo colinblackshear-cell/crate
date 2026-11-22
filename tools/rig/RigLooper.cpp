@@ -501,7 +501,12 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 if (layer.audio.getNumSamples() < 1024)
                     break;
                 // The next bar line, or now if the clock is stopped (it starts with the layer).
-                layer.startBeat = clock.playing ? std::ceil (clock.beat / bpb - 1.0e-9) * bpb : clock.beat;
+                // A count-in waits whole bars first: from stop, that many; while playing, the next
+                // bar line counts as the first.
+                const int countIn = juce::jlimit (0, 4, layer.countIn.load());
+                layer.startBeat = clock.playing ? std::ceil (clock.beat / bpb - 1.0e-9) * bpb + juce::jmax (0, countIn - 1) * bpb
+                                                : clock.beat + countIn * bpb;
+                layer.startsAt = layer.startBeat;
                 const int bars = layer.bars.load();
                 layer.stopBeat = bars > 0 ? layer.startBeat + bars * bpb : -1.0;
                 layer.writeIndex = 0;
@@ -516,6 +521,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
             }
             case State::armed:
                 layer.state = (int) State::empty;   // changed your mind
+                layer.startsAt = -1.0;
                 break;
             case State::recording:
             {
@@ -665,6 +671,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 if (! clock.playing || beat < layer.startBeat - 1.0e-9)
                     continue;
                 layer.state = (int) (state = State::recording);
+                layer.startsAt = -1.0;
                 layer.writeIndex = 0;
             }
 

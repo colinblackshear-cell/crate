@@ -48,6 +48,9 @@ public:
     {
         std::atomic<int> source { mix };
         std::atomic<int> bars { 0 };          // 0: record until pressed again
+        // Bars to count in before it records (the bottom bar's Count-in): from stop it waits this
+        // many bars with the click; while playing, 2 waits a bar more than the next bar line.
+        std::atomic<int> countIn { 0 };
         std::atomic<float> level { 0.8f };
         std::atomic<bool> mute { false };
 
@@ -62,6 +65,9 @@ public:
         // How it plays right now (a Bend: reverse, half or double speed, a stutter), any thread.
         // Only the playing changes: the loop itself, and what an overdub writes, stay as they are.
         std::atomic<int> bend { 0 };
+        // The clock beat it starts recording on, while armed (-1 otherwise), for the window's
+        // count-in and the click.
+        std::atomic<double> startsAt { -1.0 };
 
     private:
         friend class RigLooper;

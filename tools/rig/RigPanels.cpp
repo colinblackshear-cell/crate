@@ -1,6 +1,7 @@
 #include "RigPanels.h"
 #include "RigSong.h"
 #include "RigColours.h"
+#include "core/ui/ToolIcons.h"
 
 namespace rigpanels
 {
@@ -68,6 +69,12 @@ void PanelButton::paintButton (juce::Graphics& g, bool over, bool down)
             g.strokePath (path, juce::PathStrokeType (s * 0.15f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             path.clear();
         }
+        else if (icon == Icon::menu)
+        {
+            // Three lines, as on the phone.
+            for (int k = 0; k < 3; ++k)
+                path.addRoundedRectangle (ic.getX() + s * 0.12f, ic.getY() + s * (0.2f + 0.27f * (float) k), s * 0.76f, s * 0.11f, s * 0.05f);
+        }
         else if (icon == Icon::play)
             path.addTriangle (ic.getX() + s * 0.2f, ic.getY() + s * 0.12f, ic.getRight() - s * 0.08f, ic.getCentreY(), ic.getX() + s * 0.2f,
                               ic.getBottom() - s * 0.12f);
@@ -114,49 +121,28 @@ void PanelButton::paintButton (juce::Graphics& g, bool over, bool down)
 //==============================================================================
 bool Header::Shown::operator== (const Shown& o) const
 {
-    return std::abs (bpm - o.bpm) < 0.01 && rampTo == o.rampTo && partLetter == o.partLetter && partName == o.partName && barBeat == o.barBeat
-        && partQueued == o.partQueued && std::abs (vuLeft - o.vuLeft) < 0.004f && std::abs (vuRight - o.vuRight) < 0.004f
+    return partLetter == o.partLetter && partName == o.partName && barBeat == o.barBeat && partQueued == o.partQueued && target == o.target
+        && countIn == o.countIn && std::abs (vuLeft - o.vuLeft) < 0.004f && std::abs (vuRight - o.vuRight) < 0.004f
         && keyboard == o.keyboard && keyboardFound == o.keyboardFound && keyboardActive == o.keyboardActive && macKeys == o.macKeys
         && micOn == o.micOn && recording == o.recording && songOn == o.songOn;
 }
 
 Header::Header (bool isStandalone) : standalone (isStandalone)
 {
-    for (auto* b : { &play, &stop, &rec })
-    {
-        b->fontSize = 13.0f;
-        addAndMakeVisible (b);
-    }
-    play.icon = PanelButton::Icon::play;
-    stop.icon = PanelButton::Icon::stop;
-    rec.icon = PanelButton::Icon::rec;
-    for (auto* b : { &up, &down })
-    {
-        b->fontSize = 20.0f;
-        addAndMakeVisible (b);
-    }
-    tap.fontSize = 16.0f;
-    addAndMakeVisible (tap);
-    quantize.fontSize = 13.0f;
-    addAndMakeVisible (quantize);
+    menu.icon = PanelButton::Icon::menu;
+    menu.text = {};
+    menu.fontSize = 14.0f;
+    menu.setTooltip ("Your song and everything else: New song, Open, Save, Settings (F6), the Guide, New pattern.");
+    addAndMakeVisible (menu);
     jam.fontSize = 12.0f;
     jam.setTooltip ("The song is playing and decides which tracks play, so a track you switch on can stay quiet. "
                     "Jam hands control back to you: everything you switch on plays, and the song waits on the Song screen.");
     addChildComponent (jam);
-    show.fontSize = 15.0f;
+    show.fontSize = 17.0f;
     show.subSize = 11.0f;
     show.sub = juce::String::fromUTF8 ("Not saved yet \xc2\xb7 menu");
     show.setTooltip ("Your show: New song, Open, Save (Cmd+S), Save as, Export for Logic, and the Guide.");
     addAndMakeVisible (show);
-    play.setTooltip ("Starts and stops every tool together (space bar).");
-    stop.setTooltip ("Stops, goes back to the start, and silences any notes still sounding.");
-    rec.setTooltip ("Rec set: records the whole set for Logic, from the next bar: every tool as its own WAV, the mix, and what you play as MIDI. "
-                    "Press again to stop. Saved in Music > Crate > Rig > Recordings.");
-    up.setTooltip ("Tempo up (hold Shift for a tenth).");
-    down.setTooltip ("Tempo down (hold Shift for a tenth).");
-    tap.setTooltip ("Tap a few times in time to set the tempo.");
-    quantize.setTooltip ("Quantize: pulls what you've played onto the beat (the MPC, drum machine, Bass, Synth or loops), "
-                         "on the grid you pick. Cmd+U quantizes what's on screen straight away.");
 }
 
 void Header::update (const Shown& s)
@@ -164,21 +150,24 @@ void Header::update (const Shown& s)
     if (s == shown)
         return;
     shown = s;
-    jam.setVisible (s.songOn && s.recording.isEmpty());
+    jam.setVisible (s.songOn && s.recording.isEmpty() && s.countIn.isEmpty());
     repaint();
 }
 
 void Header::resized()
 {
     auto r = getLocalBounds().reduced (22, 0);
-    const int h = 66;
-    // Room for everything? Narrow the VU meters, then drop them, then the wordmark, on a small
-    // screen.
-    constexpr int fixed = 276 + 128 + 8 + 46 + 8 + 84 + 16 + 176 + 12 + 150 + 12 + 118;
-    constexpr int wordmark = 168 + 16, vuMin = 16 + 2 * 80 + 8, vuMax = 16 + 2 * 116 + 8;
-    showVu = r.getWidth() >= wordmark + fixed + vuMin;
-    showWordmark = r.getWidth() >= wordmark + fixed || showVu;
+    const int h = juce::jmin (60, getHeight() - 16);
+    auto centreY = [&] (juce::Rectangle<int> b, int height) { return b.withSizeKeepingCentre (b.getWidth(), height); };
 
+    menu.setBounds (centreY (r.removeFromLeft (h), h));
+    r.removeFromLeft (14);
+    lampsArea = centreY (r.removeFromRight (128), 72);
+    r.removeFromRight (12);
+    // Room for everything? Drop the VU meters, then the wordmark, on a small screen.
+    constexpr int showWidth = 220, lcdMin = 430, wordmark = 168 + 16, vu = 16 + 2 * 96;
+    showWordmark = r.getWidth() >= wordmark + showWidth + 12 + lcdMin;
+    showVu = r.getWidth() >= wordmark + showWidth + 12 + lcdMin + vu;
     if (showWordmark)
     {
         wordmarkArea = r.removeFromLeft (168);
@@ -186,46 +175,17 @@ void Header::resized()
     }
     else
         wordmarkArea = {};
-
-    auto centreY = [&] (juce::Rectangle<int> b, int height) { return b.withSizeKeepingCentre (b.getWidth(), height); };
-    for (auto* b : { &play, &stop, &rec })
-    {
-        b->setBounds (centreY (r.removeFromLeft (80), h));
-        r.removeFromLeft (10);
-    }
-    r.removeFromLeft (6);
-    tempoArea = centreY (r.removeFromLeft (128), h);
-    r.removeFromLeft (8);
-    {
-        auto col = centreY (r.removeFromLeft (46), h);
-        up.setBounds (col.removeFromTop (32));
-        col.removeFromTop (2);
-        down.setBounds (col);
-    }
-    r.removeFromLeft (8);
-    {
-        // Tap over Quantize.
-        auto col = centreY (r.removeFromLeft (84), h + 6);
-        tap.setBounds (col.removeFromTop (col.getHeight() / 2 - 1));
-        col.removeFromTop (2);
-        quantize.setBounds (col);
-    }
-    r.removeFromLeft (16);
-    partArea = centreY (r.removeFromLeft (176), h);
-    jam.setBounds (partArea.getRight() - 62, partArea.getBottom() - 30, 54, 24);
+    // Your song, then the LCD.
+    show.setBounds (centreY (r.removeFromLeft (showWidth), h));
     r.removeFromLeft (12);
-    // Your show, beside the song's place: its name and its menu.
-    show.setBounds (centreY (r.removeFromLeft (150), h));
-    r.removeFromLeft (12);
-
-    lampsArea = centreY (r.removeFromRight (118), 72);
     vuArea = {};
     if (showVu)
     {
-        const int width = juce::jmin (vuMax, r.getWidth()) - 16;
+        vuArea = centreY (r.removeFromRight (vu - 16), h);
         r.removeFromRight (16);
-        vuArea = centreY (r.removeFromRight (width), 68);
     }
+    partArea = centreY (r.removeFromLeft (juce::jmin (r.getWidth(), 640)), h);
+    jam.setBounds (partArea.getRight() - 62, partArea.getBottom() - 30, 54, 24);
     micLampArea = lampsArea.withTrimmedTop (48);
     keyboardLampArea = lampsArea.withHeight (24);
 }
@@ -249,29 +209,28 @@ void Header::paint (juce::Graphics& g)
         engraved (g, juce::String::fromUTF8 ("Model KB-1 \xc2\xb7 Groove Station"), w.withTrimmedTop (2), juce::Justification::topLeft, 11.0f);
     }
 
-    // Tempo.
-    {
-        auto r = tempoArea.toFloat();
-        drawLcd (g, r);
-        lcdText (g, juce::String (shown.bpm, 1), r.withTrimmedBottom (20).withTrimmedTop (4), 50.0f);
-        lcdText (g, shown.rampTo > 0 ? juce::String::fromUTF8 ("\xe2\x86\x92 ") + juce::String (shown.rampTo, 0) + " BPM" : juce::String ("BPM"),
-                 r.withTrimmedTop (r.getHeight() - 22).withTrimmedBottom (4), 16.0f, juce::Justification::centred,
-                 shown.rampTo > 0 ? colours::lcdGreen : colours::lcdAmber);
-    }
-
-    // Where the song is: the part playing, the bar and beat.
+    // The LCD: the section, where the song is, and where the next take goes.
     {
         auto r = partArea.toFloat();
         drawLcd (g, r);
-        auto inner = r.reduced (14.0f, 2.0f);
-        auto letter = inner.removeFromLeft (36.0f);
-        lcdText (g, shown.partLetter.isNotEmpty() ? shown.partLetter : "-", letter, 58.0f, juce::Justification::centred,
-                 shown.partLetter.isNotEmpty() ? colours::lcdGreen : colours::lcdAmber.withAlpha (0.5f));
-        inner.removeFromLeft (12.0f);
-        lcdText (g, shown.barBeat, inner.removeFromTop (inner.getHeight() * 0.58f).withTrimmedTop (4), 34.0f, juce::Justification::bottomLeft);
+        auto inner = r.reduced (14.0f, 3.0f);
+        if (shown.partLetter.isNotEmpty())
+        {
+            lcdText (g, shown.partLetter, inner.removeFromLeft (34.0f), 52.0f, juce::Justification::centred, colours::lcdGreen);
+            inner.removeFromLeft (10.0f);
+        }
+        auto top = inner.removeFromTop (inner.getHeight() * 0.6f);
+        const auto where = shown.countIn.isNotEmpty() ? shown.countIn : shown.barBeat;
+        const auto whereFont = lcd (32.0f);
+        const float whereWidth = juce::GlyphArrangement::getStringWidth (whereFont, where) + 20.0f;
+        lcdText (g, where, top.removeFromLeft (juce::jmin (whereWidth, top.getWidth())), 32.0f, juce::Justification::bottomLeft,
+                 shown.countIn.isNotEmpty() ? colours::arm.brighter (0.4f) : colours::lcdAmber);
+        if (shown.target.isNotEmpty())
+            lcdText (g, juce::String::fromUTF8 ("\xe2\x80\xba ") + shown.target, top, 26.0f, juce::Justification::bottomLeft,
+                     colours::lcdAmber.withAlpha (0.55f));
         if (shown.recording.isNotEmpty())
         {
-            // Recording: a red line instead of the section's name, and a red edge.
+            // Recording: a red line under it, and a red edge.
             g.setColour (colours::arm);
             g.drawRoundedRectangle (r.reduced (1.0f), 8.0f, 2.0f);
             const bool on = (juce::Time::getMillisecondCounter() / 500) % 2 == 0;
@@ -321,14 +280,226 @@ void Header::mouseUp (const juce::MouseEvent& e)
 {
     if (e.mouseWasClicked() && wordmarkArea.contains (e.getPosition()) && onWordmark)
         return onWordmark();
-    if (e.mouseWasClicked() && tempoArea.contains (e.getPosition()) && onTempo)
-        return onTempo();
     if (e.mouseWasClicked() && partArea.contains (e.getPosition()) && shown.recording.isNotEmpty() && onRecording)
         return onRecording();
     if (standalone && e.mouseWasClicked() && micLampArea.contains (e.getPosition()) && onMic)
         return onMic();
     if (standalone && e.mouseWasClicked() && keyboardLampArea.contains (e.getPosition()) && onKeyboard)
         onKeyboard();
+}
+
+//==============================================================================
+void Dock::TempoBox::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    drawLcd (g, r);
+    lcdText (g, juce::String (bpm, std::abs (bpm - std::round (bpm)) < 0.05 ? 0 : 1), r.withTrimmedBottom (r.getHeight() * 0.36f).withTrimmedTop (2),
+             juce::jmin (40.0f, r.getHeight() * 0.62f));
+    lcdText (g, rampTo > 0 ? juce::String::fromUTF8 ("\xe2\x86\x92 ") + juce::String (rampTo, 0) + " BPM" : juce::String::fromUTF8 ("BPM \xc2\xb7 TAP"),
+             r.withTrimmedTop (r.getHeight() * 0.64f).withTrimmedBottom (3), 15.0f, juce::Justification::centred,
+             rampTo > 0 ? colours::lcdGreen : colours::lcdAmber.withAlpha (0.75f));
+}
+
+void Dock::TempoBox::mouseDown (const juce::MouseEvent& e)
+{
+    dragStartY = e.getPosition().y;
+    dragSteps = 0;
+    dragged = false;
+}
+
+void Dock::TempoBox::mouseDrag (const juce::MouseEvent& e)
+{
+    // Up for faster, down for slower: a BPM for every 6 pixels (a tenth with Shift).
+    const int steps = (dragStartY - e.getPosition().y) / 6;
+    if (std::abs (dragStartY - e.getPosition().y) > 3)
+        dragged = true;
+    if (steps != dragSteps && onNudge)
+        onNudge ((steps - dragSteps) * (e.mods.isShiftDown() ? 0.1 : 1.0));
+    dragSteps = steps;
+}
+
+void Dock::TempoBox::mouseUp (const juce::MouseEvent& e)
+{
+    if (dragged || ! e.mouseWasClicked())
+        return;
+    if (e.mods.isPopupMenu())
+    {
+        if (onMenu)
+            onMenu();
+    }
+    else if (onTap)
+        onTap();
+}
+
+void Dock::TempoBox::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    if (onNudge && w.deltaY != 0.0f)
+        onNudge ((w.deltaY > 0 ? 1.0 : -1.0) * (e.mods.isShiftDown() ? 0.1 : 1.0));
+}
+
+juce::Rectangle<int> Dock::RecButton::arrowArea() const
+{
+    return getLocalBounds().removeFromRight (juce::jmin (44, getWidth() / 4));
+}
+
+void Dock::RecButton::mouseDown (const juce::MouseEvent& e)
+{
+    arrowHit = arrowArea().contains (e.getPosition());
+    juce::Button::mouseDown (e);
+}
+
+void Dock::RecButton::paintButton (juce::Graphics& g, bool over, bool down)
+{
+    auto r = getLocalBounds().toFloat().withTrimmedBottom (5.0f);
+    const float radius = r.getHeight() * 0.5f;
+    const bool on = state != 0;
+    // A red pill (dark while it records, so the red dot inside says it), sitting on its edge.
+    const auto face = on && state == 2 ? juce::Colour (0xff2a231d) : colours::arm;
+    const auto edge = on && state == 2 ? juce::Colour (0xff0d0a08) : juce::Colour (0xff8d2a1c);
+    if (state == 1)
+        glow (g, r, radius, colours::arm, 12.0f, 0.6f);
+    g.setColour (edge);
+    g.fillRoundedRectangle (r.translated (0, 5.0f), radius);
+    auto top = r.translated (0, down ? 3.0f : 0.0f);
+    g.setColour (over ? face.brighter (0.08f) : face);
+    g.fillRoundedRectangle (top, radius);
+    if (state == 1)
+    {
+        g.setColour (juce::Colours::white.withAlpha ((juce::Time::getMillisecondCounter() / 300) % 2 == 0 ? 0.9f : 0.35f));
+        g.drawRoundedRectangle (top.reduced (2.0f), radius - 2.0f, 2.5f);
+    }
+
+    auto arrow = arrowArea().toFloat().withY (top.getY()).withHeight (top.getHeight());
+    auto main = top.withRight (arrow.getX());
+    g.setColour (juce::Colours::white.withAlpha (0.35f));
+    g.fillRect (arrow.getX(), top.getCentreY() - top.getHeight() * 0.28f, 1.5f, top.getHeight() * 0.56f);
+    {
+        juce::Path tri;
+        const auto c = arrow.getCentre().translated (-3.0f, 0.0f);
+        tri.addTriangle (c.x - 6.0f, c.y - 3.0f, c.x + 6.0f, c.y - 3.0f, c.x, c.y + 4.0f);
+        g.setColour (juce::Colours::white);
+        g.fillPath (tri);
+    }
+
+    // The dot (a square while it records), the word, and where it goes.
+    const float d = juce::jmin (26.0f, top.getHeight() * 0.38f);
+    auto dot = juce::Rectangle<float> (d, d).withCentre ({ main.getX() + radius + 4.0f, main.getCentreY() });
+    g.setColour (state == 2 ? colours::arm : juce::Colours::white);
+    if (state == 2)
+        g.fillRoundedRectangle (dot.reduced (2.0f), 3.0f);
+    else
+        g.fillEllipse (dot);
+    auto words = main.withTrimmedLeft (dot.getRight() - main.getX() + 10.0f).withTrimmedRight (6.0f).toNearestInt();
+    g.setColour (juce::Colours::white);
+    g.setFont (cond (juce::jmin (28.0f, top.getHeight() * 0.42f), Weight::extra, 0.06f));
+    auto upper = words.removeFromTop (words.getHeight() * 3 / 5);
+    g.drawFittedText (text.toUpperCase(), upper, juce::Justification::bottomLeft, 1, 0.7f);
+    g.setColour (juce::Colours::white.withAlpha (0.85f));
+    g.setFont (cond (12.0f, Weight::bold, 0.1f));
+    g.drawFittedText (sub.toUpperCase(), words, juce::Justification::topLeft, 1, 0.7f);
+}
+
+Dock::Dock()
+{
+    tempo.setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+    tempo.setTooltip ("The tempo. Click a few times in time to tap it; drag up or down (or scroll) to change it, with Shift for a tenth; "
+                      "right-click for Ramp to... (a glide over some bars).");
+    addAndMakeVisible (tempo);
+    for (auto* b : { &up, &down })
+    {
+        b->fontSize = 18.0f;
+        b->setRepeatSpeed (400, 80);
+        addAndMakeVisible (b);
+    }
+    up.setTooltip ("Tempo up (hold Shift for a tenth).");
+    down.setTooltip ("Tempo down (hold Shift for a tenth).");
+    for (auto* b : { &click, &countIn, &length, &undo, &recMoves, &moves, &quantize })
+    {
+        b->fontSize = 17.0f;
+        b->subSize = 10.5f;
+        addAndMakeVisible (b);
+    }
+    click.setTooltip ("The click (metronome), on every beat while it plays. The count-in clicks either way.");
+    countIn.setTooltip ("Count-in: from stop, Rec counts this many bars with the click before it records. While it plays, "
+                        "it starts at the next bar (2 bars: a bar after that).");
+    length.setTooltip ("How long the next take is: it stops by itself after these bars and loops. Free: until you press Rec again.");
+    rec.setTooltip ("Rec: records the picked tool onto the next empty loop layer, in time, after the count-in. Press again to stop "
+                    "(or it stops at its length). The arrow: where Rec lands (a layer, a take on the song, the Sampler, the whole set) "
+                    "and the rest of the record options.");
+    addAndMakeVisible (rec);
+    play.icon = PanelButton::Icon::play;
+    play.fontSize = 13.0f;
+    play.setTooltip ("Starts every tool together (space bar). Pressed while it plays: stops, goes back to the start, and silences "
+                     "any notes still sounding.");
+    addAndMakeVisible (play);
+    undo.text = "Undo";
+    undo.sub = "last take";
+    undo.setTooltip ("Takes back the last take: clears the loop it recorded (or calls off one that hasn't started). With no take to undo, "
+                     "the last Clear or overdub (Cmd+Z).");
+    recMoves.icon = PanelButton::Icon::rec;
+    recMoves.setTooltip ("Records the knobs you turn while it plays, from the next bar: the bass's Cutoff sweeping, an effect's Mix, "
+                         "any setting on any tool or its effects (on screen or with a learned knob). Press again to stop at the end of the bar. "
+                         "Each setting gets a lane that plays back on the beat.");
+    moves.setTooltip ("The automation lanes: what each one moves, Loop or Once, its length; draw on a lane to change it, "
+                      "clear one or all (with Undo). Cmd+Shift+A.");
+    quantize.sub = "on the grid";
+    quantize.setTooltip ("Quantize: pulls what you've played onto the beat (the MPC, drum machine, Bass, Synth or loops), "
+                         "on the grid you pick. Cmd+U quantizes what's on screen straight away.");
+}
+
+void Dock::paint (juce::Graphics& g)
+{
+    const auto& p = pal();
+    g.setColour (p.line);
+    g.fillRect (getLocalBounds().removeFromTop (2));
+    if (moves.isVisible())
+    {
+        // A line between the take's buttons and the rest.
+        const int x = undo.getRight() + 9;
+        g.fillRect (x, 18, 2, getHeight() - 32);
+    }
+}
+
+void Dock::resized()
+{
+    auto r = getLocalBounds().reduced (22, 0).withTrimmedTop (2);
+    const int h = juce::jmin (62, r.getHeight() - 20);
+    auto centreY = [&] (juce::Rectangle<int> b, int height) { return b.withSizeKeepingCentre (b.getWidth(), height); };
+    // Narrow windows drop Automation, then shrink the boxes.
+    const bool roomy = r.getWidth() >= 1180;
+    const int box = roomy ? 104 : 88;
+    tempo.setBounds (centreY (r.removeFromLeft (roomy ? 118 : 100), h));
+    r.removeFromLeft (6);
+    {
+        auto col = centreY (r.removeFromLeft (38), h);
+        up.setBounds (col.removeFromTop (h / 2 - 1));
+        col.removeFromTop (2);
+        down.setBounds (col);
+    }
+    r.removeFromLeft (10);
+    click.setBounds (centreY (r.removeFromLeft (box - 10), h));
+    for (auto* b : { &countIn, &length })
+        if (b->isVisible())
+        {
+            r.removeFromLeft (8);
+            b->setBounds (centreY (r.removeFromLeft (box), h));
+        }
+    r.removeFromLeft (16);
+    rec.setBounds (centreY (r.removeFromLeft (roomy ? 260 : 220), h + 12));
+    r.removeFromLeft (16);
+    play.setBounds (centreY (r.removeFromLeft (box - 14), h));
+    r.removeFromLeft (8);
+    undo.setBounds (centreY (r.removeFromLeft (box), h));
+    r.removeFromLeft (20);
+    moves.setVisible (roomy && recMoves.isVisible());
+    recMoves.setBounds (centreY (r.removeFromLeft (box + 8), h));
+    r.removeFromLeft (8);
+    if (moves.isVisible())
+    {
+        moves.setBounds (centreY (r.removeFromLeft (box + 16), h));
+        r.removeFromLeft (8);
+    }
+    quantize.setBounds (centreY (r.removeFromLeft (juce::jmin (box, r.getWidth())), h));
 }
 
 //==============================================================================
@@ -372,16 +543,16 @@ ScreenBar::ScreenBar()
     chords.key = "F7";
     chords.setTooltip ("The chord builder, in a drawer over any view: your own chords on 16 pads, played on the picked track "
                        "(or any instrument) from a click, your Launchkey's pads or keys; a progression on the clock, to a loop or to Logic (F7).");
-    addAndMakeVisible (chords);
+    addChildComponent (chords);   // (Chords is a tool on the rail now)
     settings.fontSize = 16.0f;
     settings.key = "F6";
     settings.setTooltip ("Settings: what the keys and pads play, the split, sampling one tool into another, knob Learn, the click, "
                          "audio and MIDI, the dark panel and a second screen (F6).");
-    addAndMakeVisible (settings);
+    addChildComponent (settings);   // (in the menu at the top left, and F6)
     help.fontSize = 17.0f;
     help.setTooltip ("How to: step-by-step guides for this screen, recording loops, building a song, saving and exporting, "
                      "singing live and plugging in a guitar.");
-    addAndMakeVisible (help);
+    addAndMakeVisible (help);   // (the Guide stays at the top, always)
 }
 
 void ScreenBar::setCurrent (const juce::String& view, bool soundsOpen, bool settingsOpen, bool chordsOpen)
@@ -410,14 +581,15 @@ void ScreenBar::resized()
     r.removeFromLeft (6);
     forward.setBounds (r.removeFromLeft (60));
     r.removeFromLeft (16);
-    help.setBounds (r.removeFromRight (84));
-    r.removeFromRight (10);
     const int util = juce::jlimit (110, 150, r.getWidth() / 9);
-    settings.setBounds (r.removeFromRight (util));
-    r.removeFromRight (10);
+    // (Settings, the Guide and Chords live elsewhere now, but keep a place for when they're shown.)
+    for (auto* b : { &help, &settings, &chords })
+        if (b->isVisible())
+        {
+            b->setBounds (r.removeFromRight (b == &help ? 84 : util));
+            r.removeFromRight (10);
+        }
     sounds.setBounds (r.removeFromRight (util));
-    r.removeFromRight (10);
-    chords.setBounds (r.removeFromRight (util));
     r.removeFromRight (28);
     int n = 0;
     for (auto* b : tabs)
@@ -434,21 +606,60 @@ void ScreenBar::resized()
 }
 
 //==============================================================================
-TrackRail::TrackRail()
-{
-    newPattern.fontSize = 14.0f;
-    newPattern.setTooltip ("Starts the next thing in the song on an empty pattern: a beat, a bass line, keys, the vocoder, a loop "
-                           "or a sample. Also keeps what's playing as the next section, or starts over with a new, empty song.");
-    addAndMakeVisible (newPattern);
-    for (auto* b : { &recTake, &toSong, &recMoves, &moves })
-    {
-        b->fontSize = 15.0f;
-        b->subSize = 10.5f;
-        addAndMakeVisible (b);
-    }
-    recTake.icon = PanelButton::Icon::rec;
-    recMoves.icon = PanelButton::Icon::rec;
+TrackRail::ToolButton::ToolButton (const juce::String& name, int i, juce::Colour c) : PanelButton (name), icon (i), colour (c) {}
 
+void TrackRail::ToolButton::paintButton (juce::Graphics& g, bool over, bool)
+{
+    // Drawn like the instruments' cards: a well with the tool's colour down its left edge.
+    const auto& p = pal();
+    auto r = getLocalBounds().toFloat().reduced (4.0f);
+    if (selected)
+    {
+        glow (g, r, 12.0f, colours::selected, 10.0f, 0.5f);
+        g.setColour (colours::selected);
+        g.fillRoundedRectangle (r.expanded (3.0f), 14.0f);
+    }
+    drawWell (g, r);
+    {
+        juce::Graphics::ScopedSaveState s (g);
+        juce::Path clip;
+        clip.addRoundedRectangle (r, 12.0f);
+        g.reduceClipRegion (clip);
+        g.setColour (colour);
+        g.fillRect (r.withWidth (10.0f));
+        if (over)
+        {
+            g.setColour (juce::Colours::white.withAlpha (0.04f));
+            g.fillRect (r);
+        }
+    }
+    auto area = r.toNearestInt().withTrimmedLeft (18).withTrimmedRight (10);
+    const int iconSize = juce::jmin (34, area.getHeight() - 8);
+    crate::toolicons::draw (g, (crate::toolicons::Tool) icon, area.removeFromLeft (iconSize).withSizeKeepingCentre (iconSize, iconSize).toFloat().reduced (3.0f),
+                            colour);
+    area.removeFromLeft (8);
+    const bool compact = getHeight() < 56;
+    g.setColour (p.wellInk);
+    if (compact)
+    {
+        g.setFont (cond (juce::jmin (18.0f, area.getHeight() * 0.55f), Weight::extra, 0.04f));
+        g.drawFittedText (text.toUpperCase(), area, juce::Justification::centredLeft, 1, 0.75f);
+        return;
+    }
+    auto top = area.removeFromTop (area.getHeight() / 2);
+    g.setFont (cond (juce::jmin (26.0f, top.getHeight() * 0.95f), Weight::extra, 0.04f));
+    g.drawText (text.toUpperCase(), top, juce::Justification::bottomLeft, false);
+    drawLamp (g, { (float) area.getX() + 7.0f, (float) area.getY() + 11.0f }, selected ? Lit::play : Lit::none, 11.0f);
+    engraved (g, status, area.withTrimmedLeft (18).withHeight (22), juce::Justification::centredLeft, 12.0f, true);
+}
+
+TrackRail::TrackRail()
+    : chords ("Chords", (int) crate::toolicons::Tool::chords, juce::Colour (0xffb9a3dc)),
+      effects ("Effects", (int) crate::toolicons::Tool::effects, juce::Colour (0xffe8c27a))
+{
+    chords.setTooltip ("Chords: your own chords on 16 pads, played on the picked track (or any instrument), with the song's key; "
+                       "a progression on the clock, to a loop or to Logic (F7).");
+    effects.setTooltip ("Effects: the pedals of any tool, loop layer or the master, as a pedalboard.");
 }
 
 void TrackRail::setCards (const juce::Array<juce::Component*>& list)
@@ -469,39 +680,19 @@ void TrackRail::paint (juce::Graphics&)
 void TrackRail::resized()
 {
     auto r = getLocalBounds();
-    auto top = r.removeFromTop (40);
-    newPattern.setBounds (top.withTrimmedRight (4).withHeight (36));
-    r.removeFromTop (6);
-    // In a short window the buttons under the tracks are a little shorter, so the tracks keep room.
-    const int rows = recMoves.isVisible() || moves.isVisible() ? 2 : 1;
-    const int buttonHeight = (r.getHeight() - rows * 60) / juce::jmax (1, cards.size()) < 44 ? 42 : 54;
-    {
-        auto capture = r.removeFromBottom (buttonHeight).withTrimmedRight (4);
-        r.removeFromBottom (6);
-        const int w = (capture.getWidth() - 6) / 2;
-        recTake.setBounds (capture.removeFromLeft (w));
-        capture.removeFromLeft (6);
-        toSong.setBounds (capture);
-    }
-    if (recMoves.isVisible() || moves.isVisible())
-    {
-        auto automation = r.removeFromBottom (buttonHeight).withTrimmedRight (4);
-        r.removeFromBottom (6);
-        const int w = (automation.getWidth() - 6) / 2;
-        recMoves.setBounds (automation.removeFromLeft (w));
-        automation.removeFromLeft (6);
-        moves.setBounds (automation);
-    }
-    const int n = cards.size();
+    juce::Array<juce::Component*> shown;
+    for (auto& c : cards)
+        if (c != nullptr && c->isVisible())
+            shown.add (c);
+    const int n = shown.size();
     if (n == 0)
         return;
     const int gap = 2;
     // (No taller than this: a taller card squeezes its words, "Rea...".)
     const int h = juce::jmin (79, (r.getHeight() - gap * (n - 1)) / n);
-    for (auto& c : cards)
+    for (auto* c : shown)
     {
-        if (c != nullptr)
-            c->setBounds (r.removeFromTop (h).expanded (4, 0).withTrimmedLeft (4));
+        c->setBounds (r.removeFromTop (h).expanded (4, 0).withTrimmedLeft (4));
         r.removeFromTop (gap);
     }
 }

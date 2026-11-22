@@ -29,6 +29,10 @@ public:
     // Input strip (a guitar, keytar or second mic on your interface). The Drone came last.
     enum Track { drums, machine, bass, synth, vocoder, sampler, loops, lineIn, drone, numTracks };
     static juce::String trackName (int);
+    // Its name on the rail, as on the phone's tool row ("Pads · MPC" for the MPC), and its
+    // picture (a crate::toolicons::Tool).
+    static juce::String railName (int);
+    static int railIcon (int);
     static juce::Colour trackColour (int);
     static int stripFor (int track);
     // The page with the track's full editor ("MPC", "Bass"...).

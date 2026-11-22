@@ -38,6 +38,9 @@ public:
 
     // The metronome: a click on every beat while playing, higher on the first beat of the bar.
     std::atomic<bool> metronome { false };
+    // A count-in (a loop waiting to record): the click plays until this beat even with the
+    // metronome off, so you hear the bars counted. -1: none. The engine sets it every block.
+    std::atomic<double> countInUntil { -1.0 };
 
     //==========================================================================
     // Audio thread.

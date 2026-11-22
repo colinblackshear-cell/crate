@@ -1,4 +1,5 @@
 #include "GrooveView.h"
+#include "core/ui/ToolIcons.h"
 #include "RigColours.h"
 #include "RigPanels.h"
 #include "RigSounds.h"
@@ -225,19 +226,32 @@ public:
         {
             // A short card (a small window): one line, its lamp and name beside its buttons (what
             // it's doing is in its tooltip).
-            auto line = r.toNearestInt().withTrimmedLeft (22).withRight (go.getX() - 6);
+            auto line = r.toNearestInt().withTrimmedLeft (18).withRight (go.getX() - 6);
+            const int iconSize = juce::jmin (26, line.getHeight() - 4);
+            crate::toolicons::draw (g, (crate::toolicons::Tool) railIcon (index),
+                                    line.removeFromLeft (iconSize).withSizeKeepingCentre (iconSize, iconSize).toFloat().reduced (2.0f), colour);
+            line.removeFromLeft (4);
             vintage::drawLamp (g, { (float) line.getX() + 6.0f, (float) line.getCentreY() }, shownStatus.second, 11.0f);
             g.setColour (p.wellInk);
             g.setFont (vintage::cond (juce::jmin (18.0f, line.getHeight() * 0.55f), Weight::extra, 0.04f));
-            g.drawFittedText (trackName (index).toUpperCase(), line.withTrimmedLeft (16), juce::Justification::centredLeft, 1, 0.75f);
+            g.drawFittedText (railName (index).toUpperCase(), line.withTrimmedLeft (16), juce::Justification::centredLeft, 1, 0.75f);
             return;
         }
-        auto area = r.toNearestInt().withTrimmedLeft (22).reduced (0, 8).withTrimmedRight (12);
+        auto area = r.toNearestInt().withTrimmedLeft (18).reduced (0, 8).withTrimmedRight (12);
+        {
+            // The tool's picture, as on the phone's tool row.
+            const int iconSize = juce::jmin (24, area.getHeight() / 2 + 2);
+            crate::toolicons::draw (g, (crate::toolicons::Tool) railIcon (index),
+                                    area.removeFromLeft (iconSize).removeFromTop (area.getHeight() / 2).withSizeKeepingCentre (iconSize, iconSize)
+                                        .toFloat().reduced (2.0f), colour);
+            area.removeFromLeft (6);
+        }
         auto top = area.removeFromTop (area.getHeight() / 2);
         g.setColour (p.wellInk);
         g.setFont (vintage::cond (juce::jmin (30.0f, top.getHeight() * 0.95f), Weight::extra, 0.04f));
-        const auto name = trackName (index).toUpperCase();
-        const int nameWidth = juce::jmin (top.getWidth() / 2 + 20, (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), name) + 6);
+        const auto name = railName (index).toUpperCase();
+        const int nameWidth = juce::jmin (getHeight() >= 74 ? top.getWidth() / 2 + 20 : top.getWidth(),
+                                          (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), name) + 6);
         g.drawText (name, top.removeFromLeft (nameWidth), juce::Justification::centredLeft, false);
         // (A short card has no room for the detail beside its buttons: it's in the tooltip.)
         if (getHeight() >= 74)
@@ -327,6 +341,28 @@ juce::String GrooveView::trackName (int t)
 }
 
 juce::Colour GrooveView::trackColour (int t) { return RigColours::forStrip (stripFor (t)); }
+
+juce::String GrooveView::railName (int t)
+{
+    return t == drums ? juce::String::fromUTF8 ("Pads \xc2\xb7 MPC") : trackName (t);
+}
+
+int GrooveView::railIcon (int t)
+{
+    using crate::toolicons::Tool;
+    switch (t)
+    {
+        case drums:   return (int) Tool::pads;
+        case machine: return (int) Tool::drums;
+        case bass:    return (int) Tool::bass;
+        case synth:   return (int) Tool::synth;
+        case vocoder: return (int) Tool::vocoder;
+        case sampler: return (int) Tool::sampler;
+        case lineIn:  return (int) Tool::lineIn;
+        case drone:   return (int) Tool::drone;
+        default:      return (int) Tool::loops;
+    }
+}
 
 int GrooveView::stripFor (int t)
 {

@@ -346,7 +346,7 @@ struct DroneRigTests : juce::UnitTest
                     expect (cards[i]->getLocalBounds().contains (c->getBounds()), size + ": card " + juce::String (i) + "'s buttons fit inside it: "
                                                                                         + c->getBounds().toString() + " in " + b.toString());
         }
-        expect (cards.getLast()->getBottom() <= rail.recTake.getY(), size + ": the cards sit above Rec take");
+        expect (cards.getLast()->getBottom() <= rail.getHeight(), size + ": the cards fit on the rail");
     }
 
     static void snapshot (juce::Component& c, const juce::File& file)
