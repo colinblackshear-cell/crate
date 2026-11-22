@@ -1,4 +1,5 @@
 #include "RecordScreen.h"
+#include "PocketFactory.h"
 #include "PocketKit.h"
 
 #include "core/AudioFiles.h"
@@ -57,7 +58,7 @@ RecordScreen::RecordScreen (PocketHost& h, PocketAudio& a, Library& lib, Effects
     nameField.setTextToShowWhenEmpty ("Name this sound", col::inkFaint);
     nameField.setReturnKeyStartsNewLine (false);
     nameField.onReturnKey = [this] { nameField.giveAwayKeyboardFocus(); };
-    nameField.onTextChange = [this] { updateLabels(); };
+    nameField.onTextChange = [this] { dirty = dirty || currentId.isNotEmpty(); updateLabels(); };
 
     recButton.setLook (Look::ghost);
     recButton.onClick = [this] { toggleRecord(); };
@@ -179,7 +180,10 @@ RecordScreen::RecordScreen (PocketHost& h, PocketAudio& a, Library& lib, Effects
     toPad.onClick = [this]
     {
         if (targetPad >= 0)
+        {
+            savePadEdits();   // KEEP, TRIM SILENCE, a fade...: what you did is what the pad plays
             return host.backToPads (targetPad);
+        }
         saveToSounds();   // the pad plays the saved sound, with its chop markers and effects
         if (currentId.isNotEmpty())
             host.sendToPad (currentId);
@@ -219,6 +223,7 @@ void RecordScreen::commit (crate::SharedAudio a, juce::Range<int> selection, std
     undoStack.push_back (current());
     redoStack.clear();
     restore ({ std::move (a), selection, std::move (markers) });
+    dirty = true;
 }
 
 void RecordScreen::undo()
@@ -228,6 +233,7 @@ void RecordScreen::undo()
     redoStack.push_back (current());
     restore (undoStack.back());
     undoStack.pop_back();
+    dirty = true;
 }
 
 void RecordScreen::redo()
@@ -237,6 +243,7 @@ void RecordScreen::redo()
     undoStack.push_back (current());
     restore (redoStack.back());
     redoStack.pop_back();
+    dirty = true;
 }
 
 bool RecordScreen::needSound()
@@ -308,6 +315,7 @@ void RecordScreen::finishRecording()
     undoStack.push_back (current());
     redoStack.clear();
     currentId = {};
+    dirty = true;
     if (nameField.getText().isEmpty() || nameField.getText().startsWith ("Take "))
         nameField.setText ("Take " + juce::Time::getCurrentTime().formatted ("%H:%M"), false);
     wave.setAudio (loaded);
@@ -365,16 +373,45 @@ void RecordScreen::saveToSounds()
     if (name.isEmpty())
         name = "Take " + juce::Time::getCurrentTime().formatted ("%H:%M");
     nameField.setText (name, false);
-    if (currentId.isNotEmpty() && library.find (currentId) != nullptr)
+    if (auto* item = library.find (currentId); currentId.isNotEmpty() && item != nullptr)
     {
+        if (item->tag == pocket::kTagFactory)
+        {
+            // A factory kit's sound is on that kit in every song: the edit becomes your own copy, and this song's pads
+            // that played the factory one play the copy.
+            const auto old = currentId;
+            const auto id = library.add (name, kTagRecorded, *wave.getAudio(), fx, wave.getMarkers());
+            if (id.isEmpty())
+                return host.toast ("Couldn't save that sound");
+            currentId = id;
+            dirty = false;
+            host.padSoundSwapped (old, id);
+            host.toast ("Saved as your own \"" + name + "\" (the factory kit stays as it was)");
+            return;
+        }
         if (library.update (currentId, name, *wave.getAudio(), fx, wave.getMarkers()))
+        {
+            dirty = false;
             host.toast ("Updated \"" + name + "\" in Sounds");
+        }
         else
             host.toast ("Couldn't save that sound");
         return;
     }
     currentId = library.add (name, kTagRecorded, *wave.getAudio(), fx, wave.getMarkers());
+    dirty = currentId.isEmpty();
     host.toast (currentId.isEmpty() ? juce::String ("Couldn't save that sound") : "Saved \"" + name + "\" to Sounds");
+}
+
+bool RecordScreen::savePadEdits()
+{
+    if (targetPad < 0 || ! dirty || wave.getAudio() == nullptr || wave.getAudio()->getNumSamples() == 0)
+        return false;
+    saveToSounds();
+    if (dirty || currentId.isEmpty())
+        return false;
+    host.padSoundEdited (currentId);
+    return true;
 }
 
 void RecordScreen::editForPad (int pad, const juce::String& id)
@@ -411,6 +448,7 @@ void RecordScreen::loadSound (const juce::String& id)
     undoStack.clear();
     redoStack.clear();
     currentId = id;
+    dirty = false;
     nameField.setText (item->name, false);
     fx = item->fx;
     sheet.setKnobs (fx);
@@ -438,6 +476,7 @@ void RecordScreen::wireSheet()
     sheet.onKnobsChange = [this]
     {
         fx = sheet.getKnobs();
+        dirty = true;
         updateLabels();
         if (sheet.hearEffects())
             previewSoon();
@@ -476,6 +515,7 @@ void RecordScreen::wireSheet()
         std::sort (hits.begin(), hits.end());
         wave.setMarkers (hits);
         sheet.chopWave.setMarkers (hits);
+        dirty = true;
         updateLabels();
         host.toast (hits.empty() ? juce::String ("No hits found. Try a higher sensitivity.") : "Found " + juce::String ((int) hits.size()) + " hits");
     };
@@ -487,12 +527,14 @@ void RecordScreen::wireSheet()
         m.erase (std::remove_if (m.begin(), m.end(), [] (int x) { return x <= 0; }), m.end());
         wave.setMarkers (m);
         sheet.chopWave.setMarkers (m);
+        dirty = true;
         updateLabels();
     };
     sheet.onClear = [this]
     {
         wave.setMarkers ({});
         sheet.chopWave.setMarkers ({});
+        dirty = true;
         updateLabels();
         host.toast ("Markers cleared");
     };
@@ -500,6 +542,7 @@ void RecordScreen::wireSheet()
     sheet.chopWave.onMarkersChange = [this]
     {
         wave.setMarkers (sheet.chopWave.getMarkers());
+        dirty = true;
         updateLabels();
     };
 }

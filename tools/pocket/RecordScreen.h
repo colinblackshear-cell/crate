@@ -19,6 +19,16 @@ public:
     // pads pick it up; BACK TO PADS returns. Loading another sound, or a new idea, ends it.
     void editForPad (int pad, const juce::String& id);
     void endPadMode();
+    // Pad mode: the edits not saved yet go onto the pad (and every pad playing the sound). Leaving the page by any way
+    // (BACK, the tool row, the drawer) calls it, so an edit like KEEP is never dropped. True when it saved something.
+    bool savePadEdits();
+    bool hasUnsavedEdits() const { return dirty; }
+    // The self-checks: the handles, KEEP and the way back, as a finger would.
+    void testSelect (juce::Range<int> r) { wave.setSelection (r); updateLabels(); }
+    void testKeep() { if (keep.onClick) keep.onClick(); }
+    void testBack() { if (toPad.onClick) toPad.onClick(); }
+    const crate::SharedAudio& shownAudio() const { return wave.getAudio(); }
+    const juce::String& soundId() const { return currentId; }
     juce::Rectangle<int> tourSpot() const { return recButton.getBounds(); }   // the tour's spotlight
     int padTarget() const { return targetPad; }
     void startRecording() { if (! audio.isRecording()) toggleRecord(); }   // NEW IDEA
@@ -83,4 +93,5 @@ private:
     double lastRecordSeconds = 0;
     juce::File takeFile;
     int targetPad = -1;
+    bool dirty = false;   // an edit since the sound was opened or saved
 };

@@ -78,6 +78,7 @@ target_sources(KaleidoboxPocket PRIVATE
     EffectsScreen.cpp
     PocketAppEffects.cpp
     PocketAppNav.cpp
+    PocketAppSampler.cpp
     ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
     ${VOCODER_SOURCES})
 

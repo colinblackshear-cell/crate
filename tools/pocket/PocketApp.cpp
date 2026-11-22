@@ -730,6 +730,8 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
 // Pages and tools
 void PocketApp::showPage (Page p, int morePage)
 {
+    if (page == Page::recorder && p != Page::recorder)
+        record.savePadEdits();   // a pad's sound edited on the sample page: leaving by any way keeps the edit on the pad
     if (lessonOn && ! (p == Page::tool && tool == Tool::drums))
         endLesson();   // leaving DRUMS ends the lesson
     // Sounds, Remote, Mac link, Settings and the recorder remember where they were opened from
@@ -801,7 +803,10 @@ void PocketApp::pressToastAction() { toastBox->pressAction(); }
 void PocketApp::goBack()
 {
     if (page == Page::recorder)
+    {
+        record.savePadEdits();
         record.endPadMode();
+    }
     if (backPage == Page::tool)
         showTool (backTool, false);
     else if (backPage == Page::vocoderSettings)
@@ -1193,6 +1198,23 @@ void PocketApp::padSoundEdited (const juce::String& soundId)
         toast (n == 1 ? juce::String ("The pad has the new sound") : juce::String (n) + " pads have the new sound");
 }
 
+void PocketApp::padSoundSwapped (const juce::String& oldId, const juce::String& newId)
+{
+    auto& kit = beats.kit();
+    for (int p = 0; p < kPads; ++p)
+    {
+        const auto old = kit.pads[(size_t) p];
+        if (old.empty() || old.soundId != oldId || ! kit.assign (p, newId, old.from, old.to, old.name))
+            continue;
+        auto& now = kit.pads[(size_t) p];
+        now.volume = old.volume;
+        now.pan = old.pan;
+        now.tune = old.tune;
+        now.mode = old.mode;
+    }
+    beats.padsChanged();
+}
+
 void PocketApp::backToPads (int pad)
 {
     record.endPadMode();
@@ -1217,6 +1239,7 @@ void PocketApp::switchIdea (const juce::String& id)
     closePadSheet();
     closeSendSheet();
     audio.stopPlaying();
+    record.savePadEdits();   // (into the song being left: its pads)
     beats.leave();
     loopsScreen.leave();
     beats.flush();
@@ -3199,6 +3222,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = runNavigationChecks (navReport, folder); why.isNotEmpty())
         problems.add ("Navigation: " + why);
 
+    // The sampler: a trimmed sound is what its pad plays, at once and after the song is opened again
+    juce::String samplerReport;
+    if (const auto why = runSamplerChecks (samplerReport); why.isNotEmpty())
+        problems.add ("Sampler: " + why);
+
     // The count-in as it looks: REC on VOCODER with the song stopped, at beat 3 of the count
     {
         switchIdea (ideas.create ("Train horn song"));
@@ -3270,7 +3298,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nREC, count-in and mic checks (97 BPM, 44.1 kHz):\n" + recReport
                           + "\nEffect pedals (44.1 kHz):\n" + boardsReport
                           + "\nEffects in the app (97 BPM, 44.1 kHz):\n" + effectsReport
-                          + "\nNavigation (drawer, hold menus, tool slide, sheets):\n" + navReport);
+                          + "\nNavigation (drawer, hold menus, tool slide, sheets):\n" + navReport
+                          + "\nSampler (trim onto a pad, save, reopen):\n" + samplerReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }

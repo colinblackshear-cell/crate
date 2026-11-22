@@ -123,6 +123,7 @@ private:
     void openSamplePage (int pad) override;
     void togglePlay() override;
     void padSoundEdited (const juce::String& soundId) override;
+    void padSoundSwapped (const juce::String& oldId, const juce::String& newId) override;
     void backToPads (int pad) override;
     void openSoundBank() override;
     void showLoops() override { showTool (Tool::loops); }
@@ -274,6 +275,7 @@ private:
     juce::String runRecChecks (juce::String& report);
     juce::String runLoopEditChecks (juce::String& report);
     juce::String runNavigationChecks (juce::String& report, const juce::File& folder);
+    juce::String runSamplerChecks (juce::String& report);   // PocketAppSampler.cpp: a trimmed sound is what the pad plays
 
     struct PocketLook : juce::LookAndFeel_V4 { PocketLook(); juce::Font getPopupMenuFont() override; juce::Font getTextButtonFont (juce::TextButton&, int) override; };
     PocketLook look;

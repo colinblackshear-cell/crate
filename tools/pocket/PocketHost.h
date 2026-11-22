@@ -32,6 +32,8 @@ struct PocketHost
     // The pad sample page: the Record tab edited the sound a pad plays and saved it. Every pad playing
     // that sound picks it up. backToPads returns to Beats > MPC Pads with the pad picked.
     virtual void padSoundEdited (const juce::String& soundId) = 0;
+    // An edit of a factory kit's sound was saved as your own copy: this song's pads that played `oldId` play `newId`.
+    virtual void padSoundSwapped (const juce::String& oldId, const juce::String& newId) = 0;
     virtual void backToPads (int pad) = 0;
     virtual void openSoundBank() = 0;   // SOUNDS on the pads: factory kits and your own sounds
     virtual void showLoops() = 0;       // the LOOPS tool (layers)
