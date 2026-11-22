@@ -6,6 +6,7 @@
 #include "GrooveView.h"
 #include "GuideView.h"
 #include "HelpPanel.h"
+#include "RigPanels.h"
 
 // The phone's way in, on the Mac: the Guide's three ways in (Take the 2-minute tour, Show me: make a
 // beat, Start making), and the Make a beat lesson over the drum machine: kick, snare, hats glow on
@@ -76,6 +77,31 @@ public:
 
             guide->wayIn (2)->onClick();
             expectEquals (view.getView(), juce::String ("Play"), "Start making goes to Play");
+        }
+
+        beginTest ("the Rec arrow opens the Rec setup: count-in, length, click, and where Rec lands");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            RigView view (engine, nullptr);
+            view.setSize (1440, 960);
+            view.showView ("Play");
+            view.showRecMenu();
+            auto* setup = view.getRecSetup();
+            expect (setup != nullptr && setup->isVisible());
+            if (setup == nullptr)
+                return;
+            expect (setup->getBottom() <= view.getDock().getY() + 8 && setup->getY() >= 0, "over the bottom bar, on screen");
+            snapshot (view, "-rec-setup");
+            setup->countIns[2]->onClick();
+            expectEquals (view.getRecCountIn(), 2);
+            setup->lengths[5]->onClick();
+            expectEquals (view.getRecLength(), 0, "Free");
+            setup->lands[2]->onClick();
+            expect (view.getRecLands() == RigView::RecLands::sample);
+            expect (setup->lands[2]->on && ! setup->lands[0]->on);
+            view.showRecMenu();   // the arrow again closes it
+            expect (view.getRecSetup() == nullptr);
         }
 
         beginTest ("Make a beat: kick, snare, hats glow on the drum machine, Rec lands it on layer 1");

@@ -11,7 +11,7 @@ class RigLesson : public juce::Component
 {
 public:
     enum Phase { kick, snare, hats, rec, landed };
-    static constexpr int kWidth = 420, kHeight = 210;
+    static constexpr int kWidth = 440, kHeight = 250;
 
     RigLesson();
 
@@ -29,7 +29,7 @@ public:
     int landedLayer() const { return landedOn; }
     bool isRecBusy() const { return busy; }
 
-    rigpanels::PanelButton primary { "Next" }, secondary { "Skip the lesson" };
+    rigpanels::PanelButton primary { "Next" }, secondary { "Skip the lesson" }, back { "Back" };
 
     void paint (juce::Graphics&) override;
     void resized() override;

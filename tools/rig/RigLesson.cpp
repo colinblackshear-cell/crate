@@ -11,8 +11,11 @@ RigLesson::RigLesson()
 {
     primary.fontSize = 17.0f;
     secondary.fontSize = 15.0f;
+    back.fontSize = 15.0f;
     addAndMakeVisible (primary);
     addAndMakeVisible (secondary);
+    addAndMakeVisible (back);
+    back.onClick = [this] { if (current > kick && current <= rec) goTo (current - 1); };
     primary.onClick = [this]
     {
         switch (current)
@@ -94,47 +97,56 @@ RigLesson::Words RigLesson::words() const
 
 void RigLesson::paint (juce::Graphics& g)
 {
+    // A cream card with an amber edge, as in the design.
     auto r = getLocalBounds().toFloat().reduced (6.0f);
-    vintage::glow (g, r, 14.0f, vintage::colours::lcdAmber, 12.0f, 0.35f);
-    g.setColour (juce::Colour (0xf2191410));
-    g.fillRoundedRectangle (r, 14.0f);
-    g.setColour (vintage::colours::lcdAmber.withAlpha (0.8f));
-    g.drawRoundedRectangle (r.reduced (0.75f), 14.0f, 1.5f);
-
-    auto text = r.reduced (18.0f, 14.0f);
-    auto top = text.removeFromTop (20.0f);
-    g.setFont (vintage::cond (13.0f, vintage::Weight::extra, 0.22f));
+    vintage::glow (g, r, 16.0f, vintage::colours::lcdAmber, 12.0f, 0.4f);
+    g.setColour (juce::Colour (0xfff6eedd));
+    g.fillRoundedRectangle (r, 16.0f);
     g.setColour (vintage::colours::lcdAmber);
-    const auto step = current == landed ? juce::String ("DONE") : "STEP " + juce::String (current + 1) + " OF 4";
-    g.drawText (u8 ("MAKE A BEAT  \xc2\xb7  ") + step, top, juce::Justification::centredLeft, false);
-    // Four little dots: where you are.
+    g.drawRoundedRectangle (r.reduced (1.5f), 16.0f, 3.0f);
+
+    const auto ink = juce::Colour (0xff271f18);
+    auto text = r.reduced (24.0f, 18.0f);
+    const auto step = current == landed ? juce::String ("done") : juce::String (current + 1) + " of 4";
+    vintage::engraved (g, u8 ("Make a beat \xc2\xb7 ") + step, text.removeFromTop (18.0f).toNearestInt(), juce::Justification::centredLeft, 12.0f,
+                       false, ink.withAlpha (0.7f));
+    const auto w = words();
+    g.setFont (vintage::wordmark (30.0f));
+    g.setColour (ink);
+    g.drawFittedText (w.title, text.removeFromTop (42.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+    g.setFont (vintage::barlow (16.0f));
+    g.setColour (ink.withAlpha (0.85f));
+    auto body = text.removeFromTop (text.getHeight() - 74.0f);
+    g.drawFittedText (w.body, body.toNearestInt(), juce::Justification::topLeft, 4, 0.9f);
+    // Where you are: four bars.
+    auto bars = text.removeFromTop (14.0f).withSizeKeepingCentre (text.getWidth(), 5.0f);
+    const float each = (bars.getWidth() - 3 * 8.0f) / 4.0f;
     for (int i = 0; i < 4; ++i)
     {
-        const auto dot = juce::Rectangle<float> (9.0f, 9.0f).withCentre ({ top.getRight() - 8.0f - (float) (3 - i) * 16.0f, top.getCentreY() });
-        g.setColour (i <= current ? vintage::colours::lcdAmber : juce::Colours::white.withAlpha (0.18f));
-        g.fillEllipse (dot);
+        g.setColour (i <= current ? vintage::colours::lcdAmber : ink.withAlpha (0.15f));
+        g.fillRoundedRectangle (bars.removeFromLeft (each), 2.5f);
+        bars.removeFromLeft (8.0f);
     }
-    const auto w = words();
-    g.setFont (vintage::cond (26.0f, vintage::Weight::extra, 0.02f));
-    g.setColour (juce::Colour (0xfff6efe2));
-    g.drawText (w.title, text.removeFromTop (34.0f), juce::Justification::centredLeft, false);
-    g.setFont (vintage::barlow (15.0f));
-    g.setColour (juce::Colour (0xffd9cfbf));
-    g.drawFittedText (w.body, text.removeFromTop (text.getHeight() - 50.0f).toNearestInt(), juce::Justification::topLeft, 4, 0.9f);
 }
 
 void RigLesson::resized()
 {
-    auto footer = getLocalBounds().reduced (24, 0).withTop (getHeight() - 20 - 44).withHeight (44);
+    auto footer = getLocalBounds().reduced (30, 0).withTop (getHeight() - 24 - 42).withHeight (42);
     const bool last = current == landed;
     const auto w = words();
     primary.text = w.next + (last || current == rec ? juce::String() : u8 (" \xe2\x80\xba"));
     primary.lit = current == rec ? vintage::Lit::arm : vintage::Lit::next;
-    primary.icon = current == rec ? rigpanels::PanelButton::Icon::rec : rigpanels::PanelButton::Icon::none;
+    primary.icon = rigpanels::PanelButton::Icon::none;
     primary.setEnabled (! (current == rec && busy));
-    secondary.text = last ? "Done" : "Skip the lesson";
-    primary.setBounds (footer.removeFromRight (last ? 200 : 170));
-    secondary.setBounds (footer.removeFromLeft (last ? 110 : 150));
+    secondary.text = last ? "Done" : "Skip lesson";
+    primary.setBounds (footer.removeFromRight (last ? 190 : 150));
+    back.setVisible (current > kick && current <= rec);
+    if (back.isVisible())
+    {
+        back.setBounds (footer.removeFromLeft (80));
+        footer.removeFromLeft (8);
+    }
+    secondary.setBounds (footer.removeFromLeft (last ? 100 : 140));
     primary.repaint();
     secondary.repaint();
 }

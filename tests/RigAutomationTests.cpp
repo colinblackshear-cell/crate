@@ -425,7 +425,8 @@ public:
             RigEngine engine;
             engine.prepare (48000.0, 480);
             RigView view (engine, nullptr);
-            view.setSize (1440, 960);
+            // (Automation is on the bar in a wide window; in a narrower one it's in the Rec arrow's panel.)
+            view.setSize (1680, 960);
             view.showView ("Play");
             auto* rail = find<rigpanels::Dock> (view);
             expect (rail != nullptr);

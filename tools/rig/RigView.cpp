@@ -472,6 +472,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     footer.onSong = [this] { showView ("Song"); };
     footer.onPickSection = [this] (int section) { pickRecSection (section); };
     footer.onSlimChanged = [this] { resized(); };
+    // The song's sections on the bottom bar (keys 1-8), as on the phone.
+    dock.onSection = [this] (int i) { rigpanels::Footer::pressPart (engine, i); };
+    dock.onSectionMenu = [this] (int i, juce::Component& chip) { footer.showPartMenu (i, &chip); };
+    dock.onAddSection = [this] { keepAsSongPart(); };
 
     // The Setup page's parts.
     setupPage = new SetupPage (*this);
@@ -1491,43 +1495,74 @@ void RigView::updateDock()
 
 void RigView::showRecMenu()
 {
-    juce::PopupMenu menu;
-    menu.addSectionHeader ("Rec setup (the same as on the phone)");
+    if (recSetup != nullptr)
+        return closeRecSetup();
+    struct Backdrop : juce::Component
     {
-        juce::PopupMenu sub;
-        for (int bars : { 0, 1, 2 })
-            sub.addItem (bars == 0 ? juce::String ("Off") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), true, recCountIn == bars,
-                         [this, bars] { setRecSetup (bars, recLength); });
-        menu.addSubMenu ("Count-in: " + dock.countIn.sub, sub);
-    }
-    {
-        juce::PopupMenu sub;
-        for (int bars : { 1, 2, 4, 8, 16, 0 })
-            sub.addItem (bars == 0 ? juce::String ("Free (until you press Rec again)") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), true,
-                         recLength == bars, [this, bars] { setRecSetup (recCountIn, bars); });
-        menu.addSubMenu ("Length: " + dock.length.sub, sub);
-    }
-    menu.addItem ("Click", true, engine.getTransport().metronome.load(), [this]
+        std::function<void()> onDown;
+        void mouseDown (const juce::MouseEvent&) override { if (onDown) onDown(); }
+    };
+    auto backdrop = std::make_unique<Backdrop>();
+    backdrop->onDown = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)] { if (safe != nullptr) safe->closeRecSetup(); }); };
+    recBackdrop = std::move (backdrop);
+    addAndMakeVisible (*recBackdrop);
+    recBackdrop->setBounds (getLocalBounds());
+
+    recSetup = std::make_unique<rigpanels::RecSetup>();
+    recSetup->onCountIn = [this] (int bars) { setRecSetup (bars, recLength); updateRecSetup(); };
+    recSetup->onLength = [this] (int bars) { setRecSetup (recCountIn, bars); updateRecSetup(); };
+    recSetup->onClick = [this]
     {
         engine.getTransport().metronome = ! engine.getTransport().metronome.load();
         updateDock();
-    });
-    if (! toolMode())
+        updateRecSetup();
+    };
+    recSetup->onLands = [this] (int i)
     {
-        menu.addSeparator();
-        menu.addSectionHeader ("Where Rec lands");
-        menu.addItem ("The next loop layer (as on the phone)", true, recLands == RecLands::layer, [this] { setRecLands (RecLands::layer); });
-        menu.addItem ("A take on the song, into a section (Rec into)", true, recLands == RecLands::song, [this] { setRecLands (RecLands::song); });
-        menu.addItem ("Into the Sampler or an MPC pad (resample what plays)", true, recLands == RecLands::sample,
-                      [this] { setRecLands (RecLands::sample); });
-        menu.addItem ("The whole set: stems, mix and MIDI for Logic", true, recLands == RecLands::set, [this] { setRecLands (RecLands::set); });
-        menu.addSeparator();
-        menu.addItem (juce::String::fromUTF8 ("To Song \xe2\x80\xba ") + toSongSub, [this] { showToSongMenu(); });
-        menu.addItem (juce::String::fromUTF8 ("Rec into: section, cycle, notes or sound \xe2\x80\xba"), [this] { showRecTargetMenu (dock.rec); });
-        menu.addItem (juce::String::fromUTF8 ("Takes \xe2\x80\xba"), [this] { showTakesMenu (dock.rec); });
-        menu.addItem (juce::String::fromUTF8 ("Automation lanes \xe2\x80\xba"), [this] { showAutomation(); });
-    }
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (dock.rec));
+        setRecLands (i == 0 ? RecLands::layer : i == 1 ? RecLands::song : i == 2 ? RecLands::sample : RecLands::set);
+        updateRecSetup();
+    };
+    recSetup->onExtra = [this] (int i, juce::Component&)
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this), i]
+        {
+            if (safe == nullptr)
+                return;
+            safe->closeRecSetup();
+            switch (i)
+            {
+                case 0: safe->showToSongMenu(); break;
+                case 1: safe->showRecTargetMenu (safe->dock.rec); break;
+                case 2: safe->showTakesMenu (safe->dock.rec); break;
+                default: safe->showAutomation(); break;
+            }
+        });
+    };
+    addAndMakeVisible (*recSetup);
+    updateRecSetup();
+    // Over the Rec, above the bottom bar.
+    const auto rec = getLocalArea (&dock, dock.rec.getBounds());
+    const int w = rigpanels::RecSetup::kWidth, h = recSetup->preferredHeight();
+    recSetup->setBounds (juce::jlimit (8, juce::jmax (8, getWidth() - w - 8), rec.getCentreX() - w / 2), juce::jmax (8, dock.getY() - h + 6), w, h);
+    recSetup->toFront (false);
+}
+
+void RigView::updateRecSetup()
+{
+    if (recSetup == nullptr)
+        return;
+    const int lands = recLands == RecLands::layer ? 0 : recLands == RecLands::song ? 1 : recLands == RecLands::sample ? 2 : 3;
+    recSetup->setState (recCountIn, recLength, engine.getTransport().metronome.load(), lands, toolMode());
+}
+
+void RigView::closeRecSetup()
+{
+    if (recSetup != nullptr)
+        removeChildComponent (recSetup.get());
+    if (recBackdrop != nullptr)
+        removeChildComponent (recBackdrop.get());
+    recSetup.reset();
+    recBackdrop.reset();
 }
 
 void RigView::loadRecSetup()
@@ -2497,6 +2532,7 @@ void RigView::beginLesson()
     // An empty grid, as on the phone: the lesson's song is a new one, so its starter beat goes
     // (Clear's undo still has it).
     groove->clearPatternNow();
+    say ("Make a beat: an empty grid, the click on. Follow the card (Skip lesson any time).");
     resized();
     lesson->begin();
 }
@@ -3099,6 +3135,16 @@ void RigView::timerCallback()
 
     updateHeader();
     footer.tick();
+    {
+        const auto& tl = engine.getTimeline();
+        const int count = (int) rigsong::sections (tl).size();
+        auto& clock = engine.getTransport();
+        const bool songOn = tl.on.load() && clock.isPlaying();
+        const int bpb = juce::jmax (1, clock.getBeatsPerBar());
+        const int current = songOn ? rigsong::sectionAt (tl, clock.getPositionInBeats() / bpb) : -1;
+        const double pending = tl.getPendingJump();
+        dock.setSections (count, current, songOn && pending >= 0 ? rigsong::sectionAt (tl, pending) : -1);
+    }
     updateRecInto();
     {
         // Your show's name, and whether it has been saved yet. A one-tool plugin's is its tool, and
@@ -3112,11 +3158,16 @@ void RigView::timerCallback()
             sub = juce::String::fromUTF8 ("Get from box \xc2\xb7 Send to box");
         }
         const auto lit = vintage::Lit::none;
-        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit)
+        // A small dot after the name while the song isn't saved anywhere yet.
+        const bool dot = ! toolMode() && name.isEmpty();
+        if (! toolMode() && name.isEmpty())
+            text = "Untitled song";
+        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit || header.show.dot != dot)
         {
             header.show.text = text;
             header.show.sub = sub;
             header.show.lit = lit;
+            header.show.dot = dot;
             header.show.repaint();
         }
     }
@@ -4338,7 +4389,7 @@ void RigView::resized()
     {
         // Rec and the transport along the bottom (as on the phone), the song's strip over them.
         dock.setBounds (area.removeFromBottom (compact ? rigpanels::Dock::kCompactHeight : rigpanels::Dock::kHeight));
-        footer.setBounds (area.removeFromBottom (footer.isSlim() ? (compact ? 52 : 56) : (compact ? 112 : 128)));
+        footer.setBounds (area.removeFromBottom (footer.isSlim() ? 30 : (compact ? 112 : 128)));
     }
     if (railShown())
     {
