@@ -30,6 +30,7 @@ const char* toolName (Tool t)
         case Tool::synth: return "SYNTH";
         case Tool::chords: return "CHORDS";
         case Tool::vocoder: return "VOCODER";
+        case Tool::drone: return "DRONE";
         case Tool::effects: return "EFFECTS";
     }
     return "";
@@ -46,6 +47,7 @@ juce::Colour toolColour (Tool t)
         case Tool::synth: return juce::Colour (0xff5fb3c4);
         case Tool::chords: return juce::Colour (0xffb9a3dc);
         case Tool::vocoder: return juce::Colour (0xff82cf6a);
+        case Tool::drone: return juce::Colour (0xffd8578e);   // the Mac's Drone: kumkum rose
         case Tool::effects: return juce::Colour (0xffe8c27a);
     }
     return col::ink;
@@ -117,6 +119,17 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
             p.startNewSubPath (c.x, c.y + 7);
             p.lineTo (c.x, c.y + 12);
             g.strokePath (p, stroke);
+            break;
+        }
+        case Tool::drone:   // a tanpura: its round gourd and four strings up the neck
+        {
+            g.drawEllipse (c.x - 8, c.y + 1, 16, 11, 2.3f);
+            for (int k = 0; k < 4; ++k)
+            {
+                const float x = c.x - 4.5f + (float) k * 3.0f;
+                g.drawLine (x, c.y - 12, x, c.y + 6, 1.4f);
+            }
+            g.drawLine (c.x - 6, c.y - 12, c.x + 6, c.y - 12, 2.3f);
             break;
         }
         case Tool::effects:   // two pedal knobs, linked

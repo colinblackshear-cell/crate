@@ -15,6 +15,8 @@
 //            tune, Follow keys, and the chord builder's key.
 //   Playing: when it plucks (its own time, or on the beat), how fast, and the sound of the strings.
 //   Resonate: strings that ring to what a track plays into them (they work with the drone off too).
+//   Pattern (under them): the order the strings go round in, or steps you draw; Swing and Human.
+//   Tone: the instrument (tanpura, bowed, swarmandal, electric, bell), Bright, Body, Detune and Space.
 //
 // Every control is one of the drone's settings, so knob Learn, macros and automation see it as they
 // see any tool's.
@@ -44,6 +46,17 @@ public:
     juce::TextButton micButton { "Mic off: turn it on" };
     void turnMicOn();
     juce::OwnedArray<juce::TextButton> noteKeys, octaveButtons, firstButtons, pluckButtons;
+    // Pattern: the order the strings go round in, or your own steps (a grid: a row for each string), their
+    // swing and feel. Tone: the instrument the strings are, and its sound.
+    juce::OwnedArray<juce::TextButton> orderButtons, stepCountButtons, stepRateButtons, voiceButtons;
+    juce::TextButton clearStepsButton { "Clear" };
+    // A short window: the strings (0) or Pattern and Tone (1), a tab for each.
+    juce::TextButton stringsTab { "Strings and tuning" }, patternTab { "Pattern and tone" };
+    void showPage (int);
+    int getPage() const { return page; }
+    bool isCompact() const { return compact; }
+    juce::Rectangle<int> stepCell (int step, int string) const;   // empty while it's hidden
+    void pressStep (int step, int string);
     vintage::Knob* knobFor (const juce::String& paramId) const;
     void showSoundMenu();
     void showFeedMenu();
@@ -61,6 +74,11 @@ private:
     std::vector<std::unique_ptr<vintage::Knob>> knobs;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> followAttachment;
     juce::Rectangle<int> stringsWell, tuningWell, playingWell, resonateWell, stringsArea, meterArea, captionArea;
+    juce::Rectangle<int> patternWell, toneWell, orderLabel, stepsLabel, gridArea, gridHint, voiceLabel;
+    int gridLabelW = 40, shownStep = -1, page = 0;
+    bool compact = false;
+    std::vector<juce::Component*> mainControls();
+    std::vector<juce::Component*> moreControls();
     juce::Rectangle<int> noteLabel, octaveLabel, firstLabel, pluckLabel, feedLabel;
     std::array<int, crate::drone::kStrings> seenPlucks {};
     std::array<float, crate::drone::kStrings> flash {}, shown {};

@@ -10,7 +10,7 @@
 namespace pocket
 {
 // Every tool the row can show, in the row's order (PocketApp's tools list has them all).
-enum class Tool { loops, drums, pads, sampler, synth, chords, vocoder, effects };
+enum class Tool { loops, drums, pads, sampler, synth, chords, vocoder, drone, effects };
 const char* toolName (Tool);
 juce::Colour toolColour (Tool);
 void drawToolIcon (juce::Graphics&, Tool, juce::Point<float> centre, juce::Colour);

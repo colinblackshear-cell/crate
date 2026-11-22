@@ -396,6 +396,42 @@ struct DroneRigTests : juce::UnitTest
             screen->tick();
             expect (screen->micButton.isVisible() && screen->getLocalBounds().contains (screen->micButton.getBounds()), "it fits");
 
+            // Pattern and Tone: their buttons are the drone's settings, and a square on the grid is a step.
+            screen->orderButtons[2]->onClick();
+            expectEquals (param (engine.getDrone().params, "droneOrder"), 2.0f, "Wander");
+            screen->voiceButtons[1]->onClick();
+            expectEquals (param (engine.getDrone().params, "droneVoice"), 1.0f, "Bowed");
+            screen->stepCountButtons[1]->onClick();
+            expectEquals (param (engine.getDrone().params, "droneStepCount"), 1.0f, "8 steps");
+            expectEquals (engine.getDrone().getStep (0), 0x1, "turning steps on with none drawn draws a first pattern");
+            screen->pressStep (1, 2);
+            expectEquals (engine.getDrone().getStep (1), 0x4, "a square lights its string on its step");
+            screen->pressStep (12, 3);
+            expectEquals (param (engine.getDrone().params, "droneStepCount"), 2.0f, "a square past 8 makes it 16 steps");
+            screen->pressStep (12, 3);
+            expectEquals (engine.getDrone().getStep (12), 0x4, "and a second click clears it (the first pattern's Sa stays)");
+            screen->clearStepsButton.onClick();
+            expectEquals (engine.getDrone().getStep (0), 0);
+            expect (! screen->stepCell (5, 1).isEmpty() && screen->getLocalBounds().contains (screen->stepCell (15, 3)));
+            for (auto* k : { "droneSwing", "droneHuman", "droneBright", "droneBody", "droneDetune", "droneSpace" })
+                expect (screen->knobFor (k) != nullptr && screen->knobFor (k)->isVisible(), k);
+            screen->stepCountButtons[0]->onClick();
+
+            // A short window: a tab for the strings and one for Pattern and Tone, everything fitting on each.
+            view.setSize (1000, 700);
+            expect (screen->isCompact() && screen->patternTab.isVisible());
+            for (int page : { 1, 0 })
+            {
+                screen->showPage (page);
+                expect (screen->voiceButtons[0]->isVisible() == (page == 1));
+                expect (screen->onButton.isVisible() == (page == 0));
+                for (auto* c : screen->getChildren())
+                    if (c->isVisible())
+                        expect (screen->getLocalBounds().contains (c->getBounds()) && c->getWidth() > 20 && c->getHeight() > 20,
+                                "1000x700, page " + juce::String (page) + ": " + c->getName() + " " + c->getBounds().toString());
+            }
+            view.setSize (1600, 1000);
+
             // The Play view's middle: its strings and ready-made drones.
             view.showView ("Play");
             expectEquals (view.getPage(), juce::String ("Groove"));
@@ -417,10 +453,21 @@ struct DroneRigTests : juce::UnitTest
                 snapshot (view, path + "-drone-play.png");
                 view.goTo ("Mixer");
                 snapshot (view, path + "-drone-mixer.png");
-                view.setSize (1000, 700);
+                setParam (engine.getDrone().params, "droneVoice", 2.0f);
+                engine.getDrone().setStepCount (2);
+                engine.getDrone().setStep (3, 0x6);
+                setParam (engine.getDrone().params, "droneSwing", 0.3f);
                 view.showView ("Edit");
+                render (engine, 1.0);
+                screen->tick();
+                snapshot (view, path + "-drone-steps.png");
+                view.setSize (1000, 700);
+                screen->showPage (0);
                 screen->tick();
                 snapshot (view, path + "-drone-small.png");
+                screen->showPage (1);
+                snapshot (view, path + "-drone-small-pattern.png");
+                screen->showPage (0);
             }
 
             // At the smallest window, the rail's cards still don't overlap.

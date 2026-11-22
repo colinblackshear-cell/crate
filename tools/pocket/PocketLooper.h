@@ -26,7 +26,7 @@ constexpr int kLoopLayers = 8;
 
 // both = your voice and the vocoder (Sing). loops = every layer (after the ALL board), master = the whole mix (after the
 // MASTER board), layerTap = one layer after its board: the EFFECTS tool's resample takes.
-enum class LoopSource { mic, drums, vocoder, mix, both, synth, chords, loops, master, layerTap, count };
+enum class LoopSource { mic, drums, vocoder, mix, both, synth, chords, loops, master, layerTap, drone, count };
 constexpr int kInstruments = 2;   // the SYNTH and CHORDS tools' sound, each its own source
 
 // A tool that plays notes inside the looper (SYNTH, CHORDS): always heard, recorded as its own source, and
@@ -35,10 +35,17 @@ struct Instrument : public PocketAudio::Renderer
 {
     virtual float echoSend() const { return 0.0f; }
 };
+// The DRONE tool inside the looper: heard, the DRONE source, and fed what its strings ring to (a DroneFeed:
+// 0 your voice, 1 the vocoder, 2 the drums, 3 SYNTH, 4 CHORDS), one mono block before each render.
+struct DroneVoice : public Instrument
+{
+    virtual int feedSource() const = 0;
+    virtual void setFeed (const float* mono) = 0;   // null: nothing
+};
 enum class LoopState { empty, waiting, recording, playing, overdubWait, overdubbing };
 
 // The tool that made a layer (what the Loops rows show): set when the take is armed.
-enum class LayerTool { mic, drums, pads, synth, chords, vocoder, mix, count };
+enum class LayerTool { mic, drums, pads, synth, chords, vocoder, mix, drone, count };
 int toolForSource (int source);   // a LoopSource's usual maker (DRUMS for the drums source: PADS says so itself)
 
 // QUANTIZE on a layer that came from notes: the grid (0 = as played, 1 = 1/4, 2 = 1/8, 3 = 1/16), how far the
@@ -90,6 +97,8 @@ public:
     void setChordSource (PocketAudio::Renderer* r) { chordSource = r; }
     // The SYNTH (0) and CHORDS (1) tools: heard, and the SYNTH / CHORDS sources. Not owned. Set before the sound starts.
     void setInstrument (int slot, Instrument* i) { if (juce::isPositiveAndBelow (slot, kInstruments)) instruments[(size_t) slot] = i; }
+    // The DRONE tool: heard, and the DRONE source. Not owned. Set before the sound starts.
+    void setDrone (DroneVoice* d) { drone = d; }
     // The count-in, in bars (0, 1 or 2), for a recording that starts the clock. The click plays through it.
     void setCountInBars (int bars) { countInBars = juce::jlimit (0, 2, bars); }
 
@@ -247,6 +256,7 @@ private:
     PocketAudio::Renderer* vocoder = nullptr;
     PocketAudio::Renderer* chordSource = nullptr;
     std::array<Instrument*, kInstruments> instruments {};
+    DroneVoice* drone = nullptr;
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;
     std::array<Layer, kLoopLayers> layers;
@@ -279,6 +289,7 @@ private:
     std::vector<float> busDelay, busReverb, busL, busR;
     std::vector<float> srcMic, srcDrums, srcVoc, srcMix, srcBoth, vocL, vocR, clickBuf;
     std::array<std::vector<float>, kInstruments> srcInst;
+    std::vector<float> srcDrone;
     // the boards' stereo buses
     std::vector<float> padsL, padsR, voiceL, voiceR, allL, allR, srcLoops, srcMaster;
     std::array<std::vector<float>, kLoopLayers> layerL, layerR;

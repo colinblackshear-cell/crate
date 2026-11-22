@@ -201,6 +201,8 @@ PocketApp::PocketApp (Options o)
       synthPart (beats.engine()),
       synthScreen (synthPart, beats.engine()),
       chordsScreen (chordsTool),
+      droneTool (beats.engine()),
+      droneScreen (droneTool),
       padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
       sampler (static_cast<PocketHost&> (*this), audio, lib, beats.kit()),
@@ -262,7 +264,7 @@ PocketApp::PocketApp (Options o)
     dim->onTap = [this] { closeAllSheets(); };
 
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
-    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::effects };
+    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone, Tool::effects };
     // EFFECTS from a tool opens on that tool's board
     toolRow.onSelect = [this] (Tool t) { if (t == Tool::effects) openEffects (page == Page::tool ? boardForTool (tool) : -1); else showTool (t); };
     thumb.state = [this]
@@ -421,6 +423,13 @@ PocketApp::PocketApp (Options o)
     chordsTool.engine().setVocoder (&vocoderScreen.engine().processor());
     loopsScreen.engine().setInstrument (0, &synthPart.engine());
     loopsScreen.engine().setInstrument (1, &chordsTool.engine());
+    loopsScreen.engine().setDrone (&droneTool);
+    droneScreen.toast = [this] (const juce::String& t) { toast (t); };
+    droneScreen.onChanged = [this] { saveSong(); };
+    droneScreen.micOn = [this] { return micOn; };
+    droneScreen.askMic = [this] { askForMic ([this] { droneScreen.repaint(); }); };
+    droneScreen.songRoot = [this] { return songKey.root; };
+    droneScreen.songKeyName = [this] { return songKey.label(); };
     setupEffects();
     setupSampler();
     loadSong();
@@ -457,7 +466,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &droneScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         addChildComponent (c);
     addChildComponent (countPanel);
     addChildComponent (thumb);
@@ -796,6 +805,7 @@ void PocketApp::showPage (Page p, int morePage)
     singScreen.setVisible (onTool && tool == Tool::vocoder);
     synthScreen.setVisible (onTool && tool == Tool::synth);
     chordsScreen.setVisible (onTool && tool == Tool::chords);
+    droneScreen.setVisible (onTool && tool == Tool::drone);
     if (! (onTool && tool == Tool::sampler))
         sampler.leave();   // a take still running is kept
     sampler.setVisible (onTool && tool == Tool::sampler);
@@ -897,7 +907,7 @@ void PocketApp::noteStep()
     if (page == Page::recorder)
         s = sheetOpen ? stepShape : stepRecord;
     else if (page == Page::tool)
-        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords || tool == Tool::effects ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
+        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords || tool == Tool::drone || tool == Tool::effects ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
           : beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
     if (page == Page::tool && tool == Tool::sampler)
         s = stepShape;
@@ -1788,6 +1798,7 @@ void PocketApp::recPressed()
     if (page != Page::tool)
         return;
     const bool needsMic = recTool() == Tool::vocoder
+                       || (tool == Tool::drone && droneTool.feed.load() == (int) pocket::DroneFeed::voice && droneTool.resonate.load() > 0.0f)
                        || (tool == Tool::loops && (loopsScreen.source() == (int) LoopSource::mic || loopsScreen.source() == (int) LoopSource::vocoder))
                        || (tool == Tool::effects && effects->source() == pocket::boardVoice);
     if (needsMic && ! micOn)
@@ -1801,6 +1812,7 @@ void PocketApp::recPressed()
         case Tool::vocoder: recVocoder(); break;
         case Tool::synth: recSynth(); break;
         case Tool::chords: recChords(); break;
+        case Tool::drone: recDrone(); break;
         case Tool::effects: recEffects(); break;
         default: break;
     }
@@ -2037,6 +2049,33 @@ void PocketApp::recChords()
                 : "Play the chords " + juce::String (running ? "from the next bar" : "after the count-in") + ": they go on layer " + juce::String (layer + 1) + ".");
 }
 
+// DRONE: REC records the drone as you hear it (with your voice ringing its strings, if they ring to it) onto the
+// next layer, from the next bar (or after the count-in). Once the layer plays, the drone is switched off here so it
+// doesn't double; ON plays it live again.
+void PocketApp::recDrone()
+{
+    auto& b = beats.engine();
+    if (loopsScreen.nextLayer() < 0)
+        return toast ("All 8 layers are used. Clear one in LOOPS to record.");
+    if (! droneTool.on.load() && droneTool.resonate.load() <= 0.0f)
+        return toast ("The drone is off. Tap ON (or turn RESONATE up), then REC.");
+    const bool running = b.clockRunning();
+    int bars = appSettings.recBars();
+    if (bars <= 0)
+        bars = 4;   // FREE: four bars (a drone has no end of its own)
+    const int layer = loopsScreen.recordFrom ((int) pocket::LoopSource::drone, bars);
+    if (layer < 0)
+        return;
+    lockKind = LockKind::drone;
+    lockLayer = layer;
+    lockArmed = true;
+    lockWatch.startTimer (20);
+    if (! running)
+        togglePlay();   // the song starts; the take starts after the count-in (or at once without one)
+    toast ("The drone goes on layer " + juce::String (layer + 1) + " " + juce::String (running ? "from the next bar" : "after the count-in")
+           + " (" + lengthLabel (bars).toLowerCase() + ").");
+}
+
 void PocketApp::applyChordsPadSound()
 {
     const int pad = chordsTool.padSoundPad;
@@ -2212,6 +2251,26 @@ void PocketApp::lockWatchTick()
                                                                                   : U8(". It keeps looping. UNDO takes it off.")));
         return;
     }
+    if (lockKind == LockKind::drone)
+    {
+        if (st == pocket::LoopState::playing)
+        {
+            lockWatch.stopTimer();
+            lockKind = LockKind::none;
+            loops.setTransport (true);
+            const bool wasOn = droneTool.on.exchange (false);
+            droneScreen.repaint();
+            saveSong();
+            toast ("The drone is on layer " + juce::String (lockLayer + 1) + " and keeps looping."
+                   + (wasOn ? juce::String (" It's off here so it doesn't double: tap ON to play it live again.") : juce::String()));
+        }
+        else if (st == pocket::LoopState::empty)
+        {
+            lockWatch.stopTimer();
+            lockKind = LockKind::none;
+        }
+        return;
+    }
     if (lockKind == LockKind::chords)
     {
         if (st == pocket::LoopState::empty)
@@ -2362,6 +2421,8 @@ void PocketApp::setSongKey (SongKey k)
     if (voc.key() != k.root || voc.minor() != k.minor)
         voc.setKey (k.root, k.minor);
     chordsTool.setKey (k);
+    droneTool.setSongKey (k.root);
+    droneScreen.repaint();
     saveSong();
     synthScreen.leave();
     synthScreen.repaint();
@@ -2392,6 +2453,8 @@ void PocketApp::loadSong()
     applyChordsPadSound();
     chordsUndoLayer = -1;
     chordsScreen.toolChanged();
+    droneTool.fromVar (v.getProperty ("drone", {}), songKey.root);
+    droneScreen.toolChanged();
     if (voc.key() != songKey.root || voc.minor() != songKey.minor)
         voc.setKey (songKey.root, songKey.minor);
     synthScreen.partChanged();
@@ -2404,6 +2467,7 @@ void PocketApp::saveSong()
     o->setProperty ("key", songKey.toVar());
     o->setProperty ("synth", synthPart.toVar());
     o->setProperty ("chords", chordsTool.toVar());
+    o->setProperty ("drone", droneTool.toVar());
     if (const auto b = boardsToVar(); ! b.isVoid())
         o->setProperty ("boards", b);
     auto file = lib.ideaRoot().getChildFile ("song.json");
@@ -2420,6 +2484,7 @@ void PocketApp::headerTickNow()
         {
             songKey = { voc.key(), voc.minor() };
             chordsTool.setKey (songKey);
+            droneTool.setSongKey (songKey.root);
             saveSong();
             synthScreen.repaint();
             chordsScreen.repaint();
@@ -2692,7 +2757,7 @@ void PocketApp::resized()
     thumb.setVisible (thumbShown());
 
     const auto content = contentBounds();
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &droneScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         c->setBounds (content);
     padPicker.setBounds (padPickOpen ? padPickerBounds() : padPickerBounds().withY (h));
     chordEdit.bottomInset = insets.getBottom();
@@ -3194,6 +3259,41 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         chordsTool.reset();
         chordsTool.setKey (songKey);
         chordsScreen.toolChanged();
+    }
+
+    // DRONE: on, the strings ringing (a few seconds rendered so they show), then singing into them with the mic off
+    {
+        droneTool.reset();
+        droneTool.setSongKey (songKey.root);
+        droneTool.on = true;
+        droneTool.prepare (44100.0);
+        std::vector<float> l (512), r (512);
+        for (int i = 0; i < 44100 * 3 / 512; ++i)
+            droneTool.renderAt (l.data(), r.data(), 512, false, 0.0, 97.0);
+        micOn = micHear = false;
+        applyMic();
+        showTool (Tool::drone, false);
+        for (int i = 0; i < 12; ++i)
+            droneScreen.tickForDemo();
+        savePng (folder.getChildFile ("17-tool-drone.png"));
+        droneTool.resonate = 0.6f;
+        droneScreen.repaint();
+        savePng (folder.getChildFile ("17b-drone-sing-mic-off.png"));
+        // its second page: PATTERN and TONE, with 16 steps drawn and the swarmandal picked
+        droneTool.resonate = 0.0f;
+        droneTool.voice = 2;
+        droneTool.setStepCount (2);
+        droneTool.toggleStep (3, 1);
+        droneTool.toggleStep (3, 2);
+        droneTool.toggleStep (9, 3);
+        droneTool.swing = 0.3f;
+        droneTool.space = 0.4f;
+        droneScreen.showPage (1);
+        savePng (folder.getChildFile ("17c-drone-pattern.png"));
+        droneScreen.showPage (0);
+        droneTool.reset();
+        droneTool.setSongKey (songKey.root);
+        droneScreen.toolChanged();
     }
 
     // VOCODER: the mic off, the headphones sheet (wired, Bluetooth, none), then the banner. The CHORDS tool holds
@@ -3997,6 +4097,121 @@ juce::String PocketApp::runRecChecks (juce::String& report)
     applyMic();
     stopEverything();
     pump (2048);
+
+    // DRONE: singing into its strings (RESONATE, ringing to your voice) is silent while the mic is off and rings once
+    // it's on, even with the mic not in the speaker; REC lands the drone on the next layer, and the live drone then
+    // switches off so it doesn't double; its settings come back with the song.
+    {
+        switchIdea (ideas.create ("Drone check"));
+        appSettings.countInBars = 0;
+        appSettings.recLength = 0;   // 1 bar
+        L.setCountInBars (0);
+        appSettings.click = false;
+        applyClick();
+        L.setDryMonitor (false);
+        silentInput = false;
+        pump (2048);
+        showTool (Tool::drone, false);
+        droneTool.reset();
+        droneTool.followKey = false;
+        droneTool.root = 9;   // A: the test tone (A4) is its Sa an octave up
+        droneTool.feed = (int) pocket::DroneFeed::voice;
+        droneTool.resonate = 0.8f;
+        micOn = micHear = false;
+        applyMic();
+        pump (8192);
+        outPeak = 0.0f;
+        pump (barSamples);
+        const float deafPeak = outPeak;
+        const bool warned = droneScreen.micWarningShown();
+        micOn = true;
+        applyMic();
+        pump (8192);
+        outPeak = 0.0f;
+        pump (barSamples);
+        const float singPeak = outPeak;
+        report << "drone, singing A into the strings: mic off " << juce::String (deafPeak, 6) << " (warning " << (warned ? "shown" : "NOT shown")
+               << "), mic on (not in the speaker) " << juce::String (singPeak, 4) << "\n";
+        if (deafPeak > 1.0e-4f)
+            problems.add ("DRONE: the strings rang to the mic while it was off (peak " + juce::String (deafPeak, 5) + ")");
+        if (! warned)
+            problems.add ("DRONE: the screen didn't say the mic is off");
+        if (singPeak < 0.01f)
+            problems.add ("DRONE: singing into the strings with the mic on didn't ring them (peak " + juce::String (singPeak, 5) + ")");
+
+        droneTool.resonate = 0.0f;
+        droneTool.on = true;
+        silentInput = true;
+        pump (8192);
+        recPressed();
+        const bool landed = waitPlaying (0, 6);
+        if (! landed)
+            problems.add ("REC on DRONE: no take landed on layer 1");
+        else
+        {
+            checkTake ("DRONE", 0, 4.0, 4.0);
+            if (takePeak (0) < 0.01f)
+                problems.add ("REC on DRONE: the layer is silent (peak " + juce::String (takePeak (0), 4) + ")");
+            if (droneTool.on.load())
+                problems.add ("REC on DRONE: the live drone kept playing over its layer");
+            if (auto t = L.takeOf (0); t == nullptr || t->tool != (int) pocket::LayerTool::drone)
+                problems.add ("REC on DRONE: the layer isn't marked as the drone's");
+        }
+        togglePlay();
+        pump (4096);
+
+        droneTool.level = 0.5f;
+        droneTool.first = 1;
+        droneTool.voice = 3;
+        droneTool.order = 2;
+        droneTool.space = 0.35f;
+        droneTool.setStepCount (1);
+        droneTool.toggleStep (1, 2);
+        saveSong();
+        droneTool.reset();
+        loadSong();
+        if (std::abs (droneTool.level.load() - 0.5f) > 1.0e-4f || droneTool.first.load() != 1 || droneTool.root.load() != 9 || droneTool.followKey)
+            problems.add ("DRONE: its settings didn't come back with the song");
+        if (droneTool.voice.load() != 3 || droneTool.order.load() != 2 || std::abs (droneTool.space.load() - 0.35f) > 1.0e-4f
+            || droneTool.stepCount.load() != 1 || droneTool.steps[0].load() != 0x1 || droneTool.steps[1].load() != 0x4)
+            problems.add ("DRONE: its pattern and tone didn't come back with the song");
+
+        // STEPS: drawn squares pluck their strings on their steps, in time with the clock (8 steps of an 1/8: 4 beats round)
+        {
+            droneTool.reset();
+            droneTool.on = true;
+            droneTool.clearSteps();
+            droneTool.toggleStep (0, 0);
+            droneTool.toggleStep (2, 1);
+            droneTool.toggleStep (2, 2);
+            droneTool.toggleStep (5, 3);
+            droneTool.prepare (44100.0);
+            int before[4];
+            for (int st = 0; st < 4; ++st)
+                before[st] = droneTool.pluckCount (st);
+            std::vector<float> l (441), r (441);
+            for (int b = 0; b < 800; ++b)   // 8 s at 120: 16 beats, four times round
+                droneTool.renderAt (l.data(), r.data(), 441, true, b * 441 * 2.0 / 44100.0, 120.0);
+            juce::String got;
+            bool right = true;
+            for (int st = 0; st < 4; ++st)
+            {
+                const int n = droneTool.pluckCount (st) - before[st];
+                got << n << " ";
+                right = right && n == 4;
+            }
+            report << "drone steps (4 times round): plucks per string " << got.trim() << "\n";
+            if (! right)
+                problems.add ("DRONE STEPS: the strings didn't pluck on their steps (" + got.trim() + ")");
+        }
+        droneTool.reset();
+        droneTool.setSongKey (songKey.root);
+        micOn = micHear = false;
+        applyMic();
+        silentInput = false;
+        stopEverything();
+        pump (2048);
+    }
     return problems.joinIntoString ("\n");
 }
 

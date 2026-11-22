@@ -42,7 +42,28 @@ const KnobSpec knobSpecs[] = {
     { "droneStrings", "Strings", "How loud the plucked strings are. Down to 0 for the reeds alone (a shruti box)." },
     { "droneReeds", "Reeds", "A held reed tone under the strings (a harmonium or shruti box), on the drone's notes." },
     { "droneResonate", "Resonate", "How much the four strings ring to what's fed into them: a voice or an instrument makes the drone sing along." },
+    { "droneSwing", "Swing", "Pushes every other step late, for a swung, rolling pattern (with Steps on)." },
+    { "droneHuman", "Human", "A player's hand: each pluck a little early or late and a little softer or harder. 0 is exact." },
+    { "droneBright", "Bright", "Darker (down) or brighter (up): how much of the high harmonics you hear." },
+    { "droneBody", "Body", "How much of the strings' low fundamental you hear: thinner down, fuller up." },
+    { "droneDetune", "Detune", "Each string a few cents apart from the next, for a wide, chorused, slightly out-of-tune bed." },
+    { "droneSpace", "Space", "A big room around the strings: up for a long, washed-out reverb." },
 };
+
+const char* const orderTips[] = { "The classic tanpura order: the first string, Sa, Sa, then low Sa, round and round.",
+                                  "The other way round: low Sa first, back up to the first string.",
+                                  "A different string each time (never the same one twice), Sa most often: it never quite repeats.",
+                                  "Two at once: the first string with low Sa, then the two Sa strings together.",
+                                  "All four strings strummed together, one after another, quickly." };
+const char* const voiceTips[] = { "Tanpura: plucked strings with the jawari's buzz (the classic drone).",
+                                  "Bowed: each string swells in slowly and holds, like a bowed string section.",
+                                  "Swarmandal: a bright, harp-like zither, an octave up, quick and sparkling.",
+                                  "Electric: a held, filtered synth tone that slowly opens and closes.",
+                                  "Bell: glassy, ringing bells (not in tune with each other's harmonics: a metallic shimmer)." };
+const char* const stepCountNames[] = { "Off", "8", "16" };
+const char* const stepRateNames[] = { "1/4", "1/8", "1/16" };
+
+constexpr size_t kFirstPatternKnob = 8;   // knobSpecs from Swing on are Pattern's and Tone's
 
 const char* const firstNames[] = { "Pa", "Ma", "Ni", "Sa" };
 const char* const firstTips[] = { "The first string plays Pa, the fifth over Sa: the classic drone.",
@@ -158,6 +179,66 @@ DroneView::DroneView (RigEngine& e) : engine (e)
                           "can't feed back). Turns it on; wear headphones.");
     micButton.onClick = [this] { turnMicOn(); };
     addChildComponent (micButton);
+
+    for (int i = 0; i < crate::drone::numOrders; ++i)
+    {
+        auto* b = orderButtons.add (new juce::TextButton (crate::drone::orderName (i)));
+        wellButton (*b, Lit::current, 14.0f);
+        b->setTooltip (orderTips[i]);
+        b->onClick = [this, i] { setChoice ("droneOrder", i); say (juce::String ("The strings go ") + crate::drone::orderName (i) + "."); update(); };
+        addAndMakeVisible (b);
+    }
+    for (int i = 0; i < 3; ++i)
+    {
+        auto* b = stepCountButtons.add (new juce::TextButton (stepCountNames[i]));
+        wellButton (*b, Lit::current, 14.0f);
+        b->setTooltip (i == 0 ? juce::String ("Steps off: the strings go round in the order above, at the Pluck setting.")
+                              : juce::String (i == 1 ? "8" : "16") + " steps you draw: click a square to pluck that string on that step "
+                                "(a column of several plucks them together). In time with Kaleidobox while it plays.");
+        b->onClick = [this, i]
+        {
+            engine.getDrone().setStepCount (i);
+            say (i == 0 ? juce::String ("Steps off: the strings go round in their order.")
+                        : juce::String ("Steps on: click the squares to draw which strings pluck on which step."));
+            update();
+            repaint (patternWell);
+        };
+        addAndMakeVisible (b);
+    }
+    for (int i = 0; i < 3; ++i)
+    {
+        auto* b = stepRateButtons.add (new juce::TextButton (stepRateNames[i]));
+        wellButton (*b, Lit::current, 14.0f);
+        b->setTooltip (juce::String ("Each step is ") + (i == 0 ? "a beat" : i == 1 ? "half a beat" : "a quarter of a beat") + " long.");
+        b->onClick = [this, i] { setChoice ("droneStepRate", i); update(); };
+        addAndMakeVisible (b);
+    }
+    wellButton (clearStepsButton, Lit::none, 13.0f);
+    clearStepsButton.setTooltip ("Clears every step (all rests).");
+    clearStepsButton.onClick = [this]
+    {
+        engine.getDrone().clearSteps();
+        say ("The steps are cleared: click the squares to draw a new pattern.");
+        repaint (patternWell);
+    };
+    addAndMakeVisible (clearStepsButton);
+    for (int i = 0; i < crate::drone::numVoices; ++i)
+    {
+        auto* b = voiceButtons.add (new juce::TextButton (crate::drone::voiceName (i)));
+        wellButton (*b, Lit::current, 14.0f);
+        b->setTooltip (voiceTips[i]);
+        b->onClick = [this, i] { setChoice ("droneVoice", i); say (juce::String ("The strings are a ") + juce::String (crate::drone::voiceName (i)).toLowerCase() + " now."); update(); };
+        addAndMakeVisible (b);
+    }
+
+    for (auto* tab : { &stringsTab, &patternTab })
+    {
+        wellButton (*tab, Lit::current, 14.0f);
+        tab->onClick = [this, tab] { showPage (tab == &patternTab ? 1 : 0); };
+        addChildComponent (tab);
+    }
+    stringsTab.setTooltip ("The strings, their tuning, how they play, and singing into them.");
+    patternTab.setTooltip ("Pattern (the order the strings go in, or your own steps) and Tone (the instrument they are).");
 
     for (const auto& spec : knobSpecs)
     {
@@ -291,11 +372,71 @@ void DroneView::pressString (int string)
     repaint (stringsWell);
 }
 
+void DroneView::showPage (int which)
+{
+    page = juce::jlimit (0, 1, which);
+    resized();
+    update();
+    repaint();
+}
+
+std::vector<juce::Component*> DroneView::mainControls()
+{
+    std::vector<juce::Component*> list { &onButton, &soundButton, &followButton, &chordsKeyButton, &feedButton, &levelKnob, &micButton };
+    for (auto* group : { &noteKeys, &octaveButtons, &firstButtons, &pluckButtons })
+        for (auto* b : *group)
+            list.push_back (b);
+    for (size_t i = 0; i < knobs.size(); ++i)
+        if (i < kFirstPatternKnob)
+            list.push_back (knobs[i].get());
+    return list;
+}
+
+std::vector<juce::Component*> DroneView::moreControls()
+{
+    std::vector<juce::Component*> list { &clearStepsButton };
+    for (auto* group : { &orderButtons, &stepCountButtons, &stepRateButtons, &voiceButtons })
+        for (auto* b : *group)
+            list.push_back (b);
+    for (size_t i = kFirstPatternKnob; i < knobs.size(); ++i)
+        list.push_back (knobs[i].get());
+    return list;
+}
+
+juce::Rectangle<int> DroneView::stepCell (int step, int string) const
+{
+    if (gridArea.isEmpty() || ! juce::isPositiveAndBelow (step, 16) || ! juce::isPositiveAndBelow (string, crate::drone::kStrings))
+        return {};
+    const auto cells = gridArea.withTrimmedLeft (gridLabelW);
+    const int w = cells.getWidth() / 16, h = cells.getHeight() / crate::drone::kStrings;
+    return { cells.getX() + step * w, cells.getY() + string * h, w, h };
+}
+
+void DroneView::pressStep (int step, int string)
+{
+    auto& d = engine.getDrone();
+    if (choice ("droneStepCount") == 0)
+    {
+        // Drawing a step turns the steps on (as many as reach it), with just what you draw.
+        setChoice ("droneStepCount", step < 8 ? 1 : 2);
+        say ("Steps on: the strings pluck on the squares you light.");
+    }
+    else if (step >= 8 && choice ("droneStepCount") == 1)
+        setChoice ("droneStepCount", 2);
+    d.setStep (step, d.getStep (step) ^ (1 << string));
+    update();
+    repaint (patternWell);
+}
+
 void DroneView::mouseDown (const juce::MouseEvent& e)
 {
     for (int s = 0; s < crate::drone::kStrings; ++s)
         if (stringArea (s).contains (e.getPosition()))
             return pressString (s);
+    for (int step = 0; step < 16; ++step)
+        for (int s = 0; s < crate::drone::kStrings; ++s)
+            if (stepCell (step, s).contains (e.getPosition()))
+                return pressStep (step, s);
 }
 
 //==============================================================================
@@ -325,16 +466,38 @@ void DroneView::update()
         light (*firstButtons[i], i == first);
     for (int i = 0; i < pluckButtons.size(); ++i)
         light (*pluckButtons[i], i == sync);
+    const int order = choice ("droneOrder"), stepCount = choice ("droneStepCount"), stepRate = choice ("droneStepRate"), voice = choice ("droneVoice");
+    for (int i = 0; i < orderButtons.size(); ++i)
+    {
+        light (*orderButtons[i], i == order);
+        orderButtons[i]->setAlpha (stepCount == 0 ? 1.0f : 0.45f);   // (the steps play instead)
+    }
+    for (int i = 0; i < stepCountButtons.size(); ++i)
+        light (*stepCountButtons[i], i == stepCount);
+    for (int i = 0; i < stepRateButtons.size(); ++i)
+    {
+        light (*stepRateButtons[i], i == stepRate);
+        stepRateButtons[i]->setAlpha (stepCount > 0 ? 1.0f : 0.45f);
+    }
+    for (int i = 0; i < voiceButtons.size(); ++i)
+        light (*voiceButtons[i], i == voice);
+    for (auto* b : pluckButtons)
+        b->setAlpha (stepCount == 0 ? 1.0f : 0.45f);
+    if (auto* swing = knobFor ("droneSwing"))
+        swing->setAlpha (stepCount > 0 ? 1.0f : 0.45f);
 
     // Pace only counts while it keeps its own time.
     if (auto* pace = knobFor ("dronePace"))
     {
-        const bool used = sync == 0;
+        const bool used = sync == 0 && choice ("droneStepCount") == 0;
         pace->setAlpha (used ? 1.0f : 0.4f);
         pace->slider.setTooltip (used ? juce::String (knobSpecs[1].tip) + " Drag up or down; double-click for the default."
-                                      : "Pace is the time between plucks while the drone keeps its own time. Pluck is set to "
-                                        + juce::String (pluckNames[juce::jlimit (0, 3, sync)]).toLowerCase()
-                                        + ", so it plucks with the beat instead: pick Own time to use Pace.");
+                                      : choice ("droneStepCount") > 0
+                                            ? juce::String ("Pace is the time between plucks in the strings' order. The steps are on, so they play instead "
+                                                            "(at their step length): turn Steps off to use Pace.")
+                                            : "Pace is the time between plucks while the drone keeps its own time. Pluck is set to "
+                                                  + juce::String (pluckNames[juce::jlimit (0, 3, sync)]).toLowerCase()
+                                                  + ", so it plucks with the beat instead: pick Own time to use Pace.");
     }
 
     const int key = juce::jlimit (0, 11, engine.getChords().fillKey);
@@ -346,7 +509,7 @@ void DroneView::update()
         if (std::abs ((float) levelKnob.slider.getValue() - level) > 1.0e-4f)
             levelKnob.slider.setValue (level, juce::dontSendNotification);
     }
-    const bool deaf = engine.whyDroneDeaf().isNotEmpty();
+    const bool deaf = engine.whyDroneDeaf().isNotEmpty() && (! compact || page == 0);
     if (micButton.isVisible() != deaf)
         micButton.setVisible (deaf);
 
@@ -381,6 +544,11 @@ void DroneView::tick()
     update();
     repaint (stringsWell);
     repaint (meterArea.expanded (2));
+    if (const int step = d.getCurrentStep(); step != shownStep)
+    {
+        shownStep = step;
+        repaint (gridArea.expanded (3));
+    }
 }
 
 //==============================================================================
@@ -390,11 +558,14 @@ void DroneView::paint (juce::Graphics& g)
     const auto colour = RigColours::drone;
     vintage::drawFace (g, getLocalBounds());
 
-    for (auto well : { stringsWell, tuningWell, playingWell, resonateWell })
-        vintage::drawWell (g, well.toFloat());
+    for (auto well : { stringsWell, tuningWell, playingWell, resonateWell, patternWell, toneWell })
+        if (! well.isEmpty())
+            vintage::drawWell (g, well.toFloat());
 
     auto title = [&] (juce::Rectangle<int> well, const juce::String& text, const juce::String& sub)
     {
+        if (well.isEmpty())
+            return;
         auto r = well.reduced (16, 12).removeFromTop (24);
         g.setColour (p.wellInk);
         const auto upper = text.toUpperCase();
@@ -413,6 +584,7 @@ void DroneView::paint (juce::Graphics& g)
     };
 
     // The strings: the drone's colour swatch, its name, and four strings ringing.
+    if (! stringsWell.isEmpty())
     {
         auto r = stringsWell.reduced (16, 12).removeFromTop (24);
         auto swatch = r.removeFromLeft (18).withSizeKeepingCentre (18, 18).toFloat();
@@ -488,11 +660,49 @@ void DroneView::paint (juce::Graphics& g)
     title (tuningWell, "Tuning", {});
     title (playingWell, "Playing", {});
     title (resonateWell, "Sing into the strings", {});
+    title (patternWell, "Pattern", "the order the strings go in, or your own steps");
+    title (toneWell, "Tone", "what the strings are");
     const std::pair<juce::Rectangle<int>, const char*> labels[] = { { noteLabel, "Note (Sa)" }, { octaveLabel, "Octave" }, { firstLabel, "First string" },
-                                                                    { pluckLabel, "Pluck" }, { feedLabel, "Rings to" } };
+                                                                    { pluckLabel, "Pluck" }, { feedLabel, "Rings to" }, { orderLabel, "Order" },
+                                                                    { stepsLabel, "Steps" }, { voiceLabel, "Instrument" } };
     for (const auto& [area, text] : labels)
         if (! area.isEmpty())
             vintage::engraved (g, text, area, juce::Justification::bottomLeft, 12.0f, true);
+
+    // The steps: a row for each string, a square for each step (lit: it plucks there), the step playing outlined.
+    if (! gridArea.isEmpty())
+    {
+        const int count = choice ("droneStepCount") == 2 ? 16 : choice ("droneStepCount") == 1 ? 8 : 0;
+        const int now = count > 0 ? d.getCurrentStep() : -1;
+        for (int string = 0; string < crate::drone::kStrings; ++string)
+        {
+            const auto row = stepCell (0, string);
+            const juce::String name = string == 0 ? juce::String (firstNames[juce::jlimit (0, 3, first)]) : string == 3 ? juce::String ("Low") : juce::String ("Sa");
+            g.setColour (p.wellInk.withAlpha (count > 0 ? 0.9f : 0.5f));
+            g.setFont (vintage::cond (13.0f, Weight::extra, 0.06f));
+            g.drawText (name.toUpperCase(), juce::Rectangle<int> (gridArea.getX(), row.getY(), gridLabelW - 6, row.getHeight()), juce::Justification::centredLeft, false);
+            for (int step = 0; step < 16; ++step)
+            {
+                const auto cell = stepCell (step, string).toFloat().reduced (2.0f);
+                const bool lit = (engine.getDrone().getStep (step) >> string) & 1;
+                auto fill = lit ? colour.withAlpha (count > 0 && step < count ? 1.0f : 0.35f)
+                                : juce::Colour ((step / 4) % 2 == 0 ? 0xff3a332d : 0xff2e2925);
+                if (count > 0 && step >= count)
+                    fill = fill.withMultipliedAlpha (0.35f);
+                g.setColour (fill);
+                g.fillRoundedRectangle (cell, 3.0f);
+            }
+        }
+        if (juce::isPositiveAndBelow (now, count))
+        {
+            auto column = stepCell (now, 0).getUnion (stepCell (now, crate::drone::kStrings - 1)).toFloat().reduced (0.5f);
+            g.setColour (juce::Colour (0xfff1e7d1).withAlpha (0.8f));
+            g.drawRoundedRectangle (column, 4.0f, 1.5f);
+        }
+        if (! gridHint.isEmpty())
+            vintage::engraved (g, count == 0 ? "Steps off: click to draw" : "Click squares to draw",
+                               gridHint.withTrimmedLeft (gridLabelW), juce::Justification::centredLeft, 11.0f, true);
+    }
 
     // How much the strings are ringing to what's fed in.
     if (! meterArea.isEmpty())
@@ -524,14 +734,65 @@ void DroneView::resized()
     const int full = area.getWidth();
     // A narrow window gives the strings a little less, and the settings smaller type.
     const bool narrow = full < 900;
-    stringsWell = area.removeFromLeft (full * (narrow ? 30 : 40) / 100);
-    area.removeFromLeft (gap);
-    const int rest = area.getWidth() - gap * 2;
-    tuningWell = area.removeFromLeft (rest * (narrow ? 36 : 34) / 100);
-    area.removeFromLeft (gap);
-    playingWell = area.removeFromLeft (rest * (narrow ? 35 : 36) / 100);
-    area.removeFromLeft (gap);
-    resonateWell = area;
+    // A short window shows the strings or Pattern and Tone, a tab for each; a tall one shows them all, Pattern
+    // and Tone along the bottom.
+    compact = getHeight() < 640;
+    stringsTab.setVisible (compact);
+    patternTab.setVisible (compact);
+    if (compact)
+    {
+        auto tabs = area.removeFromTop (32);
+        stringsTab.setBounds (tabs.removeFromLeft (200));
+        tabs.removeFromLeft (6);
+        patternTab.setBounds (tabs.removeFromLeft (200));
+        area.removeFromTop (10);
+        stringsTab.setToggleState (page == 0, juce::dontSendNotification);
+        patternTab.setToggleState (page == 1, juce::dontSendNotification);
+    }
+    const bool showMain = ! compact || page == 0, showMore = ! compact || page == 1;
+    for (auto* c : mainControls())
+        c->setVisible (showMain && c != &micButton);
+    for (auto* c : moreControls())
+        c->setVisible (showMore);
+    if (auto* fine = knobFor ("droneFine"))
+    {
+        fine->setVisible (compact ? showMore : showMain);
+        if (! compact && fine->sideways)
+        {
+            fine->sideways = false;
+            fine->nameSize = narrow ? 11.0f : 13.0f;
+        }
+    }
+    stringsWell = tuningWell = playingWell = resonateWell = stringsArea = meterArea = captionArea = {};
+    patternWell = toneWell = gridArea = gridHint = {};
+    noteLabel = octaveLabel = firstLabel = pluckLabel = feedLabel = orderLabel = stepsLabel = voiceLabel = {};
+    if (showMore)
+    {
+        auto band = compact ? area : area.removeFromBottom (juce::jlimit (212, 240, getHeight() * 30 / 100));
+        area.removeFromBottom (gap);
+        if (compact && band.getWidth() < 1000)
+        {
+            patternWell = band.removeFromTop (juce::jmax (band.getHeight() / 2, band.getHeight() - gap - 128));   // (Tone: its buttons and a row of knobs)
+            band.removeFromTop (gap);
+        }
+        else
+        {
+            patternWell = band.removeFromLeft ((band.getWidth() - gap) * 60 / 100);
+            band.removeFromLeft (gap);
+        }
+        toneWell = band;
+    }
+    if (showMain)
+    {
+        stringsWell = area.removeFromLeft (full * (narrow ? 30 : 40) / 100);
+        area.removeFromLeft (gap);
+        const int rest = area.getWidth() - gap * 2;
+        tuningWell = area.removeFromLeft (rest * (narrow ? 36 : 34) / 100);
+        area.removeFromLeft (gap);
+        playingWell = area.removeFromLeft (rest * (narrow ? 35 : 36) / 100);
+        area.removeFromLeft (gap);
+        resonateWell = area;
+    }
 
     const int row = juce::jlimit (28, 40, getHeight() / 20);
     for (auto* list : { &noteKeys, &octaveButtons, &firstButtons })
@@ -548,6 +809,7 @@ void DroneView::resized()
     titleTwoLines = juce::GlyphArrangement::getStringWidth (vintage::cond (21.0f, Weight::extra, 0.1f), "SING INTO THE STRINGS")
                             > (float) resonateWell.reduced (16, 12).getWidth() ? 46 : 24;
     // The strings: On and the sounds over them, then the four strings.
+    if (showMain)
     {
         auto r = stringsWell.reduced (16, 12);
         r.removeFromTop (24 + 10);
@@ -563,6 +825,7 @@ void DroneView::resized()
     }
 
     // Tuning.
+    if (showMain)
     {
         auto r = tuningWell.reduced (14, 12);
         r.removeFromTop (24 + 6);
@@ -602,11 +865,12 @@ void DroneView::resized()
         bottom.removeFromBottom (6);
         followButton.setBounds (bottom);
         r.removeFromBottom (8);
-        if (auto* fine = knobFor ("droneFine"))
+        if (auto* fine = knobFor ("droneFine"); fine != nullptr && ! compact)
             fine->setBounds (r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 160), juce::jmin (r.getHeight(), 170)));
     }
 
     // Playing.
+    if (showMain)
     {
         auto r = playingWell.reduced (14, 12);
         r.removeFromTop (24 + 6);
@@ -631,7 +895,162 @@ void DroneView::resized()
                 k->setBounds (juce::Rectangle<int> (r.getX() + (i % 2) * w, r.getY() + (i / 2) * h, w, h).reduced (4, 2));
     }
 
+    // Pattern: Order and Steps on the left, the grid in the middle, Swing and Human on the right; in a narrow
+    // well, Order, then Steps with Swing and Human beside them, then the grid across the whole well.
+    if (showMore)
+    {
+        const int small = juce::jlimit (26, 32, row);
+        for (auto* list : { &orderButtons, &stepCountButtons, &stepRateButtons, &voiceButtons })
+            for (auto* b : *list)
+                b->getProperties().set ("fontSize", narrow ? 11.0f : 14.0f);
+        auto r = patternWell.reduced (14, 12);
+        r.removeFromTop (24 + 6);
+        auto rowOf = [] (juce::Rectangle<int> line, juce::OwnedArray<juce::TextButton>& buttons, int count, int from = 0)
+        {
+            const int w = (line.getWidth() - 4 * (count - 1)) / count;
+            for (int i = from; i < from + count && i < buttons.size(); ++i)
+            {
+                buttons[i]->setBounds (line.removeFromLeft (w));
+                line.removeFromLeft (4);
+            }
+        };
+        auto stepButtons = [&] (juce::Rectangle<int> line)
+        {
+            // Off, 8, 16, then how long each step is.
+            const int w = (line.getWidth() - 4 * 4 - 10) / 6;
+            for (auto* list : { &stepCountButtons, &stepRateButtons })
+            {
+                for (auto* b : *list)
+                {
+                    b->setBounds (line.removeFromLeft (w));
+                    line.removeFromLeft (4);
+                }
+                line.removeFromLeft (6);
+            }
+        };
+        auto* swing = knobFor ("droneSwing");
+        auto* human = knobFor ("droneHuman");
+        const bool stacked = r.getWidth() < 680;
+        if (stacked)
+        {
+            // (A short well: the buttons say what they are, without the label over them.)
+            if (patternWell.getHeight() >= 260)
+            {
+                orderLabel = r.removeFromTop (16);
+                r.removeFromTop (3);
+            }
+            rowOf (r.removeFromTop (small), orderButtons, orderButtons.size());
+            r.removeFromTop (8);
+            auto line = r.removeFromTop (juce::jmax (small, 40));
+            stepsLabel = line.withHeight (0);   // (the buttons say what they are)
+            for (auto* k : { swing, human })
+                if (k != nullptr && ! k->sideways)
+                {
+                    k->sideways = true;
+                    k->nameSize = 11.0f;
+                }
+            const int kw = juce::jmin (120, line.getWidth() / 5);
+            if (human != nullptr)
+                human->setBounds (line.removeFromRight (kw));
+            if (swing != nullptr)
+                swing->setBounds (line.removeFromRight (kw));
+            line.removeFromRight (8);
+            auto buttons = line.withSizeKeepingCentre (line.getWidth(), small);
+            clearStepsButton.setBounds (buttons.removeFromRight (juce::jmin (70, buttons.getWidth() / 6)));
+            buttons.removeFromRight (6);
+            stepButtons (buttons);
+            r.removeFromTop (6);
+        }
+        else
+        {
+            auto left = r.removeFromLeft (juce::jlimit (220, 330, r.getWidth() * 37 / 100));
+            r.removeFromLeft (16);
+            auto knobsArea = r.removeFromRight (juce::jlimit (130, 200, r.getWidth() * 28 / 100));
+            r.removeFromRight (12);
+            orderLabel = left.removeFromTop (18);
+            left.removeFromTop (4);
+            // Five in a row, or three and two when that's too narrow for their names.
+            if (left.getWidth() < 300)
+            {
+                rowOf (left.removeFromTop (small), orderButtons, 3);
+                left.removeFromTop (4);
+                rowOf (left.removeFromTop (small).withTrimmedRight ((left.getWidth() + 4) / 3), orderButtons, 2, 3);
+            }
+            else
+                rowOf (left.removeFromTop (small), orderButtons, orderButtons.size());
+            left.removeFromTop (8);
+            stepsLabel = left.removeFromTop (18);
+            left.removeFromTop (4);
+            stepButtons (left.removeFromTop (small));
+            for (auto* k : { swing, human })
+                if (k != nullptr && k->sideways)
+                {
+                    k->sideways = false;
+                    k->nameSize = narrow ? 11.0f : 13.0f;
+                }
+            const int kw = knobsArea.getWidth() / 2;
+            if (swing != nullptr)
+                swing->setBounds (knobsArea.removeFromLeft (kw).reduced (2, 0));
+            if (human != nullptr)
+                human->setBounds (knobsArea.reduced (2, 0));
+        }
+        for (auto* k : { swing, human })
+            if (k != nullptr)
+                k->resized();
+        if (! stacked)
+        {
+            // Over the grid: what it says, and Clear.
+            auto top = r.removeFromTop (small);
+            clearStepsButton.setBounds (top.removeFromRight (juce::jmin (80, top.getWidth() / 4)));
+            gridHint = top.withTrimmedRight (8);
+            r.removeFromTop (4);
+        }
+        // The grid: as tall as it can be, squares no wider than they're tall.
+        gridLabelW = narrow ? 34 : 44;
+        const int cellH = juce::jmin (r.getHeight() / crate::drone::kStrings, 34);
+        const int cellW = juce::jmin ((r.getWidth() - gridLabelW) / 16, cellH + 10);
+        gridArea = juce::Rectangle<int> (r.getX(), r.getY(), gridLabelW + cellW * 16, cellH * crate::drone::kStrings);
+    }
+
+    // Tone: the instrument, then its knobs (a short well: side by side, their names beside them). On a short
+    // window's Pattern and tone page, Fine tune comes here too.
+    if (showMore)
+    {
+        auto r = toneWell.reduced (14, 12);
+        r.removeFromTop (24 + 6);
+        if (! compact)
+        {
+            voiceLabel = r.removeFromTop (16);
+            r.removeFromTop (4);
+        }
+        const int small = juce::jlimit (26, 32, row);
+        auto line = r.removeFromTop (small);
+        const int w = (line.getWidth() - 4 * 4) / 5;
+        for (auto* b : voiceButtons)
+        {
+            b->setBounds (line.removeFromLeft (w));
+            line.removeFromLeft (4);
+        }
+        r.removeFromTop (8);
+        std::vector<vintage::Knob*> list;
+        for (auto* id : { "droneBright", "droneBody", "droneDetune", "droneSpace" })
+            list.push_back (knobFor (id));
+        if (compact)
+            list.push_back (knobFor ("droneFine"));
+        const bool flat = r.getHeight() < 96;
+        const int kw = r.getWidth() / (int) list.size();
+        for (size_t i = 0; i < list.size(); ++i)
+            if (auto* k = list[i])
+            {
+                k->sideways = flat;
+                k->nameSize = flat || narrow ? 11.0f : 13.0f;
+                k->setBounds (juce::Rectangle<int> (r.getX() + (int) i * kw, r.getY(), kw, flat ? juce::jmin (r.getHeight(), 48) : r.getHeight()).reduced (3, 0));
+                k->resized();
+            }
+    }
+
     // Resonate: what it does (under its title), its knob, what it rings to, how much it rings.
+    if (showMain)
     {
         auto r = resonateWell.reduced (14, 12);
         r.removeFromTop (titleTwoLines + 6);

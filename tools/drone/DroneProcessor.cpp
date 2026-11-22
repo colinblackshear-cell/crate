@@ -15,25 +15,6 @@ void set (juce::AudioProcessorValueTreeState& params, const char* id, float valu
         p->setValueNotifyingHost (p->convertTo0to1 (value));
 }
 
-struct Preset
-{
-    const char* name;
-    int first, octave, sync;
-    float pace, jawari, decay, width, reeds, strings;
-};
-
-const Preset presets[] = {
-    { "Classic (Pa)",        0,  0, 0, 1.10f, 0.60f, 0.50f, 0.70f, 0.00f, 1.0f },
-    { "Evening (Ma)",        1,  0, 0, 1.30f, 0.55f, 0.60f, 0.70f, 0.00f, 1.0f },
-    { "Yearning (Ni)",       2,  0, 0, 1.20f, 0.65f, 0.55f, 0.75f, 0.00f, 1.0f },
-    { "Deep and slow",       0, -1, 0, 2.20f, 0.70f, 0.90f, 0.85f, 0.15f, 1.0f },
-    { "Bright jawari",       0,  0, 0, 0.90f, 1.00f, 0.45f, 0.60f, 0.00f, 1.0f },
-    { "Plain strings",       0,  0, 0, 1.10f, 0.10f, 0.50f, 0.70f, 0.00f, 1.0f },
-    { "On the beat",         0,  0, 1, 1.00f, 0.60f, 0.40f, 0.70f, 0.00f, 1.0f },
-    { "Shruti box",          0,  0, 0, 1.10f, 0.50f, 0.50f, 0.60f, 1.00f, 0.0f },
-    { "Strings and reeds",   0,  0, 0, 1.40f, 0.60f, 0.65f, 0.80f, 0.45f, 1.0f },
-    { "High shimmer",        3,  1, 0, 0.70f, 0.85f, 0.50f, 0.90f, 0.00f, 1.0f },
-};
 }
 
 juce::StringArray DroneProcessor::feedNames()
@@ -49,16 +30,16 @@ juce::StringArray DroneProcessor::rootNames()
 juce::StringArray DroneProcessor::presetNames()
 {
     juce::StringArray names;
-    for (const auto& p : presets)
+    for (const auto& p : drone::presets())
         names.add (p.name);
     return names;
 }
 
 void DroneProcessor::loadPreset (int index)
 {
-    if (! juce::isPositiveAndBelow (index, (int) std::size (presets)))
+    if (! juce::isPositiveAndBelow (index, (int) drone::presets().size()))
         return;
-    const auto& p = presets[index];
+    const auto& p = drone::presets()[(size_t) index];
     // (The note, On, and what the strings ring to stay as they are: those belong to the song.)
     set (params, "droneFirst", (float) p.first);
     set (params, "droneOctave", (float) (p.octave + 1));
@@ -69,6 +50,64 @@ void DroneProcessor::loadPreset (int index)
     set (params, "droneWidth", p.width);
     set (params, "droneReeds", p.reeds);
     set (params, "droneStrings", p.strings);
+    set (params, "droneVoice", (float) p.voice);
+    set (params, "droneOrder", (float) p.order);
+    set (params, "droneHuman", p.human);
+    set (params, "droneBright", p.bright);
+    set (params, "droneBody", p.body);
+    set (params, "droneDetune", p.detune);
+    set (params, "droneSpace", p.space);
+    // (A ready-made drone plays its own order: your steps stay drawn, for when you pick them again.)
+    set (params, "droneStepCount", 0.0f);
+    set (params, "droneSwing", 0.0f);
+}
+
+void DroneProcessor::setStepCount (int choice)
+{
+    bool empty = true;
+    for (auto& v : steps)
+        empty = empty && v.load() == 0;
+    if (choice > 0 && empty)
+    {
+        const auto first = drone::starterSteps();
+        for (int i = 0; i < 16; ++i)
+            setStep (i, first[(size_t) i]);
+    }
+    if (auto* p = params.getParameter ("droneStepCount"))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (p->convertTo0to1 ((float) juce::jlimit (0, 2, choice)));
+        p->endChangeGesture();
+    }
+}
+
+int DroneProcessor::getStep (int step) const
+{
+    return juce::isPositiveAndBelow (step, 16) ? (int) steps[(size_t) step].load() : 0;
+}
+
+void DroneProcessor::setStep (int step, int mask)
+{
+    if (! juce::isPositiveAndBelow (step, 16))
+        return;
+    steps[(size_t) step].store ((std::uint8_t) (mask & 0x0f));
+    juce::String text;
+    for (auto& v : steps)
+        text << juce::String::toHexString ((int) v.load());
+    params.state.setProperty ("steps", text, nullptr);
+}
+
+void DroneProcessor::clearSteps()
+{
+    for (int i = 0; i < 16; ++i)
+        setStep (i, 0);
+}
+
+void DroneProcessor::stepsFromState()
+{
+    const auto text = params.state.getProperty ("steps", {}).toString();
+    for (int i = 0; i < 16; ++i)
+        steps[(size_t) i].store ((std::uint8_t) (i < text.length() ? juce::CharacterFunctions::getHexDigitValue (text[i]) & 0x0f : 0));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout DroneProcessor::createLayout()
@@ -96,6 +135,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout DroneProcessor::createLayout
     number ("droneResonate", "Resonate", { 0.0f, 1.0f }, 0.0f, percent);
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneFeed", 1 }, "Rings to", feedNames(), 0));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "droneFollow", 1 }, "Follow keys", false));
+    // The pattern and the tone (added with the more-patterns update: shows from before get these defaults).
+    StringArray orders, voices;
+    for (int i = 0; i < drone::numOrders; ++i)
+        orders.add (drone::orderName (i));
+    for (int i = 0; i < drone::numVoices; ++i)
+        voices.add (drone::voiceName (i));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneOrder", 1 }, "Order", orders, 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneStepCount", 1 }, "Steps", StringArray { "Off", "8 steps", "16 steps" }, 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneStepRate", 1 }, "Step length", StringArray { "1/4", "1/8", "1/16" }, 1));
+    number ("droneSwing", "Swing", { 0.0f, 1.0f }, 0.0f, percent);
+    number ("droneHuman", "Human", { 0.0f, 1.0f }, 0.0f, percent);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneVoice", 1 }, "Instrument", voices, 0));
+    number ("droneBright", "Bright", { 0.0f, 1.0f }, 0.5f, percent);
+    number ("droneBody", "Body", { 0.0f, 1.0f }, 0.5f, percent);
+    number ("droneDetune", "Detune", { 0.0f, 1.0f }, 0.0f, percent);
+    number ("droneSpace", "Space", { 0.0f, 1.0f }, 0.0f, percent);
     return layout;
 }
 
@@ -126,6 +181,20 @@ drone::Settings DroneProcessor::readSettings() const
     s.strings = get (params, "droneStrings");
     s.reeds = get (params, "droneReeds");
     s.resonate = get (params, "droneResonate");
+    s.order = juce::roundToInt (get (params, "droneOrder"));
+    const int count = juce::roundToInt (get (params, "droneStepCount"));
+    s.stepCount = count == 1 ? 8 : count == 2 ? 16 : 0;
+    const int rate = juce::roundToInt (get (params, "droneStepRate"));
+    s.stepBeats = rate == 0 ? 1.0f : rate == 2 ? 0.25f : 0.5f;
+    for (int i = 0; i < 16; ++i)
+        s.steps[(size_t) i] = steps[(size_t) i].load();
+    s.swing = get (params, "droneSwing");
+    s.human = get (params, "droneHuman");
+    s.voice = juce::roundToInt (get (params, "droneVoice"));
+    s.bright = get (params, "droneBright");
+    s.body = get (params, "droneBody");
+    s.detune = get (params, "droneDetune");
+    s.space = get (params, "droneSpace");
     return s;
 }
 
@@ -208,6 +277,9 @@ void DroneProcessor::setStateInformation (const void* data, int size)
     {
         const auto state = juce::ValueTree::fromXml (*xml);
         if (state.hasType (params.state.getType()))
+        {
             params.replaceState (state);
+            stepsFromState();
+        }
     }
 }

@@ -29,8 +29,16 @@ public:
     static juce::StringArray presetNames();
     void loadPreset (int index);
 
-    // How far under the other tools it sits, at its fader's 0 dB (6 dB down: it's a bed).
-    static constexpr float kBedGain = 0.5f;
+    static constexpr float kBedGain = crate::drone::kBedGain;
+
+    // Steps: what each of the 16 steps plucks (bits 0-3: the strings, 0 a rest). Saved with the drone's
+    // settings; read by the audio thread.
+    int getStep (int step) const;
+    void setStep (int step, int mask);
+    void clearSteps();
+    // Off (0), 8 steps (1) or 16 (2); turning them on with none drawn draws a first pattern to start from.
+    void setStepCount (int choice);
+    int getCurrentStep() const { return engine.currentStep.load(); }
 
     // Plucks a string from the screen (0-3).
     void pluck (int string) { engine.pluck (string); }
@@ -72,8 +80,11 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     crate::drone::Settings readSettings() const;
 
+    void stepsFromState();
+
     crate::drone::Engine engine;
     crate::SafetyLimiter limiter;
+    std::array<std::atomic<std::uint8_t>, 16> steps {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DroneProcessor)
 };
