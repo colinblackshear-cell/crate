@@ -42,7 +42,7 @@ if(CRATE_VOCODER_DIR)
 else()
     FetchContent_Declare(vocoder
         GIT_REPOSITORY https://github.com/colinblackshear-cell/vocoder.git
-        GIT_TAG 0d954c8ce935bc83f9af8364e17967f01af189ba
+        GIT_TAG 194d7b01f1f8484c64e090107227a75618211d4f
         SOURCE_SUBDIR not-a-folder)
     FetchContent_MakeAvailable(vocoder)
 endif()
