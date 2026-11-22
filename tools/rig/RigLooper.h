@@ -6,6 +6,7 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
 
 // The Rig's looper: sixteen layers of sound recorded live, in time with the Rig's clock.
 //
@@ -36,6 +37,14 @@ public:
     static constexpr double kMaxUndoSeconds = 600.0;
     static constexpr double kGrowAheadSeconds = 12.0;   // grows when less than this is left
     static constexpr double kGrowStepSeconds = 300.0;   // grows by at most this at a time
+    // Copying a playing loop (copyLayerAudio) is done by the audio thread, a slice each block:
+    // kCopySpeed samples for each sample of the block (between kCopyMinSlice and kCopyMaxSlice),
+    // in pages of kCopyPageSamples. A copy the loop's replacement interrupts is tried again, at
+    // most kCopyRounds times. With no block for kStallFloorMs (or four of the longest recent gaps
+    // between blocks, up to kStallCapMs) the audio is taken to have stopped.
+    static constexpr int kCopyPageShift = 10, kCopyPageSamples = 1 << kCopyPageShift;
+    static constexpr int kCopySpeed = 1024, kCopyMinSlice = 1 << 15, kCopyMaxSlice = 1 << 20, kCopyRounds = 3;
+    static constexpr juce::uint32 kStallFloorMs = 1000, kStallCapMs = 5000;
 
     enum class State { empty, armed, recording, playing, overdubbing };
     // line: the Input strip (a guitar, keytar... on your interface, through its effects). New
@@ -96,6 +105,24 @@ public:
         };
         BendAt bendNow, bendBefore;
         int bendFade = 0;   // samples left of the fade from bendBefore
+
+        // `length`, for a copier on another thread (set with it, under `lock`).
+        std::atomic<int> publishedLength { 0 };
+        // A copy of the loop being made by the audio thread (see copyLayerAudio). The copier
+        // fills in where it goes, then posts it (`state`); the audio thread takes it at the start
+        // of a block, and from then on only touches it under `lock`, until it says it's finished.
+        struct Snapshot
+        {
+            std::atomic<int> state { 0 };
+            // The copier's, until posted: its buffer (2 channels of `length`) and a flag a page.
+            float* dest[2] {};
+            juce::uint8* copied = nullptr;
+            int length = 0, pages = 0;
+            // Under `lock`, while the audio thread copies: the next page in order.
+            bool active = false;
+            int next = 0, credit = 0;   // credit: samples of copying owed, short of a page
+        };
+        Snapshot snap;
     };
 
     // Ways a playing loop can be bent, live: backwards, at half speed (an octave down, like a
@@ -161,8 +188,31 @@ public:
     // place in the bar, level and effects. False (and nothing changes) while it records or
     // overdubs, or if the length differs.
     bool replaceLayerAudio (int layer, juce::AudioBuffer<float> audio);
-    // Message thread: a copy of a layer's loop (empty if it has none).
+    // Message thread, or a plugin host's thread: a copy of a layer's loop exactly as it was at
+    // one moment (empty if it has none, or while it records), made while it keeps playing.
+    //
+    // The copy is the loop as it is at the start of the audio thread's next block for that
+    // layer (after that block's requests: a clear or an undo asked for before then is in it).
+    // The copier sets aside the room here; the audio thread fills it, a slice each block, and
+    // before an overdub writes over a page not yet copied, copies that page first. So nothing
+    // reads the loop's samples while the audio thread may write them, and the audio thread never
+    // allocates, frees or waits. If the loop is replaced (a new loop, a bank swap, a clear, an
+    // undo) before the copy is done, it starts again, up to kCopyRounds times, then copies under
+    // the lock. With no audio running (or the copier being the thread that runs it), it copies
+    // under the lock at once; if the audio stops partway, it finishes under the lock.
     juce::AudioBuffer<float> copyLayerAudio (int layer) const;
+    // How copies were made, for tests and benchmarks.
+    struct CopyStats
+    {
+        int byAudioThread = 0, pagesCopiedBeforeOverdub = 0, retries = 0, underLock = 0, finishedUnderLock = 0;
+    };
+    CopyStats getCopyStats() const;
+    // Tests only: called once while the audio thread copies (`underLock` false), and while a
+    // copy under the lock holds it (true); always copy under the lock (as before); and a slice
+    // size (samples a block) instead of kCopySpeed, to make a copy slow.
+    static inline std::function<void (int layer, bool underLock)> copyPauseForTests;
+    static inline std::atomic<bool> copyUnderLockForTests { false };
+    static inline std::atomic<int> copySliceForTests { 0 };
     // Message thread: the loop's loudness in `count` slices, for drawing it (also while it
     // records). Reads without locking: the audio thread only ever changes the samples.
     std::vector<float> readPeaks (int layer, int count) const;
@@ -239,6 +289,31 @@ public:
 
 private:
     void handleRequests (Layer&, int index, const Clock&, bool& wantsPlay);
+
+    // The copy (copyLayerAudio). Snapshot states:
+    enum SnapState { snapIdle, snapPosted, snapActive, snapDone, snapAborted, snapMismatch, snapNothing };
+    enum class Waited { done, finishedUnderLock, aborted, nothing, audioStopped };
+    // Audio thread, under the layer's lock: take a posted copy; copy the next slice; copy a page
+    // before an overdub writes over it.
+    void startSnapshot (Layer&);
+    void continueSnapshot (Layer&, int blockSize);
+    void copyBeforeWrite (Layer& layer, int sample)
+    {
+        if (layer.snap.active && layer.snap.copied[sample >> kCopyPageShift] == 0)
+            copyPage (layer, sample >> kCopyPageShift, 2);
+    }
+    // Copies a page of the loop into the copy, and marks it (1 in order, 2 before an overdub).
+    static void copyPage (Layer&, int page, juce::uint8 mark);
+    // Any thread, under the layer's lock: the loop is about to change, so a copy in progress is
+    // called off (the copier tries again).
+    static void abortSnapshot (Layer&);
+    Waited waitForSnapshot (Layer&, int index) const;
+    juce::AudioBuffer<float> copyUnderLock (Layer&, int index) const;
+    // Whether an audio thread (not this one) is running blocks, and how long a pause in them
+    // means it has stopped.
+    bool audioRunningElsewhere() const;
+    juce::uint32 stallLimitMs() const;
+
     void finishRecording (Layer&);
     void applySwap (Layer&, int index);   // under the layer's lock
     // Where a bend plays from (beats into the loop), given where straight would be.
@@ -258,6 +333,14 @@ private:
     std::array<int, kLayers> fxTail {};                        // samples left of an effect's tail
     std::array<Trim, kLayers> trims;
     std::array<int, kLayers> trimVersions {};   // the layer's version when its trim was set
+
+    // Copies are made one at a time (copyLayerAudio).
+    mutable juce::CriticalSection copyMutex;
+    // The audio thread's beat: blocks done, when the last ended, the longest recent gap between
+    // two (x256, fading), and which thread runs them.
+    std::atomic<juce::uint32> blocksDone { 0 }, lastBlockMs { 0 }, longestGap256 { 0 };
+    std::atomic<juce::Thread::ThreadID> audioThread { nullptr };
+    mutable std::atomic<int> statByAudio { 0 }, statBeforeOverdub { 0 }, statRetries { 0 }, statUnderLock { 0 }, statFinishedUnderLock { 0 };
 
     JUCE_DECLARE_NON_COPYABLE (RigLooper)
 };

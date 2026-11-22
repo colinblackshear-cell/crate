@@ -1,6 +1,7 @@
 #include "RigLooper.h"
 
 #include <algorithm>
+#include <cstring>
 
 namespace
 {
@@ -51,7 +52,10 @@ void RigLooper::prepare (double rate, int maxBlock)
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
         if (layer.audio.getNumSamples() < capacity && (State) layer.state.load() == State::empty)
+        {
+            abortSnapshot (layer);
             layer.audio.setSize (2, capacity);
+        }
     }
     undoAudio.setSize (2, capacity);
     undoLayer = -1;
@@ -69,8 +73,10 @@ void RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double
     }
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
+        abortSnapshot (layer);
         std::swap (layer.audio, audio);
         layer.length = layer.audio.getNumSamples();
+        layer.publishedLength.store (layer.length, std::memory_order_relaxed);
         layer.startBeat = 0;
         layer.stopBeat = -1;
         layer.lengthBeats = beats;
@@ -129,10 +135,12 @@ void RigLooper::applySwap (Layer& layer, int index)
         layer.ending = (int) Ending::kept;
         return;
     }
+    abortSnapshot (layer);
     if (layer.swapBeats > 0 && layer.swapAudio.getNumSamples() > 0)
     {
         std::swap (layer.audio, layer.swapAudio);
         layer.length = layer.audio.getNumSamples();
+        layer.publishedLength.store (layer.length, std::memory_order_relaxed);
         layer.lengthBeats = layer.swapBeats;
         layer.startBeat = juce::jmax (0.0, layer.swapBeat);
         layer.stopBeat = -1;
@@ -142,6 +150,7 @@ void RigLooper::applySwap (Layer& layer, int index)
     {
         layer.state = (int) State::empty;
         layer.length = 0;
+        layer.publishedLength.store (layer.length, std::memory_order_relaxed);
         layer.lengthBeats = 0;
         layer.position = 0;
     }
@@ -169,6 +178,7 @@ bool RigLooper::replaceLayerAudio (int index, juce::AudioBuffer<float> audio)
         const juce::SpinLock::ScopedLockType sl (layer.lock);
         if ((State) layer.state.load() != State::playing || layer.length <= 0 || audio.getNumSamples() != layer.length)
             return false;
+        abortSnapshot (layer);
         std::swap (layer.audio, audio);
         if (undoLayer == index)
             undoLayer = -1;
@@ -177,17 +187,219 @@ bool RigLooper::replaceLayerAudio (int index, juce::AudioBuffer<float> audio)
     return true;   // the old buffer is freed here, outside the lock
 }
 
-juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index) const
+// ---- Copying a playing loop ----------------------------------------------------------------
+//
+// Who owns what. The copier (copyLayerAudio, one at a time under copyMutex) allocates the
+// destination and the page flags, and frees them when it returns. It writes the snapshot's
+// fields only while `state` is idle, then publishes them with a release store of `posted`.
+// The audio thread takes a posted copy (acquire) at the start of a block, under the layer's
+// lock, and from then on reads the loop and writes the destination only under that lock, while
+// `active`. It stops being active (under the lock) when the copy is finished or the loop is about
+// to change, and only then stores the final state (release). The copier reads the destination
+// only after seeing a final state (acquire), or under the lock after making it inactive itself;
+// either way the audio thread will never touch it again. The loop's samples are never read
+// outside the layer's lock.
+
+void RigLooper::abortSnapshot (Layer& layer)
 {
-    auto& layer = const_cast<Layer&> (layers[(size_t) index]);
+    if (layer.snap.active)
+    {
+        layer.snap.active = false;
+        layer.snap.state.store (snapAborted, std::memory_order_release);
+    }
+}
+
+void RigLooper::startSnapshot (Layer& layer)
+{
+    auto& s = layer.snap;
+    const auto st = (State) layer.state.load (std::memory_order_relaxed);
+    if (layer.length <= 0 || (st != State::playing && st != State::overdubbing))
+        s.state.store (snapNothing, std::memory_order_release);
+    else if (layer.length != s.length || layer.audio.getNumChannels() < 2 || layer.audio.getNumSamples() < layer.length
+             || s.pages != (layer.length + kCopyPageSamples - 1) / kCopyPageSamples)
+        s.state.store (snapMismatch, std::memory_order_release);   // it changed since the copier looked
+    else
+    {
+        s.active = true;
+        s.next = s.credit = 0;
+        s.state.store (snapActive, std::memory_order_relaxed);
+    }
+}
+
+void RigLooper::copyPage (Layer& layer, int page, juce::uint8 mark)
+{
+    auto& s = layer.snap;
+    const int from = page << kCopyPageShift;
+    const int count = juce::jmin (kCopyPageSamples, s.length - from);
+    for (int ch = 0; ch < 2; ++ch)
+        std::memcpy (s.dest[ch] + from, layer.audio.getReadPointer (ch) + from, sizeof (float) * (size_t) count);
+    s.copied[page] = mark;
+}
+
+void RigLooper::continueSnapshot (Layer& layer, int blockSize)
+{
+    auto& s = layer.snap;
+    const int forTests = copySliceForTests.load (std::memory_order_relaxed);
+    const int slice = forTests > 0 ? forTests : juce::jlimit (kCopyMinSlice, kCopyMaxSlice, blockSize * kCopySpeed);
+    // Each page looked at counts, copied or not, so the work a block is bounded. (A slice
+    // under a page, for tests only, adds up over blocks.)
+    s.credit += slice;
+    int budget = s.credit / kCopyPageSamples;
+    s.credit -= budget * kCopyPageSamples;
+    while (s.next < s.pages && budget > 0)
+    {
+        if (s.copied[s.next] == 0)
+            copyPage (layer, s.next, 1);
+        ++s.next;
+        --budget;
+    }
+    if (s.next >= s.pages)
+    {
+        s.active = false;
+        s.state.store (snapDone, std::memory_order_release);
+    }
+}
+
+bool RigLooper::audioRunningElsewhere() const
+{
+    const auto last = lastBlockMs.load (std::memory_order_relaxed);
+    if (last == 0 || audioThread.load (std::memory_order_relaxed) == juce::Thread::getCurrentThreadId())
+        return false;
+    return juce::Time::getMillisecondCounter() - last < stallLimitMs();
+}
+
+juce::uint32 RigLooper::stallLimitMs() const
+{
+    return juce::jlimit (kStallFloorMs, kStallCapMs, 4 * longestGap256.load (std::memory_order_relaxed) / 256);
+}
+
+RigLooper::Waited RigLooper::waitForSnapshot (Layer& layer, int index) const
+{
+    auto& s = layer.snap;
+    bool paused = false;
+    auto seen = blocksDone.load (std::memory_order_acquire);
+    auto seenAt = juce::Time::getMillisecondCounter();
+    for (;;)
+    {
+        const int st = s.state.load (std::memory_order_acquire);
+        if (st == snapDone || st == snapAborted || st == snapMismatch || st == snapNothing)
+        {
+            s.state.store (snapIdle, std::memory_order_relaxed);
+            return st == snapDone ? Waited::done : st == snapNothing ? Waited::nothing : Waited::aborted;
+        }
+        if (st == snapActive && ! paused && copyPauseForTests)
+        {
+            paused = true;
+            copyPauseForTests (index, false);
+            continue;
+        }
+        const auto blocks = blocksDone.load (std::memory_order_acquire);
+        const auto now = juce::Time::getMillisecondCounter();
+        if (blocks != seen)
+        {
+            seen = blocks;
+            seenAt = now;
+        }
+        else if (now - seenAt >= stallLimitMs())
+        {
+            // The audio has stopped. Under the lock, the audio thread can't be in the middle of it.
+            const juce::SpinLock::ScopedLockType sl (layer.lock);
+            const int again = s.state.load (std::memory_order_acquire);
+            if (again == snapPosted)
+            {
+                s.state.store (snapIdle, std::memory_order_relaxed);
+                return Waited::audioStopped;   // never started: copy it all under the lock
+            }
+            if (again == snapActive && s.active)
+            {
+                // Finish the pages left, from the loop as it is: nothing has written it since it
+                // was started without first keeping its page (the lock is held).
+                for (int page = 0; page < s.pages; ++page)
+                    if (s.copied[page] == 0)
+                        copyPage (layer, page, 1);
+                s.active = false;
+                s.state.store (snapIdle, std::memory_order_relaxed);
+                return Waited::finishedUnderLock;
+            }
+            continue;   // it finished just now
+        }
+        juce::Thread::sleep (1);
+    }
+}
+
+juce::AudioBuffer<float> RigLooper::copyUnderLock (Layer& layer, int index) const
+{
     const juce::SpinLock::ScopedLockType sl (layer.lock);
+    statUnderLock.fetch_add (1, std::memory_order_relaxed);
+    if (copyPauseForTests)
+        copyPauseForTests (index, true);
     const auto state = (State) layer.state.load();
     if (layer.length <= 0 || (state != State::playing && state != State::overdubbing))
         return {};
     juce::AudioBuffer<float> copy (2, layer.length);
     for (int ch = 0; ch < 2; ++ch)
-        copy.copyFrom (ch, 0, layer.audio, ch, 0, layer.length);
+        copy.copyFrom (ch, 0, layer.audio, juce::jmin (ch, layer.audio.getNumChannels() - 1), 0, layer.length);
     return copy;
+}
+
+juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index) const
+{
+    auto& layer = const_cast<Layer&> (layers[(size_t) index]);
+    if (const auto st = (State) layer.state.load(); st != State::playing && st != State::overdubbing)
+        return {};
+    const juce::ScopedLock cl (copyMutex);
+    if (copyUnderLockForTests.load() || ! audioRunningElsewhere())
+        return copyUnderLock (layer, index);
+
+    auto& s = layer.snap;
+    for (int round = 0; round < kCopyRounds; ++round)
+    {
+        const int length = layer.publishedLength.load (std::memory_order_relaxed);
+        if (length <= 0)
+            return {};
+        const int pages = (length + kCopyPageSamples - 1) / kCopyPageSamples;
+        juce::AudioBuffer<float> out (2, length);
+        // Written here first, so its memory is really there (the system hands out a big
+        // allocation a page at a time, as it's first touched): the audio thread then only copies.
+        out.clear();
+        std::vector<juce::uint8> copied ((size_t) pages, 0);
+        // The state is idle: the audio thread doesn't look at these until it's posted.
+        s.dest[0] = out.getWritePointer (0);
+        s.dest[1] = out.getWritePointer (1);
+        s.copied = copied.data();
+        s.length = length;
+        s.pages = pages;
+        s.state.store (snapPosted, std::memory_order_release);
+
+        const auto waited = waitForSnapshot (layer, index);
+        s.dest[0] = s.dest[1] = nullptr;
+        s.copied = nullptr;
+        switch (waited)
+        {
+            case Waited::done:
+                statByAudio.fetch_add (1, std::memory_order_relaxed);
+                statBeforeOverdub.fetch_add ((int) std::count (copied.begin(), copied.end(), (juce::uint8) 2),
+                                             std::memory_order_relaxed);
+                return out;
+            case Waited::finishedUnderLock:
+                statFinishedUnderLock.fetch_add (1, std::memory_order_relaxed);
+                return out;
+            case Waited::nothing:
+                return {};
+            case Waited::audioStopped:
+                return copyUnderLock (layer, index);
+            case Waited::aborted:
+                statRetries.fetch_add (1, std::memory_order_relaxed);
+                break;
+        }
+    }
+    // Replaced every time: it can't be pinned down without holding it still.
+    return copyUnderLock (layer, index);
+}
+
+RigLooper::CopyStats RigLooper::getCopyStats() const
+{
+    return { statByAudio.load(), statBeforeOverdub.load(), statRetries.load(), statUnderLock.load(), statFinishedUnderLock.load() };
 }
 
 std::vector<float> RigLooper::readPeaks (int index, int count) const
@@ -218,11 +430,13 @@ void RigLooper::reset (int index)
     auto& layer = layers[(size_t) index];
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
+        abortSnapshot (layer);
         layer.presses = 0;
         layer.clears = 0;
         layer.undos = 0;
         layer.state = (int) State::empty;
         layer.length = 0;
+        layer.publishedLength.store (layer.length, std::memory_order_relaxed);
         layer.lengthBeats = 0;
         layer.position = 0;
         layer.bend = straight;
@@ -244,7 +458,10 @@ void RigLooper::makeRoom (int index)
     room.clear();
     const juce::SpinLock::ScopedLockType sl (layer.lock);
     if ((State) layer.state.load() == State::empty)
+    {
+        abortSnapshot (layer);
         std::swap (layer.audio, room);
+    }
 }
 
 bool RigLooper::openTrim (int index)
@@ -416,6 +633,7 @@ void RigLooper::maintain()
             if (now > done)
                 for (int ch = 0; ch < 2; ++ch)
                     room.copyFrom (ch, done, layer.audio, ch, done, now - done);
+            abortSnapshot (layer);
             std::swap (layer.audio, room);
         }
         // The old buffer goes here, outside the lock.
@@ -434,7 +652,9 @@ void RigLooper::maintain()
 
 void RigLooper::finishRecording (Layer& layer)
 {
+    abortSnapshot (layer);   // (none can be running while it records; for certain)
     layer.length = juce::jmax (1, layer.writeIndex);
+    layer.publishedLength.store (layer.length, std::memory_order_relaxed);
     layer.lengthBeats = layer.stopBeat - layer.startBeat;
     // A live source came in late by the round trip: what was sung on the beat is that far in.
     if (const int delay = isLiveSource (layer.source.load()) ? liveDelay.load() : 0; delay > 0 && delay < layer.length / 4)
@@ -459,11 +679,13 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
 
     if (layer.clears.exchange (0) > 0)
     {
+        abortSnapshot (layer);
         layer.bend = straight;   // a new loop here starts straight
         layer.bendNow = layer.bendBefore = {};
         layer.bendFade = 0;
         layer.state = (int) State::empty;
         layer.length = 0;
+        layer.publishedLength.store (layer.length, std::memory_order_relaxed);
         layer.lengthBeats = 0;
         layer.position = 0;
         if (undoLayer == index)
@@ -477,6 +699,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
         const auto state = (State) layer.state.load();
         if (ul.isLocked() && (state == State::playing || state == State::overdubbing) && undoLength == layer.length)
         {
+            abortSnapshot (layer);
             for (int ch = 0; ch < 2; ++ch)
                 layer.audio.copyFrom (ch, 0, undoAudio, ch, 0, undoLength);
             layer.state = (int) State::playing;
@@ -633,6 +856,9 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         }
 
         handleRequests (layer, index, clock, wantsPlay);
+        // The moment a copy asked for is of: here, after this block's requests.
+        if (layer.snap.state.load (std::memory_order_acquire) == snapPosted)
+            startSnapshot (layer);
 
         const auto* src = sources[(size_t) juce::jlimit (0, numSources - 1, layer.source.load())];
         const float* srcL = src != nullptr ? src->getReadPointer (0) : nullptr;
@@ -794,6 +1020,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 if (state == State::overdubbing)
                 {
                     const int w = (i0 - dubDelay + layer.length) % layer.length;
+                    copyBeforeWrite (layer, w);   // a copy being made keeps what was here
                     if (srcL != nullptr)
                         audioL[w] += srcL[i];
                     if (srcR != nullptr)
@@ -804,6 +1031,8 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         }
 
         layer.recorded = layer.writeIndex;
+        if (layer.snap.active)
+            continueSnapshot (layer, n);
 
         // What the window shows.
         const auto state = (State) layer.state.load();
@@ -824,5 +1053,17 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             ++layer.version;
         finishLayer();
     }
+
+    // The beat a copier listens for: blocks done, and the longest recent gap between them.
+    const auto now = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
+    if (const auto last = lastBlockMs.load (std::memory_order_relaxed); last != 0)
+    {
+        const auto gap = juce::jmin ((juce::uint32) 2000, now - last);
+        const auto fading = longestGap256.load (std::memory_order_relaxed);
+        longestGap256.store (juce::jmax (gap * 256, fading - fading / 256), std::memory_order_relaxed);
+    }
+    lastBlockMs.store (now, std::memory_order_relaxed);
+    audioThread.store (juce::Thread::getCurrentThreadId(), std::memory_order_relaxed);
+    blocksDone.fetch_add (1, std::memory_order_release);
     return wantsPlay;
 }

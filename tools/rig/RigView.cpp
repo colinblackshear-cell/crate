@@ -3693,7 +3693,7 @@ bool RigView::writeShowTo (const juce::File& file)
     currentShow = file;
     int loops = 0;
     for (int i = 0; i < RigLooper::kLayers; ++i)
-        if (engine.getLooper().copyLayerAudio (i).getNumSamples() > 0)
+        if (const auto st = engine.getLooper().getState (i); st == RigLooper::State::playing || st == RigLooper::State::overdubbing)
             ++loops;
     say ("Saved " + file.getFileNameWithoutExtension() + ": the show" + (loops > 0 ? " and " + juce::String (loops) + (loops == 1 ? " loop" : " loops") : juce::String())
          + ", in " + file.getParentDirectory().getFullPathName() + ". Cmd+S saves it again."
