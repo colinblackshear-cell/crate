@@ -33,6 +33,7 @@ Tool openToolFor (int layerTool, bool& has)
         case LayerTool::synth: return Tool::synth;
         case LayerTool::chords: return Tool::chords;
         case LayerTool::vocoder: return Tool::vocoder;
+        case LayerTool::drone: return Tool::drone;
         default: has = false; return Tool::loops;
     }
 }

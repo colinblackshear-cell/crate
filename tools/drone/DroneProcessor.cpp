@@ -15,25 +15,6 @@ void set (juce::AudioProcessorValueTreeState& params, const char* id, float valu
         p->setValueNotifyingHost (p->convertTo0to1 (value));
 }
 
-struct Preset
-{
-    const char* name;
-    int first, octave, sync;
-    float pace, jawari, decay, width, reeds, strings;
-};
-
-const Preset presets[] = {
-    { "Classic (Pa)",        0,  0, 0, 1.10f, 0.60f, 0.50f, 0.70f, 0.00f, 1.0f },
-    { "Evening (Ma)",        1,  0, 0, 1.30f, 0.55f, 0.60f, 0.70f, 0.00f, 1.0f },
-    { "Yearning (Ni)",       2,  0, 0, 1.20f, 0.65f, 0.55f, 0.75f, 0.00f, 1.0f },
-    { "Deep and slow",       0, -1, 0, 2.20f, 0.70f, 0.90f, 0.85f, 0.15f, 1.0f },
-    { "Bright jawari",       0,  0, 0, 0.90f, 1.00f, 0.45f, 0.60f, 0.00f, 1.0f },
-    { "Plain strings",       0,  0, 0, 1.10f, 0.10f, 0.50f, 0.70f, 0.00f, 1.0f },
-    { "On the beat",         0,  0, 1, 1.00f, 0.60f, 0.40f, 0.70f, 0.00f, 1.0f },
-    { "Shruti box",          0,  0, 0, 1.10f, 0.50f, 0.50f, 0.60f, 1.00f, 0.0f },
-    { "Strings and reeds",   0,  0, 0, 1.40f, 0.60f, 0.65f, 0.80f, 0.45f, 1.0f },
-    { "High shimmer",        3,  1, 0, 0.70f, 0.85f, 0.50f, 0.90f, 0.00f, 1.0f },
-};
 }
 
 juce::StringArray DroneProcessor::feedNames()
@@ -49,16 +30,16 @@ juce::StringArray DroneProcessor::rootNames()
 juce::StringArray DroneProcessor::presetNames()
 {
     juce::StringArray names;
-    for (const auto& p : presets)
+    for (const auto& p : drone::presets())
         names.add (p.name);
     return names;
 }
 
 void DroneProcessor::loadPreset (int index)
 {
-    if (! juce::isPositiveAndBelow (index, (int) std::size (presets)))
+    if (! juce::isPositiveAndBelow (index, (int) drone::presets().size()))
         return;
-    const auto& p = presets[index];
+    const auto& p = drone::presets()[(size_t) index];
     // (The note, On, and what the strings ring to stay as they are: those belong to the song.)
     set (params, "droneFirst", (float) p.first);
     set (params, "droneOctave", (float) (p.octave + 1));

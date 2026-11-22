@@ -18,6 +18,7 @@ int pocket::toolForSource (int source)
         case LoopSource::mix: return (int) LayerTool::mix;
         case LoopSource::synth: return (int) LayerTool::synth;
         case LoopSource::chords: return (int) LayerTool::chords;
+        case LoopSource::drone: return (int) LayerTool::drone;
         case LoopSource::loops:
         case LoopSource::master:
         case LoopSource::layerTap: return (int) LayerTool::mix;
@@ -369,7 +370,7 @@ void LoopsEngine::prepare (double rate)
     sampleRate = rate;
     for (auto& v : layerOut)
         v.assign ((size_t) kChunk, 0.0f);
-    for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &srcBoth, &vocL, &vocR, &clickBuf, &busDelay, &busReverb, &busL, &busR })
+    for (auto* v : { &srcMic, &srcDrums, &srcVoc, &srcMix, &srcBoth, &srcDrone, &vocL, &vocR, &clickBuf, &busDelay, &busReverb, &busL, &busR })
         v->assign ((size_t) kChunk, 0.0f);
     for (auto& v : srcInst)
         v.assign ((size_t) kChunk, 0.0f);
@@ -393,6 +394,8 @@ void LoopsEngine::prepare (double rate)
     for (auto* i : instruments)
         if (i != nullptr)
             i->prepare (rate);
+    if (drone != nullptr)
+        drone->prepare (rate);
 }
 
 void LoopsEngine::setState (Layer& l, LoopState s)
@@ -700,6 +703,35 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     for (int i = 0; i < n; ++i)
         srcBoth[(size_t) i] = srcMic[(size_t) i] + srcVoc[(size_t) i];
 
+    // DRONE: heard, its own source, its strings ringing to your voice (the mic as you hear it, only while the
+    // mic is on), the vocoder, the drums or an instrument
+    std::fill (srcDrone.begin(), srcDrone.begin() + n, 0.0f);
+    if (drone != nullptr)
+    {
+        const float* feed = nullptr;
+        switch (drone->feedSource())
+        {
+            case 0: feed = mic ? srcMic.data() : nullptr; break;
+            case 1: feed = srcVoc.data(); break;
+            case 2: feed = srcDrums.data(); break;
+            case 3: feed = srcInst[0].data(); break;
+            case 4: feed = srcInst[1].data(); break;
+            default: break;
+        }
+        std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
+        std::fill (vocR.begin(), vocR.begin() + n, 0.0f);
+        drone->setFeed (feed);
+        drone->render (vocL.data(), vocR.data(), n);
+        drone->setFeed (nullptr);
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += vocL[(size_t) i];
+            if (right != nullptr)
+                right[i] += vocR[(size_t) i];
+            srcDrone[(size_t) i] = 0.5f * (vocL[(size_t) i] + vocR[(size_t) i]);
+        }
+    }
+
     // play the layers, through their effects; the delay and reverb they send to
     for (int l = 0; l < kLoopLayers; ++l)
         playLayer (layers[(size_t) l], l, blockBeat, bps, n);
@@ -766,6 +798,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         float m = srcDrums[(size_t) i] + (vocoderHeard ? srcVoc[(size_t) i] : 0.0f) + 0.5f * (busL[(size_t) i] + busR[(size_t) i]);
         for (auto& inst : srcInst)
             m += inst[(size_t) i];
+        m += srcDrone[(size_t) i];
         if (allWet)
             m += 0.5f * (allL[(size_t) i] + allR[(size_t) i]);
         else
@@ -943,6 +976,7 @@ void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps
         case LoopSource::both: src = srcBoth.data(); break;
         case LoopSource::synth: src = srcInst[0].data(); break;
         case LoopSource::chords: src = srcInst[1].data(); break;
+        case LoopSource::drone: src = srcDrone.data(); break;
         case LoopSource::loops: src = srcLoops.data(); break;
         case LoopSource::master: src = srcMaster.data(); break;
         case LoopSource::layerTap: src = layerOut[(size_t) l.tap].data(); break;

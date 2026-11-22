@@ -21,6 +21,7 @@ int PocketApp::boardForTool (Tool t) const
             return l >= 0 ? layerBoardId (l) : -1;
         }
         case Tool::effects: return effects != nullptr ? effects->source() : -1;
+        case Tool::drone: return -1;   // (no board of its own yet: EFFECTS opens on its picker)
         default: return -1;
     }
 }

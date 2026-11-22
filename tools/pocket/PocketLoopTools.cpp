@@ -17,6 +17,7 @@ const char* layerToolName (int tool)
         case LayerTool::chords: return "CHORDS";
         case LayerTool::vocoder: return "VOCODER";
         case LayerTool::mix: return "MIX";
+        case LayerTool::drone: return "DRONE";
         default: return "MIC";
     }
 }
@@ -31,6 +32,7 @@ juce::Colour layerToolColour (int tool)
         case LayerTool::chords: return toolColour (Tool::chords);
         case LayerTool::vocoder: return toolColour (Tool::vocoder);
         case LayerTool::mix: return juce::Colour (0xffcdbfa5);
+        case LayerTool::drone: return toolColour (Tool::drone);
         default: return juce::Colour (0xffe8a24a);   // your voice: warm, apart from the vocoder's green
     }
 }
@@ -44,6 +46,7 @@ void drawLayerToolIcon (juce::Graphics& g, int tool, juce::Point<float> c, juce:
         case LayerTool::synth: drawToolIcon (g, Tool::synth, c, ink); break;
         case LayerTool::chords: drawToolIcon (g, Tool::chords, c, ink); break;
         case LayerTool::mix: drawToolIcon (g, Tool::loops, c, ink); break;
+        case LayerTool::drone: drawToolIcon (g, Tool::drone, c, ink); break;
         default: drawToolIcon (g, Tool::vocoder, c, ink); break;   // a mic, for the voice and the vocoder
     }
 }

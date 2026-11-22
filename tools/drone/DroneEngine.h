@@ -52,6 +52,36 @@ struct Clock
     double ppq = 0, bpm = 120, beatsPerBar = 4;
 };
 
+// The ready-made drones, the same on the Mac and the phone. (The note, On, and what the strings
+// ring to aren't in them: those belong to the song.)
+struct Preset
+{
+    const char* name;
+    int first, octave, sync;
+    float pace, jawari, decay, width, reeds, strings;
+};
+
+inline const std::array<Preset, 10>& presets()
+{
+    static const std::array<Preset, 10> list { {
+        { "Classic (Pa)",        0,  0, 0, 1.10f, 0.60f, 0.50f, 0.70f, 0.00f, 1.0f },
+        { "Evening (Ma)",        1,  0, 0, 1.30f, 0.55f, 0.60f, 0.70f, 0.00f, 1.0f },
+        { "Yearning (Ni)",       2,  0, 0, 1.20f, 0.65f, 0.55f, 0.75f, 0.00f, 1.0f },
+        { "Deep and slow",       0, -1, 0, 2.20f, 0.70f, 0.90f, 0.85f, 0.15f, 1.0f },
+        { "Bright jawari",       0,  0, 0, 0.90f, 1.00f, 0.45f, 0.60f, 0.00f, 1.0f },
+        { "Plain strings",       0,  0, 0, 1.10f, 0.10f, 0.50f, 0.70f, 0.00f, 1.0f },
+        { "On the beat",         0,  0, 1, 1.00f, 0.60f, 0.40f, 0.70f, 0.00f, 1.0f },
+        { "Shruti box",          0,  0, 0, 1.10f, 0.50f, 0.50f, 0.60f, 1.00f, 0.0f },
+        { "Strings and reeds",   0,  0, 0, 1.40f, 0.60f, 0.65f, 0.80f, 0.45f, 1.0f },
+        { "High shimmer",        3,  1, 0, 0.70f, 0.85f, 0.50f, 0.90f, 0.00f, 1.0f },
+    } };
+    return list;
+}
+
+// How far under the other tools it sits, at its fader's 0 dB (6 dB down: a drone is a bed under
+// the song). The Mac and the phone both use it.
+constexpr float kBedGain = 0.5f;
+
 inline const char* firstName (int first)
 {
     static const char* names[] = { "Pa", "Ma", "Ni", "Sa" };

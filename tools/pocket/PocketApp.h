@@ -25,6 +25,7 @@
 #include "SamplerScreen.h"
 #include "SynthScreen.h"
 #include "ChordsScreen.h"
+#include "DroneScreen.h"
 #include "ChordEditSheet.h"
 #include "PocketKey.h"
 #include "PocketIntro.h"
@@ -188,6 +189,7 @@ private:
     void recVocoder();
     void recSynth();
     void recChords();
+    void recDrone();
     // SAMPLER (PocketAppSampler.cpp): the pads that play a sound after it was trimmed or the trim undone (`shift`: how far
     // their parts move), and the 4 x 4 pad picker.
     void repadSound (const juce::String& oldId, const juce::String& newId, int shift);
@@ -224,7 +226,7 @@ private:
     // the pattern is cleared (UNDO brings it back with the layer off), so the synth is free for a new part.
     // chords: a CHORDS take (the looper records the chords source); once its layer plays, the progression's sound
     // is muted (it still drives the vocoder) and a held chord lets go, so nothing plays twice.
-    enum class LockKind { none, pads, drums, drumsLive, synthLive, synthPattern, chords };
+    enum class LockKind { none, pads, drums, drumsLive, synthLive, synthPattern, chords, drone };
     LockKind lockKind = LockKind::none;
     bool playingIn() const
     {
@@ -308,6 +310,8 @@ private:
     pocket::SynthPart synthPart;   // the SYNTH tool's sound and pattern, also inside the renderer
     SynthScreen synthScreen;
     ChordsScreen chordsScreen;
+    pocket::DroneTool droneTool;   // the DRONE tool, inside the renderer
+    DroneScreen droneScreen;
     std::unique_ptr<EffectsScreen> effects;
     PocketAudio audio;
     EffectsSheet sheet;

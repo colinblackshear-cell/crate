@@ -29,8 +29,7 @@ public:
     static juce::StringArray presetNames();
     void loadPreset (int index);
 
-    // How far under the other tools it sits, at its fader's 0 dB (6 dB down: it's a bed).
-    static constexpr float kBedGain = 0.5f;
+    static constexpr float kBedGain = crate::drone::kBedGain;
 
     // Plucks a string from the screen (0-3).
     void pluck (int string) { engine.pluck (string); }

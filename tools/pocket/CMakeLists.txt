@@ -72,6 +72,8 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketChords.cpp
     ChordsScreen.cpp
     ChordEditSheet.cpp
+    PocketDrone.cpp
+    DroneScreen.cpp
     VocoderScreen.cpp
     PocketLinkClient.cpp
     LinkScreens.cpp
