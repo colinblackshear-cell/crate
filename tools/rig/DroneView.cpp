@@ -417,12 +417,12 @@ void DroneView::pressStep (int step, int string)
     auto& d = engine.getDrone();
     if (choice ("droneStepCount") == 0)
     {
-        // Drawing a step turns the steps on (as many as reach it).
-        d.setStepCount (step < 8 ? 1 : 2);
+        // Drawing a step turns the steps on (as many as reach it), with just what you draw.
+        setChoice ("droneStepCount", step < 8 ? 1 : 2);
         say ("Steps on: the strings pluck on the squares you light.");
     }
     else if (step >= 8 && choice ("droneStepCount") == 1)
-        d.setStepCount (2);
+        setChoice ("droneStepCount", 2);
     d.setStep (step, d.getStep (step) ^ (1 << string));
     update();
     repaint (patternWell);

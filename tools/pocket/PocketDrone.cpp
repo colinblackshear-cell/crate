@@ -65,6 +65,47 @@ void DroneTool::loadPreset (int index)
     width = p.width;
     reeds = p.reeds;
     strings = p.strings;
+    voice = p.voice;
+    order = p.order;
+    human = p.human;
+    bright = p.bright;
+    body = p.body;
+    detune = p.detune;
+    space = p.space;
+    // (a ready-made drone plays its own order: your steps stay drawn, for when you pick them again)
+    stepCount = 0;
+    swing = 0.0f;
+}
+
+void DroneTool::setStepCount (int choice)
+{
+    bool empty = true;
+    for (auto& v : steps)
+        empty = empty && v.load() == 0;
+    if (choice > 0 && empty)
+    {
+        const auto first = crate::drone::starterSteps();
+        for (size_t i = 0; i < steps.size(); ++i)
+            steps[i] = first[i];
+    }
+    stepCount = juce::jlimit (0, 2, choice);
+}
+
+void DroneTool::toggleStep (int step, int string)
+{
+    if (! juce::isPositiveAndBelow (step, 16) || ! juce::isPositiveAndBelow (string, crate::drone::kStrings))
+        return;
+    if (stepCount.load() == 0)
+        stepCount = step < 8 ? 1 : 2;   // (drawing turns them on, as you draw them: no first pattern)
+    else if (step >= 8 && stepCount.load() == 1)
+        stepCount = 2;
+    steps[(size_t) step] = (std::uint8_t) (steps[(size_t) step].load() ^ (1 << string));
+}
+
+void DroneTool::clearSteps()
+{
+    for (auto& v : steps)
+        v = 0;
 }
 
 int DroneTool::presetIndex() const
@@ -75,7 +116,9 @@ int DroneTool::presetIndex() const
     {
         const auto& p = list[i];
         if (p.first == first.load() && p.octave == octave.load() && p.sync == sync.load() && near (p.pace, pace.load()) && near (p.jawari, jawari.load())
-            && near (p.decay, ring.load()) && near (p.width, width.load()) && near (p.reeds, reeds.load()) && near (p.strings, strings.load()))
+            && near (p.decay, ring.load()) && near (p.width, width.load()) && near (p.reeds, reeds.load()) && near (p.strings, strings.load())
+            && p.voice == voice.load() && p.order == order.load() && stepCount.load() == 0 && near (p.human, human.load()) && near (p.bright, bright.load())
+            && near (p.body, body.load()) && near (p.detune, detune.load()) && near (p.space, space.load()))
             return (int) i;
     }
     return -1;
@@ -103,6 +146,8 @@ void DroneTool::reset()
     feed = (int) DroneFeed::voice;
     level = 0.8f;
     followKey = true;
+    stepRate = 1;
+    clearSteps();
 }
 
 juce::var DroneTool::toVar() const
@@ -124,6 +169,20 @@ juce::var DroneTool::toVar() const
     o->setProperty ("resonate", resonate.load());
     o->setProperty ("feed", feed.load());
     o->setProperty ("level", level.load());
+    o->setProperty ("order", order.load());
+    o->setProperty ("stepCount", stepCount.load());
+    o->setProperty ("stepRate", stepRate.load());
+    juce::String text;
+    for (auto& v : steps)
+        text << juce::String::toHexString ((int) v.load());
+    o->setProperty ("steps", text);
+    o->setProperty ("swing", swing.load());
+    o->setProperty ("human", human.load());
+    o->setProperty ("voice", voice.load());
+    o->setProperty ("bright", bright.load());
+    o->setProperty ("body", body.load());
+    o->setProperty ("detune", detune.load());
+    o->setProperty ("space", space.load());
     return juce::var (o);
 }
 
@@ -151,6 +210,20 @@ void DroneTool::fromVar (const juce::var& v, int songRoot)
     resonate = num ("resonate", 0.0f, 0.0f, 1.0f);
     feed = whole ("feed", 0, 0, (int) DroneFeed::count - 1);
     level = num ("level", 0.8f, 0.0f, 1.0f);
+    // (songs from before the pattern and tone: their defaults, which are how it sounded)
+    order = whole ("order", 0, 0, crate::drone::numOrders - 1);
+    stepCount = whole ("stepCount", 0, 0, 2);
+    stepRate = whole ("stepRate", 1, 0, 2);
+    const auto text = v.getProperty ("steps", {}).toString();
+    for (int i = 0; i < 16; ++i)
+        steps[(size_t) i] = (std::uint8_t) (i < text.length() ? juce::CharacterFunctions::getHexDigitValue (text[i]) & 0x0f : 0);
+    swing = num ("swing", 0.0f, 0.0f, 1.0f);
+    human = num ("human", 0.0f, 0.0f, 1.0f);
+    voice = whole ("voice", 0, 0, crate::drone::numVoices - 1);
+    bright = num ("bright", 0.5f, 0.0f, 1.0f);
+    body = num ("body", 0.5f, 0.0f, 1.0f);
+    detune = num ("detune", 0.0f, 0.0f, 1.0f);
+    space = num ("space", 0.0f, 0.0f, 1.0f);
 }
 
 crate::drone::Settings DroneTool::read() const
@@ -169,6 +242,19 @@ crate::drone::Settings DroneTool::read() const
     s.strings = strings.load();
     s.reeds = reeds.load();
     s.resonate = resonate.load();
+    s.order = order.load();
+    const int count = stepCount.load(), rateChoice = stepRate.load();
+    s.stepCount = count == 1 ? 8 : count == 2 ? 16 : 0;
+    s.stepBeats = rateChoice == 0 ? 1.0f : rateChoice == 2 ? 0.25f : 0.5f;
+    for (size_t i = 0; i < steps.size(); ++i)
+        s.steps[i] = steps[i].load();
+    s.swing = swing.load();
+    s.human = human.load();
+    s.voice = voice.load();
+    s.bright = bright.load();
+    s.body = body.load();
+    s.detune = detune.load();
+    s.space = space.load();
     return s;
 }
 

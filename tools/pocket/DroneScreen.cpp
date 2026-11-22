@@ -8,7 +8,11 @@ const juce::Colour kDrone { 0xffd8578e }, kString { 0xfff1e7d1 }, kBridge { 0xff
 const char* const kFirstNames[4] = { "PA", "MA", "NI", "SA" };
 const char* const kSyncNames[4] = { "OWN TIME", "BEAT", "2 BEATS", "BAR" };
 const char* const kOctNames[3] = { "LOW", "MID", "HIGH" };
-const char* const kKnobNames[DroneScreen::numKnobs] = { "PACE", "JAWARI", "RING", "REEDS", "VOLUME", "RESONATE" };
+const char* const kKnobNames[DroneScreen::numKnobs] = { "PACE", "JAWARI", "RING", "REEDS", "VOLUME", "RESONATE", "SWING", "HUMAN", "BRIGHT", "BODY", "DETUNE", "SPACE" };
+const char* const kOrderNames[crate::drone::numOrders] = { "CLASSIC", "REVERSE", "WANDER", "PAIRS", "ROLL" };
+const char* const kVoiceNames[crate::drone::numVoices] = { "TANPURA", "BOWED", "SWARMANDAL", "ELECTRIC", "BELL" };
+const char* const kStepCountNames[3] = { "OFF", "8", "16" };
+const char* const kStepRateNames[3] = { "1/4", "1/8", "1/16" };
 }
 
 DroneScreen::DroneScreen (DroneTool& d) : drone (d)
@@ -50,9 +54,12 @@ void DroneScreen::layout()
         const float onW = 64.0f, soundW = juce::jlimit (120.0f, 170.0f, iw * 0.42f);
         addHit ({ x0, y, onW, rowH }, onId);
         addHit ({ x0 + iw - soundW, y, soundW, rowH }, soundId);
-        titleR = { x0 + onW + 10.0f, y, iw - onW - soundW - 20.0f, rowH };
+        titleR = { x0 + onW + 8.0f, y, iw - onW - soundW - 16.0f, rowH };
+        addHit (titleR, pageId);
     }
     y += rowH + gap;
+    if (page == 1)
+        return layoutPattern (y);
 
     // the strings: the knobs and the sing well take what they need, the strings the rest
     const float knobH = roomy ? 78.0f : compact ? 56.0f : 66.0f, singH = roomy ? 112.0f : compact ? 80.0f : 96.0f;
@@ -124,6 +131,66 @@ void DroneScreen::layout()
     }
 }
 
+// PATTERN: ORDER, STEPS (and CLEAR), the grid (a row for each string, a square for each step), then TONE: the
+// instrument, and a row of knobs, SWING HUMAN BRIGHT BODY DETUNE SPACE.
+void DroneScreen::layoutPattern (float y)
+{
+    const float w = (float) getWidth(), h = (float) getHeight();
+    const float x0 = 16.0f, iw = w - 32.0f;
+    const bool roomy = h > 560.0f, compact = h < 480.0f;
+    const float rowH = roomy ? 42.0f : compact ? 34.0f : 38.0f, gap = roomy ? 8.0f : compact ? 4.0f : 6.0f, labelW = 54.0f;
+    auto addHit = [this] (juce::Rectangle<float> r, int id) { hits.push_back ({ r, id }); };
+    auto chips = [&] (int base, int count, float left, float width, float g = 4.0f)
+    {
+        const float cw = (width - g * (float) (count - 1)) / (float) count;
+        for (int i = 0; i < count; ++i)
+            addHit ({ left + (float) i * (cw + g), y, cw, rowH }, base + i);
+    };
+    orderLabel = { x0, y, labelW, rowH };
+    chips (orderBase, crate::drone::numOrders, x0 + labelW, iw - labelW);
+    y += rowH + gap;
+    stepsLabel = { x0, y, labelW, rowH };
+    {
+        const float left = x0 + labelW, width = iw - labelW, clearW = 58.0f;
+        const float part = (width - clearW - 16.0f) / 2.0f;
+        chips (stepCountBase, 3, left, part);
+        chips (stepRateBase, 3, left + part + 8.0f, part);
+        addHit ({ left + width - clearW, y, clearW, rowH }, clearId);
+    }
+    y += rowH + gap;
+
+    // the grid takes what the rest leaves (squares up to 46 tall)
+    const float knobH = roomy ? 84.0f : compact ? 64.0f : 78.0f;
+    const float below = gap + rowH + gap + knobH + 8.0f;
+    const float gridH = juce::jlimit (4.0f * 22.0f, 4.0f * (roomy ? 46.0f : 36.0f), h - y - below);
+    gridR = { x0, y, iw, gridH };
+    {
+        const float cw = (iw - 40.0f) / 16.0f, ch = gridH / (float) crate::drone::kStrings;
+        for (int step = 0; step < 16; ++step)
+            for (int string = 0; string < crate::drone::kStrings; ++string)
+                addHit ({ x0 + 40.0f + (float) step * cw, y + (float) string * ch, cw, ch }, cellBase + step * 4 + string);
+    }
+    y += gridH + gap;
+    toneLabel = { x0, y, labelW, rowH };
+    chips (voiceBase, crate::drone::numVoices, x0 + labelW, iw - labelW);
+    y += rowH + gap;
+    for (int k = swingKnob; k <= spaceKnob; ++k)
+    {
+        const float kw = iw / 6.0f;
+        knobR[(size_t) k] = { x0 + (float) (k - swingKnob) * kw, y, kw, knobH };
+        addHit (knobR[(size_t) k], knobBase + k);
+    }
+}
+
+void DroneScreen::showPage (int which)
+{
+    page = juce::jlimit (0, 1, which);
+    pressed = 0;
+    dragKnob = -1;
+    layout();
+    repaint();
+}
+
 int DroneScreen::idAt (juce::Point<float> p) const
 {
     for (auto& hit : hits)
@@ -151,6 +218,12 @@ float DroneScreen::knobValue (int k) const
         case reedsKnob: return drone.reeds.load();
         case volumeKnob: return drone.level.load();
         case resonateKnob: return drone.resonate.load();
+        case swingKnob: return drone.swing.load();
+        case humanKnob: return drone.human.load();
+        case brightKnob: return drone.bright.load();
+        case bodyKnob: return drone.body.load();
+        case detuneKnob: return drone.detune.load();
+        case spaceKnob: return drone.space.load();
         default: return 0.0f;
     }
 }
@@ -166,6 +239,12 @@ void DroneScreen::setKnob (int k, float v)
         case reedsKnob: drone.reeds = v; break;
         case volumeKnob: drone.level = v; break;
         case resonateKnob: drone.resonate = v; break;
+        case swingKnob: drone.swing = v; break;
+        case humanKnob: drone.human = v; break;
+        case brightKnob: drone.bright = v; break;
+        case bodyKnob: drone.body = v; break;
+        case detuneKnob: drone.detune = v; break;
+        case spaceKnob: drone.space = v; break;
         default: break;
     }
     repaint();
@@ -177,6 +256,7 @@ juce::String DroneScreen::knobText (int k) const
     {
         case paceKnob: return juce::String (drone.pace.load(), 1) + "s";
         case volumeKnob: return DroneTool::volumeText (drone.level.load());
+        case brightKnob: return juce::String (juce::roundToInt ((knobValue (k) - 0.5f) * 200.0f));   // (0 in the middle)
         default: return juce::String (juce::roundToInt (knobValue (k) * 100.0f));
     }
 }
@@ -185,7 +265,7 @@ juce::String DroneScreen::knobText (int k) const
 void DroneScreen::mouseDown (const juce::MouseEvent& e)
 {
     pressed = idAt (e.position);
-    if (pressed >= stringBase && pressed < stringBase + crate::drone::kStrings)
+    if ((pressed >= stringBase && pressed < stringBase + crate::drone::kStrings) || pressed >= cellBase)
     {
         press (pressed);   // a string sounds on the touch
         pressed = 0;
@@ -240,6 +320,12 @@ void DroneScreen::mouseDoubleClick (const juce::MouseEvent& e)
         case reedsKnob: drone.reeds = 0.0f; break;
         case volumeKnob: drone.level = 0.8f; break;
         case resonateKnob: drone.resonate = 0.0f; break;
+        case swingKnob: drone.swing = 0.0f; break;
+        case humanKnob: drone.human = 0.0f; break;
+        case brightKnob: drone.bright = 0.5f; break;
+        case bodyKnob: drone.body = 0.5f; break;
+        case detuneKnob: drone.detune = 0.0f; break;
+        case spaceKnob: drone.space = 0.0f; break;
         default: break;
     }
     changed();
@@ -256,6 +342,46 @@ void DroneScreen::press (int id)
         if (! drone.on.load())
             say ("Plucked. The drone is off, so the string rings once: tap ON for the drone.");
         return repaint();
+    }
+    if (id >= cellBase && id < cellBase + 64)
+    {
+        const bool was = drone.stepCount.load() > 0;
+        drone.toggleStep ((id - cellBase) / 4, (id - cellBase) % 4);
+        if (! was)
+            say ("STEPS on: the strings pluck on the squares you light.");
+        return changed();
+    }
+    if (id == pageId)
+        return showPage (page == 0 ? 1 : 0);
+    if (id >= orderBase && id < orderBase + crate::drone::numOrders)
+    {
+        drone.order = id - orderBase;
+        if (drone.stepCount.load() > 0)
+            say ("The STEPS are on, so they play instead: tap OFF to hear " + juce::String (kOrderNames[id - orderBase]) + ".");
+        return changed();
+    }
+    if (id >= stepCountBase && id < stepCountBase + 3)
+    {
+        drone.setStepCount (id - stepCountBase);
+        say (id == stepCountBase ? juce::String ("STEPS off: the strings go round in their ORDER.")
+                                 : juce::String ("STEPS on: tap the squares to draw which strings pluck on which step."));
+        return changed();
+    }
+    if (id >= stepRateBase && id < stepRateBase + 3)
+    {
+        drone.stepRate = id - stepRateBase;
+        return changed();
+    }
+    if (id == clearId)
+    {
+        drone.clearSteps();
+        say ("The steps are cleared: tap the squares to draw a new pattern.");
+        return changed();
+    }
+    if (id >= voiceBase && id < voiceBase + crate::drone::numVoices)
+    {
+        drone.voice = id - voiceBase;
+        return changed();
     }
     if (id == onId)
     {
@@ -386,6 +512,15 @@ void DroneScreen::timerCallback()
         shown[(size_t) s] += (juce::jlimit (0.0f, 1.0f, drone.ringing (s)) - shown[(size_t) s]) * 0.5f;
     }
     meter = juce::jmax (juce::jlimit (0.0f, 1.0f, drone.resonating()), meter * 0.85f);
+    if (page == 1)
+    {
+        if (const int step = drone.currentStep(); step != shownStep)
+        {
+            shownStep = step;
+            repaint (gridR.expanded (3.0f).toNearestInt());
+        }
+        return;
+    }
     repaint (stringsWell.expanded (2).toNearestInt());
     repaint (singWell.toNearestInt());
 }
@@ -416,14 +551,84 @@ void DroneScreen::drawKnobAt (juce::Graphics& g, int k)
     g.drawFittedText (knobText (k), value.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 }
 
+void DroneScreen::paintPattern (juce::Graphics& g)
+{
+    for (auto [r, t] : { std::pair { orderLabel, "ORDER" }, std::pair { stepsLabel, "STEPS" }, std::pair { toneLabel, "TONE" } })
+    {
+        g.setColour (col::inkDim);
+        g.setFont (spaced (condensedBold (13.0f), 0.1f));
+        g.drawText (t, r, juce::Justification::centredLeft);
+    }
+    const int order = drone.order.load(), count = drone.stepCount.load(), rateChoice = drone.stepRate.load(), voice = drone.voice.load();
+    const int steps = count == 2 ? 16 : count == 1 ? 8 : 0;
+    for (auto& hit : hits)
+    {
+        const int id = hit.id;
+        juce::String text;
+        bool lit = false;
+        float alpha = 1.0f;
+        if (id >= orderBase && id < orderBase + crate::drone::numOrders) { text = kOrderNames[id - orderBase]; lit = order == id - orderBase; alpha = steps > 0 ? 0.45f : 1.0f; }
+        else if (id >= stepCountBase && id < stepCountBase + 3) { text = kStepCountNames[id - stepCountBase]; lit = count == id - stepCountBase; }
+        else if (id >= stepRateBase && id < stepRateBase + 3) { text = kStepRateNames[id - stepRateBase]; lit = rateChoice == id - stepRateBase; alpha = steps > 0 ? 1.0f : 0.45f; }
+        else if (id == clearId) text = "CLEAR";
+        else if (id >= voiceBase && id < voiceBase + crate::drone::numVoices) { text = kVoiceNames[id - voiceBase]; lit = voice == id - voiceBase; }
+        else
+            continue;
+        g.beginTransparencyLayer (alpha);
+        drawChip (g, hit.r, text, lit, pressed == id, (id >= orderBase && id < orderBase + crate::drone::numOrders) || id >= voiceBase ? 11.5f : 13.0f);
+        g.endTransparencyLayer();
+    }
+
+    // the grid: a row for each string, a square for each step (lit: it plucks there), the step playing outlined
+    drawWell (g, gridR.expanded (4.0f), 10.0f);
+    const int now = steps > 0 ? drone.currentStep() : -1;
+    const int first = drone.first.load();
+    for (int string = 0; string < crate::drone::kStrings; ++string)
+    {
+        const auto row = hitRect (cellBase + string);
+        g.setColour (kString.withAlpha (steps > 0 ? 0.9f : 0.5f));
+        g.setFont (condensedBold (juce::jmin (14.0f, row.getHeight() * 0.6f)));
+        const juce::String name = string == 0 ? juce::String (kFirstNames[juce::jlimit (0, 3, first)]) : string == 3 ? juce::String ("LOW") : juce::String ("SA");
+        g.drawText (name, juce::Rectangle<float> (gridR.getX() + 4.0f, row.getY(), 36.0f, row.getHeight()), juce::Justification::centredLeft);
+        for (int step = 0; step < 16; ++step)
+        {
+            const auto cell = hitRect (cellBase + step * 4 + string).reduced (1.5f);
+            const bool lit = (drone.steps[(size_t) step].load() >> string) & 1;
+            auto fill = lit ? kDrone : juce::Colour ((step / 4) % 2 == 0 ? 0xff3a332d : 0xff2e2925);
+            if (steps == 0 || step >= steps)
+                fill = fill.withMultipliedAlpha (lit ? 0.4f : 0.6f);
+            g.setColour (fill);
+            g.fillRoundedRectangle (cell, 3.0f);
+        }
+    }
+    if (juce::isPositiveAndBelow (now, steps))
+    {
+        auto column = hitRect (cellBase + now * 4).getUnion (hitRect (cellBase + now * 4 + 3));
+        g.setColour (kString.withAlpha (0.85f));
+        g.drawRoundedRectangle (column.reduced (0.5f), 4.0f, 1.5f);
+    }
+    for (int k = swingKnob; k <= spaceKnob; ++k)
+    {
+        g.beginTransparencyLayer (k == swingKnob && steps == 0 ? 0.45f : 1.0f);
+        drawKnobAt (g, k);
+        g.endTransparencyLayer();
+    }
+}
+
 void DroneScreen::paint (juce::Graphics& g)
 {
     const bool on = drone.on.load();
 
-    // Drone · C
-    g.setColour (col::ink);
-    g.setFont (spaced (condensedBold (19.0f), 0.02f));
-    g.drawFittedText ("Drone " + juce::String (U8("\xc2\xb7 ")) + DroneTool::noteName (drone.root.load()), titleR.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+    // the page chip: to PATTERN and TONE, or back to the STRINGS
+    drawChip (g, titleR, page == 0 ? U8("PATTERN \xc2\xb7 TONE \xe2\x80\xba") : U8("\xe2\x80\xb9 STRINGS"), page == 1, pressed == pageId, 13.0f);
+    if (page == 1)
+    {
+        for (auto& hit : hits)
+            if (hit.id == onId || hit.id == soundId)
+                drawChip (g, hit.r, hit.id == onId ? (on ? "ON" : "OFF") : "SOUND: " + drone.presetName().toUpperCase(), hit.id == onId && on,
+                          pressed == hit.id, hit.id == soundId ? 13.0f : 14.0f, hit.id == onId ? col::green : juce::Colour());
+        return paintPattern (g);
+    }
     for (auto [r, t] : { std::pair { noteLabel, "NOTE" }, std::pair { firstLabel, "FIRST" }, std::pair { pluckLabel, "PLUCK" } })
     {
         g.setColour (col::inkDim);

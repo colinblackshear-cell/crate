@@ -3279,6 +3279,18 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         droneTool.resonate = 0.6f;
         droneScreen.repaint();
         savePng (folder.getChildFile ("17b-drone-sing-mic-off.png"));
+        // its second page: PATTERN and TONE, with 16 steps drawn and the swarmandal picked
+        droneTool.resonate = 0.0f;
+        droneTool.voice = 2;
+        droneTool.setStepCount (2);
+        droneTool.toggleStep (3, 1);
+        droneTool.toggleStep (3, 2);
+        droneTool.toggleStep (9, 3);
+        droneTool.swing = 0.3f;
+        droneTool.space = 0.4f;
+        droneScreen.showPage (1);
+        savePng (folder.getChildFile ("17c-drone-pattern.png"));
+        droneScreen.showPage (0);
         droneTool.reset();
         droneTool.setSongKey (songKey.root);
         droneScreen.toolChanged();
@@ -4150,11 +4162,48 @@ juce::String PocketApp::runRecChecks (juce::String& report)
 
         droneTool.level = 0.5f;
         droneTool.first = 1;
+        droneTool.voice = 3;
+        droneTool.order = 2;
+        droneTool.space = 0.35f;
+        droneTool.setStepCount (1);
+        droneTool.toggleStep (1, 2);
         saveSong();
         droneTool.reset();
         loadSong();
         if (std::abs (droneTool.level.load() - 0.5f) > 1.0e-4f || droneTool.first.load() != 1 || droneTool.root.load() != 9 || droneTool.followKey)
             problems.add ("DRONE: its settings didn't come back with the song");
+        if (droneTool.voice.load() != 3 || droneTool.order.load() != 2 || std::abs (droneTool.space.load() - 0.35f) > 1.0e-4f
+            || droneTool.stepCount.load() != 1 || droneTool.steps[0].load() != 0x1 || droneTool.steps[1].load() != 0x4)
+            problems.add ("DRONE: its pattern and tone didn't come back with the song");
+
+        // STEPS: drawn squares pluck their strings on their steps, in time with the clock (8 steps of an 1/8: 4 beats round)
+        {
+            droneTool.reset();
+            droneTool.on = true;
+            droneTool.clearSteps();
+            droneTool.toggleStep (0, 0);
+            droneTool.toggleStep (2, 1);
+            droneTool.toggleStep (2, 2);
+            droneTool.toggleStep (5, 3);
+            droneTool.prepare (44100.0);
+            int before[4];
+            for (int st = 0; st < 4; ++st)
+                before[st] = droneTool.pluckCount (st);
+            std::vector<float> l (441), r (441);
+            for (int b = 0; b < 800; ++b)   // 8 s at 120: 16 beats, four times round
+                droneTool.renderAt (l.data(), r.data(), 441, true, b * 441 * 2.0 / 44100.0, 120.0);
+            juce::String got;
+            bool right = true;
+            for (int st = 0; st < 4; ++st)
+            {
+                const int n = droneTool.pluckCount (st) - before[st];
+                got << n << " ";
+                right = right && n == 4;
+            }
+            report << "drone steps (4 times round): plucks per string " << got.trim() << "\n";
+            if (! right)
+                problems.add ("DRONE STEPS: the strings didn't pluck on their steps (" + got.trim() + ")");
+        }
         droneTool.reset();
         droneTool.setSongKey (songKey.root);
         micOn = micHear = false;

@@ -27,6 +27,16 @@ public:
     std::atomic<int> root { 0 }, octave { 0 }, first { 0 }, sync { 0 }, feed { (int) DroneFeed::voice };
     std::atomic<float> pace { 1.1f }, jawari { 0.6f }, ring { 0.5f }, fine { 0.0f }, width { 0.7f }, strings { 1.0f }, reeds { 0.0f },
                        resonate { 0.0f };
+    // The pattern: the order the strings go in, or steps you draw (stepCount 0 off, 1 = 8 steps, 2 = 16; each step's
+    // bits 0-3 the strings it plucks; stepRate 0 = 1/4, 1 = 1/8, 2 = 1/16), Swing and Human. The tone: the
+    // instrument the strings are, Bright, Body, Detune and Space. (As the Mac's.)
+    std::atomic<int> order { 0 }, stepCount { 0 }, stepRate { 1 }, voice { 0 };
+    std::array<std::atomic<std::uint8_t>, 16> steps {};
+    std::atomic<float> swing { 0.0f }, human { 0.0f }, bright { 0.5f }, body { 0.5f }, detune { 0.0f }, space { 0.0f };
+    void setStepCount (int choice);   // turning steps on with none drawn draws a first pattern to start from
+    void toggleStep (int step, int string);
+    void clearSteps();
+    int currentStep() const { return engine.currentStep.load(); }
     // Its volume, as the Mac's fader: 0.8 is 0 dB, the top +6 dB.
     std::atomic<float> level { 0.8f };
     // The drone's note follows the song's KEY (on until you pick a note yourself).
