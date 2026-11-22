@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 // The Drone box: an electronic tanpura (in the way of the little Raagini boxes), and strings that
@@ -44,7 +45,47 @@ struct Settings
     float reeds = 0.0f;
     float resonate = 0.0f;   // how much the strings ring to what's fed in
     float strings = 1.0f;    // the plucked strings' level
+
+    // The pattern. Order: which string comes next (Classic Pa-Sa-Sa-low Sa, Reverse, Wander, Pairs of
+    // two at once, Roll: all four in a quick strum on every pluck).
+    int order = 0;
+    // Steps: 0 = off, else 8 or 16 steps, each the strings it plucks (bits 0-3, 0 = a rest), one step
+    // every stepBeats beats, in time with the song (stopped, at its tempo). Overrides Order and Pluck.
+    int stepCount = 0;
+    std::array<std::uint8_t, 16> steps {};
+    float stepBeats = 0.5f;
+    float swing = 0.0f;      // every second step later (0 straight ... 1 a full triplet swing)
+    float human = 0.0f;      // a player's drift: each pluck a little early or late, softer or harder
+
+    // The tone. Voice: the instrument (Tanpura, Bowed, Swarmandal, Electric, Bell).
+    int voice = 0;
+    float bright = 0.5f;     // dark ... bright (0.5: as the voice is)
+    float body = 0.5f;       // the low harmonics: thin ... big gourd (0.5: as the voice is)
+    float detune = 0.0f;     // the strings drift apart and beat against each other
+    float space = 0.0f;      // its own reverb
 };
+
+enum Order { orderClassic, orderReverse, orderWander, orderPairs, orderRoll, numOrders };
+enum Voice { voiceTanpura, voiceBowed, voiceSwarmandal, voiceElectric, voiceBell, numVoices };
+inline const char* orderName (int o)
+{
+    static const char* names[] = { "Classic", "Reverse", "Wander", "Pairs", "Roll" };
+    return names[juce::jlimit (0, (int) numOrders - 1, o)];
+}
+inline const char* voiceName (int v)
+{
+    static const char* names[] = { "Tanpura", "Bowed", "Swarmandal", "Electric", "Bell" };
+    return names[juce::jlimit (0, (int) numVoices - 1, v)];
+}
+
+// A first pattern for the steps, so picking 8 or 16 steps plays at once: the four strings in turn, a rest between.
+inline std::array<std::uint8_t, 16> starterSteps()
+{
+    std::array<std::uint8_t, 16> steps {};
+    for (int i = 0; i < 16; i += 2)
+        steps[(size_t) i] = (std::uint8_t) (1 << ((i / 2) % 4));
+    return steps;
+}
 
 struct Clock
 {
@@ -59,11 +100,14 @@ struct Preset
     const char* name;
     int first, octave, sync;
     float pace, jawari, decay, width, reeds, strings;
+    int voice = 0, order = 0;
+    float human = 0.0f, bright = 0.5f, body = 0.5f, detune = 0.0f, space = 0.0f;
 };
 
-inline const std::array<Preset, 10>& presets()
+inline const std::array<Preset, 15>& presets()
 {
-    static const std::array<Preset, 10> list { {
+    //                                       first oct sync pace   jawari decay width reeds strings voice order human bright body detune space
+    static const std::array<Preset, 15> list { {
         { "Classic (Pa)",        0,  0, 0, 1.10f, 0.60f, 0.50f, 0.70f, 0.00f, 1.0f },
         { "Evening (Ma)",        1,  0, 0, 1.30f, 0.55f, 0.60f, 0.70f, 0.00f, 1.0f },
         { "Yearning (Ni)",       2,  0, 0, 1.20f, 0.65f, 0.55f, 0.75f, 0.00f, 1.0f },
@@ -74,6 +118,11 @@ inline const std::array<Preset, 10>& presets()
         { "Shruti box",          0,  0, 0, 1.10f, 0.50f, 0.50f, 0.60f, 1.00f, 0.0f },
         { "Strings and reeds",   0,  0, 0, 1.40f, 0.60f, 0.65f, 0.80f, 0.45f, 1.0f },
         { "High shimmer",        3,  1, 0, 0.70f, 0.85f, 0.50f, 0.90f, 0.00f, 1.0f },
+        { "Wandering tanpura",   0,  0, 0, 1.00f, 0.65f, 0.55f, 0.75f, 0.00f, 1.0f, 0, 2, 0.6f, 0.5f, 0.5f, 0.10f, 0.20f },
+        { "Bowed drone",         0,  0, 0, 2.60f, 0.30f, 0.70f, 0.80f, 0.00f, 1.0f, 1, 0, 0.2f, 0.45f, 0.45f, 0.15f, 0.25f },
+        { "Swarmandal shimmer",  3,  0, 0, 1.60f, 0.75f, 0.50f, 0.90f, 0.00f, 1.0f, 2, 4, 0.3f, 0.6f, 0.7f, 0.10f, 0.35f },
+        { "Electric bed",        0, -1, 0, 3.00f, 0.00f, 0.80f, 0.90f, 0.20f, 1.0f, 3, 3, 0.0f, 0.5f, 0.6f, 0.35f, 0.30f },
+        { "Temple bells",        0,  0, 0, 1.80f, 0.00f, 0.60f, 0.85f, 0.00f, 1.0f, 4, 2, 0.4f, 0.5f, 0.5f, 0.00f, 0.45f },
     } };
     return list;
 }
@@ -112,6 +161,7 @@ public:
     void prepare (double rate)
     {
         sampleRate = juce::jmax (8000.0, rate);
+        reverb.setSampleRate (sampleRate);
         for (auto& c : combs)
         {
             c.line.assign ((size_t) (sampleRate / 24.0) + 8, 0.0f);
@@ -134,7 +184,12 @@ public:
         }
         untilPluck = 0;
         nextString = 0;
+        numEvents = 0;
+        stepIndex = -1;
         controlPhase = 0;
+        reverb.reset();
+        reverbTail = 0;
+        reverbSpace = -1.0f;
         reedGain = resonateGain = 0;
         reedTime = 0;
         wasOn = false;
@@ -158,15 +213,17 @@ public:
         {
             untilPluck = 0;
             nextString = 0;
+            stepIndex = -1;
         }
         wasOn = s.on;
 
-        // Where the plucks fall in this block.
-        int pluckAt[4];
-        int numPlucks = 0;
+        // Where the pattern's ticks fall in this block, and the plucks they make. A roll, swing and a player's
+        // drift put some plucks a little later: they wait in `events` (into the next block if need be).
         if (s.on)
         {
-            const double beats = s.sync == 1 ? 1.0 : s.sync == 2 ? 2.0 : s.sync == 3 ? clock.beatsPerBar : 0.0;
+            const bool stepping = s.stepCount > 0;
+            const double beats = stepping ? (double) juce::jlimit (0.125f, 2.0f, s.stepBeats)
+                                          : s.sync == 1 ? 1.0 : s.sync == 2 ? 2.0 : s.sync == 3 ? clock.beatsPerBar : 0.0;
             if (beats > 0 && clock.playing && clock.bpm > 1)
             {
                 const double perSample = clock.bpm / (60.0 * sampleRate);
@@ -174,14 +231,15 @@ public:
                 double next = std::ceil (clock.ppq / beats - 1.0e-9) * beats;
                 if (lastPpq < 0 || clock.ppq < lastPpq - 1.0e-6)
                     lastPluckPpq = -1.0e9;   // (the clock started or jumped)
-                for (; next < end && numPlucks < 4; next += beats)
+                const int tickSamples = (int) (beats * 60.0 / clock.bpm * sampleRate);
+                for (int ticks = 0; next < end && ticks < 8; next += beats, ++ticks)
                     if (next > lastPluckPpq + beats * 0.5)   // (never the same beat twice)
                     {
-                        pluckAt[numPlucks++] = juce::jlimit (0, numSamples - 1, (int) ((next - clock.ppq) / perSample));
+                        tick (juce::jlimit (0, numSamples - 1, (int) ((next - clock.ppq) / perSample)), (long long) std::llround (next / beats), s, tickSamples);
                         lastPluckPpq = next;
                     }
                 lastPpq = end;
-                untilPluck = (int) (beats * 60.0 / clock.bpm * sampleRate);   // (if the clock stops, it carries on)
+                untilPluck = tickSamples;   // (if the clock stops, it carries on)
                 pluckSeconds = (float) (beats * 60.0 / clock.bpm);
             }
             else
@@ -192,13 +250,20 @@ public:
                 pluckSeconds = (float) seconds;
                 untilPluck = juce::jmin (untilPluck, interval);
                 int at = untilPluck;
-                while (at < numSamples && numPlucks < 4)
+                for (int ticks = 0; at < numSamples && ticks < 8; ++ticks)
                 {
-                    pluckAt[numPlucks++] = at;
+                    tick (at, -1, s, interval);
                     at += interval;
                 }
-                untilPluck = at - numSamples;
+                untilPluck = juce::jmax (0, at - numSamples);
             }
+            if (! stepping)
+                currentStep.store (-1);
+        }
+        else
+        {
+            numEvents = 0;
+            currentStep.store (-1);
         }
         const int byHand = pendingPluck.exchange (-1);
 
@@ -207,20 +272,28 @@ public:
         const float stringLevel = juce::jlimit (0.0f, 1.5f, s.strings);
         tuneCombs (sa, s.first, resTarget);
 
-        int done = 0, pluckIndex = 0;
+        int done = 0;
         if (byHand >= 0)
-            startPluck (byHand, sa, s.first, 1.0f);
+            startPluck (byHand, sa, s, 1.0f);
         while (done < numSamples)
         {
-            while (pluckIndex < numPlucks && pluckAt[pluckIndex] <= done)
+            int nextEvent = numSamples;
+            for (int e = 0; e < numEvents;)
             {
-                startPluck (nextString, sa, s.first, 0.86f + 0.14f * random.nextFloat());
-                nextString = (nextString + 1) % kStrings;
-                ++pluckIndex;
+                auto& ev = events[(size_t) e];
+                if (ev.at <= done)
+                {
+                    for (int k = 0; k < kStrings; ++k)
+                        if ((ev.mask >> k) & 1)
+                            startPluck (k, sa, s, ev.velocity);
+                    events[(size_t) e] = events[(size_t) --numEvents];
+                    continue;
+                }
+                nextEvent = juce::jmin (nextEvent, ev.at);
+                ++e;
             }
             int n = juce::jmin (numSamples - done, kControl - controlPhase);
-            if (pluckIndex < numPlucks)
-                n = juce::jmin (n, juce::jmax (1, pluckAt[pluckIndex] - done));
+            n = juce::jmin (n, juce::jmax (1, nextEvent - done));
             if (controlPhase == 0)
                 control (s, sa, reedTarget, resTarget);
 
@@ -301,10 +374,38 @@ public:
                 slot.age += slot.active ? n : 0;
             reedTime += n;
         }
+        for (int e = 0; e < numEvents; ++e)
+            events[(size_t) e].at -= numSamples;
+
+        // Space: its own reverb over what it played (left and right hold only the drone: both callers clear them).
+        const float space = juce::jlimit (0.0f, 1.0f, s.space);
+        if (space > 0.001f)
+            reverbTail = (int) (6.0 * sampleRate);
+        if (reverbTail > 0)
+        {
+            if (std::abs (space - reverbSpace) > 1.0e-3f)
+            {
+                reverbSpace = space;
+                juce::Reverb::Parameters p;
+                p.roomSize = 0.86f;
+                p.damping = 0.45f;
+                p.wetLevel = 0.3f * space;   // (the reverb doubles its dry and triples its wet inside)
+                p.dryLevel = 0.5f * (1.0f - 0.5f * space);
+                p.width = 1.0f;
+                reverb.setParameters (p);
+            }
+            reverb.processStereo (left, right, numSamples);
+            reverbTail -= numSamples;
+            if (space <= 0.001f && reverbTail <= 0)
+                reverb.reset();
+        }
     }
 
+    // The step the pattern is on (0-15), or -1 while Steps is off, for the screen.
+    std::atomic<int> currentStep { -1 };
+
     // Still making sound (after Off, the strings ring out).
-    bool isSounding() const { return anySounding; }
+    bool isSounding() const { return anySounding || reverbTail > 0; }
 
 private:
     struct Partial
@@ -317,6 +418,7 @@ private:
     {
         bool active = false, fading = false;
         int string = 0, count = 0, age = 0, fadeAge = 0;
+        int voice = 0;
         float velocity = 1, gainL = 0.7f, gainR = 0.7f;
         std::array<Partial, kHarmonics> partials;
     };
@@ -347,8 +449,77 @@ private:
         r = std::sin (angle);
     }
 
-    void startPluck (int string, double sa, int first, float velocity)
+    // One tick of the pattern at sample `at` of this block: the plucks it makes, by Steps or by Order.
+    // `index`: the tick's number counted from the song's start (-1 off the clock: the next step).
+    void tick (int at, long long index, const Settings& s, int tickSamples)
     {
+        const float human = juce::jlimit (0.0f, 1.0f, s.human);
+        auto push = [this] (int when, int mask, float velocity)
+        {
+            if (mask != 0 && numEvents < (int) events.size())
+                events[(size_t) numEvents++] = { when, (std::uint8_t) mask, velocity };
+        };
+        auto late = [&] { return (int) (random.nextFloat() * human * 0.028f * (float) sampleRate); };
+        auto velocity = [&] { return (0.86f + 0.14f * random.nextFloat()) * (1.0f + human * 0.5f * (random.nextFloat() - 0.5f)); };
+        if (s.stepCount > 0)
+        {
+            const int count = juce::jlimit (1, 16, s.stepCount);
+            stepIndex = index >= 0 ? (int) (index % count) : (stepIndex + 1) % count;
+            currentStep.store (stepIndex);
+            const int swing = (stepIndex % 2) == 1 ? (int) (juce::jlimit (0.0f, 1.0f, s.swing) * (float) tickSamples / 3.0f) : 0;
+            const int mask = s.steps[(size_t) stepIndex] & 0x0f;
+            const int many = (mask & 1) + ((mask >> 1) & 1) + ((mask >> 2) & 1) + ((mask >> 3) & 1);
+            push (at + swing + late(), mask, velocity() * (many > 1 ? 0.8f : 1.0f));
+            return;
+        }
+        switch (s.order)
+        {
+            case orderReverse:
+                push (at + late(), 1 << (kStrings - 1 - nextString), velocity());
+                nextString = (nextString + 1) % kStrings;
+                break;
+            case orderWander:
+            {
+                // Any string but the last one, Sa most often.
+                static const float weight[] = { 1.0f, 1.6f, 1.6f, 1.2f };
+                float total = 0;
+                for (int k = 0; k < kStrings; ++k)
+                    total += k == lastString ? 0.0f : weight[k];
+                float pick = random.nextFloat() * total;
+                int string = 0;
+                for (int k = 0; k < kStrings; ++k)
+                {
+                    if (k == lastString)
+                        continue;
+                    string = k;
+                    if ((pick -= weight[k]) <= 0)
+                        break;
+                }
+                lastString = string;
+                push (at + late(), 1 << string, velocity());
+                break;
+            }
+            case orderPairs:   // the first string with the low Sa, then the two middle ones
+                push (at + late(), (nextString % 2) == 0 ? 0x9 : 0x6, velocity() * 0.8f);
+                nextString = (nextString + 1) % kStrings;
+                break;
+            case orderRoll:
+            {
+                const int gap = (int) (0.05 * sampleRate);
+                for (int k = 0; k < kStrings; ++k)
+                    push (at + k * gap + late() / 2, 1 << k, velocity() * (k == 0 ? 0.62f : 0.53f));
+                break;
+            }
+            default:
+                push (at + late(), 1 << nextString, velocity());
+                nextString = (nextString + 1) % kStrings;
+                break;
+        }
+    }
+
+    void startPluck (int string, double sa, const Settings& s, float velocity)
+    {
+        const int first = s.first;
         string = juce::jlimit (0, kStrings - 1, string);
         // Its last pluck fades away under this one; this one takes the other slot.
         Slot* use = nullptr;
@@ -377,15 +548,24 @@ private:
         slot.age = 0;
         slot.fadeAge = 0;
         slot.velocity = velocity;
-        // The two middle strings sit a hair apart, and no two plucks are quite the same.
+        slot.voice = juce::jlimit (0, (int) numVoices - 1, s.voice);
+        // The two middle strings sit a hair apart, and no two plucks are quite the same (Detune: much more).
         static const double apartCents[] = { 0.0, -0.9, 0.9, 0.0 };
-        const double cents = apartCents[string] + (random.nextDouble() - 0.5) * 0.8;
-        const double hz = sa * stringRatio (string, first) * std::pow (2.0, cents / 1200.0);
+        const double spread = 1.0 + 8.0 * juce::jlimit (0.0f, 1.0f, s.detune);
+        const double cents = apartCents[string] * spread + (random.nextDouble() - 0.5) * 0.8 * spread * (string == 0 || string == 3 ? 0.6 : 1.0);
+        double hz = sa * stringRatio (string, first) * std::pow (2.0, cents / 1200.0);
+        if (slot.voice == voiceSwarmandal)
+            hz *= 2.0;   // a harp-zither's strings sit an octave up
+        // How far a string's harmonics run sharp (a real string's do a little; a bow and a synth lock them).
+        const double stretch = slot.voice == voiceSwarmandal ? 4.0e-5 : slot.voice == voiceTanpura ? 1.2e-5 : 0.0;
+        // A bell's partials aren't harmonics: these are a cast bell's, against its hum note.
+        static const double bellRatios[] = { 0.5, 1.0, 1.183, 1.506, 2.0, 2.514, 2.662, 3.011, 4.166, 5.433, 6.796, 8.215 };
+        const int maxPartials = slot.voice == voiceBell ? (int) std::size (bellRatios) : kHarmonics;
         const double top = juce::jmin (11000.0, sampleRate * 0.45);
         slot.count = 0;
-        for (int k = 1; k <= kHarmonics; ++k)
+        for (int k = 1; k <= maxPartials; ++k)
         {
-            const double f = hz * k * (1.0 + 1.2e-5 * k * k);   // a real string's harmonics run a little sharp
+            const double f = slot.voice == voiceBell ? hz * 2.0 * bellRatios[k - 1] : hz * k * (1.0 + stretch * k * k);
             if (f > top)
                 break;
             auto& p = slot.partials[(size_t) slot.count++];
@@ -400,6 +580,22 @@ private:
             p.hz = (float) f;
         }
         pluckCounts[(size_t) string].fetch_add (1);
+    }
+
+    // How each voice is made from the same harmonics.
+    struct VoiceShape
+    {
+        float attack, ring, ringFall, tilt, tiltJawari, bloom, bodyJawari, handOver, trim;
+    };
+    static const VoiceShape& voiceShape (int voice)
+    {
+        //                                attack  ring   ringFall tilt  tiltJ  bloom bodyJ handOver trim
+        static const VoiceShape shapes[] = { { 0.016f, 1.0f,  0.045f,  1.4f,  0.95f, 1.0f, 0.45f, 0.10f, 1.0f },    // Tanpura
+                                             { 0.45f,  6.0f,  0.010f,  1.65f, 0.6f,  0.2f, 0.2f,  0.80f, 0.58f },   // Bowed: held, no pluck
+                                             { 0.004f, 0.55f, 0.030f,  0.95f, 0.3f,  0.0f, 0.0f,  0.30f, 0.99f },   // Swarmandal: bright, an octave up
+                                             { 0.08f,  6.0f,  0.0f,    0.9f,  0.0f,  0.0f, 0.0f,  0.60f, 0.40f },   // Electric: a filtered saw, held
+                                             { 0.003f, 0.9f,  0.12f,   0.35f, 0.0f,  0.0f, 0.0f,  0.60f, 0.66f } };  // Bell: glassy, inharmonic
+        return shapes[juce::jlimit (0, (int) numVoices - 1, voice)];
     }
 
     void tuneCombs (double sa, int first, float amount)
@@ -426,12 +622,14 @@ private:
     {
         const float jawari = juce::jlimit (0.0f, 1.0f, s.jawari);
         const float t60 = 2.5f + 11.0f * juce::jlimit (0.0f, 1.0f, s.decay);
-        const float tilt = 1.4f - 0.95f * jawari;      // the buzz keeps the high harmonics up
-        const float bloom = 10.0f * jawari * jawari + 2.0f * jawari;
-        const float body = 1.0f - 0.45f * jawari;       // ...and takes it out of the bottom two
+        const float brightTilt = 0.9f * (juce::jlimit (0.0f, 1.0f, s.bright) - 0.5f);   // Bright: the harmonics' slope
+        const float bodyGain = 0.4f + 1.2f * juce::jlimit (0.0f, 1.0f, s.body);           // Body: the bottom two
+        const float brightBy = juce::jlimit (0.0f, 1.0f, s.bright) - 0.5f;
+        const float brightTrim = std::pow (10.0f, -(brightBy > 0 ? 17.0f : 10.0f) * brightBy / 20.0f);
         const float block = (float) kControl / (float) sampleRate;
         // As loud whatever the settings: more buzz, quicker plucks and the high octave all add up to more.
-        const float evenDb = -16.0f * std::pow (jawari, 2.9f) + juce::jlimit (-6.0f, 5.0f, 8.0f * std::log10 (pluckSeconds / 1.1f)) - (s.octave > 0 ? 2.5f : 0.0f) - 0.1f;
+        const float jawariDb = -16.0f * std::pow (jawari, 2.9f);   // (as much as each instrument buzzes: below)
+        const float evenDb = juce::jlimit (-6.0f, 5.0f, 8.0f * std::log10 (pluckSeconds / 1.1f)) - (s.octave > 0 ? 2.5f : 0.0f) - 0.1f;
         const float even = std::pow (10.0f, evenDb / 20.0f);
         bool any = false;
         std::array<float, kStrings> ring {};
@@ -439,33 +637,50 @@ private:
         {
             if (! slot.active)
                 continue;
+            const auto& v = voiceShape (slot.voice);
+            const float tilt = v.tilt - v.tiltJawari * jawari - brightTilt;   // the buzz keeps the high harmonics up
+            const float bloom = v.bloom * (10.0f * jawari * jawari + 2.0f * jawari);
+            const float body = (1.0f - v.bodyJawari * jawari) * bodyGain;     // ...and takes it out of the bottom two
+            // (Bright keeps its loudness: a brighter slope adds up to more, so it comes down to match.)
+            const float level = even * std::pow (10.0f, jawariDb * v.bloom / 20.0f) * v.trim * brightTrim;
             const float t = (float) slot.age / (float) sampleRate + block;
             // The band the jawari throws the sound into: high at the pluck, falling through the harmonics.
             const float centre = 520.0f + 3900.0f * std::exp (-t / (0.55f + 0.5f * jawari));
             // Then it comes round again, lower and softer, as the string keeps grazing the bridge.
             const float again = 600.0f + 1500.0f * (0.5f + 0.5f * std::cos (t * 2.1f));
-            const float attack = 1.0f - std::exp (-t / 0.016f);
+            const float attack = 1.0f - std::exp (-t / v.attack);
             float fade = 1.0f;
             if (slot.fading)
             {
                 slot.fadeAge += kControl;
-                fade = std::exp (-(float) slot.fadeAge / (float) sampleRate / (s.on ? 0.10f : 0.35f));
+                fade = std::exp (-(float) slot.fadeAge / (float) sampleRate / (s.on ? v.handOver : juce::jmax (0.35f, v.handOver)));
             }
             else if (! s.on)
             {
                 slot.fading = true;
                 slot.fadeAge = 0;
             }
+            // Bowed: the bow's slow swell; Electric: a slow filter sweep, each string its own.
+            const float tremolo = slot.voice == voiceBowed ? 1.0f + 0.05f * std::sin (t * 32.0f + (float) slot.string * 1.7f) : 1.0f;
+            const float cutoff = slot.voice == voiceElectric
+                                     ? (300.0f + 2600.0f * (0.5f + 0.5f * std::sin (t * 0.45f + (float) slot.string * 1.3f))) * (0.45f + 1.1f * juce::jlimit (0.0f, 1.0f, s.bright))
+                                     : 0.0f;
             float loudest = 0;
             for (int k = 0; k < slot.count; ++k)
             {
                 auto& p = slot.partials[(size_t) k];
                 const float n = (float) (k + 1);
-                const float ring60 = t60 / (1.0f + 0.045f * n);
+                const float ring60 = t60 * v.ring / (1.0f + v.ringFall * n);
                 const float env = std::exp (-6.91f * t / ring60);
                 const float d1 = std::log2 (p.hz / centre) / 0.42f, d2 = std::log2 (p.hz / again) / 0.5f;
-                const float shape = 1.0f + bloom * std::exp (-0.5f * d1 * d1) + 0.35f * bloom * std::exp (-0.5f * d2 * d2) * (1.0f - std::exp (-t / 0.8f));
-                const float target = (k < 2 ? body : 1.0f) * even * slot.velocity * attack * fade * env * shape * std::pow (n, -tilt) * 0.5f;
+                float shape = 1.0f + bloom * std::exp (-0.5f * d1 * d1) + 0.35f * bloom * std::exp (-0.5f * d2 * d2) * (1.0f - std::exp (-t / 0.8f));
+                if (cutoff > 0)
+                {
+                    const float x = p.hz / cutoff;
+                    shape /= 1.0f + x * x * x * x;
+                }
+                const float slope = slot.voice == voiceBell ? std::pow (n, -0.35f - brightTilt) : std::pow (n, -tilt);
+                const float target = (k < 2 ? body : 1.0f) * level * slot.velocity * attack * fade * env * shape * tremolo * slope * 0.5f;
                 p.step = (target - p.amp) / (float) kControl;
                 loudest = juce::jmax (loudest, target);
                 // (Keep the spinning pair on the circle.)
@@ -543,6 +758,12 @@ private:
     std::array<Comb, kStrings> combs;
     juce::Random random { 0x7a9b };
     std::atomic<int> pendingPluck { -1 };
+    juce::Reverb reverb;
+    int reverbTail = 0;
+    float reverbSpace = -1.0f;
+    struct Event { int at = 0; std::uint8_t mask = 0; float velocity = 1; };
+    std::array<Event, 32> events {};
+    int numEvents = 0, stepIndex = -1, lastString = -1;
     int untilPluck = 0, nextString = 0, controlPhase = 0;
     float pluckSeconds = 1.1f, reedGain = 0, resonateGain = 0, combFeed = 0.1f, resonateSmooth = 0.001f, dcL = 0, dcR = 0;
     double reedTime = 0, lastPpq = -1, lastPluckPpq = -1.0e9;

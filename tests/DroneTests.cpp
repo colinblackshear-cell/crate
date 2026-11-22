@@ -164,6 +164,103 @@ struct DroneTests : juce::UnitTest
             }
         }
 
+        beginTest ("every instrument and every pluck order sits as loud as the tanpura's Classic drone");
+        {
+            auto loudness = [this] (const char* id, float value)
+            {
+                DroneProcessor d;
+                d.prepareToPlay (48000.0, 480);
+                d.loadPreset (0);
+                setParam (d, id, value);
+                setParam (d, "droneOn", 1.0f);
+                return rmsDb (render (d, 14.0), 6.0, 14.0);
+            };
+            const float classic = loudness ("droneVoice", 0.0f);
+            for (int v = 1; v < crate::drone::numVoices; ++v)
+            {
+                const float level = loudness ("droneVoice", (float) v);
+                logMessage ("VOICE|" + juce::String (crate::drone::voiceName (v)) + "|" + juce::String (level, 1));
+                expect (std::abs (level - classic) <= 3.0f, juce::String (crate::drone::voiceName (v)) + ": " + juce::String (level, 1));
+            }
+            for (int o = 1; o < crate::drone::numOrders; ++o)
+            {
+                const float level = loudness ("droneOrder", (float) o);
+                expect (std::abs (level - classic) <= 3.0f, juce::String (crate::drone::orderName (o)) + ": " + juce::String (level, 1));
+            }
+            for (const char* id : { "droneBright", "droneBody", "droneSpace", "droneHuman", "droneDetune" })
+                for (float value : { 0.0f, 1.0f })
+                {
+                    const float level = loudness (id, value);
+                    expect (std::abs (level - classic) <= 3.0f, juce::String (id) + " " + juce::String (value) + ": " + juce::String (level, 1));
+                }
+        }
+
+        beginTest ("pluck orders: Reverse starts on the low Sa, Pairs plucks two at once, Roll all four");
+        {
+            auto firstPlucks = [this] (int order)
+            {
+                DroneProcessor d;
+                d.prepareToPlay (48000.0, 480);
+                setParam (d, "droneOrder", (float) order);
+                setParam (d, "droneOn", 1.0f);
+                render (d, 0.5);
+                int mask = 0;
+                for (int s = 0; s < crate::drone::kStrings; ++s)
+                    mask |= d.getPluckCount (s) > 0 ? 1 << s : 0;
+                return mask;
+            };
+            expectEquals (firstPlucks (crate::drone::orderClassic), 0x1);
+            expectEquals (firstPlucks (crate::drone::orderReverse), 0x8);
+            expectEquals (firstPlucks (crate::drone::orderPairs), 0x9);
+            expectEquals (firstPlucks (crate::drone::orderRoll), 0xf);
+        }
+
+        beginTest ("steps: the strings lit on each step pluck on it, in time with the clock; rests stay quiet; saved with the drone");
+        {
+            struct Head : juce::AudioPlayHead
+            {
+                double ppq = 0;
+                juce::Optional<PositionInfo> getPosition() const override
+                {
+                    PositionInfo info;
+                    info.setIsPlaying (true);
+                    info.setPpqPosition (ppq);
+                    info.setBpm (120.0);
+                    return info;
+                }
+            } head;
+            DroneProcessor d;
+            d.prepareToPlay (48000.0, 480);
+            d.setPlayHead (&head);
+            setParam (d, "droneOn", 1.0f);
+            setParam (d, "droneStepCount", 1.0f);   // 8 steps
+            setParam (d, "droneStepRate", 1.0f);    // of an 1/8 each: 4 beats round
+            d.setStep (0, 0x1);
+            d.setStep (2, 0x6);
+            d.setStep (5, 0x8);
+            juce::AudioBuffer<float> block (2, 480);
+            juce::MidiBuffer midi;
+            for (int b = 0; b < 400; ++b)   // 4 s = 8 beats = twice round
+            {
+                head.ppq = b * 480 * 120.0 / (60.0 * 48000.0);
+                d.process (block, nullptr, midi);
+            }
+            for (int s = 0; s < 4; ++s)
+                expectEquals (d.getPluckCount (s), 2, "string " + juce::String (s));
+            expect (juce::isPositiveAndBelow (d.getCurrentStep(), 8));
+            d.setPlayHead (nullptr);
+
+            juce::MemoryBlock state;
+            d.getStateInformation (state);
+            DroneProcessor other;
+            other.setStateInformation (state.getData(), (int) state.getSize());
+            expectEquals (other.getStep (0), 0x1);
+            expectEquals (other.getStep (2), 0x6);
+            expectEquals (other.getStep (5), 0x8);
+            expectEquals (other.getStep (1), 0);
+            expectEquals (juce::roundToInt (other.params.getParameter ("droneStepCount")->getValue() * 2.0f), 1);
+        }
+
         beginTest ("resonate: a note of the drone fed in rings the strings on after it stops; a note between them barely does");
         {
             auto ringAfter = [this] (double hz)
