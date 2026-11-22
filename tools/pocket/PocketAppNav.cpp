@@ -441,16 +441,17 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         chordsScreen.pressPad (3, true);
         expect (chordsTool.heldPad() == 3, "Chord pad: a touch didn't play the chord at once");
         chordsScreen.holdPad (3);
-        expect (holdCard.isOpen() && holdCard.itemCount() == chordsTool.progLength && holdCard.current().items[0].text == "PUT IN PROGRESSION BOX 1",
-                "Hold menu on a chord pad: no menu, or not one row per box");
+        expect (holdCard.isOpen() && holdCard.itemCount() == chordsTool.progLength + 2 && holdCard.current().items[0].text == "EDIT CHORD"
+                    && holdCard.current().items[2].text == "PUT IN PROGRESSION BOX 1",
+                "Hold menu on a chord pad: no menu, or not EDIT CHORD, COPY CHORD TO and one row per box");
         expect (chordsTool.heldPad() == 3, "Chord pad: the hold menu let the chord go");
-        holdCard.choose (1);
+        holdCard.choose (3);
         expect (chordsTool.progression[1] == 3, "Hold menu on a chord pad: PUT IN PROGRESSION BOX 2 didn't put the chord there");
         chordsScreen.pressPad (3, false);
         chordsTool.reset();
         chordsTool.setKey (songKey);
         chordsScreen.toolChanged();
-        report << "hold menu on a chord pad: the chord plays on the touch and keeps playing under the menu; PUT IN PROGRESSION BOX n puts it there\n";
+        report << "hold menu on a chord pad: the chord plays on the touch and keeps playing under the menu; EDIT CHORD and COPY CHORD TO lead the menu; PUT IN PROGRESSION BOX n puts it there\n";
         settle();
     }
 
@@ -644,5 +645,196 @@ juce::String PocketApp::runSongDeleteChecks (juce::String& report, const juce::F
     report << "the last song: deletes, and " << ideas.current().name << " (new, empty, the Street kit) opens\n";
     holdCard.close();
     hideToast();
+    return problems.joinIntoString ("\n");
+}
+
+//==============================================================================
+// EDIT CHORD in the app: CHORDS > hold a pad > EDIT CHORD, ROOT and TYPE, the keys, DONE; the pad plays it (synth and
+// vocoder), it's marked on the pad, COPY CHORD TO, and it stays after the song is saved and opened again and the key changes.
+juce::String PocketApp::runOwnChordChecks (juce::String& report, const juce::File& folder)
+{
+    juce::StringArray problems;
+    auto expect = [&problems] (bool ok, const juce::String& what) { if (! ok) problems.add (what); };
+    auto notesText = [] (const juce::Array<int>& n)
+    {
+        juce::StringArray s;
+        for (int v : n)
+            s.add (SongKey::noteName (v));
+        return s.joinIntoString (" ");
+    };
+    auto pcsOf = [] (const juce::Array<int>& n)
+    {
+        juce::Array<int> s;
+        for (int v : n)
+            s.addIfNotAlreadyThere (((v % 12) + 12) % 12);
+        s.sort();
+        return s;
+    };
+    auto typeIndex = [] (const char* label)
+    {
+        const auto& t = ownChordTypes();
+        for (int i = 0; i < (int) t.size(); ++i)
+            if (juce::String (t[(size_t) i].label) == label)
+                return i;
+        return 0;
+    };
+    // what the pad really plays: a touch, a few blocks of the engine, the notes it sent the vocoder
+    auto played = [this] (int pad)
+    {
+        auto& e = chordsTool.engine();
+        std::vector<float> l (256), r (256);
+        chordsTool.releaseAll();   // (a HEAR may still have the pad on: a touch would let it go)
+        for (int i = 0; i < 4; ++i)
+            e.renderAt (l.data(), r.data(), 256, false, 0.0, 120.0);
+        const int before = e.vocoderSends();
+        chordsTool.padDown (pad, false);
+        for (int i = 0; i < 8 && e.vocoderSends() == before; ++i)
+            e.renderAt (l.data(), r.data(), 256, false, 0.0, 120.0);
+        auto got = e.vocoderSends() != before ? e.lastVocoderNotes() : juce::Array<int>();
+        chordsTool.padUp (pad);
+        chordsTool.releaseAll();
+        return got;
+    };
+    hideToast();
+    holdCard.close();
+    showIdeasList();
+    switchIdea (ideas.create ("Own chord check"));
+    const auto songId = ideas.current().id;
+    setSongKey ({ 9, true });
+    hideToast();
+    showTool (Tool::chords, false);
+    const int pad = 2;
+
+    // ---------------------------------------------------------------- hold > EDIT CHORD > ROOT G, TYPE MAJ7
+    chordsScreen.holdPad (pad);
+    if (holdCard.isOpen() && holdCard.itemCount() > 0 && holdCard.current().items[0].text == "EDIT CHORD")
+        holdCard.choose (0);
+    else
+        problems.add ("the chord pad's hold menu has no EDIT CHORD");
+    expect (chordEditOpen && chordEdit.isVisible() && chordEdit.pad() == pad, "EDIT CHORD didn't open the chord sheet on pad 3");
+    chordEdit.pickRoot (7);
+    chordEdit.pickType (typeIndex ("MAJ7"));
+    hideToast();
+    savePng (folder.getChildFile ("40-edit-chord-type.png"));
+    const auto gmaj7 = chordmath::buildOwn (7, typeIndex ("MAJ7"), 0, 0);
+    expect (chordsTool.isOwn (pad) && chordsTool.padNotes (pad) == gmaj7, "ROOT G + TYPE MAJ7: pad 3 plays " + notesText (chordsTool.padNotes (pad)) + ", not " + notesText (gmaj7));
+    expect (chordsTool.padName (pad).startsWith ("G"), "ROOT G + TYPE MAJ7: pad 3 is called " + chordsTool.padName (pad));
+    {
+        const auto got = played (pad);
+        report << "EDIT CHORD G MAJ7 on pad 3: named " << chordsTool.padName (pad) << ", pad notes " << notesText (chordsTool.padNotes (pad)) << ", sent to the vocoder " << notesText (got) << "\n";
+        expect (pcsOf (got) == pcsOf (gmaj7), "pad 3's touch sent " + notesText (got) + " to the vocoder, not G MAJ7's notes");
+    }
+    // INV + : the B on the bottom, the same notes
+    chordEdit.invert (1);
+    expect (pcsOf (chordsTool.padNotes (pad)) == pcsOf (gmaj7) && chordsTool.padNotes (pad).getFirst() == gmaj7[1], "INV + didn't put the 3rd on the bottom ("
+                                                                                                                        + notesText (chordsTool.padNotes (pad)) + ")");
+    chordEdit.invert (-1);
+
+    // ---------------------------------------------------------------- the keys: C MAJ, then C# and D added: CUSTOM
+    chordEdit.pickRoot (0);
+    chordEdit.pickType (typeIndex ("MAJ"));
+    const int low = chordsTool.padNotes (pad).getFirst();
+    expect (! chordEdit.keyRect (low + 1).isEmpty(), "the keys don't show the chord's notes");
+    chordEdit.toggleNote (low + 1);
+    chordEdit.toggleNote (low + 2);
+    hideToast();
+    savePng (folder.getChildFile ("40a-edit-chord-keys-custom.png"));
+    juce::Array<int> cluster { low, low + 1, low + 2, low + 4, low + 7 };
+    expect (chordsTool.padNotes (pad) == cluster, "toggling C# and D on the keys gave " + notesText (chordsTool.padNotes (pad)));
+    expect (chordsTool.padName (pad) == "CUSTOM", "a C C# D E G cluster is called " + chordsTool.padName (pad) + ", not CUSTOM");
+    expect (pcsOf (played (pad)) == pcsOf (cluster), "the custom chord isn't what the pad sends the vocoder");
+    // a toggled voicing that is a chord gets its name: take C# and D out, add the B: C MAJ7
+    chordEdit.toggleNote (low + 1);
+    chordEdit.toggleNote (low + 2);
+    chordEdit.toggleNote (low + 11);
+    expect (chordsTool.padName (pad) == chordmath::nameNotes (chordsTool.padNotes (pad)) && chordsTool.padName (pad).startsWith ("C"),
+            "C E G B on the keys is called " + chordsTool.padName (pad));
+    report << "the keys: C C# D E G shows CUSTOM; C E G B shows " << chordsTool.padName (pad) << "\n";
+    chordEdit.toggleNote (low + 11);
+    chordEdit.toggleNote (low + 1);
+    chordEdit.toggleNote (low + 2);
+    chordEdit.onDone();
+    expect (! chordEditOpen, "DONE didn't close the chord sheet");
+    hideToast();
+    chordsTool.releaseAll();   // (the pads as they rest: the own chord's mark on a pad that isn't playing)
+    {
+        std::vector<float> l (256), r (256);
+        chordsTool.engine().renderAt (l.data(), r.data(), 256, false, 0.0, 120.0);
+    }
+    chordsScreen.repaint();
+    savePng (folder.getChildFile ("40b-chord-pad-own.png"));
+
+    // ---------------------------------------------------------------- COPY CHORD TO pad 6 (the sub-menu), and the pad's menu
+    chordsScreen.holdPad (pad);
+    if (holdCard.isOpen() && holdCard.itemCount() > 1 && holdCard.current().items[1].text.startsWith ("COPY CHORD TO"))
+        holdCard.choose (1);
+    expect (holdCard.isOpen() && holdCard.current().title.startsWith ("COPY"), "COPY CHORD TO didn't open the list of pads");
+    if (holdCard.isOpen() && holdCard.itemCount() >= 5 && holdCard.current().items[4].text == "PAD 6")
+        holdCard.choose (4);
+    else
+        problems.add ("COPY CHORD TO: no PAD 6 in its list");
+    expect (chordsTool.isOwn (5) && chordsTool.padNotes (5) == cluster, "COPY CHORD TO PAD 6 didn't give pad 6 the chord");
+    hideToast();
+
+    // ---------------------------------------------------------------- saved: another song and back, then a new key
+    saveSong();
+    {
+        const auto other = ideas.create ("Own chord check B");
+        switchIdea (other);
+        expect (! chordsTool.isOwn (pad), "a new song's pad 3 has the other song's own chord");
+        switchIdea (songId);
+        ideas.remove (other);
+    }
+    expect (chordsTool.isOwn (pad) && chordsTool.padNotes (pad) == cluster && chordsTool.isOwn (5), "the own chords didn't come back when the song was opened again ("
+                                                                                                        + notesText (chordsTool.padNotes (pad)) + ")");
+    expect (pcsOf (played (pad)) == pcsOf (cluster), "after reopening, pad 3 doesn't play its own chord");
+    const auto keyPad0 = chordsTool.padName (0);
+    setSongKey ({ 0, false });
+    hideToast();
+    expect (chordsTool.padNotes (pad) == cluster && chordsTool.isOwn (5), "the key change (A minor to C major) changed the own chords");
+    expect (chordsTool.padName (0) != keyPad0, "the key change didn't change the pads that follow the key");
+    expect (pcsOf (played (pad)) == pcsOf (cluster), "after the key change, pad 3 doesn't play its own chord");
+    report << "own chords stay after another song and back, and after A minor > C major (pad 1 went " << keyPad0 << " > " << chordsTool.padName (0) << ")\n";
+
+    // ---------------------------------------------------------------- RESET TO SONG KEY (the menu, then the sheet)
+    chordsScreen.holdPad (5);
+    if (holdCard.isOpen() && holdCard.itemCount() > 2 && holdCard.current().items[2].text == "RESET TO SONG KEY")
+        holdCard.choose (2);
+    else
+        problems.add ("an own chord's menu has no RESET TO SONG KEY");
+    expect (! chordsTool.isOwn (5) && chordsTool.padNotes (5) == chordsTool.keyNotes (5), "RESET TO SONG KEY didn't give pad 6 the key's chord back");
+    openChordEdit (pad);
+    chordEdit.resetToKey();
+    expect (! chordsTool.isOwn (pad), "the sheet's RESET TO SONG KEY didn't take the own chord off");
+    closeChordEdit();
+    // the progression plays an own chord too
+    {
+        auto own = chordsTool.ownChord (pad);
+        own.on = true;
+        own.notes = cluster;
+        own.type = -1;
+        chordsTool.setOwnChord (pad, own);
+        chordsTool.progression = { pad, -1, -1, -1, -1, -1, -1, -1 };
+        chordsTool.progressionOn = true;
+        chordsTool.apply();
+        auto& e = chordsTool.engine();
+        const int before = e.vocoderSends();
+        std::vector<float> l (256), r (256);
+        double beat = 0.0;
+        for (int i = 0; i < 20 && e.vocoderSends() == before; ++i, beat += 256 * 120.0 / (60.0 * 44100.0))
+            e.renderAt (l.data(), r.data(), 256, true, beat, 120.0);
+        expect (e.vocoderSends() != before && pcsOf (e.lastVocoderNotes()) == pcsOf (cluster), "the progression doesn't play pad 3's own chord");
+        chordsTool.progressionOn = false;
+        chordsTool.progression = { -1, -1, -1, -1, -1, -1, -1, -1 };
+        chordsTool.apply();
+        chordsTool.resetToKey (pad);
+        e.renderAt (l.data(), r.data(), 256, false, 0.0, 120.0);
+    }
+    report << "COPY CHORD TO PAD 6, RESET TO SONG KEY (menu and sheet) and the progression playing an own chord work\n";
+
+    showIdeasList();
+    removeIdea (songId);
+    hideToast();
+    holdCard.close();
     return problems.joinIntoString ("\n");
 }

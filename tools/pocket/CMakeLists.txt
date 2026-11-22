@@ -71,6 +71,7 @@ target_sources(KaleidoboxPocket PRIVATE
     SynthScreen.cpp
     PocketChords.cpp
     ChordsScreen.cpp
+    ChordEditSheet.cpp
     VocoderScreen.cpp
     PocketLinkClient.cpp
     LinkScreens.cpp
@@ -107,6 +108,8 @@ target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/synth/SynthEngine.cpp)
 # The EFFECTS tool: the Mac's pedalboard (the StripFx rack and its pedals, factory boards and tuner), its DSP only.
 # The phone hosts no plugins, so the rack's plugin slot is left out.
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/StripFx.cpp ${TOOLS}/rig/Pedalboard.cpp)
+# CHORDS > EDIT CHORD names the chord you build with the Mac chord builder's own namer (RigChords::nameOf: no plugins, no routing)
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/RigChords.cpp)
 target_compile_definitions(KaleidoboxPocket PRIVATE CRATE_STRIPFX_NO_PLUGINS=1)
 
 # The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools
