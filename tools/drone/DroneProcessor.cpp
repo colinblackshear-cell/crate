@@ -190,6 +190,9 @@ void DroneProcessor::process (juce::AudioBuffer<float>& buffer, const juce::Audi
                     fed ? feed->getReadPointer (0) : nullptr,
                     fed ? feed->getReadPointer (juce::jmin (1, feed->getNumChannels() - 1)) : nullptr,
                     numSamples, readSettings(), clock);
+    // A bed under the song: 6 dB under the Bass's and the Synth's sounds (at their level it sat on
+    // top of everything).
+    buffer.applyGain (kBedGain);
     limiter.process (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples);
 }
 

@@ -63,6 +63,10 @@ public:
     DroneProcessor& getDrone() { return drone; }
     // Plucks one of its strings (0-3) from the screen, on or off (an off drone wakes for it).
     void pluckDrone (int string) { drone.pluck (string); dronePlucked = true; }
+    // Why singing into the drone's strings makes no sound, in a few words ("The mic is off"), or
+    // empty when they hear the mic. (Only for "Mic / line in": the strings hear your mic straight
+    // from the interface, whether or not the Input strip is on, but only while the mic is on.)
+    juce::String whyDroneDeaf() const;
 
     // Every tool, by the number knob Learn and shows use for it.
     // Each mixer strip's effects rack is a tool too (fxTool + the strip's StripId), so its knobs
@@ -576,7 +580,7 @@ private:
     std::array<juce::LinearSmoothedValue<float>, numStrips> gains;
     // The vocoder and Input switches fade (so they never click), and keys let go while the
     // vocoder is off reach it when it's back on (so they can't come back as stuck notes).
-    juce::LinearSmoothedValue<float> vocoderFade, inputFade, micFade;
+    juce::LinearSmoothedValue<float> vocoderFade, inputFade, micFade, droneMicFade;
     juce::MidiBuffer vocoderMissed, midiScratch;
 
     const juce::MidiBuffer* hostMidi = nullptr;

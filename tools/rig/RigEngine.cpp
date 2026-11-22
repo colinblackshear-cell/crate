@@ -88,6 +88,15 @@ juce::String RigEngine::sampleSourceName (int source)
     }
 }
 
+juce::String RigEngine::whyDroneDeaf() const
+{
+    if (drone.getFeed() != DroneProcessor::feedInput)
+        return {};
+    if (! micOn.load())
+        return "The mic is off";
+    return {};
+}
+
 juce::String RigEngine::inputJackName (int jack)
 {
     switch ((InputJack) jack)
@@ -414,6 +423,8 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     inputFade.setCurrentAndTargetValue (0.0f);
     micFade.reset (sampleRate, 0.015);
     micFade.setCurrentAndTargetValue (micOn.load() ? 1.0f : 0.0f);
+    droneMicFade.reset (sampleRate, 0.015);
+    droneMicFade.setCurrentAndTargetValue (0.0f);
     vocoderMissed.clear();
 
     for (int s = 0; s < numStrips; ++s)
@@ -937,12 +948,37 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     // their strips), or to all of them together.
     juce::AudioBuffer<float> droneBlock (droneBuffer.getArrayOfWritePointers(), 2, n);
     droneBlock.clear();
+    if (drone.getFeed() != DroneProcessor::feedInput)
+        droneMicFade.setCurrentAndTargetValue (0.0f);   // (so it fades in when you pick the mic)
     if (const bool plucked = dronePlucked.exchange (false); runsStrip (droneStrip) && (plucked || drone.wantsToPlay()))
     {
         const juce::AudioBuffer<float>* feed = nullptr;
         switch (drone.getFeed())
         {
-            case DroneProcessor::feedInput:   feed = &inputBlock; break;
+            case DroneProcessor::feedInput:
+            {
+                // Your voice straight from the mic or interface (not the Input strip, which is off
+                // until you turn it on and has its own fader): heard while the mic is on.
+                juce::AudioBuffer<float> voice (droneFeedBuffer.getArrayOfWritePointers(), 2, n);
+                droneMicFade.setTargetValue (hearMic && numInputs > 0 ? 1.0f : 0.0f);
+                if (droneMicFade.getCurrentValue() > 0.0f || droneMicFade.isSmoothing())
+                {
+                    copyInput (voice);
+                    if (droneMicFade.isSmoothing())
+                    {
+                        const float from = droneMicFade.getCurrentValue();
+                        droneMicFade.skip (n);
+                        for (int ch = 0; ch < 2; ++ch)
+                            voice.applyGainRamp (ch, 0, n, from, droneMicFade.getCurrentValue());
+                    }
+                }
+                else
+                {
+                    voice.clear();
+                }
+                feed = &droneFeedBuffer;
+                break;
+            }
             case DroneProcessor::feedVocoder: feed = &vocoderBlock; break;
             case DroneProcessor::feedBass:    feed = &bassBlock; break;
             case DroneProcessor::feedSynth:   feed = &synthBlock; break;

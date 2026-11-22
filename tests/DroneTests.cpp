@@ -148,7 +148,7 @@ struct DroneTests : juce::UnitTest
             expect (early > late * 1.5f, "early " + juce::String (early) + " late " + juce::String (late));
         }
 
-        beginTest ("it sits with the other tools' sounds, and never over the ceiling");
+        beginTest ("it sits 6 dB under the other tools' sounds (a bed), and never over the ceiling");
         {
             for (int preset = 0; preset < DroneProcessor::presetNames().size(); ++preset)
             {
@@ -159,7 +159,7 @@ struct DroneTests : juce::UnitTest
                 auto out = render (d, 14.0);
                 const float level = rmsDb (out, 6.0, 14.0);
                 logMessage ("DRONE|" + DroneProcessor::presetNames()[preset] + "|" + juce::String (level, 1) + "|" + juce::String (juce::Decibels::gainToDecibels (out.getMagnitude (0, out.getNumSamples())), 1));
-                expect (std::abs (level - -18.0f) <= 2.0f, DroneProcessor::presetNames()[preset] + ": " + juce::String (level, 1) + " dB");
+                expect (std::abs (level - -24.0f) <= 2.0f, DroneProcessor::presetNames()[preset] + ": " + juce::String (level, 1) + " dB");
                 expect (out.getMagnitude (0, out.getNumSamples()) <= juce::Decibels::decibelsToGain (crate::SafetyLimiter::kCeilingDb) + 1.0e-4f);
             }
         }
