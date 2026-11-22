@@ -11,6 +11,7 @@
 #include "RigEngine.h"
 #include "RigPlugin.h"
 #include "RigShowFiles.h"
+#include "RigLastShow.h"
 #include "RigSong.h"
 
 namespace
@@ -388,6 +389,8 @@ struct RigShowFilesTests : juce::UnitTest
                     change (e);
                     after = snapshot (e);
                 }
+                const auto oldRevision = juce::parseXML (show)->getStringAttribute (rigshow::kRevisionAttribute);
+                expect (fromLegacy == oldRevision.isEmpty());
                 const int n = point == "wavChunk" ? 1 : 0;
                 const auto out = runChild (show, point, n);
                 expect (out.contains ("KILLED AT " + point), point + ": the copy was killed there:\n" + out.getLastCharacters (2000));
@@ -403,6 +406,9 @@ struct RigShowFilesTests : juce::UnitTest
                               juce::String (fromLegacy ? "from legacy, " : "from new, ") + "killed at " + point
                                   + (committed ? ": the new show" : ": the old show"));
 
+                // The XML on disk names exactly the revision it should, and that resolves to a whole folder.
+                expectRevisionOnDisk (show, point, fromLegacy, committed, oldRevision);
+
                 // And the next save, after the kill, works and loads.
                 change (loaded);
                 const auto r = loaded.saveShowFile (show);
@@ -413,6 +419,95 @@ struct RigShowFilesTests : juce::UnitTest
                 load (again, show);
                 expectEquals (differences (after, snapshot (again)), juce::String(), point + ": saved again");
             }
+        }
+
+        //======================================================================
+        beginTest ("E. A legacy folder's promotion stopped half way (old folder moved to .r-legacy-*, new one not yet renamed) loads the new show, and the next save finishes it");
+        {
+            const auto show = copyOfFixture (root.getChildFile ("E-legacy-promotion"));
+            Snapshot after;
+            {
+                auto eOwner = std::make_unique<RigEngine>();
+                auto& e = *eOwner;
+                e.prepare (kRate, 256);
+                load (e, show);
+                change (e);
+                after = snapshot (e);
+            }
+            const auto out = runChild (show, "promote", 0);
+            expect (out.contains ("KILLED AT promote"), out.getLastCharacters (2000));
+            expectRevisionOnDisk (show, "promote", true, true, {});
+            const auto revision = juce::parseXML (show)->getStringAttribute (rigshow::kRevisionAttribute);
+            expect (! rigshow::currentFolder (show).exists(), "no \"<show> loops\" (the stop was between the two renames)");
+
+            auto loadedOwner = std::make_unique<RigEngine>();
+            auto& loaded = *loadedOwner;
+            loaded.prepare (kRate, 256);
+            expect (load (loaded, show));
+            expectEquals (loaded.getLoopAudioProblem(), juce::String());
+            expectEquals (differences (after, snapshot (loaded)), juce::String(), "the new show, from .r-<id>");
+
+            // Saving again with nothing changed names the same revision and finishes the promotion.
+            const auto r = loaded.saveShowFile (show);
+            expect (r.ok && r.unchanged && r.revision == revision, "the same revision: " + r.error);
+            expect (rigshow::holdsRevision (rigshow::currentFolder (show), revision), "now \"<show> loops\" holds it, for older builds too");
+            juce::Array<juce::File> legacyAside;
+            for (const auto& f : show.getParentDirectory().findChildFiles (juce::File::findDirectories, false, "Legacy show loops.r-legacy-*"))
+                legacyAside.add (f);
+            expectEquals (legacyAside.size(), 1);
+            if (legacyAside.size() == 1)
+                expectEquals (contentsOf (legacyAside[0]), contentsOf (fixtureFolder().getChildFile ("Legacy show loops")), "the legacy folder kept whole");
+        }
+
+        //======================================================================
+        beginTest ("Last show: a save that fails on quit says why, keeps the Last show from before, and tells the next launch");
+        {
+            const auto folder = root.getChildFile ("Last show");
+            const auto show = copyOfFixture (folder);
+            juce::PropertiesFile::Options options;
+            options.applicationName = "Last show test";
+            options.filenameSuffix = ".settings";
+            juce::PropertiesFile settings (folder.getChildFile ("test.settings"), options);
+            Snapshot before;
+            {
+                auto eOwner = std::make_unique<RigEngine>();
+                auto& e = *eOwner;
+                e.prepare (kRate, 256);
+                load (e, show);
+                expect (riglastshow::save (e, show, settings).ok, "a good save");
+                expect (riglastshow::takeFailureFromLastQuit (settings).isEmpty(), "says nothing");
+                before = snapshot (e);
+            }
+            const auto xmlBefore = readAll (show);
+            auto eOwner = std::make_unique<RigEngine>();
+            auto& e = *eOwner;
+            e.prepare (kRate, 256);
+            load (e, show);
+            change (e);
+            rigshow::Result r;
+            {
+                HookScope fail ([] (const juce::String& point, int) { return point != "wav"; });
+                r = riglastshow::save (e, show, settings);
+            }
+            expect (! r.ok, "the save says it failed");
+            const auto onQuit = riglastshow::quitMessage (r);
+            expect (onQuit.contains (r.error) && onQuit.contains ("Last show from before is still there"), onQuit);
+            expectEquals (readAll (show), xmlBefore, "the Last show file is as it was");
+
+            // The settings file (as the next launch reads it) has why.
+            juce::PropertiesFile nextLaunch (folder.getChildFile ("test.settings"), options);
+            const auto atLaunch = riglastshow::takeFailureFromLastQuit (nextLaunch);
+            expect (atLaunch.contains ("wasn't saved") && atLaunch.contains (r.error), atLaunch);
+            expect (riglastshow::takeFailureFromLastQuit (nextLaunch).isEmpty(), "said once");
+            auto againOwner = std::make_unique<RigEngine>();
+            auto& again = *againOwner;
+            again.prepare (kRate, 256);
+            expect (load (again, show));
+            expectEquals (differences (before, snapshot (again)), juce::String(), "and it opens as the Last show from before");
+
+            // A later good save clears it.
+            expect (riglastshow::save (e, show, settings).ok);
+            expect (riglastshow::takeFailureFromLastQuit (settings).isEmpty());
         }
 
         //======================================================================
@@ -566,17 +661,77 @@ struct RigShowFilesTests : juce::UnitTest
         root.deleteRecursively();
     }
 
+    // After a save was killed at `point`: which revision the show file names, where its folder is,
+    // and (from a legacy show) where the older build's folder went.
+    void expectRevisionOnDisk (const juce::File& show, const juce::String& point, bool fromLegacy, bool committed, const juce::String& oldRevision)
+    {
+        const auto where = juce::String (fromLegacy ? "from legacy, " : "from new, ") + "killed at " + point + ": ";
+        const auto revision = juce::parseXML (show)->getStringAttribute (rigshow::kRevisionAttribute);
+        const auto current = rigshow::currentFolder (show);
+        juce::Array<juce::File> legacyAside;
+        for (const auto& f : show.getParentDirectory().findChildFiles (juce::File::findDirectories, false, "*"))
+            if (f.getFileName().startsWith (current.getFileName() + ".r-legacy-"))
+                legacyAside.add (f);
+        juce::String problem;
+        const auto resolved = rigshow::resolve (show, revision, &problem);
+        expect (resolved != juce::File(), where + "the show's revision resolves: " + problem);
+
+        if (! committed)
+        {
+            expectEquals (revision, oldRevision, where + "the show file still names the old revision");
+            expect (resolved == current, where + "in \"<show> loops\", untouched");
+            // (From a new show, the first save already moved the legacy folder to .r-legacy-*.)
+            expectEquals (legacyAside.size(), fromLegacy ? 0 : 1, where + "the legacy folder wasn't moved");
+            return;
+        }
+        expect (revision.isNotEmpty() && revision != oldRevision, where + "the show file names the new revision");
+        expect (rigshow::holdsRevision (resolved, revision), where + "and its folder is whole");
+        const bool promoted = point == "done";
+        expect (resolved == (promoted ? current : rigshow::revisionFolder (show, revision)),
+                where + "found at " + resolved.getFileName());
+        if (fromLegacy)
+        {
+            // "aside" stopped before the legacy folder moved; "promote" after it moved, before the new one took its name.
+            const bool moved = point == "promote" || point == "done";
+            expectEquals (legacyAside.size(), moved ? 1 : 0, where + "the legacy folder went to .r-legacy-*");
+            expect (current.exists() == (point != "promote"), where + (point == "promote" ? "no \"<show> loops\" yet" : "\"<show> loops\" is there"));
+            if (moved && legacyAside.size() == 1)
+                expectEquals (contentsOf (legacyAside[0]), contentsOf (fixtureFolder().getChildFile ("Legacy show loops")),
+                              where + "the legacy folder, every file as it was");
+            if (! moved)
+                expect (! current.getChildFile (rigshow::kIndexName).exists(), where + "\"<show> loops\" is still the legacy one");
+        }
+        else if (point != "done")
+        {
+            expect (rigshow::holdsRevision (point == "promote" ? rigshow::revisionFolder (show, oldRevision) : current, oldRevision),
+                    where + "the old revision is still whole");
+        }
+
+        // What an older build (which reads only "<show> loops") would see here, for the report.
+        auto oldBuild = std::make_unique<RigEngine>();
+        oldBuild->prepare (kRate, 256);
+        auto xml = juce::parseXML (show);
+        xml->removeAttribute (rigshow::kRevisionAttribute);
+        oldBuild->loadShow (juce::ValueTree::fromXml (*xml));
+        oldBuild->readLoopAudio (show);
+        int loops = 0;
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+            loops += oldBuild->getLooper().copyLayerAudio (i).getNumSamples() > 0 ? 1 : 0;
+        logMessage ("  " + where + "an older build would load " + juce::String (loops) + " loops from \"<show> loops\""
+                    + (promoted ? " (the new revision)" : current.exists() ? " (the previous revision's sound)" : " (folder not there yet)"));
+    }
+
     // A save made to fail at one step: false with why, and the show on disk is exactly as it was
     // (its file, its folder, nothing left beside it), and loads as before.
-    void expectFailedSaveKeepsShow (const juce::File& root, const juce::String& name, std::function<bool (const juce::String&, int)> hook)
+    void expectFailedSaveKeepsShow (const juce::File& root, const juce::String& label, std::function<bool (const juce::String&, int)> hook)
     {
-        const auto show = copyOfFixture (root.getChildFile (name));
+        const auto show = copyOfFixture (root.getChildFile (label));
         {
             auto eOwner = std::make_unique<RigEngine>();
             auto& e = *eOwner;
             e.prepare (kRate, 256);
             load (e, show);
-            expect (e.saveShowFile (show).ok, name + ": saved once");
+            expect (e.saveShowFile (show).ok, label + ": saved once");
         }
         auto engineOwner = std::make_unique<RigEngine>();
         auto& engine = *engineOwner;
@@ -592,20 +747,20 @@ struct RigShowFilesTests : juce::UnitTest
             HookScope fail (std::move (hook));
             r = engine.saveShowFile (show);
         }
-        expect (! r.ok, name + ": the save says it failed");
-        expect (r.error.isNotEmpty(), name + ": and why");
-        expectEquals (readAll (show), xmlBefore, name + ": the show file is as it was");
-        expectEquals (contentsOf (show.getParentDirectory()), folderBefore, name + ": every file is as it was");
-        expect (siblingsOf (show) == namesBefore, name + ": nothing left beside it\n" + siblingsOf (show).joinIntoString ("\n"));
+        expect (! r.ok, label + ": the save says it failed");
+        expect (r.error.isNotEmpty(), label + ": and why");
+        expectEquals (readAll (show), xmlBefore, label + ": the show file is as it was");
+        expectEquals (contentsOf (show.getParentDirectory()), folderBefore, label + ": every file is as it was");
+        expect (siblingsOf (show) == namesBefore, label + ": nothing left beside it\n" + siblingsOf (show).joinIntoString ("\n"));
         auto againOwner = std::make_unique<RigEngine>();
         auto& again = *againOwner;
         again.prepare (kRate, 256);
         expect (load (again, show));
-        expectEquals (differences (before, snapshot (again)), juce::String(), name + ": it loads as before");
+        expectEquals (differences (before, snapshot (again)), juce::String(), label + ": it loads as before");
 
         // The same save, once the disk is fine, works.
         const auto ok = engine.saveShowFile (show);
-        expect (ok.ok, name + ": saving again works: " + ok.error);
+        expect (ok.ok, label + ": saving again works: " + ok.error);
     }
 
     // Runs the save in a copy of this program that is killed (std::_Exit, no clean up) at a step.
