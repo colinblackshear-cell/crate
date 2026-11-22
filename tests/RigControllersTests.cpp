@@ -244,6 +244,174 @@ public:
             expect (closed);
         }
 
+        beginTest ("drum triggers: named, played by note until learned");
+        {
+            using crate::controllers::guessFor;
+            expect (guessFor ("Kaleidobox Trigger").kind == Kind::triggers);
+            expect (guessFor ("Arduino Leonardo").kind == Kind::triggers);
+            expect (guessFor ("TD-17").kind == Kind::triggers);
+            expect (guessFor ("Alesis Strike MultiPad").kind == Kind::triggers);
+            expect (guessFor ("Trigger Finger Pro").kind == Kind::pads, "the M-Audio pad controller is still pads");
+
+            Translator t;
+            t.setProfile (Profile::defaultsFor (Kind::triggers));
+            bool kept = false;
+            auto out = pass (t, juce::MidiMessage::noteOn (10, 38, (juce::uint8) 90), &kept);
+            expect (kept);
+            expectEquals (out.getChannel(), 10);
+            expectEquals (out.getNoteNumber(), 38, "note 38 is pad 3 until learned");
+            expectEquals ((int) out.getVelocity(), 90, "as played");
+            out = pass (t, juce::MidiMessage::noteOn (1, 37, (juce::uint8) 90));
+            expectEquals (out.getChannel(), 10, "any channel: onto the pads' channel");
+            pass (t, juce::MidiMessage::noteOn (10, 20, (juce::uint8) 90), &kept);
+            expect (! kept, "a note that isn't a pad plays nothing (not a key)");
+            pass (t, juce::MidiMessage::aftertouchChange (10, 38, 40), &kept);
+            expect (! kept);
+            pass (t, juce::MidiMessage::controllerEvent (10, 4, 100), &kept);
+            expect (kept, "a hi-hat pedal's CC comes through");
+        }
+
+        beginTest ("drum triggers: hit each drum to learn it onto the next pad");
+        {
+            Translator t;
+            t.setProfile (Profile::defaultsFor (Kind::triggers));
+            t.learn (Translator::Learn::triggers, 4);   // starting at pad 5
+            bool kept = false;
+            auto out = pass (t, juce::MidiMessage::noteOn (10, 60, (juce::uint8) 100), &kept);
+            expect (kept, "the hit still plays while learning");
+            expectEquals (out.getNoteNumber(), 36 + 4);
+            pass (t, juce::MidiMessage::noteOff (10, 60));
+            out = pass (t, juce::MidiMessage::noteOn (10, 60, (juce::uint8) 100));
+            expectEquals (out.getNoteNumber(), 36 + 4, "hitting the same drum again doesn't take another pad");
+            out = pass (t, juce::MidiMessage::noteOn (10, 61, (juce::uint8) 100));
+            expectEquals (out.getNoteNumber(), 36 + 5, "the next drum gets the next pad");
+            expectEquals (t.nextTriggerTarget(), 6);
+            expectEquals (t.triggersLearned(), 2);
+            expect (t.takeLearned());
+            t.stopLearning();
+            const auto p = t.getProfile();
+            expectEquals (p.triggerFor (60), 4);
+            expectEquals (p.triggerFor (61), 5);
+            expect (p.learnedTriggers() == std::vector<int> { 60, 61 });
+            out = pass (t, juce::MidiMessage::noteOff (10, 61));
+            expectEquals (out.getNoteNumber(), 36 + 5, "its let go stops the same pad");
+
+            // Saved and read back, with the feel.
+            auto q = p;
+            q.feel = crate::controllers::Feel::soft;
+            q.triggers[40] = (juce::int8) crate::controllers::kTriggerNothing;
+            const auto back = Profile::fromTree (q.toTree());
+            expect (back == q);
+            expectEquals (back.triggerFor (40), (int) crate::controllers::kTriggerNothing);
+        }
+
+        beginTest ("drum triggers: a drum on a loop layer presses its Rec");
+        {
+            Translator t;
+            auto p = Profile::defaultsFor (Kind::triggers);
+            p.triggers[36] = (juce::int8) (crate::controllers::kTriggerFirstLoop + 2);   // loop 3
+            t.setProfile (p);
+            int loop = -1;
+            auto m = juce::MidiMessage::noteOn (10, 36, (juce::uint8) 100);
+            expect (! t.translate (m, 10, &loop), "it doesn't play a pad");
+            expectEquals (loop, 2);
+            loop = -1;
+            m = juce::MidiMessage::noteOff (10, 36);
+            expect (! t.translate (m, 10, &loop));
+            expectEquals (loop, -1, "the let go presses nothing");
+
+            t.learn (Translator::Learn::triggers, crate::controllers::kTriggerFirstLoop + 15);
+            m = juce::MidiMessage::noteOn (10, 50, (juce::uint8) 100);
+            t.translate (m, 10, &loop);
+            expectEquals (loop, 15, "learned onto loop 16");
+            expectEquals (t.nextTriggerTarget(), crate::controllers::kTriggerFirstLoop + 15, "the last loop stays the last");
+        }
+
+        beginTest ("drum triggers: the feel bends velocity");
+        {
+            using crate::controllers::applyFeel;
+            using crate::controllers::Feel;
+            expectEquals (applyFeel (Feel::even, 40), 40);
+            expect (applyFeel (Feel::soft, 40) > 40, "light hands: soft hits louder");
+            expect (applyFeel (Feel::hard, 40) < 40, "heavy hands: soft hits softer");
+            expectEquals (applyFeel (Feel::soft, 127), 127);
+            expectEquals (applyFeel (Feel::hard, 1), 1, "never silent");
+            Translator t;
+            auto p = Profile::defaultsFor (Kind::triggers);
+            p.feel = Feel::soft;
+            t.setProfile (p);
+            const auto out = pass (t, juce::MidiMessage::noteOn (10, 36, (juce::uint8) 40));
+            expectEquals ((int) out.getVelocity(), applyFeel (Feel::soft, 40));
+        }
+
+        beginTest ("the picker: drum triggers learned hit by hit, a line per drum");
+        {
+            crate::controllers::Setup setup;
+            ControllersPanel panel (setup, [] { return juce::StringArray { "Kaleidobox Trigger" }; });
+            panel.setSize (820, 640);
+            auto* row = panel.getRow ("Kaleidobox Trigger");
+            expect (row != nullptr);
+            expect (row->learnTriggers.isVisible() && row->learnAs.isVisible() && row->feel.isVisible());
+            expect (! row->learnPad.isVisible() && ! row->learnKnobs.isVisible() && ! row->octave.isVisible());
+            expectEquals (row->getNumTriggerLines(), 0);
+            const int h0 = row->getHeight();
+
+            row->learnAs.setSelectedId (3, juce::sendNotificationSync);   // pad 2
+            row->learnTriggers.onClick();
+            auto& t = setup.translatorFor ("Kaleidobox Trigger");
+            expect (t.learning() == Translator::Learn::triggers);
+            for (int note : { 36, 38, 42 })
+            {
+                auto m = juce::MidiMessage::noteOn (10, note, (juce::uint8) 100);
+                setup.translate ("Kaleidobox Trigger", m, 10);
+            }
+            row->learnTriggers.onClick();
+            expect (t.learning() == Translator::Learn::none, "Stop");
+            expect (setup.saveLearned());
+            row->refresh();
+            panel.resized();
+            expectEquals (row->getNumTriggerLines(), 3);
+            expect (row->getHeight() > h0, "a line per drum");
+            expectEquals (setup.profileFor ("Kaleidobox Trigger").triggerFor (38), 2, "the second drum: pad 3");
+
+            auto* line = row->getTriggerLine (42);
+            expect (line != nullptr);
+            line->target.setSelectedId (crate::controllers::kTriggerFirstLoop + 2, juce::sendNotificationSync);
+            expectEquals (setup.profileFor ("Kaleidobox Trigger").triggerFor (42), (int) crate::controllers::kTriggerFirstLoop, "onto loop 1");
+
+            row->feel.setSelectedId ((int) crate::controllers::Feel::hard + 1, juce::sendNotificationSync);
+            expect (setup.profileFor ("Kaleidobox Trigger").feel == crate::controllers::Feel::hard);
+
+            row->forgetTrigger (36);   // (what Forget does, just after the click)
+            expectEquals (row->getNumTriggerLines(), 2, "Forget");
+
+            // CRATE_TRIGGERS_SNAPSHOT=/path/to.png saves a picture of a trigger box being learned.
+            if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_TRIGGERS_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                crate::controllers::Setup shot;
+                ControllersPanel picture (shot, [] { return juce::StringArray { "Kaleidobox Trigger", "Launchkey MK3 61 LKMK3 MIDI Out" }; });
+                picture.setNewDevice ("Kaleidobox Trigger");
+                auto& tr = shot.translatorFor ("Kaleidobox Trigger");
+                tr.learn (Translator::Learn::triggers, 0);
+                for (int note : { 36, 37, 38, 39, 40 })
+                {
+                    auto m = juce::MidiMessage::noteOn (10, note, (juce::uint8) 100);
+                    shot.translate ("Kaleidobox Trigger", m, 10);
+                }
+                auto p = tr.getProfile();
+                p.triggers[40] = (juce::int8) crate::controllers::kTriggerFirstLoop;
+                shot.setProfile ("Kaleidobox Trigger", p);
+                picture.setSize (820, 900);
+                picture.rebuild();
+                picture.resized();
+                picture.getRow ("Kaleidobox Trigger")->tick();
+                auto image = picture.createComponentSnapshot (picture.getLocalBounds(), true, 2.0f);
+                juce::File (path).deleteFile();
+                juce::FileOutputStream out { juce::File (path) };
+                juce::PNGImageFormat().writeImageToStream (image, out);
+            }
+        }
+
         beginTest ("Settings has MIDI controllers in the app, not in Logic");
         {
             RigEngine engine;

@@ -10,6 +10,9 @@
 // pads, a keyboard, a pad controller, or not listened to), where its pads start (Learn pad 1),
 // how a pad controller's pads are laid out, an octave for its keys, and its eight knobs (Learn
 // knobs). A lamp lights when a controller sends anything, so you can tell which is which.
+// Drum triggers (a Kaleidobox Trigger box, an e-drum kit) get "Hit to learn": hit each drum
+// in turn and it takes the next pad (or a loop layer's Rec), then a line per drum to change it,
+// each with a lamp that lights on its hits, and how hard hits come out (Feel).
 // A controller plugged in for the first time opens it once, on that controller.
 class ControllersPanel : public juce::Component,
                          private juce::Timer
@@ -48,6 +51,14 @@ public:
         juce::ComboBox kind, layout, octave;
         juce::TextButton learnPad { "Learn pad 1" }, learnKnobs { "Learn knobs" }, reset { "Defaults" };
         juce::Label padsInfo, knobsInfo, status;
+        // Drum triggers.
+        juce::TextButton learnTriggers { "Hit to learn" };
+        juce::ComboBox learnAs, feel;
+        class TriggerLine;
+        TriggerLine* getTriggerLine (int note) const;
+        int getNumTriggerLines() const { return triggerLines.size(); }
+        // Forgets a learned drum: it plays the pad its note is again.
+        void forgetTrigger (int note);
         bool lit = false;
         static int heightFor (const crate::controllers::Profile&);
 
@@ -55,7 +66,27 @@ public:
         ControllersPanel& panel;
         crate::controllers::Translator& translator;
         void apply (const crate::controllers::Profile&);
-        juce::Rectangle<int> lampArea, nameArea, hintArea, padsLabel, keysLabel, knobsLabel;
+        void rebuildTriggerLines (const crate::controllers::Profile&);
+        juce::OwnedArray<TriggerLine> triggerLines;
+        juce::Rectangle<int> lampArea, nameArea, hintArea, padsLabel, keysLabel, knobsLabel, triggersLabel, feelLabel;
+        friend class TriggerLine;
+    };
+
+    // One learned drum trigger: its lamp, its note, what it plays, and Forget.
+    class Row::TriggerLine : public juce::Component
+    {
+    public:
+        TriggerLine (Row&, int note);
+        void paint (juce::Graphics&) override;
+        void resized() override;
+        void tick();
+        const int note;
+        juce::ComboBox target;
+        juce::TextButton forget { "Forget" };
+        bool lit = false;
+    private:
+        Row& row;
+        juce::Rectangle<int> lampArea, textArea;
     };
 
 private:

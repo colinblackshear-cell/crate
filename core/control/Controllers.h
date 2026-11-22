@@ -20,6 +20,11 @@
 //
 // What isn't known from the box is learned: press "Learn pad 1" and hit the first pad, press
 // "Learn knobs" and turn knobs 1 to 8.
+//
+// Drum triggers (a Kaleidobox Trigger box, or any e-drum module: piezos on real drums or pads,
+// one note per input) are learned hit by hit: press "Hit to learn", hit each drum in turn, and
+// each gets the next pad (or a loop layer). A trigger not learned plays the pad its note is
+// (note 36 is pad 1), so a box that sends 36, 37, 38... plays pads 1, 2, 3... out of the box.
 namespace crate::controllers
 {
     enum class Kind
@@ -29,6 +34,7 @@ namespace crate::controllers
         keys,           // a keyboard: every note is a key, nothing is a pad
         pads,           // a pad controller: every note is a pad (up to 64, the MPC's four banks)
         off,            // not listened to
+        triggers,       // drum triggers: each input (a note) learned onto a pad or a loop layer (added later: saved numbers stay)
         numKinds
     };
     juce::String kindName (Kind);
@@ -46,6 +52,15 @@ namespace crate::controllers
     // The Rig's own way: pads are notes from this on its pad channel, knobs these CCs.
     constexpr int kRigFirstPadNote = 36, kRigFirstKnobCc = 21, kNumKnobs = 8, kMaxPads = 64;
 
+    // What a drum trigger (one note) does: plays a pad (0-63), presses a loop layer's Rec
+    // (record / stop / overdub, as its button), nothing, or (not learned) the pad its note is.
+    constexpr int kTriggerByNote = -2, kTriggerNothing = -1, kTriggerFirstLoop = kMaxPads, kTriggerLoops = 16,
+                  kTriggerNumTargets = kMaxPads + kTriggerLoops;
+    juce::String triggerTargetName (int target);
+    // How hard hits come out: soft hits brought up, as played, or soft hits kept soft.
+    enum class Feel { soft, even, hard };
+    juce::String feelName (Feel);
+    int applyFeel (Feel, int velocity);
     struct Profile
     {
         Kind kind = Kind::keys;
@@ -54,9 +69,19 @@ namespace crate::controllers
         Layout layout = Layout::blocks;
         int octave = 0;             // -3..+3: moves the keys (not the pads)
         std::array<int, kNumKnobs> knobs { 21, 22, 23, 24, 25, 26, 27, 28 };   // CC per knob, -1 none
+        // Drum triggers only: what each note does (kTriggerByNote until learned), and the feel.
+        std::array<juce::int8, 128> triggers = makeTriggers();
+        Feel feel = Feel::even;
+
+        static std::array<juce::int8, 128> makeTriggers() { std::array<juce::int8, 128> t {}; t.fill ((juce::int8) kTriggerByNote); return t; }
+        // What a trigger note does now: its learned target, else the pad its note is (or nothing).
+        int triggerFor (int note) const;
+        // The notes learned, lowest first.
+        std::vector<int> learnedTriggers() const;
 
         static Profile defaultsFor (Kind);
         bool hasPads() const { return kind == Kind::launchkey || kind == Kind::keysAndPads || kind == Kind::pads; }
+        bool isTriggers() const { return kind == Kind::triggers; }
         bool hasKeys() const { return kind == Kind::launchkey || kind == Kind::keysAndPads || kind == Kind::keys; }
         // Pad index (0-63) a note on `channel` is, or -1.
         int padFor (int channel, int note) const;
@@ -80,14 +105,24 @@ namespace crate::controllers
         Profile getProfile() const;
 
         // Rewrites `m` the Rig's way, given the Rig's pad channel. False: drop it (the device is
-        // off, or the message was caught by a learn).
-        bool translate (juce::MidiMessage& m, int rigPadChannel);
+        // off, or the message was caught by a learn, or it was a trigger hit on a loop layer:
+        // then `loopHit`, if given, is set to the layer, 0-15).
+        bool translate (juce::MidiMessage& m, int rigPadChannel, int* loopHit = nullptr);
 
         // Learning: the next note on is pad 1 (its note, and its channel unless a pad
         // controller); or the next eight different CCs are knobs 1-8 (stopLearning keeps the ones
         // turned so far).
-        enum class Learn { none, pad, knobs };
-        void learn (Learn);
+        //
+        // Or (drum triggers) every drum hit that isn't learned yet in this learn gets
+        // `firstTarget`, the next the one after (pad 1, pad 2...; loop 1, loop 2...), and still
+        // plays, until stopLearning().
+        enum class Learn { none, pad, knobs, triggers };
+        void learn (Learn, int firstTarget = 0);
+        // The target the next trigger hit gets while learning triggers.
+        int nextTriggerTarget() const { return triggerTarget.load(); }
+        int triggersLearned() const { return triggersSoFar.load(); }
+        // When `note` last came in (Time::getMillisecondCounter), so each trigger's lamp lights.
+        juce::uint32 lastHeard (int note) const { return juce::isPositiveAndBelow (note, 128) ? noteHeard[(size_t) note].load() : 0; }
         void stopLearning();
         Learn learning() const { return (Learn) learnWhat.load(); }
         int knobsLearned() const { return knobsSoFar.load(); }
@@ -100,7 +135,9 @@ namespace crate::controllers
     private:
         mutable juce::SpinLock lock;
         Profile profile;
-        std::atomic<int> learnWhat { 0 }, knobsSoFar { 0 };
+        std::atomic<int> learnWhat { 0 }, knobsSoFar { 0 }, triggerTarget { 0 }, triggersSoFar { 0 };
+        std::array<bool, 128> caughtTriggers {};
+        std::array<std::atomic<juce::uint32>, 128> noteHeard {};
         std::atomic<bool> learned { false };
         std::atomic<juce::uint32> heard { 0 };
         std::array<int, kNumKnobs> caughtKnobs {};
@@ -129,8 +166,9 @@ namespace crate::controllers
         // Saves any profile a learn changed. Returns true if one did.
         bool saveLearned();
 
-        // MIDI thread: rewrites a device's message the Rig's way; false drops it.
-        bool translate (const juce::String& deviceName, juce::MidiMessage&, int rigPadChannel);
+        // MIDI thread: rewrites a device's message the Rig's way; false drops it (and a drum
+        // trigger on a loop layer sets `loopHit`).
+        bool translate (const juce::String& deviceName, juce::MidiMessage&, int rigPadChannel, int* loopHit = nullptr);
 
     private:
         struct Slot
