@@ -18,6 +18,31 @@ void PanelButton::paintButton (juce::Graphics& g, bool over, bool down)
     const auto& p = pal();
     auto r = getLocalBounds().toFloat();
     juce::Colour ink;
+    if (flat)
+    {
+        // No face: words (or the menu's three lines) straight on the panel.
+        if (over || down)
+        {
+            g.setColour (p.ink.withAlpha (down ? 0.1f : 0.05f));
+            g.fillRoundedRectangle (r, 8.0f);
+        }
+        g.setColour (p.ink);
+        if (icon == Icon::menu)
+        {
+            const float w = juce::jmin (34.0f, r.getWidth() * 0.6f), x = r.getCentreX() - w * 0.5f;
+            for (int k = 0; k < 3; ++k)
+                g.fillRoundedRectangle (x, r.getCentreY() - 9.0f + (float) k * 8.0f, w, 3.2f, 1.6f);
+            return;
+        }
+        auto area = getLocalBounds().reduced (8, 0);
+        const auto font = barlow (fontSize);
+        g.setFont (font);
+        const float w = juce::jmin ((float) area.getWidth() - (dot ? 22.0f : 0.0f), juce::GlyphArrangement::getStringWidth (font, text) + 4.0f);
+        g.drawFittedText (text, area.removeFromLeft ((int) w), juce::Justification::centredLeft, 1, 0.8f);
+        if (dot)
+            g.fillEllipse (juce::Rectangle<float> (9.0f, 9.0f).withCentre ({ (float) area.getX() + 14.0f, (float) area.getCentreY() }));
+        return;
+    }
     if (empty)
     {
         g.setColour (p.line);
@@ -130,6 +155,7 @@ bool Header::Shown::operator== (const Shown& o) const
 Header::Header (bool isStandalone) : standalone (isStandalone)
 {
     menu.icon = PanelButton::Icon::menu;
+    menu.flat = true;
     menu.text = {};
     menu.fontSize = 14.0f;
     menu.setTooltip ("Your song and everything else: New song, Open, Save, Settings (F6), the Guide, New pattern.");
@@ -138,7 +164,10 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
     jam.setTooltip ("The song is playing and decides which tracks play, so a track you switch on can stay quiet. "
                     "Jam hands control back to you: everything you switch on plays, and the song waits on the Song screen.");
     addChildComponent (jam);
-    show.fontSize = 17.0f;
+    show.flat = true;
+    show.text = "Untitled song";
+    show.dot = true;
+    show.fontSize = 24.0f;
     show.subSize = 11.0f;
     show.sub = juce::String::fromUTF8 ("Not saved yet \xc2\xb7 menu");
     show.setTooltip ("Your show: New song, Open, Save (Cmd+S), Save as, Export for Logic, and the Guide.");
@@ -157,34 +186,32 @@ void Header::update (const Shown& s)
 void Header::resized()
 {
     auto r = getLocalBounds().reduced (22, 0);
-    const int h = juce::jmin (60, getHeight() - 16);
+    const int h = juce::jmin (56, getHeight() - 18);
     auto centreY = [&] (juce::Rectangle<int> b, int height) { return b.withSizeKeepingCentre (b.getWidth(), height); };
 
+    // As on the phone: the menu, the name, the song's name; the LCD in the middle; what's plugged in.
     menu.setBounds (centreY (r.removeFromLeft (h), h));
-    r.removeFromLeft (14);
+    r.removeFromLeft (8);
     lampsArea = centreY (r.removeFromRight (128), 72);
     r.removeFromRight (12);
-    // Room for everything? Drop the VU meters, then the wordmark, on a small screen.
-    constexpr int showWidth = 220, lcdMin = 430, wordmark = 168 + 16, vu = 16 + 2 * 96;
-    showWordmark = r.getWidth() >= wordmark + showWidth + 12 + lcdMin;
-    showVu = r.getWidth() >= wordmark + showWidth + 12 + lcdMin + vu;
+    const int full = getLocalBounds().getWidth();
+    const int lcdWidth = juce::jlimit (360, 560, full / 3);
+    partArea = centreY (juce::Rectangle<int> (full / 2 - lcdWidth / 2, 0, lcdWidth, getHeight()), h + 4);
+    if (partArea.getX() < r.getX() + 300)
+        partArea.setX (r.getX() + 300);
+    // To the left of the LCD: the wordmark (if there's room), a line, the song's name.
+    auto left = r.withRight (partArea.getX() - 16);
+    showWordmark = left.getWidth() >= 168 + 160;
+    wordmarkArea = showWordmark ? left.removeFromLeft (168) : juce::Rectangle<int>();
+    dividerX = showWordmark ? left.getX() + 10 : -1;
     if (showWordmark)
-    {
-        wordmarkArea = r.removeFromLeft (168);
-        r.removeFromLeft (16);
-    }
-    else
-        wordmarkArea = {};
-    // Your song, then the LCD.
-    show.setBounds (centreY (r.removeFromLeft (showWidth), h));
-    r.removeFromLeft (12);
-    vuArea = {};
-    if (showVu)
-    {
-        vuArea = centreY (r.removeFromRight (vu - 16), h);
-        r.removeFromRight (16);
-    }
-    partArea = centreY (r.removeFromLeft (juce::jmin (r.getWidth(), 640)), h);
+        left.removeFromLeft (20);
+    show.setBounds (centreY (left, h));
+    // The VU meters on a wide screen, between the LCD and the lamps.
+    auto right = r.withLeft (partArea.getRight() + 16);
+    constexpr int vu = 2 * 96 + 8;
+    showVu = right.getWidth() >= vu + 220;
+    vuArea = showVu ? centreY (right.removeFromRight (vu), h) : juce::Rectangle<int>();
     jam.setBounds (partArea.getRight() - 62, partArea.getBottom() - 30, 54, 24);
     micLampArea = lampsArea.withTrimmedTop (48);
     keyboardLampArea = lampsArea.withHeight (24);
@@ -207,6 +234,11 @@ void Header::paint (juce::Graphics& g)
         g.setFont (mark);
         g.drawText ("Kaleidobox", w.removeFromTop (40), juce::Justification::bottomLeft, false);
         engraved (g, juce::String::fromUTF8 ("Model KB-1 \xc2\xb7 Groove Station"), w.withTrimmedTop (2), juce::Justification::topLeft, 11.0f);
+    }
+    if (dividerX >= 0)
+    {
+        g.setColour (p.ink.withAlpha (0.25f));
+        g.fillRect (juce::Rectangle<int> (dividerX, getHeight() / 2 - 20, 1, 40));
     }
 
     // The LCD: the section, where the song is, and where the next take goes.
@@ -442,9 +474,51 @@ Dock::Dock()
                          "Each setting gets a lane that plays back on the beat.");
     moves.setTooltip ("The automation lanes: what each one moves, Loop or Once, its length; draw on a lane to change it, "
                       "clear one or all (with Undo). Cmd+Shift+A.");
+    for (int i = 0; i < 8; ++i)
+    {
+        auto* b = sections.add (new PanelButton (juce::String::charToString ((juce::juce_wchar) ('A' + i))));
+        b->fontSize = 18.0f;
+        b->setTooltip ("Section " + b->text + " (key " + juce::String (i + 1) + "): plays from the next bar. Right-click: rename, colour, "
+                       "copy, delete.");
+        b->onClick = [this, i]
+        {
+            if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
+            {
+                if (onSectionMenu)
+                    onSectionMenu (i, *sections[i]);
+            }
+            else if (onSection)
+                onSection (i);
+        };
+        addChildComponent (b);
+    }
+    addSection.fontSize = 18.0f;
+    addSection.empty = true;
+    addSection.setTooltip ("Keep what's playing as the song's next section.");
+    addSection.onClick = [this] { if (onAddSection) onAddSection(); };
+    addAndMakeVisible (addSection);
     quantize.sub = "on the grid";
     quantize.setTooltip ("Quantize: pulls what you've played onto the beat (the MPC, drum machine, Bass, Synth or loops), "
                          "on the grid you pick. Cmd+U quantizes what's on screen straight away.");
+}
+
+void Dock::setSections (int count, int current, int queued)
+{
+    count = juce::jlimit (0, sections.size(), count);
+    bool changed = count != sectionCount;
+    sectionCount = count;
+    for (int i = 0; i < sections.size(); ++i)
+    {
+        const auto lit = i == current ? Lit::current : i == queued ? Lit::next : Lit::none;
+        if (sections[i]->lit != lit)
+        {
+            sections[i]->lit = lit;
+            sections[i]->repaint();
+        }
+    }
+    addSection.setEnabled (count < sections.size());
+    if (changed)
+        resized();
 }
 
 void Dock::paint (juce::Graphics& g)
@@ -452,6 +526,8 @@ void Dock::paint (juce::Graphics& g)
     const auto& p = pal();
     g.setColour (p.line);
     g.fillRect (getLocalBounds().removeFromTop (2));
+    if (! sectionsLabel.isEmpty())
+        engraved (g, juce::String::fromUTF8 ("Song sections \xc2\xb7 keys 1-8"), sectionsLabel, juce::Justification::centredRight, 10.5f);
     if (moves.isVisible())
     {
         // A line between the take's buttons and the rest.
@@ -491,7 +567,32 @@ void Dock::resized()
     r.removeFromLeft (8);
     undo.setBounds (centreY (r.removeFromLeft (box), h));
     r.removeFromLeft (20);
-    moves.setVisible (roomy && recMoves.isVisible());
+    // The song's sections on the right: as many chips as there's room for, then +.
+    {
+        const int chip = 38, gap = 6;
+        const int want = (sectionCount + 1) * (chip + gap) - gap;
+        const int movesWidth = roomy && recMoves.isVisible() ? box + 16 + 8 : 0;
+        const int spare = r.getWidth() - (box + 8 + 8 + box + 20);   // Rec moves and Quantize first
+        const bool withMoves = movesWidth > 0 && spare - movesWidth >= juce::jmin (want, 3 * (chip + gap) + chip);
+        moves.setVisible (withMoves);
+        auto group = r.removeFromRight (juce::jlimit (chip, want, spare - (withMoves ? movesWidth : 0)));
+        sectionsLabel = group.withHeight (juce::jmax (0, (getHeight() - h) / 2 + 2)).withY (group.getY() + 2);
+        sectionsLabel = sectionsLabel.withLeft (juce::jmin (sectionsLabel.getX(), sectionsLabel.getRight() - 170));
+        auto row = centreY (group, chip).withY (centreY (group, chip).getY() + 8);
+        const int fit = juce::jmax (0, (row.getWidth() + gap) / (chip + gap) - 1);
+        for (int i = 0; i < sections.size(); ++i)
+        {
+            const bool shown = i < sectionCount && i < fit;
+            sections[i]->setVisible (shown);
+            if (shown)
+            {
+                sections[i]->setBounds (row.removeFromLeft (chip));
+                row.removeFromLeft (gap);
+            }
+        }
+        addSection.setBounds (row.removeFromLeft (chip));
+        r.removeFromRight (16);
+    }
     recMoves.setBounds (centreY (r.removeFromLeft (box + 8), h));
     r.removeFromLeft (8);
     if (moves.isVisible())
@@ -610,47 +711,9 @@ TrackRail::ToolButton::ToolButton (const juce::String& name, int i, juce::Colour
 
 void TrackRail::ToolButton::paintButton (juce::Graphics& g, bool over, bool)
 {
-    // Drawn like the instruments' cards: a well with the tool's colour down its left edge.
-    const auto& p = pal();
-    auto r = getLocalBounds().toFloat().reduced (4.0f);
-    if (selected)
-    {
-        glow (g, r, 12.0f, colours::selected, 10.0f, 0.5f);
-        g.setColour (colours::selected);
-        g.fillRoundedRectangle (r.expanded (3.0f), 14.0f);
-    }
-    drawWell (g, r);
-    {
-        juce::Graphics::ScopedSaveState s (g);
-        juce::Path clip;
-        clip.addRoundedRectangle (r, 12.0f);
-        g.reduceClipRegion (clip);
-        g.setColour (colour);
-        g.fillRect (r.withWidth (10.0f));
-        if (over)
-        {
-            g.setColour (juce::Colours::white.withAlpha (0.04f));
-            g.fillRect (r);
-        }
-    }
-    auto area = r.toNearestInt().withTrimmedLeft (18).withTrimmedRight (10);
-    const int iconSize = juce::jmin (34, area.getHeight() - 8);
-    crate::toolicons::draw (g, (crate::toolicons::Tool) icon, area.removeFromLeft (iconSize).withSizeKeepingCentre (iconSize, iconSize).toFloat().reduced (3.0f),
-                            colour);
-    area.removeFromLeft (8);
-    const bool compact = getHeight() < 56;
-    g.setColour (p.wellInk);
-    if (compact)
-    {
-        g.setFont (cond (juce::jmin (18.0f, area.getHeight() * 0.55f), Weight::extra, 0.04f));
-        g.drawFittedText (text.toUpperCase(), area, juce::Justification::centredLeft, 1, 0.75f);
-        return;
-    }
-    auto top = area.removeFromTop (area.getHeight() / 2);
-    g.setFont (cond (juce::jmin (26.0f, top.getHeight() * 0.95f), Weight::extra, 0.04f));
-    g.drawText (text.toUpperCase(), top, juce::Justification::bottomLeft, false);
-    drawLamp (g, { (float) area.getX() + 7.0f, (float) area.getY() + 11.0f }, selected ? Lit::play : Lit::none, 11.0f);
-    engraved (g, status, area.withTrimmedLeft (18).withHeight (22), juce::Justification::centredLeft, 12.0f, true);
+    // Drawn like the instruments' cards (the phone's tool row).
+    drawToolCard (g, getLocalBounds().toFloat().reduced (4.0f), colour, icon, text, status.isNotEmpty() ? status : juce::String ("Ready"),
+                  selected ? Lit::play : Lit::none, selected, over, 0, getHeight() >= 60 ? sub : juce::String());
 }
 
 TrackRail::TrackRail()
@@ -673,13 +736,20 @@ void TrackRail::setCards (const juce::Array<juce::Component*>& list)
     resized();
 }
 
-void TrackRail::paint (juce::Graphics&)
+void TrackRail::paint (juce::Graphics& g)
 {
+    // "Tools · pick one, press Rec", engraved over the cards.
+    if (labelHeight > 0)
+        engraved (g, juce::String::fromUTF8 ("Tools \xc2\xb7 pick one, press Rec"), getLocalBounds().removeFromTop (labelHeight).withTrimmedLeft (6),
+                  juce::Justification::centredLeft, 11.0f);
 }
 
 void TrackRail::resized()
 {
     auto r = getLocalBounds();
+    // The label over the cards, when there's room for it.
+    labelHeight = r.getHeight() >= 600 ? 18 : 0;
+    r.removeFromTop (labelHeight);
     juce::Array<juce::Component*> shown;
     for (auto& c : cards)
         if (c != nullptr && c->isVisible())
@@ -756,7 +826,7 @@ void Footer::pressPart (RigEngine& engine, int i)
         rigsong::addSectionFromWhatsPlaying (engine, rigsong::suggestName (tl), count == 0 ? 8.0 : rigsong::sections (tl).back().bars);
 }
 
-void Footer::showPartMenu (int i)
+void Footer::showPartMenu (int i, juce::Component* target)
 {
     const int count = (int) rigsong::sections (engine.getTimeline()).size();
     if (! juce::isPositiveAndBelow (i, count))
@@ -764,7 +834,7 @@ void Footer::showPartMenu (int i)
     juce::PopupMenu menu;
     menu.addItem (1, juce::String::fromUTF8 ("\xe2\x96\xb6 Play from here"));
     menu.addItem (2, "Rename, lengths and what plays (Song screen)...");
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (parts[i]),
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target != nullptr ? target : parts[i]),
                         [safe = juce::Component::SafePointer<Footer> (this), i] (int result)
                         {
                             if (safe == nullptr)
@@ -866,16 +936,11 @@ void Footer::resized()
 
     if (isSlim())
     {
-        // No song yet: just A (keep what's playing as the first section), then the messages.
-        content = r.withSizeKeepingCentre (r.getWidth(), 22 + 44);
-        partsLabel = content.removeFromTop (22);
-        for (int i = 1; i < parts.size(); ++i)
-            parts[i]->setVisible (false);
-        partsArea = content.withWidth (260);
-        parts[0]->fontSize = 15.0f;
-        parts[0]->setBounds (partsArea.withHeight (44));
-        content.removeFromLeft (partsArea.getWidth() + 16);
-        message.setBounds (content.withTrimmedBottom (2));
+        // No song yet: just the messages (the bottom bar's + keeps what's playing as section A).
+        partsLabel = partsArea = {};
+        for (auto* b : parts)
+            b->setVisible (false);
+        message.setBounds (r.withTrimmedTop (2));
         message.setJustificationType (juce::Justification::centred);
         message.setFont (barlow (14.0f));
         return;
@@ -1169,9 +1234,176 @@ void Footer::paint (juce::Graphics& g)
     g.setColour (p.line);
     g.fillRect (getLocalBounds().removeFromTop (2));
     message.setColour (juce::Label::textColourId, p.ink2);
-    if (partsShown && isSlim())
-        engraved (g, juce::String ("Song sections: none yet (optional)"), partsLabel.withWidth (500));
-    else if (partsShown)
+    if (partsShown && ! isSlim())
         paintStrip (g);
+}
+}
+
+namespace rigpanels
+{
+//==============================================================================
+void RecSetup::LandRow::paintButton (juce::Graphics& g, bool over, bool)
+{
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        const auto amber = colours::selected;
+        if (on)
+        {
+            g.setColour (amber.withAlpha (0.22f));
+            g.fillRoundedRectangle (r, 10.0f);
+            g.setColour (amber);
+            g.drawRoundedRectangle (r.reduced (1.0f), 10.0f, 2.0f);
+        }
+        else if (over)
+        {
+            g.setColour (juce::Colour (0xff271f18).withAlpha (0.05f));
+            g.fillRoundedRectangle (r, 10.0f);
+        }
+        // The radio.
+        const auto dot = juce::Rectangle<float> (22.0f, 22.0f).withCentre ({ r.getX() + 26.0f, r.getCentreY() });
+        g.setColour (juce::Colour (0xff271f18).withAlpha (0.7f));
+        g.drawEllipse (dot.reduced (1.0f), 2.0f);
+        if (on)
+        {
+            g.setColour (colours::next);
+            g.fillEllipse (dot.reduced (5.0f));
+        }
+        auto text = r.withTrimmedLeft (54.0f).reduced (0.0f, 6.0f);
+        g.setColour (juce::Colour (0xff271f18));
+        g.setFont (barlow (19.0f));
+        g.drawText (title, text.removeFromTop (text.getHeight() * 0.55f), juce::Justification::bottomLeft, false);
+        g.setColour (juce::Colour (0xff54463a));
+        g.setFont (barlow (14.0f));
+        g.drawFittedText (sub, text.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
+    }
+}
+
+RecSetup::RecSetup()
+{
+    auto chip = [this] (juce::OwnedArray<PanelButton>& list, const juce::String& text, std::function<void()> f)
+    {
+        auto* b = list.add (new PanelButton (text));
+        b->fontSize = 16.0f;
+        b->onClick = std::move (f);
+        addAndMakeVisible (b);
+    };
+    for (int bars : { 0, 1, 2 })
+        chip (countIns, bars == 0 ? juce::String ("Off") : juce::String (bars) + (bars == 1 ? " bar" : " bars"),
+              [this, bars] { if (onCountIn) onCountIn (bars); });
+    for (int bars : { 1, 2, 4, 8, 16, 0 })
+        chip (lengths, bars == 0 ? juce::String ("Free") : juce::String (bars), [this, bars] { if (onLength) onLength (bars); });
+    click.fontSize = 16.0f;
+    click.onClick = [this] { if (onClick) onClick(); };
+    addAndMakeVisible (click);
+
+    const char* titles[] = { "Next loop layer", "A take on the song", "Into the Sampler or next MPC pad", "The whole set, to stems" };
+    const char* subs[] = { "As editable notes where the tool has notes. The default, the same as the phone.",
+                           "Into a section on the Song timeline, at this bar (was Rec take into the song).",
+                           "Resample what plays (was Rec sample / Rec beat).",
+                           "Stems, the mix and MIDI for Logic (was Rec set)." };
+    for (int i = 0; i < 4; ++i)
+    {
+        auto* row = lands.add (new LandRow (titles[i], subs[i]));
+        row->onClick = [this, i] { if (onLands) onLands (i); };
+        addAndMakeVisible (row);
+    }
+    const char* extraNames[] = { "To Song", "Rec into", "Takes", "Automation" };
+    for (int i = 0; i < 4; ++i)
+    {
+        auto* b = extras.add (new PanelButton (juce::String (extraNames[i]) + juce::String::fromUTF8 (" \xe2\x80\xba")));
+        b->fontSize = 15.0f;
+        b->onClick = [this, i, b] { if (onExtra) onExtra (i, *b); };
+        addAndMakeVisible (b);
+    }
+}
+
+void RecSetup::setState (int countIn, int length, bool clickOn, int landsOn, bool toolMode)
+{
+    const int countValues[] = { 0, 1, 2 }, lengthValues[] = { 1, 2, 4, 8, 16, 0 };
+    for (int i = 0; i < countIns.size(); ++i)
+        countIns[i]->lit = countValues[i] == countIn ? Lit::next : Lit::none;
+    for (int i = 0; i < lengths.size(); ++i)
+        lengths[i]->lit = lengthValues[i] == length ? Lit::next : Lit::none;
+    click.text = clickOn ? "Click on" : "Click off";
+    click.lit = clickOn ? Lit::next : Lit::none;
+    for (int i = 0; i < lands.size(); ++i)
+        lands[i]->on = i == landsOn;
+    whereShown = ! toolMode;
+    for (auto* r : lands)
+        r->setVisible (whereShown);
+    for (auto* b : extras)
+        b->setVisible (whereShown);
+    resized();
+    repaint();
+}
+
+void RecSetup::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (8.0f);
+    glow (g, r, 16.0f, juce::Colours::black, 14.0f, 0.35f);
+    g.setColour (juce::Colour (0xfff3ead8));
+    g.fillRoundedRectangle (r, 16.0f);
+    g.setColour (juce::Colour (0xff271f18).withAlpha (0.15f));
+    g.drawRoundedRectangle (r.reduced (0.5f), 16.0f, 1.0f);
+    const auto ink = juce::Colour (0xff3d3229);
+    engraved (g, juce::String::fromUTF8 ("Rec setup \xc2\xb7 the same as on the phone"), topLabel, juce::Justification::centredLeft, 12.0f, false, ink);
+    engraved (g, "Count-in", countInLabel, juce::Justification::centredLeft, 13.0f, false, ink);
+    engraved (g, "Length", lengthLabel, juce::Justification::centredLeft, 13.0f, false, ink);
+    if (whereShown)
+    {
+        g.setColour (ink.withAlpha (0.2f));
+        g.fillRect (whereLabel.withHeight (1).translated (0, -8));
+        engraved (g, juce::String::fromUTF8 ("Mac extras \xc2\xb7 where Rec lands"), whereLabel, juce::Justification::centredLeft, 12.0f, false, ink);
+    }
+}
+
+void RecSetup::resized()
+{
+    auto r = getLocalBounds().reduced (8).reduced (24, 18);
+    topLabel = r.removeFromTop (22);
+    r.removeFromTop (8);
+    auto row = [&r] (juce::Rectangle<int>& label)
+    {
+        auto line = r.removeFromTop (46);
+        label = line.removeFromLeft (110);
+        r.removeFromTop (12);
+        return line;
+    };
+    {
+        auto line = row (countInLabel);
+        for (auto* b : countIns)
+        {
+            b->setBounds (line.removeFromLeft (b == countIns[0] ? 62 : 84).withSizeKeepingCentre (b == countIns[0] ? 62 : 84, 42));
+            line.removeFromLeft (8);
+        }
+        click.setBounds (line.removeFromRight (120).withSizeKeepingCentre (120, 42));
+    }
+    {
+        auto line = row (lengthLabel);
+        for (auto* b : lengths)
+        {
+            const int w = b == lengths.getLast() ? 74 : 48;
+            b->setBounds (line.removeFromLeft (w).withSizeKeepingCentre (w, 42));
+            line.removeFromLeft (8);
+        }
+    }
+    if (! whereShown)
+        return;
+    r.removeFromTop (10);
+    whereLabel = r.removeFromTop (22);
+    r.removeFromTop (6);
+    for (auto* l : lands)
+    {
+        l->setBounds (r.removeFromTop (60));
+        r.removeFromTop (4);
+    }
+    r.removeFromTop (8);
+    auto line = r.removeFromTop (42);
+    const int w = (line.getWidth() - 3 * 8) / 4;
+    for (auto* b : extras)
+    {
+        b->setBounds (line.removeFromLeft (w));
+        line.removeFromLeft (8);
+    }
 }
 }

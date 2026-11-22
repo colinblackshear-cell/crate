@@ -82,7 +82,35 @@ MpcView::MpcView (MpcProcessor& p)
 
     kitList.setRowHeight (44);
     kitList.setColour (juce::ListBox::backgroundColourId, Theme::panel);
-    newKit.onClick = [this] { project.addBank(); showPadBank (0); selectPad (0); };
+    newKit.onClick = [this]
+    {
+        if (factoryKitNames.isEmpty() || onFactoryKit == nullptr)
+        {
+            project.addBank();
+            showPadBank (0);
+            selectPad (0);
+            return;
+        }
+        // In Kaleidobox: an empty kit, or one of the factory kits (the same as on the phone).
+        juce::PopupMenu menu;
+        menu.addItem (1, "Empty kit");
+        menu.addSeparator();
+        menu.addSectionHeader ("Factory kits, the same as on the phone");
+        for (int i = 0; i < factoryKitNames.size(); ++i)
+            menu.addItem (100 + i, factoryKitNames[i]);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&newKit),
+                            [safe = juce::Component::SafePointer<MpcView> (this)] (int result)
+                            {
+                                if (safe == nullptr || result <= 0)
+                                    return;
+                                if (result == 1)
+                                    safe->project.addBank();
+                                else
+                                    safe->onFactoryKit (result - 100);
+                                safe->showPadBank (0);
+                                safe->selectPad (0);
+                            });
+    };
     removeKit.onClick = [this]
     {
         const auto& bank = project.currentBank();

@@ -89,6 +89,14 @@ public:
     bool hasKeys() const { return track == bass || track == synth; }
     juce::MidiKeyboardState& getScreenKeys() { return keysState; }
 
+    // The Make a beat lesson: glows the suggested steps (bit i = step i) on a row of the grid
+    // (-1 = none). Only a glow: nothing is written for you.
+    void setGuide (int row, juce::uint32 stepMask) { guideRow = row; guideMask = stepMask; repaint(); }
+    int getGuideRow() const { return guideRow; }
+    juce::uint32 getGuideMask() const { return guideMask; }
+    // The grid's cell for a row and step, in this view's coordinates (the lesson points at it).
+    juce::Rectangle<int> stepBounds (int row, int step) const { return cellRect (row, step).toNearestInt(); }
+
     // Re-reads everything (after a show is loaded).
     void refresh();
 
@@ -160,6 +168,8 @@ private:
     bool pressLife (int row, int i, bool back);
     void showMutateMenu();
     int lifeMode = lifeHits;
+    int guideRow = -1;
+    juce::uint32 guideMask = 0;
     juce::OwnedArray<juce::TextButton> lifeButtons;
     juce::TextButton mutateButton { "Mutate" }, feelButton { "Feel" };
     void showFeelMenu();

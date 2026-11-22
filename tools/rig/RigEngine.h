@@ -52,6 +52,13 @@ public:
     // it the kit that plays, so the drum pads play the slices straight away. Message thread.
     // Returns what to tell the user.
     juce::String sendSlicesToMpc (std::vector<crate::SharedAudio> slices, const juce::String& name);
+    // The factory kits (the same five as Kaleidobox Pocket's, made in code: FactoryKits.h). Puts kit
+    // `index` on the MPC's pads A01-A16 of kit `kit` (-1 = a new kit) and makes it the kit that plays.
+    // A new Rig starts with the Street kit on its first kit, as the phone does. Returns what to say.
+    juce::String loadFactoryKit (int index, int kit = -1);
+    // Set by the app and the Logic plugin before they make their Rig: a new Rig (and New song) has
+    // the Street kit on the pads. Off for the tests, whose Rigs start with empty pads.
+    static inline std::atomic<bool> startWithFactoryKit { false };
     EditorProcessor& getSampler() { return sampler; }
     VocoderProcessor& getVocoder() { return vocoder; }
     BassProcessor& getBass() { return bass; }

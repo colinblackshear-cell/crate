@@ -1,6 +1,7 @@
 #include "Vintage.h"
 #include "dsp/MicModel.h"   // the vocoder's Mic locker
 #include "RigFonts.h"
+#include "core/ui/ToolIcons.h"
 
 namespace vintage
 {
@@ -185,6 +186,76 @@ void drawWell (juce::Graphics& g, juce::Rectangle<float> r, float radius)
     juce::ColourGradient shade (juce::Colours::black.withAlpha (0.7f), 0, r.getY(), juce::Colours::transparentBlack, 0, r.getY() + 9, false);
     g.setGradientFill (shade);
     g.fillRect (r.withHeight (9));
+}
+
+juce::Rectangle<int> drawToolCard (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour colour, int icon, const juce::String& name,
+                                   const juce::String& status, Lit statusLit, bool selected, bool over, int rightReserve,
+                                   const juce::String& detail)
+{
+    const float radius = 11.0f;
+    if (selected)
+    {
+        glow (g, r, radius, colours::selected, 10.0f, 0.45f);
+        g.setColour (colours::selected);
+        g.fillRoundedRectangle (r.expanded (2.5f), radius + 2.0f);
+    }
+    // The card: dark, with a soft drop under it.
+    g.setColour (juce::Colours::black.withAlpha (0.25f));
+    g.fillRoundedRectangle (r.translated (0.0f, 2.0f), radius);
+    g.setColour (over ? juce::Colour (0xff2a241f) : juce::Colour (0xff221d19));
+    g.fillRoundedRectangle (r, radius);
+    {
+        juce::Graphics::ScopedSaveState s (g);
+        juce::Path clip;
+        clip.addRoundedRectangle (r, radius);
+        g.reduceClipRegion (clip);
+        g.setColour (colour);
+        g.fillRect (r.withWidth (5.0f));
+        juce::ColourGradient sheen (juce::Colours::white.withAlpha (0.05f), 0, r.getY(), juce::Colours::transparentWhite, 0, r.getY() + r.getHeight() * 0.5f, false);
+        g.setGradientFill (sheen);
+        g.fillRect (r);
+    }
+
+    auto area = r.toNearestInt().withTrimmedLeft (14).withTrimmedRight (rightReserve + 8);
+    // The picture, on its tile.
+    const int tile = juce::jlimit (22, 42, area.getHeight() - 14);
+    const auto tileBox = area.removeFromLeft (tile).withSizeKeepingCentre (tile, tile).toFloat();
+    g.setColour (juce::Colour (0xff100d0b));
+    g.fillRoundedRectangle (tileBox, 8.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.06f));
+    g.drawRoundedRectangle (tileBox.reduced (0.5f), 8.0f, 1.0f);
+    crate::toolicons::draw (g, (crate::toolicons::Tool) icon, tileBox.reduced (tile * 0.22f), colour);
+    area.removeFromLeft (12);
+
+    // The name, and under it a dot and what it's doing.
+    const bool twoLines = area.getHeight() >= 40;
+    auto text = area.withSizeKeepingCentre (area.getWidth(), twoLines ? juce::jmin (area.getHeight(), 42) : area.getHeight());
+    auto nameLine = twoLines ? text.removeFromTop (text.getHeight() * 11 / 20) : text;
+    g.setColour (juce::Colour (0xfff4ecdd));
+    g.setFont (cond (juce::jlimit (15.0f, 21.0f, (float) nameLine.getHeight() * 0.95f), Weight::extra, 0.05f));
+    const auto upper = name.toUpperCase();
+    const int nameWidth = juce::jmin (nameLine.getWidth(), (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), upper) + 6);
+    g.drawFittedText (upper, nameLine.removeFromLeft (nameWidth), juce::Justification::bottomLeft, 1, 0.7f);
+    if (detail.isNotEmpty() && nameLine.getWidth() > 40)
+    {
+        g.setColour (juce::Colour (0xffbdaf97));
+        g.setFont (cond (11.0f, Weight::bold, 0.12f));
+        g.drawFittedText (detail.toUpperCase(), nameLine, juce::Justification::bottomRight, 1, 0.8f);
+    }
+    if (twoLines)
+    {
+        auto line = text.withTrimmedTop (3);
+        const auto dotColour = statusLit == Lit::none ? juce::Colour (0xff5a5048) : litColour (statusLit);
+        const auto dot = juce::Rectangle<float> (6.0f, 6.0f).withCentre ({ (float) line.getX() + 4.0f, (float) line.getY() + 7.0f });
+        if (statusLit != Lit::none)
+            glow (g, dot, 3.0f, dotColour, 4.0f, 0.5f);
+        g.setColour (dotColour);
+        g.fillEllipse (dot);
+        g.setColour (statusLit == Lit::none ? juce::Colour (0xff9a8d7c) : dotColour);
+        g.setFont (cond (12.0f, Weight::bold, 0.16f));
+        g.drawText (status.toUpperCase(), line.withTrimmedLeft (14).withHeight (14), juce::Justification::centredLeft, false);
+    }
+    return area;
 }
 
 void drawButton (juce::Graphics& g, juce::Rectangle<float> r, Lit lit, bool down, bool over, bool inWell, float radius)

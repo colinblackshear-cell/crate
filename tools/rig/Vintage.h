@@ -57,6 +57,12 @@ void glow (juce::Graphics&, juce::Rectangle<float>, float radius, juce::Colour, 
 void drawFace (juce::Graphics&, juce::Rectangle<int>);
 void drawCheek (juce::Graphics&, juce::Rectangle<int>);
 void drawWell (juce::Graphics&, juce::Rectangle<float>, float radius = 12.0f);
+// A tool's card on the rail, as on the phone's tool row: a dark card with the tool's colour down its
+// left edge, its picture on a dark tile, its name, and a dot and a word for what it's doing.
+// `rightReserve` is kept clear for the card's own buttons. Returns where the name and status went.
+juce::Rectangle<int> drawToolCard (juce::Graphics&, juce::Rectangle<float> card, juce::Colour, int icon, const juce::String& name,
+                                   const juce::String& status, Lit statusLit, bool selected, bool over, int rightReserve,
+                                   const juce::String& detail = {});
 void drawButton (juce::Graphics&, juce::Rectangle<float>, Lit, bool down, bool over, bool inWell, float radius = 9.0f);
 void drawLamp (juce::Graphics&, juce::Point<float> centre, Lit, float diameter = 16.0f);
 void drawLcd (juce::Graphics&, juce::Rectangle<float>, float radius = 7.0f);

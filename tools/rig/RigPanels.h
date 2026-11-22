@@ -24,6 +24,9 @@ public:
     vintage::Lit lit = vintage::Lit::none;
     float fontSize = 18.0f, subSize = 12.0f;
     bool inWell = false, empty = false, redRing = false;
+    // Flat: no face, just the words on the panel (the song's name in the top bar), with a dot
+    // after them when `dot` (not saved).
+    bool flat = false, dot = false;
 };
 
 //==============================================================================
@@ -76,6 +79,7 @@ private:
     const bool standalone;
     juce::Rectangle<int> wordmarkArea, partArea, vuArea, lampsArea, micLampArea, keyboardLampArea;
     bool showVu = true, showWordmark = true;
+    int dividerX = -1;
 };
 
 //==============================================================================
@@ -129,7 +133,20 @@ public:
     PanelButton play { "Play" }, undo { "Undo" };
     PanelButton recMoves { "Rec moves" }, moves { juce::String::fromUTF8 ("Automation \xe2\x80\xba") }, quantize { "Quantize" };
 
+    // The song's sections on the right, as on the phone (keys 1-8 play them): a click plays one from
+    // the next bar, a right-click its menu, + keeps what's playing as the next one.
+    void setSections (int count, int current, int queued);
+    juce::OwnedArray<PanelButton> sections;
+    PanelButton addSection { "+" };
+    std::function<void (int section)> onSection;
+    std::function<void (int section, juce::Component&)> onSectionMenu;
+    std::function<void()> onAddSection;
+
     static constexpr int kHeight = 96, kCompactHeight = 84;
+
+private:
+    int sectionCount = 0;
+    juce::Rectangle<int> sectionsLabel;
 };
 
 //==============================================================================
@@ -183,11 +200,11 @@ public:
     };
     ToolButton chords, effects;
 
-    static constexpr int kWidth = 256;
+    static constexpr int kWidth = 280;
 
 private:
     juce::Array<juce::Component::SafePointer<juce::Component>> cards;
-    juce::Rectangle<int> labelArea;
+    int labelHeight = 0;
 };
 
 //==============================================================================
@@ -247,8 +264,10 @@ public:
     bool isSlim() const { return partsShown && sectionCount == 0; }
     std::function<void()> onSlimChanged;
 
+    // A section's menu (Play from here, Rename...), by `target` (its key, or the bottom bar's chip).
+    void showPartMenu (int part, juce::Component* target = nullptr);
+
 private:
-    void showPartMenu (int part);
     int sectionCount = 0;
     int sectionsHash = 0;
     void paintStrip (juce::Graphics&);
@@ -260,5 +279,52 @@ private:
     std::vector<juce::Rectangle<int>> sectionBoxes;
     std::vector<std::pair<double, double>> sectionBars;   // start, bars
     RecInto recInto;
+};
+}
+
+namespace rigpanels
+{
+//==============================================================================
+// The Rec arrow's panel (cream, as in the design and on the phone's Rec setup): the count-in, the
+// length and the click for the next take; then where Rec lands on the Mac (the next loop layer, as on
+// the phone; a take on the song; into the Sampler or an MPC pad; the whole set to stems); then To
+// Song, Rec into, Takes and the automation lanes. A click outside closes it.
+class RecSetup : public juce::Component
+{
+public:
+    RecSetup();
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+    // What it shows. lands: 0 layer, 1 song, 2 sample, 3 set; tool mode has no "where".
+    void setState (int countIn, int length, bool click, int lands, bool toolMode);
+    int preferredHeight() const { return whereShown ? 560 : 250; }
+    static constexpr int kWidth = 640;
+
+    std::function<void (int bars)> onCountIn, onLength;
+    std::function<void()> onClick;
+    std::function<void (int lands)> onLands;
+    // 0 To Song, 1 Rec into, 2 Takes, 3 Automation lanes (each opens its menu by `from`).
+    std::function<void (int extra, juce::Component& from)> onExtra;
+
+    juce::OwnedArray<PanelButton> countIns, lengths, extras;
+    PanelButton click { "Click" };
+    // A "where Rec lands" choice: a radio, its name and what it does.
+    class LandRow : public juce::Button
+    {
+    public:
+        LandRow (const juce::String& t, const juce::String& s) : juce::Button (t), title (t), sub (s)
+        {
+            setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        }
+        void paintButton (juce::Graphics&, bool over, bool down) override;
+        juce::String title, sub;
+        bool on = false;
+    };
+    juce::OwnedArray<LandRow> lands;
+
+private:
+    bool whereShown = true;
+    juce::Rectangle<int> countInLabel, lengthLabel, whereLabel, extrasLabel, topLabel;
 };
 }

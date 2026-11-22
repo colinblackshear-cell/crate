@@ -126,6 +126,7 @@ public:
     RecLands getRecLands() const { return recLands; }
     // Its arrow: count-in, length, click, where Rec lands, and the rest (To Song, Takes...).
     void showRecMenu();
+    rigpanels::RecSetup* getRecSetup() const { return recSetup.get(); }
     // Count-in bars (0-2) and length in bars (0: until pressed again) for the next take.
     void setRecSetup (int countInBars, int lengthBars);
     int getRecCountIn() const { return recCountIn; }
@@ -133,6 +134,13 @@ public:
     // Undo last take: throws away the take recording, or the last one recorded (its loop is
     // cleared); with no take, the last Clear or overdub (Cmd+Z). False if nothing was undone.
     bool undoLastTake();
+    // Make a beat, as on the phone: a coach card over the drum machine's grid (RigLesson.h). A song
+    // with something in it asks to save first and the lesson starts a new one.
+    void startLesson();
+    void beginLesson();
+    void endLesson();
+    class RigLesson* getLesson() const { return lesson.get(); }
+    void tickLesson();   // (the timer's: follows the take on step 4)
     // Where the next take goes, as the LCD says it ("LAYER 6 · 4 BARS"), and a count-in under
     // way ("COUNT-IN 3"), empty when none.
     juce::String recTargetText() const;
@@ -272,6 +280,14 @@ private:
     void startToolMode();
     juce::Component::SafePointer<juce::Component> quantizePanel;
     std::unique_ptr<class HelpPanel> helpPanel;
+    std::unique_ptr<class RigLesson> lesson;
+    // The Rec arrow's cream panel (rigpanels::RecSetup), over a backdrop that closes it.
+    std::unique_ptr<juce::Component> recBackdrop;
+    std::unique_ptr<rigpanels::RecSetup> recSetup;
+    void closeRecSetup();
+    void updateRecSetup();
+    bool lessonMetronomeWas = false;
+    void applyLessonPhase (int phase);
     // Hover over a button for a moment and it says what it does.
     juce::SharedResourcePointer<juce::TooltipWindow> tooltips;
 public:

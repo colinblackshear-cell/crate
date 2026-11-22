@@ -39,6 +39,8 @@ public:
 
     // A click on an entry: open its page.
     std::function<void (const juce::String& page)> onOpen;
+    // The three ways in, as on the phone's title: Take the 2-minute tour, Show me: make a beat, Start making.
+    std::function<void()> onTour, onLesson, onStartMaking;
     // The how-to guides (the ? button's).
     std::function<void()> onHelp;
     // Start over: a new song (asks to save first).
@@ -52,6 +54,8 @@ public:
     void open (int shownIndex);
     juce::Component* getCard (int shownIndex) const;
     void refresh();
+    // The three ways in (0 tour, 1 lesson, 2 start making), for the tests.
+    juce::Button* wayIn (int index) const;
 
     // Draws an entry's picture (also used by the tests' snapshot, and free for other screens).
     static void drawArt (juce::Graphics&, Art, juce::Rectangle<float>, juce::Colour, float phase);

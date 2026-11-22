@@ -203,68 +203,11 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        const auto& p = vintage::pal();
-        const bool selected = owner.track == index;
+        // As on the phone's tool row: the picture on its tile, the name, a dot and a word.
         auto r = getLocalBounds().toFloat().reduced (4.0f);
-        if (selected)
-        {
-            vintage::glow (g, r, 12.0f, vintage::colours::selected, 10.0f, 0.5f);
-            g.setColour (vintage::colours::selected);
-            g.fillRoundedRectangle (r.expanded (3.0f), 14.0f);
-        }
-        vintage::drawWell (g, r);
-        {
-            juce::Graphics::ScopedSaveState s (g);
-            juce::Path clip;
-            clip.addRoundedRectangle (r, 12.0f);
-            g.reduceClipRegion (clip);
-            g.setColour (colour);
-            g.fillRect (r.withWidth (10.0f));
-        }
-
-        if (compact())
-        {
-            // A short card (a small window): one line, its lamp and name beside its buttons (what
-            // it's doing is in its tooltip).
-            auto line = r.toNearestInt().withTrimmedLeft (18).withRight (go.getX() - 6);
-            const int iconSize = juce::jmin (26, line.getHeight() - 4);
-            crate::toolicons::draw (g, (crate::toolicons::Tool) railIcon (index),
-                                    line.removeFromLeft (iconSize).withSizeKeepingCentre (iconSize, iconSize).toFloat().reduced (2.0f), colour);
-            line.removeFromLeft (4);
-            vintage::drawLamp (g, { (float) line.getX() + 6.0f, (float) line.getCentreY() }, shownStatus.second, 11.0f);
-            g.setColour (p.wellInk);
-            g.setFont (vintage::cond (juce::jmin (18.0f, line.getHeight() * 0.55f), Weight::extra, 0.04f));
-            g.drawFittedText (railName (index).toUpperCase(), line.withTrimmedLeft (16), juce::Justification::centredLeft, 1, 0.75f);
-            return;
-        }
-        auto area = r.toNearestInt().withTrimmedLeft (18).reduced (0, 8).withTrimmedRight (12);
-        {
-            // The tool's picture, as on the phone's tool row.
-            const int iconSize = juce::jmin (24, area.getHeight() / 2 + 2);
-            crate::toolicons::draw (g, (crate::toolicons::Tool) railIcon (index),
-                                    area.removeFromLeft (iconSize).removeFromTop (area.getHeight() / 2).withSizeKeepingCentre (iconSize, iconSize)
-                                        .toFloat().reduced (2.0f), colour);
-            area.removeFromLeft (6);
-        }
-        auto top = area.removeFromTop (area.getHeight() / 2);
-        g.setColour (p.wellInk);
-        g.setFont (vintage::cond (juce::jmin (30.0f, top.getHeight() * 0.95f), Weight::extra, 0.04f));
-        const auto name = railName (index).toUpperCase();
-        const int nameWidth = juce::jmin (getHeight() >= 74 ? top.getWidth() / 2 + 20 : top.getWidth(),
-                                          (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), name) + 6);
-        g.drawText (name, top.removeFromLeft (nameWidth), juce::Justification::centredLeft, false);
-        // (A short card has no room for the detail beside its buttons: it's in the tooltip.)
-        if (getHeight() >= 74)
-        {
-            g.setColour (p.wellInk2);
-            g.setFont (vintage::barlow (13.0f));
-            g.drawFittedText (shownDetail, top, juce::Justification::centredRight, 1, 0.8f);
-        }
-
-        auto row = area;
-        row.removeFromRight (go.getWidth() + mute.getWidth() + solo.getWidth() + 16);
-        vintage::drawLamp (g, { (float) row.getX() + 8.0f, (float) row.getCentreY() }, shownStatus.second);
-        vintage::engraved (g, shownStatus.first, row.withTrimmedLeft (24), juce::Justification::centredLeft, 13.0f, true);
+        vintage::drawToolCard (g, r, colour, railIcon (index), railName (index), shownStatus.first, shownStatus.second,
+                               owner.track == index, isMouseOver (true), getWidth() - 4 - go.getX(),
+                               getHeight() >= 74 ? shownDetail : juce::String());
     }
 
     // Too short for the name over the buttons: it goes on one line.
@@ -272,31 +215,23 @@ public:
 
     void resized() override
     {
-        if (compact())
-        {
-            auto r = getLocalBounds().reduced (4).withTrimmedRight (12);
-            const int size = juce::jlimit (16, 30, r.getHeight() - 6);
-            mute.getProperties().set ("fontSize", 14.0f);
-            solo.getProperties().set ("fontSize", 14.0f);
-            auto row = r.withSizeKeepingCentre (r.getWidth(), size);
-            solo.setBounds (row.removeFromRight (size));
-            row.removeFromRight (6);
-            mute.setBounds (row.removeFromRight (size));
-            row.removeFromRight (6);
-            go.setBounds (row.removeFromRight (juce::jmax (size, 44)));
-            return;
-        }
-        mute.getProperties().set ("fontSize", 20.0f);
-        solo.getProperties().set ("fontSize", 20.0f);
-        auto r = getLocalBounds().reduced (4).withTrimmedRight (12).withTrimmedBottom (8);
-        const int size = juce::jlimit (30, 44, r.getHeight() / 2);
-        auto row = r.removeFromBottom (size);
+        // The card's own Play (On, Rec), M and S in a row on its right.
+        auto r = getLocalBounds().reduced (4).withTrimmedRight (10);
+        const int size = juce::jlimit (18, 28, r.getHeight() - 18);
+        const float font = juce::jlimit (12.0f, 16.0f, size * 0.5f);
+        for (auto* b : { &mute, &solo })
+            b->getProperties().set ("fontSize", font);
+        go.getProperties().set ("fontSize", juce::jmin (13.0f, font));
+        auto row = r.withSizeKeepingCentre (r.getWidth(), size);
         solo.setBounds (row.removeFromRight (size));
-        row.removeFromRight (8);
+        row.removeFromRight (5);
         mute.setBounds (row.removeFromRight (size));
-        row.removeFromRight (8);
-        go.setBounds (row.removeFromRight (juce::jmax (size, 50)));
+        row.removeFromRight (5);
+        go.setBounds (row.removeFromRight (juce::jmax (size + 6, 36)));
     }
+
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
@@ -2422,7 +2357,7 @@ void GrooveView::timerCallback()
     if (track == loops)
         for (int i = 0; i < RigLooper::kLayers; ++i)
             sig << juce::roundToInt (engine.getLooper().getLayer (i).position.load() * 50.0);
-    if (sig != shownSignature)
+    if (sig != shownSignature || guideRow >= 0)   // (the lesson's glow pulses)
     {
         shownSignature = sig;
         repaint (wellArea);
@@ -2656,6 +2591,15 @@ void GrooveView::paint (juce::Graphics& g)
             {
                 g.setColour (juce::Colours::white.withAlpha (0.3f));
                 g.fillRoundedRectangle (r.withTrimmedBottom (3.0f), 8.0f);
+            }
+            // The Make a beat lesson's suggested steps: a pulsing amber ring until you click them.
+            if (row == guideRow && ! c.lit && i < 32 && (guideMask >> i) & 1u)
+            {
+                const float pulse = 0.55f + 0.45f * std::sin ((float) juce::Time::getMillisecondCounter() * 0.006f);
+                g.setColour (vintage::colours::lcdAmber.withAlpha (0.25f * pulse));
+                g.fillRoundedRectangle (r.withTrimmedBottom (3.0f), 8.0f);
+                g.setColour (vintage::colours::lcdAmber.withAlpha (0.6f + 0.4f * pulse));
+                g.drawRoundedRectangle (r.withTrimmedBottom (3.0f).reduced (1.5f), 8.0f, 3.0f);
             }
 
             auto text = r.withTrimmedBottom (3.0f).reduced (6.0f, 8.0f).toNearestInt();

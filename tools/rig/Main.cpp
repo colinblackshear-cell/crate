@@ -23,6 +23,7 @@ public:
         options.folderName = "Crate Rig";
         settings = std::make_unique<juce::PropertiesFile> (options);
 
+        RigEngine::startWithFactoryKit = true;
         engine = std::make_unique<RigEngine>();
 
         // Pick up where the last show left off.
@@ -30,6 +31,13 @@ public:
         {
             engine->loadShow (juce::ValueTree::fromXml (*xml));
             engine->readLoopAudio (lastShowFile());
+            // A Last show from before the factory kits, with nothing on the pads: put the Street kit
+            // on them, as a new Rig has (a show you open yourself stays as it was saved).
+            bool padsEmpty = true;
+            for (auto& bank : engine->getMpc().getProject().getBanks())
+                padsEmpty = padsEmpty && bank.usedPads() == 0;
+            if (padsEmpty)
+                engine->loadFactoryKit (0, 0);
         }
 
         // Ask for the mic first (macOS shows its prompt), then open the audio device.

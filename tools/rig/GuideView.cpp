@@ -259,6 +259,21 @@ public:
             stars.push_back ({ random.nextFloat(), random.nextFloat(), 0.4f + random.nextFloat() * random.nextFloat() * 1.8f,
                                random.nextFloat() * juce::MathConstants<float>::twoPi });
 
+        // The three ways in, the phone's: the tour, the lesson, or straight to the tools.
+        tour.setButtonText (utf8 ("Take the 2-minute tour"));
+        tour.filled = true;
+        tour.setTooltip ("A walk round Kaleidobox on the real screens, one stop at a time.");
+        tour.onClick = [this] { if (guide.onTour) guide.onTour(); };
+        addAndMakeVisible (tour);
+        lesson.setButtonText ("Show me: make a beat");
+        lesson.setTooltip ("Four steps on the drum machine: kick, snare, hats, then Rec puts your beat on a loop layer.");
+        lesson.onClick = [this] { if (guide.onLesson) guide.onLesson(); };
+        addAndMakeVisible (lesson);
+        start.setButtonText ("Start making");
+        start.setTooltip ("Straight to Play: pick any tool on the left and press Rec.");
+        start.onClick = [this] { if (guide.onStartMaking) guide.onStartMaking(); };
+        addAndMakeVisible (start);
+
         howTo.setButtonText ("How-to guides  ?");
         howTo.setTooltip ("Step-by-step guides: recording loops, building a song, saving and exporting, singing live, plugging in a guitar.");
         howTo.onClick = [this] { if (guide.onHelp) guide.onHelp(); };
@@ -294,10 +309,17 @@ public:
         auto r = juce::Rectangle<int> (0, 0, width, 100000).reduced (margin, 0);
         const bool narrow = width < 900;
 
-        hero = r.removeFromTop (narrow ? 330 : 300);
+        hero = r.removeFromTop (narrow ? 400 : 370);
         planet = narrow ? juce::Rectangle<int>() : hero.withTrimmedLeft (hero.getWidth() * 3 / 5).reduced (10, 20);
         auto heroText = narrow ? hero : hero.withWidth (hero.getWidth() * 3 / 5);
-        auto buttons = heroText.removeFromBottom (54).withSizeKeepingCentre (heroText.getWidth(), 36);
+        auto buttons = heroText.removeFromBottom (48).withSizeKeepingCentre (heroText.getWidth(), 34);
+        auto ways = heroText.removeFromBottom (68).withSizeKeepingCentre (heroText.getWidth(), 54);
+        const int unit = juce::jmin (ways.getWidth(), 760) / 19;
+        tour.setBounds (ways.removeFromLeft (unit * 7));
+        ways.removeFromLeft (12);
+        lesson.setBounds (ways.removeFromLeft (unit * 7 - 12));
+        ways.removeFromLeft (12);
+        start.setBounds (ways.removeFromLeft (unit * 5 - 12));
         howTo.setBounds (buttons.removeFromLeft (190));
         buttons.removeFromLeft (14);
         startOver.setBounds (buttons.removeFromLeft (140));
@@ -546,16 +568,27 @@ private:
     {
     public:
         GhostButton() : juce::Button ("How-to") { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+        bool filled = false;
         void paintButton (juce::Graphics& g, bool over, bool down) override
         {
             auto r = getLocalBounds().toFloat().reduced (down ? 1.5f : 0.5f);
+            if (filled)
+            {
+                vintage::glow (g, r, 10.0f, kAmber, 10.0f, over ? 0.45f : 0.3f);
+                g.setColour (over ? kAmber.brighter (0.15f) : kAmber);
+                g.fillRoundedRectangle (r, 10.0f);
+                g.setFont (vintage::cond (getHeight() > 44 ? 21.0f : 17.0f, Weight::extra, 0.06f));
+                g.setColour (juce::Colour (0xff1a1206));
+                g.drawFittedText (getButtonText(), r.toNearestInt().reduced (8, 0), juce::Justification::centred, 1, 0.7f);
+                return;
+            }
             g.setColour (kInk.withAlpha (over ? 0.12f : 0.05f));
             g.fillRoundedRectangle (r, 8.0f);
             g.setColour (kInk.withAlpha (over ? 0.6f : 0.3f));
             g.drawRoundedRectangle (r, 8.0f, 1.2f);
-            g.setFont (vintage::cond (17.0f, Weight::bold, 0.06f));
+            g.setFont (vintage::cond (getHeight() > 44 ? 21.0f : 17.0f, Weight::bold, 0.06f));
             g.setColour (kInk);
-            g.drawText (getButtonText(), r, juce::Justification::centred, false);
+            g.drawFittedText (getButtonText(), r.toNearestInt().reduced (8, 0), juce::Justification::centred, 1, 0.7f);
         }
     };
 
@@ -564,6 +597,9 @@ private:
     std::vector<Star> stars;
     juce::Rectangle<int> hero, heroTextArea, planet, mainLabel, moreLabel, footer;
     GhostButton howTo, startOver;
+public:
+    GhostButton tour, lesson, start;
+private:
     LampToggle startHere;
 public:
     juce::OwnedArray<Card> cards;
@@ -618,6 +654,17 @@ void GuideView::timerCallback()
 }
 
 void GuideView::refresh() { content->repaint(); }
+
+juce::Button* GuideView::wayIn (int index) const
+{
+    switch (index)
+    {
+        case 0: return &content->tour;
+        case 1: return &content->lesson;
+        case 2: return &content->start;
+        default: return nullptr;
+    }
+}
 
 void GuideView::open (int i)
 {

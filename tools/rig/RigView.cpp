@@ -15,6 +15,8 @@
 #include "RigColours.h"
 #include "EditorView.h"
 #include "MpcView.h"
+#include "FactoryKits.h"
+#include "RigLesson.h"
 #include "SamplerScreen.h"
 #include "VocoderScreen.h"
 #include "SynthScreens.h"
@@ -470,6 +472,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     footer.onSong = [this] { showView ("Song"); };
     footer.onPickSection = [this] (int section) { pickRecSection (section); };
     footer.onSlimChanged = [this] { resized(); };
+    // The song's sections on the bottom bar (keys 1-8), as on the phone.
+    dock.onSection = [this] (int i) { rigpanels::Footer::pressPart (engine, i); };
+    dock.onSectionMenu = [this] (int i, juce::Component& chip) { footer.showPartMenu (i, &chip); };
+    dock.onAddSection = [this] { keepAsSongPart(); };
 
     // The Setup page's parts.
     setupPage = new SetupPage (*this);
@@ -764,6 +770,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         // (Launchkey, Launchpad) follow the pad bank the MPC shows.
         mpcView->setSoundBank (soundsView->getSharedBank());
         mpcView->onPadBankChanged = [this] (int bank) { engine.getRouting().padBank = juce::jlimit (0, 3, bank); };
+        // New kit offers the factory kits too (the same five as the phone's).
+        for (auto& kit : crate::factory::kits())
+            mpcView->factoryKitNames.add (kit.name);
+        mpcView->onFactoryKit = [this] (int index) { say (engine.loadFactoryKit (index)); };
     }
     if (samplerScreen != nullptr)
         samplerScreen->setSoundBank (soundsView->getSharedBank());
@@ -800,6 +810,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
                                      { return pageIndex (name) >= 0 || ((name == "Sampler editor" || name == "MPC") && samplerScreen != nullptr); });
     guideView->onOpen = [this] (const juce::String& name) { openTool (name); };
     guideView->onHelp = [this] { showHelp (true); };
+    guideView->onTour = [this] { tourStop = 0; showHelp (true); };
+    guideView->onLesson = [this] { startLesson(); };
+    guideView->onStartMaking = [this]
+    {
+        showView ("Play");
+        say ("Pick any tool on the left, play it, and press Rec: it lands on the next loop layer. Then pick another tool and play on top.");
+    };
     guideView->onStartOver = [this] { askNewSong(); };
     guideView->startsHere = [this] { return ! (bool) engine.screens.getProperty ("skipGuide", false); };
     guideView->setStartsHere = [this] (bool start)
@@ -1478,43 +1495,74 @@ void RigView::updateDock()
 
 void RigView::showRecMenu()
 {
-    juce::PopupMenu menu;
-    menu.addSectionHeader ("Rec setup (the same as on the phone)");
+    if (recSetup != nullptr)
+        return closeRecSetup();
+    struct Backdrop : juce::Component
     {
-        juce::PopupMenu sub;
-        for (int bars : { 0, 1, 2 })
-            sub.addItem (bars == 0 ? juce::String ("Off") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), true, recCountIn == bars,
-                         [this, bars] { setRecSetup (bars, recLength); });
-        menu.addSubMenu ("Count-in: " + dock.countIn.sub, sub);
-    }
-    {
-        juce::PopupMenu sub;
-        for (int bars : { 1, 2, 4, 8, 16, 0 })
-            sub.addItem (bars == 0 ? juce::String ("Free (until you press Rec again)") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), true,
-                         recLength == bars, [this, bars] { setRecSetup (recCountIn, bars); });
-        menu.addSubMenu ("Length: " + dock.length.sub, sub);
-    }
-    menu.addItem ("Click", true, engine.getTransport().metronome.load(), [this]
+        std::function<void()> onDown;
+        void mouseDown (const juce::MouseEvent&) override { if (onDown) onDown(); }
+    };
+    auto backdrop = std::make_unique<Backdrop>();
+    backdrop->onDown = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)] { if (safe != nullptr) safe->closeRecSetup(); }); };
+    recBackdrop = std::move (backdrop);
+    addAndMakeVisible (*recBackdrop);
+    recBackdrop->setBounds (getLocalBounds());
+
+    recSetup = std::make_unique<rigpanels::RecSetup>();
+    recSetup->onCountIn = [this] (int bars) { setRecSetup (bars, recLength); updateRecSetup(); };
+    recSetup->onLength = [this] (int bars) { setRecSetup (recCountIn, bars); updateRecSetup(); };
+    recSetup->onClick = [this]
     {
         engine.getTransport().metronome = ! engine.getTransport().metronome.load();
         updateDock();
-    });
-    if (! toolMode())
+        updateRecSetup();
+    };
+    recSetup->onLands = [this] (int i)
     {
-        menu.addSeparator();
-        menu.addSectionHeader ("Where Rec lands");
-        menu.addItem ("The next loop layer (as on the phone)", true, recLands == RecLands::layer, [this] { setRecLands (RecLands::layer); });
-        menu.addItem ("A take on the song, into a section (Rec into)", true, recLands == RecLands::song, [this] { setRecLands (RecLands::song); });
-        menu.addItem ("Into the Sampler or an MPC pad (resample what plays)", true, recLands == RecLands::sample,
-                      [this] { setRecLands (RecLands::sample); });
-        menu.addItem ("The whole set: stems, mix and MIDI for Logic", true, recLands == RecLands::set, [this] { setRecLands (RecLands::set); });
-        menu.addSeparator();
-        menu.addItem (juce::String::fromUTF8 ("To Song \xe2\x80\xba ") + toSongSub, [this] { showToSongMenu(); });
-        menu.addItem (juce::String::fromUTF8 ("Rec into: section, cycle, notes or sound \xe2\x80\xba"), [this] { showRecTargetMenu (dock.rec); });
-        menu.addItem (juce::String::fromUTF8 ("Takes \xe2\x80\xba"), [this] { showTakesMenu (dock.rec); });
-        menu.addItem (juce::String::fromUTF8 ("Automation lanes \xe2\x80\xba"), [this] { showAutomation(); });
-    }
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (dock.rec));
+        setRecLands (i == 0 ? RecLands::layer : i == 1 ? RecLands::song : i == 2 ? RecLands::sample : RecLands::set);
+        updateRecSetup();
+    };
+    recSetup->onExtra = [this] (int i, juce::Component&)
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this), i]
+        {
+            if (safe == nullptr)
+                return;
+            safe->closeRecSetup();
+            switch (i)
+            {
+                case 0: safe->showToSongMenu(); break;
+                case 1: safe->showRecTargetMenu (safe->dock.rec); break;
+                case 2: safe->showTakesMenu (safe->dock.rec); break;
+                default: safe->showAutomation(); break;
+            }
+        });
+    };
+    addAndMakeVisible (*recSetup);
+    updateRecSetup();
+    // Over the Rec, above the bottom bar.
+    const auto rec = getLocalArea (&dock, dock.rec.getBounds());
+    const int w = rigpanels::RecSetup::kWidth, h = recSetup->preferredHeight();
+    recSetup->setBounds (juce::jlimit (8, juce::jmax (8, getWidth() - w - 8), rec.getCentreX() - w / 2), juce::jmax (8, dock.getY() - h + 6), w, h);
+    recSetup->toFront (false);
+}
+
+void RigView::updateRecSetup()
+{
+    if (recSetup == nullptr)
+        return;
+    const int lands = recLands == RecLands::layer ? 0 : recLands == RecLands::song ? 1 : recLands == RecLands::sample ? 2 : 3;
+    recSetup->setState (recCountIn, recLength, engine.getTransport().metronome.load(), lands, toolMode());
+}
+
+void RigView::closeRecSetup()
+{
+    if (recSetup != nullptr)
+        removeChildComponent (recSetup.get());
+    if (recBackdrop != nullptr)
+        removeChildComponent (recBackdrop.get());
+    recSetup.reset();
+    recBackdrop.reset();
 }
 
 void RigView::loadRecSetup()
@@ -2378,10 +2426,17 @@ void RigView::showShowMenu()
         const auto tool = RigEngine::onlyToolName (strip);
         menu.addItem (7, "Keep the " + (tool.isNotEmpty() ? tool : juce::String ("picked track")) + "'s sound as a tool sound...", tool.isNotEmpty());
         menu.addItem (8, "Open a tool sound...");
+        // The factory kits, the same five as the phone's: each onto a new MPC kit.
+        juce::PopupMenu kits;
+        for (int i = 0; i < (int) crate::factory::kits().size(); ++i)
+            kits.addItem (200 + i, juce::String (crate::factory::kits()[(size_t) i].name) + "  ·  " + crate::factory::kits()[(size_t) i].what);
+        menu.addSubMenu ("Factory kits on the pads", kits);
     }
     menu.addSeparator();
     menu.addItem (10, "New pattern: start the next thing, or start over...");
     menu.addItem (11, "Settings   (F6)");
+    menu.addItem (13, "Take the 2-minute tour");
+    menu.addItem (14, "Show me: make a beat");
     menu.addItem (12, "How to: guides for this screen");
     menu.addItem (6, "The Guide: every tool, and where to start");
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.menu),
@@ -2403,9 +2458,148 @@ void RigView::showShowMenu()
                                 case 10: safe->showPatternMenu(); break;
                                 case 11: safe->showTab ("Setup"); break;
                                 case 12: safe->showHelp (safe->helpPanel == nullptr); break;
-                                default: break;
+                                case 13: safe->tourStop = 0; safe->showHelp (true); break;
+                                case 14: safe->startLesson(); break;
+                                default:
+                                    if (result >= 200 && result < 200 + (int) crate::factory::kits().size())
+                                    {
+                                        safe->say (safe->engine.loadFactoryKit (result - 200));
+                                        safe->refresh();
+                                    }
+                                    break;
                             }
                         });
+}
+
+//==============================================================================
+// Make a beat
+void RigView::startLesson()
+{
+    if (engine.isBlank())
+        return beginLesson();
+    const auto name = currentShow != juce::File() ? currentShow.getFileNameWithoutExtension() : juce::String ("this song");
+    auto options = juce::MessageBoxOptions()
+                       .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                       .withTitle ("Make a beat")
+                       .withMessage ("The lesson starts a new song, so " + name + " stays as it is. Save it first?")
+                       .withButton ("Save, then the lesson")
+                       .withButton ("Lesson, don't save")
+                       .withButton ("Cancel")
+                       .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+                                  {
+                                      if (safe == nullptr || (result != 1 && result != 2))
+                                          return;
+                                      safe->newSong (result == 1, false);
+                                      if (safe->engine.isBlank())
+                                          safe->beginLesson();
+                                  });
+}
+
+void RigView::beginLesson()
+{
+    if (groove == nullptr || toolMode())
+        return;
+    showHelp (false);
+    if (lesson == nullptr)
+    {
+        lesson = std::make_unique<RigLesson>();
+        lesson->onPhase = [this] (int phase) { applyLessonPhase (phase); };
+        lesson->onEnd = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)] { if (safe != nullptr) safe->endLesson(); }); };
+        lesson->onAddTool = [this]
+        {
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
+            {
+                if (safe == nullptr)
+                    return;
+                safe->endLesson();
+                safe->say ("Your beat keeps looping. Pick another tool on the left (Bass, Synth, Chords, Vocoder...) and press Rec when you're ready.");
+            });
+        };
+        lesson->onPressRec = [this] { pressRec(); };
+        lesson->nextLayerNumber = [this]
+        {
+            for (int i = 0; i < RigLooper::kLayers; ++i)
+                if (engine.getLooper().getState (i) == RigLooper::State::empty)
+                    return i + 1;
+            return 0;
+        };
+        addAndMakeVisible (*lesson);
+        lessonMetronomeWas = engine.getTransport().metronome.load();
+    }
+    pickTrack (GrooveView::machine);
+    showView ("Play");
+    // An empty grid, as on the phone: the lesson's song is a new one, so its starter beat goes
+    // (Clear's undo still has it).
+    groove->clearPatternNow();
+    say ("Make a beat: an empty grid, the click on. Follow the card (Skip lesson any time).");
+    resized();
+    lesson->begin();
+}
+
+void RigView::endLesson()
+{
+    if (lesson == nullptr)
+        return;
+    removeChildComponent (lesson.get());
+    lesson.reset();
+    if (groove != nullptr)
+        groove->setGuide (-1, 0);
+    engine.getTransport().metronome = lessonMetronomeWas;
+    updateDock();
+    resized();
+}
+
+// What each step sets up on the real screen. Only glows: nothing is ever written for you.
+void RigView::applyLessonPhase (int phase)
+{
+    if (groove == nullptr)
+        return;
+    if (phase == RigLesson::kick || phase == RigLesson::snare || phase == RigLesson::hats)
+    {
+        if (groove->getTrack() != GrooveView::machine)
+            pickTrack (GrooveView::machine);
+        // The pattern loops with the click, so every step clicked is heard in the loop.
+        if (! groove->isGoing (GrooveView::machine))
+            groove->pressTrackButton (GrooveView::machine);
+        engine.getTransport().metronome = true;
+        // The grid's rows: the accent, then kick, snare... closed hat is the tenth sound.
+        const int row = phase == RigLesson::kick ? 1 : phase == RigLesson::snare ? 2 : 10;
+        const juce::uint32 mask = phase == RigLesson::kick ? ((1u << 0) | (1u << 10))
+                                : phase == RigLesson::snare ? ((1u << 4) | (1u << 12)) : 0x5555u;
+        groove->setGuide (row, mask);
+    }
+    else
+        groove->setGuide (-1, 0);
+    if (phase == RigLesson::rec)
+    {
+        // The take goes on the next layer, from the drum machine.
+        if (groove->getTrack() != GrooveView::machine)
+            pickTrack (GrooveView::machine);
+        setRecLands (RecLands::layer);
+        lastTakeLayer = -1;
+    }
+    if (phase == RigLesson::landed)
+        engine.getTransport().metronome = lessonMetronomeWas;
+    updateDock();
+}
+
+void RigView::tickLesson()
+{
+    if (lesson == nullptr || lesson->phase() != RigLesson::rec)
+        return;
+    if (! juce::isPositiveAndBelow (lastTakeLayer, RigLooper::kLayers))
+    {
+        lesson->setRecBusy (false);
+        return;
+    }
+    const auto state = engine.getLooper().getState (lastTakeLayer);
+    if (state == RigLooper::State::armed || state == RigLooper::State::recording)
+        lesson->setRecBusy (true);
+    else if (state == RigLooper::State::empty)
+        lesson->setRecBusy (false);
+    else
+        lesson->showLanded (lastTakeLayer + 1);
 }
 
 //==============================================================================
@@ -2840,6 +3034,7 @@ void RigView::updateLearnButtons()
 
 void RigView::timerCallback()
 {
+    tickLesson();
     auto& transport = engine.getTransport();
     const bool playing = transport.isPlaying();
     if (dock.play.lit != (playing ? vintage::Lit::play : vintage::Lit::none))
@@ -2940,6 +3135,16 @@ void RigView::timerCallback()
 
     updateHeader();
     footer.tick();
+    {
+        const auto& tl = engine.getTimeline();
+        const int count = (int) rigsong::sections (tl).size();
+        auto& clock = engine.getTransport();
+        const bool songOn = tl.on.load() && clock.isPlaying();
+        const int bpb = juce::jmax (1, clock.getBeatsPerBar());
+        const int current = songOn ? rigsong::sectionAt (tl, clock.getPositionInBeats() / bpb) : -1;
+        const double pending = tl.getPendingJump();
+        dock.setSections (count, current, songOn && pending >= 0 ? rigsong::sectionAt (tl, pending) : -1);
+    }
     updateRecInto();
     {
         // Your show's name, and whether it has been saved yet. A one-tool plugin's is its tool, and
@@ -2953,11 +3158,16 @@ void RigView::timerCallback()
             sub = juce::String::fromUTF8 ("Get from box \xc2\xb7 Send to box");
         }
         const auto lit = vintage::Lit::none;
-        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit)
+        // A small dot after the name while the song isn't saved anywhere yet.
+        const bool dot = ! toolMode() && name.isEmpty();
+        if (! toolMode() && name.isEmpty())
+            text = "Untitled song";
+        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit || header.show.dot != dot)
         {
             header.show.text = text;
             header.show.sub = sub;
             header.show.lit = lit;
+            header.show.dot = dot;
             header.show.repaint();
         }
     }
@@ -4179,7 +4389,7 @@ void RigView::resized()
     {
         // Rec and the transport along the bottom (as on the phone), the song's strip over them.
         dock.setBounds (area.removeFromBottom (compact ? rigpanels::Dock::kCompactHeight : rigpanels::Dock::kHeight));
-        footer.setBounds (area.removeFromBottom (footer.isSlim() ? (compact ? 52 : 56) : (compact ? 112 : 128)));
+        footer.setBounds (area.removeFromBottom (footer.isSlim() ? 30 : (compact ? 112 : 128)));
     }
     if (railShown())
     {
@@ -4199,6 +4409,13 @@ void RigView::resized()
         auto drawerArea = tabs.getBounds();
         chordsDrawer->setBounds (drawerArea.removeFromBottom (juce::jmin (drawerArea.getHeight() - 120, ChordsView::kPreferredHeight)));
         chordsDrawer->toFront (false);
+    }
+    if (lesson != nullptr)
+    {
+        // Bottom right, over the empty steps past the hats, above the song's strip.
+        auto screen = tabs.getBounds();
+        lesson->setBounds (screen.removeFromBottom (RigLesson::kHeight + 10).removeFromRight (RigLesson::kWidth + 10).reduced (5));
+        lesson->toFront (false);
     }
     if (helpPanel != nullptr)
     {

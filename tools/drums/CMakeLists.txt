@@ -21,6 +21,7 @@ juce_add_plugin(KaleidoboxDrums
 # The app, plugin, Rig and tests all compile this list.
 set(DRUMS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/DrumEngine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/FactoryKits.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/DrumProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/DrumView.cpp
     PARENT_SCOPE)
