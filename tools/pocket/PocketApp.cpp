@@ -601,9 +601,8 @@ HoldSpec PocketApp::songHoldSpec (const juce::String& id)
     HoldSpec s;
     const auto* info = ideas.find (id);
     s.title = info != nullptr ? info->name.toUpperCase() : juce::String ("SONG");
-    const bool current = id == ideas.current().id;
     s.items.push_back ({ "RENAME", {}, false, true, [this, id] { renameIdea (id); } });
-    s.items.push_back ({ "DELETE", current ? juce::String ("open another song first") : juce::String ("asks first"), true, ! current, [this, id] { deleteIdea (id); } });
+    s.items.push_back ({ "DELETE", "asks first", true, true, [this, id] { deleteIdea (id); } });
     return s;
 }
 
@@ -617,6 +616,7 @@ void PocketApp::holdMenu (const HoldSpec& spec, juce::Component& source, juce::P
         const auto p = (&source == this ? at : getLocalPoint (&source, at)).toInt();
         target = juce::Rectangle<int> (p.x, p.y, 1, 1).expanded (14);
     }
+    lastHoldTarget = target.toFloat();
     holdCard.setBounds (getLocalBounds());
     holdCard.open (spec, target, insets.getTop() + 6, insets.getBottom() + 6);
 }
@@ -1297,19 +1297,60 @@ void PocketApp::deleteIdea (const juce::String& id)
     auto* info = ideas.find (id);
     if (info == nullptr)
         return;
-    auto* w = new juce::AlertWindow ("Delete " + info->name + "?", "Its pads, beat and loops are deleted. The sounds stay in Sounds.", juce::MessageBoxIconType::NoIcon, this);
-    w->addButton ("Delete", 1);
-    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, id] (int result)
+    // The confirm is the app's own card, where the song's menu was (a native alert sits apart from the app on the phone)
+    const bool open = id == ideas.current().id;
+    juce::String next;
+    for (auto& i : ideas.list())
+        if (i.id != id && next.isEmpty())
+            next = i.name;
+    HoldSpec s;
+    s.title = "DELETE " + info->name.toUpperCase() + "?";
+    const juce::String after = ! open ? U8("pads, beat, loops \xc2\xb7 no undo")
+                             : next.isNotEmpty() ? "then opens " + next : juce::String ("then a new song opens");
+    s.items.push_back ({ "DELETE SONG", after, true, true, [this, id] { removeIdea (id); } });
+    s.items.push_back ({ "KEEP IT", {}, false, true, [] {} });
+    auto where = lastHoldTarget;
+    if (where.isEmpty() || ! holdCard.getBounds().toFloat().intersects (where))
+        where = juce::Rectangle<float> ((float) getWidth() * 0.5f - 40.0f, (float) getHeight() * 0.4f, 80.0f, 2.0f);
+    holdMenu (s, *this, where.getCentre(), where);
+}
+
+void PocketApp::removeIdea (const juce::String& id)
+{
+    auto* info = ideas.find (id);
+    if (info == nullptr)
+        return;
+    const auto name = info->name;
+    if (id != ideas.current().id)
     {
-        if (result != 1)
-            return;
         if (! ideas.remove (id))
-            return toast ("Open another idea before deleting this one");
+            return toast ("Couldn't delete " + name);
         ideasScreen->refresh();
         drawer.refresh();
-        toast ("Song deleted");
-    }), true);
+        return toast ("Deleted " + name + ". The sounds stay in Sounds.");
+    }
+    // The open song: your most recent other song opens in its place (a new empty one when it was the last)
+    juce::String next;
+    for (auto& i : ideas.list())   // (newest first)
+        if (i.id != id && next.isEmpty())
+            next = i.id;
+    const bool fresh = next.isEmpty();
+    if (fresh)
+        next = ideas.create (ideas.nextName());
+    if (lessonOn)
+        endLesson();
+    const auto wasPage = page;
+    switchIdea (next);
+    if (! ideas.remove (id))
+        return toast ("Couldn't delete " + name);
+    if (wasPage == Page::tool)
+        showTool (tool, false);
+    else if (wasPage == Page::songs)
+        showIdeasList();
+    ideasScreen->refresh();
+    drawer.refresh();
+    repaint();
+    toast ("Deleted " + name + ". " + (fresh ? juce::String ("Here's a new empty song.") : "You're on " + ideas.current().name + " now."));
 }
 
 // MAKE A BEAT: a new song with an empty grid, DRUMS open, and the lesson walking through it.
@@ -2888,6 +2929,10 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     ideasScreen->holdRow (1);
     savePng (folder.getChildFile ("24-hold-song-on-home.png"));
     holdCard.close();
+    ideasScreen->holdRow (0);   // the open song: DELETE asks on the app's own card, then opens your last other song
+    holdCard.choose (1);
+    savePng (folder.getChildFile ("24c-delete-open-song-confirm.png"));
+    holdCard.close();
     showTool (Tool::loops);
     loopsScreen.selectLayer (2);
     savePng (folder.getChildFile ("03a-loops-audio-picked.png"));
@@ -3222,6 +3267,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = runNavigationChecks (navReport, folder); why.isNotEmpty())
         problems.add ("Navigation: " + why);
 
+    // Deleting songs: any song, the open one too, and the last one
+    juce::String deleteReport;
+    if (const auto why = runSongDeleteChecks (deleteReport, folder); why.isNotEmpty())
+        problems.add ("Delete songs: " + why);
+
     // The sampler: a trimmed sound is what its pad plays, at once and after the song is opened again
     juce::String samplerReport;
     if (const auto why = runSamplerChecks (samplerReport); why.isNotEmpty())
@@ -3299,6 +3349,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nEffect pedals (44.1 kHz):\n" + boardsReport
                           + "\nEffects in the app (97 BPM, 44.1 kHz):\n" + effectsReport
                           + "\nNavigation (drawer, hold menus, tool slide, sheets):\n" + navReport
+                          + "\nDeleting songs (the open one, the last one):\n" + deleteReport
                           + "\nSampler (trim onto a pad, save, reopen):\n" + samplerReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());

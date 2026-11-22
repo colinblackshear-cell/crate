@@ -156,7 +156,8 @@ private:
     void newIdea();          // + NEW SONG
     void switchIdea (const juce::String& id);
     void renameIdea (const juce::String& id);
-    void deleteIdea (const juce::String& id);
+    void deleteIdea (const juce::String& id);    // asks first (a card where the song's menu was), then removeIdea
+    void removeIdea (const juce::String& id);    // any song, the open one too: that one makes way for your last other song (or a new one)
     void makeABeat();        // Your songs' MAKE A BEAT: a new song with an empty grid, and the lesson
     void lessonFromMenu();   // the drawer's TOUR · LESSON > Show me: make a beat
     juce::String phoneSummary() const;   // "8 sounds · 3 loop layers in this song · 12 MB", on Settings
@@ -275,7 +276,8 @@ private:
     juce::String runRecChecks (juce::String& report);
     juce::String runLoopEditChecks (juce::String& report);
     juce::String runNavigationChecks (juce::String& report, const juce::File& folder);
-    juce::String runSamplerChecks (juce::String& report);   // PocketAppSampler.cpp: a trimmed sound is what the pad plays
+    juce::String runSamplerChecks (juce::String& report);
+    juce::String runSongDeleteChecks (juce::String& report, const juce::File& folder);   // PocketAppNav.cpp   // PocketAppSampler.cpp: a trimmed sound is what the pad plays
 
     struct PocketLook : juce::LookAndFeel_V4 { PocketLook(); juce::Font getPopupMenuFont() override; juce::Font getTextButtonFont (juce::TextButton&, int) override; };
     PocketLook look;
@@ -313,6 +315,7 @@ private:
     std::unique_ptr<IdeasScreen> ideasScreen;
     SongDrawer drawer { ideas, link };
     pocket::HoldMenu holdCard;
+    juce::Rectangle<float> lastHoldTarget;   // what the last hold menu kept bright (in the app's coordinates): a confirm goes there too
     std::unique_ptr<TitleScreen> title;
     std::unique_ptr<TourOverlay> tour;
     // The Make a beat lesson: a coach card over DRUMS (see PocketLesson.h)

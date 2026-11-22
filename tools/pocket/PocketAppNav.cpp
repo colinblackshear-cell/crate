@@ -467,14 +467,14 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect (s.items[0].text == "RENAME" && s.items[0].action != nullptr && s.items[1].text == "DELETE" && s.items[1].danger && s.items[1].enabled && s.items[1].action != nullptr,
                 "Song menu: RENAME and a red DELETE aren't both there for another song");
         const auto cur = songHoldSpec (idA);
-        expect (! cur.items[1].enabled, "Song menu: the open song can be deleted");
+        expect (cur.items[1].enabled && cur.items[1].action != nullptr, "Song menu: the open song's DELETE is off");
         holdCard.close();
         settle();
         showIdeasList();
         ideasScreen->holdRow (0);
         expect (holdCard.isOpen() && holdCard.itemCount() == 2, "Song menu: holding a song on Home didn't open RENAME / DELETE");
         settle();
-        report << "hold menu on a song (drawer and Home): RENAME and a red DELETE (not for the open song)\n";
+        report << "hold menu on a song (drawer and Home): RENAME and a red DELETE (the open song's too)\n";
     }
 
     // ------------------------------------------------------------------ everything the old More list offered is in the drawer
@@ -525,5 +525,122 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
     loopsScreen.setSyncJobs (false);
     loopsScreen.setDemoMode (wasDemo);
     juce::ignoreUnused (folder);
+    return problems.joinIntoString ("\n");
+}
+
+// Deleting songs through their menus: another song, the open one (on Home and from the drawer over a tool), and the last one.
+juce::String PocketApp::runSongDeleteChecks (juce::String& report, const juce::File& folder)
+{
+    juce::StringArray problems;
+    auto expect = [&problems] (bool ok, const juce::String& what) { if (! ok) problems.add (what); };
+    hideToast();
+    holdCard.close();
+    auto rowOf = [this] (const juce::String& id)
+    {
+        for (int i = 0; i < drawer.songRows(); ++i)
+            if (drawer.songIdAt (i) == id)
+                return i;
+        return -1;
+    };
+    auto homeRowOf = [this] (const juce::String& id)
+    {
+        for (int i = 0; i < (int) ideas.list().size(); ++i)
+            if (ideasScreen->songIdAtRow (i) == id)
+                return i;
+        return -1;
+    };
+    // the song's menu, then the confirm card: DELETE, DELETE SONG
+    auto deleteThroughMenu = [&] (const juce::String& id, bool fromDrawer, const juce::String& what)
+    {
+        if (fromDrawer)
+        {
+            openDrawer();
+            drawer.refresh();
+            const int row = rowOf (id);
+            if (row < 0)
+                return problems.add (what + ": the song isn't in the drawer");
+            drawer.holdRow (row);
+        }
+        else
+        {
+            const int row = homeRowOf (id);
+            if (row < 0)
+                return problems.add (what + ": the song isn't on Home");
+            ideasScreen->holdRow (row);
+        }
+        if (! holdCard.isOpen() || holdCard.itemCount() != 2 || holdCard.current().items[1].text != "DELETE" || ! holdCard.current().items[1].enabled)
+            return problems.add (what + ": no DELETE in the song's menu");
+        holdCard.choose (1);
+        if (! holdCard.isOpen() || ! holdCard.current().title.startsWith ("DELETE ") || holdCard.current().items[0].text != "DELETE SONG")
+            return problems.add (what + ": DELETE didn't ask first");
+        holdCard.choose (0);
+    };
+
+    // another song (not open), from Home
+    showIdeasList();
+    const auto keepId = ideas.current().id;
+    const auto other = ideas.create ("Delete me");
+    ideasScreen->refresh();
+    deleteThroughMenu (other, false, "Another song");
+    expect (ideas.find (other) == nullptr && ! ideas.folderFor (other).exists(), "Another song: it's still there");
+    expect (ideas.current().id == keepId, "Another song: deleting it changed the open song");
+
+    // the open song, from Home: your most recent other song opens in its place; KEEP IT keeps it
+    const auto older = ideas.create ("Delete older");
+    const auto openId = ideas.create ("Delete open");
+    switchIdea (openId);
+    showIdeasList();
+    juce::String expectNext;
+    for (auto& i : ideas.list())
+        if (i.id != openId && expectNext.isEmpty())
+            expectNext = i.id;
+    ideasScreen->holdRow (homeRowOf (openId));
+    holdCard.choose (1);
+    expect (holdCard.isOpen() && holdCard.current().items[1].text == "KEEP IT", "The open song: the confirm has no KEEP IT");
+    holdCard.choose (1);
+    expect (ideas.find (openId) != nullptr && ideas.current().id == openId, "The open song: KEEP IT deleted it");
+    deleteThroughMenu (openId, false, "The open song (Home)");
+    expect (ideas.find (openId) == nullptr && ! ideas.folderFor (openId).exists(), "The open song (Home): it's still there");
+    expect (ideas.current().id == expectNext, "The open song (Home): the most recent other song didn't open");
+    expect (page == Page::songs, "The open song (Home): it left Home");
+    report << "Home: another song deletes after its confirm; the open song deletes too and " << (ideas.find (expectNext) != nullptr ? ideas.find (expectNext)->name : juce::String ("?"))
+           << " (the most recent other) opens; KEEP IT keeps it\n";
+
+    // the open song, from the drawer over a tool: the tool stays, on the next song
+    switchIdea (older);
+    showTool (Tool::chords, false);
+    deleteThroughMenu (older, true, "The open song (drawer)");
+    expect (ideas.find (older) == nullptr && ideas.current().id != older && ideas.current().id.isNotEmpty(), "The open song (drawer): it's still open");
+    expect (page == Page::tool && tool == Tool::chords, "The open song (drawer): it didn't stay on CHORDS");
+    closeDrawer();
+    report << "drawer over CHORDS: the open song deletes and the next one opens on CHORDS\n";
+
+    // the last song: a new empty one opens (the Street kit on its pads)
+    showIdeasList();
+    for (int guard = 0; guard < 200 && ideas.list().size() > 1; ++guard)
+        for (auto& i : ideas.list())
+            if (i.id != ideas.current().id)
+            {
+                removeIdea (i.id);
+                break;
+            }
+    expect (ideas.list().size() == 1, "The last song: couldn't clear the others (" + juce::String ((int) ideas.list().size()) + " left)");
+    const auto last = ideas.current().id;
+    showIdeasList();
+    deleteThroughMenu (last, false, "The last song");
+    {
+        std::vector<float> l (512), r (512);
+        for (int i = 0; i < 40; ++i)
+            loopsScreen.engine().render (l.data(), r.data(), 512);   // the empty layers reach the engine and settle
+    }
+    expect (ideas.list().size() == 1 && ideas.find (last) == nullptr && ideas.current().id != last && ideas.current().id.isNotEmpty(),
+            "The last song: no new song in its place (" + juce::String ((int) ideas.list().size()) + " songs)");
+    expect (beats.kit().usedPads() == 16 && loopsScreen.layerCount() == 0, "The last song: the new song isn't empty with the Street kit ("
+                                                                             + juce::String (beats.kit().usedPads()) + " pads, " + juce::String (loopsScreen.layerCount()) + " layers)");
+    showIdeasList();
+    savePng (folder.getChildFile ("24d-after-deleting-the-last-song.png"));
+    report << "the last song: deletes, and " << ideas.current().name << " (new, empty, the Street kit) opens\n";
+    holdCard.close();
+    hideToast();
     return problems.joinIntoString ("\n");
 }

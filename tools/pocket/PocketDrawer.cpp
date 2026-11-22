@@ -15,13 +15,16 @@ public:
     explicit List (SongDrawer& o) : owner (o) {}
 
     SongDrawer& owner;
-    int pressed = -1, pressedPlay = -1;
+    int pressed = -1, pressedPlay = -1, pressedMore = -1;
     bool moved = false;
     juce::Point<float> downAt;
     HoldDetector hold { [this] { holdFired(); } };
 
     juce::Rectangle<float> card (int row) const { return { (float) kMargin, (float) (row * (kRowH + kRowGap)) + 2.0f, (float) getWidth() - 2.0f * kMargin, (float) kRowH }; }
     juce::Rectangle<float> playButton (int row) const { auto c = card (row); return { c.getRight() - 52.0f, c.getCentreY() - 22.0f, 44.0f, 44.0f }; }
+    // ···: RENAME and DELETE without the hold (the card's full height, up to the play button)
+    juce::Rectangle<float> moreButton (int row) const { auto c = card (row); return { c.getRight() - 100.0f, c.getCentreY() - 22.0f, 44.0f, 44.0f }; }
+    juce::Rectangle<float> moreHit (int row) const { auto c = card (row); return { c.getRight() - 108.0f, c.getY(), 54.0f, c.getHeight() }; }
     int rowAt (juce::Point<float> p) const
     {
         for (int i = 0; i < (int) owner.rows.size(); ++i)
@@ -33,7 +36,7 @@ public:
     void cancelPress()
     {
         hold.cancel();
-        pressed = pressedPlay = -1;
+        pressed = pressedPlay = pressedMore = -1;
         moved = true;
         repaint();
     }
@@ -48,18 +51,25 @@ public:
             g.fillRoundedRectangle (r, 14.0f);
             g.setColour (row.current ? col::amber : col::rule);
             g.drawRoundedRectangle (r.reduced (1.0f), 14.0f, row.current ? 2.2f : 1.2f);
-            if (i == pressed && pressedPlay < 0 && ! moved)
+            if (i == pressed && pressedPlay < 0 && pressedMore < 0 && ! moved)
             {
                 g.setColour (col::ink.withAlpha (0.06f));
                 g.fillRoundedRectangle (r, 14.0f);
             }
-            auto in = r.reduced (14, 8).withTrimmedRight (52);
+            auto in = r.reduced (14, 8).withTrimmedRight (100);
             g.setColour (col::ink);
             g.setFont (small (17.0f).boldened());
             g.drawFittedText (row.name, in.removeFromTop (26).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
             g.setColour (col::inkDim);
             g.setFont (small (13.0f));
             g.drawFittedText (row.meta, in.removeFromTop (20).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+
+            auto mb = moreButton (i);
+            g.setColour (pressedMore == i ? col::creamDeep : col::creamLight);
+            g.fillRoundedRectangle (mb.reduced (2), 10.0f);
+            g.setColour (col::inkDim);
+            for (int k = -1; k <= 1; ++k)
+                g.fillEllipse (mb.getCentreX() + (float) k * 8.0f - 2.5f, mb.getCentreY() - 2.5f, 5.0f, 5.0f);
 
             auto pb = playButton (i);
             const bool playing = owner.isPlaying && owner.isPlaying (row.id);
@@ -83,9 +93,10 @@ public:
     {
         pressed = rowAt (e.position);
         pressedPlay = pressed >= 0 && playButton (pressed).contains (e.position) ? pressed : -1;
+        pressedMore = pressed >= 0 && pressedPlay < 0 && moreHit (pressed).contains (e.position) ? pressed : -1;
         moved = false;
         downAt = e.position;
-        if (pressed >= 0 && pressedPlay < 0)
+        if (pressed >= 0 && pressedPlay < 0 && pressedMore < 0)
             hold.press (e.position);
         repaint();
     }
@@ -96,7 +107,8 @@ public:
         if (! moved && e.getDistanceFromDragStart() > 8)
         {
             moved = true;
-            pressed = pressedPlay = -1;
+            hold.cancel();
+            pressed = pressedPlay = pressedMore = -1;
             repaint();
         }
     }
@@ -104,8 +116,8 @@ public:
     void mouseUp (const juce::MouseEvent& e) override
     {
         hold.release();
-        const int row = pressed, playRow = pressedPlay;
-        pressed = pressedPlay = -1;
+        const int row = pressed, playRow = pressedPlay, moreRow = pressedMore;
+        pressed = pressedPlay = pressedMore = -1;
         repaint();
         if (row < 0 || moved || hold.fired() || rowAt (e.position) != row)
             return;
@@ -116,6 +128,8 @@ public:
                 owner.onPlay (id);
             return;
         }
+        if (moreRow == row && moreHit (row).contains (e.position))
+            return holdRow (row);
         if (owner.onPick)
             owner.onPick (id);
     }
@@ -213,7 +227,7 @@ public:
         g.drawText ("Kaleidobox", 18, top + 12, getWidth() - 36, 46, juce::Justification::centredLeft);
         g.setColour (col::inkDim);
         g.setFont (spaced (condensedBold (12.0f), 0.14f));
-        g.drawFittedText (U8("YOUR SONGS \xc2\xb7 HOLD ONE TO RENAME OR DELETE"), juce::Rectangle<int> (kMargin + 4, top + 128, getWidth() - 2 * kMargin - 4, 22),
+        g.drawFittedText (U8("YOUR SONGS \xc2\xb7 HOLD ONE OR TAP \xc2\xb7\xc2\xb7\xc2\xb7 TO RENAME OR DELETE"), juce::Rectangle<int> (kMargin + 4, top + 128, getWidth() - 2 * kMargin - 4, 22),
                           juce::Justification::centredLeft, 1, 0.8f);
         g.setColour (col::rule);
         g.fillRect (kMargin, gridTop() - 10, getWidth() - 2 * kMargin, 2);
