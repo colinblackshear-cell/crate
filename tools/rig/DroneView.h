@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "RigEngine.h"
+#include "RigColours.h"
 #include "RigPanels.h"
 #include "Vintage.h"
 
@@ -37,6 +38,11 @@ public:
     // The controls, for the window and the tests.
     rigpanels::PanelButton onButton { "On" }, soundButton { "Sound" };
     juce::TextButton followButton { "Follow keys" }, chordsKeyButton { "Use the chords' key" }, feedButton;
+    // The drone's volume, right here: the same as its fader on the Mixer.
+    vintage::Knob levelKnob { "Volume", RigColours::drone };
+    // Shown while singing into the strings can't be heard (the mic is off): turns the mic on.
+    juce::TextButton micButton { "Mic off: turn it on" };
+    void turnMicOn();
     juce::OwnedArray<juce::TextButton> noteKeys, octaveButtons, firstButtons, pluckButtons;
     vintage::Knob* knobFor (const juce::String& paramId) const;
     void showSoundMenu();

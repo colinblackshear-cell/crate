@@ -45,6 +45,28 @@ float stripPeak (RigEngine& engine, int strip, double seconds)
     render (engine, seconds);
     return engine.getStrip (strip).peak.exchange (0.0f);
 }
+// Plays the Rig for `seconds` with a voice (a held note, rich in harmonics, at `hz`) coming in on
+// the mic; the loudest the Drone's strip was.
+float singInto (RigEngine& engine, double seconds, double hz, float loudness = 0.2f)
+{
+    juce::AudioBuffer<float> in (2, kBlock), out (2, kBlock);
+    engine.getStrip (RigEngine::droneStrip).peak = 0.0f;
+    static double phase = 0.0;
+    for (int b = 0; b < juce::jmax (1, (int) (seconds * kRate / kBlock)); ++b)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            float v = 0.0f;
+            for (int h = 1; h <= 8; ++h)
+                v += (float) std::sin (phase * h) / (float) h;
+            phase += juce::MathConstants<double>::twoPi * hz / kRate;
+            in.setSample (0, i, v * loudness * 0.6f);
+            in.setSample (1, i, v * loudness * 0.6f);
+        }
+        engine.process (in.getArrayOfReadPointers(), 2, out.getArrayOfWritePointers(), 2, kBlock);
+    }
+    return engine.getStrip (RigEngine::droneStrip).peak.exchange (0.0f);
+}
 }
 
 struct DroneRigTests : juce::UnitTest
@@ -156,6 +178,62 @@ struct DroneRigTests : juce::UnitTest
             expectGreaterThan (ringing, 1.0e-3f, "the drone's strings still ring");
             expectGreaterThan (ringing, dry * 10.0f + 1.0e-6f, "and not with Resonate at 0");
             juce::ignoreUnused (synthDry);
+        }
+
+        beginTest ("singing into the mic rings the strings, with the Input strip off; not while the mic is off");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            auto& d = engine.getDrone().params;
+            setParam (d, "droneResonate", 0.6f);
+            setParam (d, "droneFeed", (float) DroneProcessor::feedInput);
+            expect (! engine.inputOn.load(), "the Input strip is off, as it is in a new Rig");
+            expect (! engine.micOn.load(), "and the mic is off, as it is when the app starts");
+            expect (engine.whyDroneDeaf().isNotEmpty(), "the screen can say why it's silent");
+            expectLessThan (singInto (engine, 1.5, 130.81), 1.0e-5f, "mic off: the strings don't hear you");
+
+            engine.micOn = true;
+            expect (engine.whyDroneDeaf().isEmpty());
+            singInto (engine, 0.5, 130.81);
+            const float sung = singInto (engine, 1.5, 130.81);
+            logMessage ("singing Sa (-14 dBFS in): the strings ring at " + juce::String (juce::Decibels::gainToDecibels (sung), 1) + " dB");
+            expectGreaterThan (sung, 0.01f, "mic on: singing Sa rings the strings");
+
+            // The Input strip's own fader and mute don't stop it (the strings hear the mic itself).
+            engine.getStrip (RigEngine::inputStrip).mute = true;
+            expectGreaterThan (singInto (engine, 1.0, 130.81), 0.01f, "with the Input strip muted too");
+            expect (! engine.inputOn.load(), "and the mic isn't put through the speakers by it");
+
+            setParam (d, "droneFeed", (float) DroneProcessor::feedSynth);
+            render (engine, 3.0);
+            expectLessThan (singInto (engine, 1.0, 130.81), 1.0e-3f, "ringing to the Synth instead, the voice doesn't ring them");
+            expect (engine.whyDroneDeaf().isEmpty(), "and there's nothing to warn about");
+        }
+
+        beginTest ("its default loudness sits with the other tools");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            setParam (engine.getDrone().params, "droneOn", 1.0f);
+            render (engine, 2.0);
+            juce::AudioBuffer<float> in (2, kBlock), out (2, kBlock);
+            in.clear();
+            double sum = 0;
+            long count = 0;
+            float peak = 0;
+            for (int b = 0; b < (int) (6.0 * kRate / kBlock); ++b)
+            {
+                engine.process (in.getArrayOfReadPointers(), 2, out.getArrayOfWritePointers(), 2, kBlock);
+                for (int i = 0; i < kBlock; ++i)
+                    sum += out.getSample (0, i) * out.getSample (0, i);
+                count += kBlock;
+                peak = juce::jmax (peak, out.getMagnitude (0, 0, kBlock));
+            }
+            const float rms = (float) std::sqrt (sum / (double) count);
+            logMessage ("the drone alone at 0 dB: peak " + juce::String (juce::Decibels::gainToDecibels (peak), 1) + " dB, RMS "
+                        + juce::String (juce::Decibels::gainToDecibels (rms), 1) + " dB");
+            expectLessThan (juce::Decibels::gainToDecibels (rms), -24.0f, "a bed under the song, not on top of it");
+            expectGreaterThan (juce::Decibels::gainToDecibels (rms), -32.0f, "but there");
         }
 
         beginTest ("the looper records the drone");
@@ -296,6 +374,27 @@ struct DroneRigTests : juce::UnitTest
             expectEquals (param (engine.getDrone().params, "droneRoot"), 2.0f, "the chord builder's key");
             screen->onButton.onClick();
             expect (engine.getDrone().isOn(), "its On");
+
+            // Its volume is its Mixer fader, both ways.
+            screen->levelKnob.slider.setValue (0.5, juce::sendNotificationSync);
+            expectWithinAbsoluteError (engine.getStrip (RigEngine::droneStrip).level.load(), 0.5f, 1.0e-4f, "Volume turns the drone's fader down");
+            engine.getStrip (RigEngine::droneStrip).level = 0.7f;
+            screen->tick();
+            expectWithinAbsoluteError ((float) screen->levelKnob.slider.getValue(), 0.7f, 1.0e-4f, "and follows the Mixer's fader");
+            expect (screen->levelKnob.isVisible() && screen->getLocalBounds().contains (screen->levelKnob.getBounds()));
+
+            // Singing into the strings with the mic off: the screen says so, and its button turns the mic on.
+            setParam (engine.getDrone().params, "droneFeed", (float) DroneProcessor::feedInput);
+            engine.micOn = false;
+            screen->tick();
+            expect (screen->micButton.isVisible(), "the mic-off button shows");
+            screen->micButton.onClick();
+            expect (engine.micOn.load(), "and turns the mic on");
+            screen->tick();
+            expect (! screen->micButton.isVisible(), "then goes away");
+            engine.micOn = false;
+            screen->tick();
+            expect (screen->micButton.isVisible() && screen->getLocalBounds().contains (screen->micButton.getBounds()), "it fits");
 
             // The Play view's middle: its strings and ready-made drones.
             view.showView ("Play");

@@ -7,7 +7,16 @@ using vintage::Weight;
 
 namespace
 {
-const char* const kCaption = "What's fed in rings four strings tuned like the drone. Works with the drone off too.";
+const char* const kCaption = "Sing or play into it and four strings tuned like the drone ring along. Works with the drone off too. "
+                             "With the mic, wear headphones.";
+
+juce::String dbText (float gain)
+{
+    if (gain <= 0.0001f)
+        return juce::String::fromUTF8 ("-\xe2\x88\x9e dB");
+    const float db = juce::Decibels::gainToDecibels (gain);
+    return (db > 0.05f ? "+" : "") + (std::abs (db) < 9.95f ? juce::String (db, 1) : juce::String (juce::roundToInt (db))) + " dB";
+}
 
 float getParam (const juce::AudioProcessorValueTreeState& params, const char* id)
 {
@@ -127,6 +136,29 @@ DroneView::DroneView (RigEngine& e) : engine (e)
     feedButton.onClick = [this] { showFeedMenu(); };
     addAndMakeVisible (feedButton);
 
+    // Volume: the drone's Mixer fader, so turning it down here is turning it down there.
+    levelKnob.inWell = true;
+    levelKnob.sideways = true;
+    levelKnob.nameSize = 13.0f;
+    levelKnob.slider.setRange (0.0, 1.0, 0.0);
+    levelKnob.slider.setDoubleClickReturnValue (true, 0.8);
+    levelKnob.slider.textFromValueFunction = [] (double v) { return dbText (RigEngine::faderGain ((float) v)); };
+    levelKnob.slider.setValue (engine.getStrip (RigEngine::droneStrip).level.load(), juce::dontSendNotification);
+    levelKnob.slider.setTooltip ("The drone's volume (the same as its fader on the Mixer). Drag up or down; double-click for 0 dB.");
+    levelKnob.slider.onValueChange = [this]
+    {
+        engine.getStrip (RigEngine::droneStrip).level = (float) levelKnob.slider.getValue();
+        levelKnob.repaint();
+    };
+    addAndMakeVisible (levelKnob);
+
+    wellButton (micButton, Lit::arm, 14.0f);
+    micButton.setToggleState (true, juce::dontSendNotification);   // (lit, so it's seen)
+    micButton.setTooltip ("The strings hear your mic or line in only while the mic is on (it's off when Kaleidobox starts, so the speakers "
+                          "can't feed back). Turns it on; wear headphones.");
+    micButton.onClick = [this] { turnMicOn(); };
+    addChildComponent (micButton);
+
     for (const auto& spec : knobSpecs)
     {
         auto knob = std::make_unique<vintage::Knob> (params, spec.id, spec.name, ring);
@@ -210,11 +242,34 @@ void DroneView::showFeedMenu()
                             if (safe == nullptr || result <= 0)
                                 return;
                             safe->setChoice ("droneFeed", result - 1);
-                            const bool silent = getParam (safe->engine.getDrone().params, "droneResonate") <= 0.001f;
-                            safe->say ("The strings ring to " + DroneProcessor::feedNames()[result - 1]
-                                       + (silent ? juce::String (". Turn Resonate up to hear them.") : juce::String (".")));
+                            // Picking what they ring to means you want to hear it: Resonate comes up if it was at 0,
+                            // and the mic comes on for the mic (as Monitor does on the Vocoder).
+                            juce::String extra;
+                            if (getParam (safe->engine.getDrone().params, "droneResonate") <= 0.001f)
+                            {
+                                if (auto* p = safe->engine.getDrone().params.getParameter ("droneResonate"))
+                                {
+                                    p->beginChangeGesture();
+                                    p->setValueNotifyingHost (p->convertTo0to1 (0.6f));
+                                    p->endChangeGesture();
+                                }
+                                extra << " Resonate is up to 60%.";
+                            }
+                            if (result - 1 == DroneProcessor::feedInput && ! safe->engine.micOn.load())
+                            {
+                                safe->engine.micOn = true;
+                                extra << " The mic is on now: wear headphones so the speakers don't ring them too.";
+                            }
+                            safe->say ("The strings ring to " + DroneProcessor::feedNames()[result - 1] + "." + extra);
                             safe->update();
                         });
+}
+
+void DroneView::turnMicOn()
+{
+    engine.micOn = true;
+    say ("The mic is on: sing and the strings ring along. Wear headphones so the speakers don't ring them too.");
+    update();
 }
 
 juce::Rectangle<int> DroneView::stringArea (int string) const
@@ -284,6 +339,17 @@ void DroneView::update()
 
     const int key = juce::jlimit (0, 11, engine.getChords().fillKey);
     chordsKeyButton.setTooltip ("Sets the drone's note to the chord builder's key (" + DroneProcessor::rootNames()[key] + " now).");
+    // The volume follows the Mixer's fader (and a learned knob) unless you're turning it here.
+    if (! levelKnob.slider.isMouseButtonDown())
+    {
+        const float level = engine.getStrip (RigEngine::droneStrip).level.load();
+        if (std::abs ((float) levelKnob.slider.getValue() - level) > 1.0e-4f)
+            levelKnob.slider.setValue (level, juce::dontSendNotification);
+    }
+    const bool deaf = engine.whyDroneDeaf().isNotEmpty();
+    if (micButton.isVisible() != deaf)
+        micButton.setVisible (deaf);
+
     const auto feedText = DroneProcessor::feedNames()[d.getFeed()] + juce::String::fromUTF8 (" \xe2\x96\xbe");
     if (feedButton.getButtonText() != feedText)
         feedButton.setButtonText (feedText);
@@ -486,7 +552,10 @@ void DroneView::resized()
         auto r = stringsWell.reduced (16, 12);
         r.removeFromTop (24 + 10);
         auto top = r.removeFromTop (juce::jlimit (44, 60, r.getHeight() / 8));
-        onButton.setBounds (top.removeFromLeft (juce::jmin (140, top.getWidth() / 3)));
+        levelKnob.nameSize = narrow ? 11.0f : 13.0f;
+        levelKnob.setBounds (top.removeFromRight (juce::jmin (170, top.getWidth() * 38 / 100)));
+        top.removeFromRight (10);
+        onButton.setBounds (top.removeFromLeft (juce::jmin (140, (top.getWidth() - 10) / 3)));
         top.removeFromLeft (10);
         soundButton.setBounds (top.removeFromLeft (juce::jmin (220, top.getWidth())));
         r.removeFromTop (12);
@@ -576,6 +645,8 @@ void DroneView::resized()
         r.removeFromTop (6);
         meterArea = r.removeFromBottom (14);
         r.removeFromBottom (12);
+        micButton.setBounds (r.removeFromBottom (row));
+        r.removeFromBottom (8);
         auto feed = r.removeFromBottom (row);
         feedButton.setBounds (feed);
         feedLabel = r.removeFromBottom (22);

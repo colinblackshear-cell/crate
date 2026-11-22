@@ -374,7 +374,8 @@ struct RigLevelTests : juce::UnitTest
         beginTest ("levels: the Drone, as a new Rig has it");
         {
             // It's off the clock: on, it plays straight away. Measured as the tonal sounds are,
-            // over a few seconds of plucks (2 dB of room: its plucks are never quite the same).
+            // over a few seconds of plucks (2 dB of room: its plucks are never quite the same). It sits
+            // 6 dB under the Bass and the Synth: a drone is a bed under the song.
             Bench b;
             if (auto* p = b.engine.getDrone().params.getParameter ("droneOn"))
                 p->setValueNotifyingHost (1.0f);
@@ -383,7 +384,7 @@ struct RigLevelTests : juce::UnitTest
             const auto level = measure (l, r);
             logMessage (juce::String::formatted ("LEVEL|Drone|default|%.1f|%.1f|0.0|0.0", level.peakDb, level.loudDb));
             expect (! level.bad, "the drone made something that isn't a number");
-            expectNear ("Drone", "default", level.loudDb, kTonalTarget, 2.0f);
+            expectNear ("Drone", "default", level.loudDb, kTonalTarget - 6.0f, 2.0f);   // a bed, 6 dB under
             expect (level.peakDb <= SafetyLimiter::kCeilingDb + 0.01f, "the drone is over the ceiling");
         }
 
