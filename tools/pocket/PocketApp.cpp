@@ -203,6 +203,8 @@ PocketApp::PocketApp (Options o)
       chordsScreen (chordsTool),
       padSheet (beats.kit()),
       record (static_cast<PocketHost&> (*this), audio, lib, sheet),
+      sampler (static_cast<PocketHost&> (*this), audio, lib, beats.kit()),
+      padPicker (beats.kit()),
       sounds (static_cast<PocketHost&> (*this), audio, lib)
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&look);
@@ -260,7 +262,7 @@ PocketApp::PocketApp (Options o)
     dim->onTap = [this] { closeAllSheets(); };
 
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
-    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::synth, Tool::chords, Tool::vocoder, Tool::effects };
+    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::effects };
     // EFFECTS from a tool opens on that tool's board
     toolRow.onSelect = [this] (Tool t) { if (t == Tool::effects) openEffects (page == Page::tool ? boardForTool (tool) : -1); else showTool (t); };
     thumb.state = [this]
@@ -415,6 +417,7 @@ PocketApp::PocketApp (Options o)
     loopsScreen.engine().setInstrument (0, &synthPart.engine());
     loopsScreen.engine().setInstrument (1, &chordsTool.engine());
     setupEffects();
+    setupSampler();
     loadSong();
     loopsScreen.engine().setCountInBars (appSettings.countInBars);
     headerTick.startTimerHz (15);
@@ -449,7 +452,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, effects.get(), remote.get(), macLink.get(), settings.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         addChildComponent (c);
     addChildComponent (countPanel);
     addChildComponent (thumb);
@@ -464,6 +467,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (headphones);
     addChildComponent (soundBank);
     addChildComponent (*sendSheet);
+    addChildComponent (padPicker);
     addChildComponent (holdCard);
     addChildComponent (*toastBox);
     addChildComponent (*tour);
@@ -517,7 +521,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &soundBank, &recSetup, &headphones, sendSheet.get() })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -621,14 +625,28 @@ void PocketApp::holdMenu (const HoldSpec& spec, juce::Component& source, juce::P
     holdCard.open (spec, target, insets.getTop() + 6, insets.getBottom() + 6);
 }
 
+// SOUND PAGE (a pad's hold menu, the pad sheet): the SAMPLER, on that pad's sound and aimed at the pad
 void PocketApp::openSamplePage (int pad)
 {
+    if (! juce::isPositiveAndBelow (pad, kPads))
+        return;
     auto id = beats.kit().pads[(size_t) pad].soundId;
-    if (lib.find (id) == nullptr)
+    if (! beats.kit().pads[(size_t) pad].empty() && lib.find (id) == nullptr)
         return toast ("That sound is gone from Sounds");
     closePadSheet();
-    showPage (Page::recorder);
-    record.editForPad (pad, id);
+    showTool (Tool::sampler, false);
+    sampler.editForPad (pad);
+}
+
+// RECORD A NEW SOUND (a pad's hold menu, PADS): the SAMPLER, empty and aimed at the pad, for REC
+void PocketApp::openSampler (int pad)
+{
+    closePadSheet();
+    showTool (Tool::sampler, false);
+    sampler.clear();
+    sampler.setTarget (pad);
+    toast (pad >= 0 ? "Press REC to sample a sound for pad " + Kit::padLabel (pad) + ", then SEND TO PAD."
+                    : juce::String ("Press REC to sample a sound from the mic, then SEND TO A PAD."));
 }
 
 //==============================================================================
@@ -710,7 +728,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -720,6 +738,8 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
     const auto pi = p.toInt();
     if (page == Page::tool && tool == Tool::synth && getLocalArea (&synthScreen, synthScreen.keysBounds()).expanded (0, 6).contains (pi))
         return false;
+    if (page == Page::tool && tool == Tool::sampler && getLocalArea (&sampler, sampler.waveBounds()).contains (pi))
+        return false;   // (its IN and OUT handles)
     if (page == Page::tool && tool == Tool::loops && loopsScreen.editorSheet().isVisible()
         && getLocalArea (&loopsScreen, loopsScreen.editorSheet().getBounds()).contains (pi))
         return false;
@@ -748,6 +768,7 @@ void PocketApp::showPage (Page p, int morePage)
     closePadSheet();
     closeSendSheet();
     closeHeadphones();
+    closePadPicker();
     audio.stopPlaying();
     if (p == Page::songs || p == Page::recorder)
         stopEverything();   // the tools share the clock; your songs and the sound recorder don't
@@ -768,6 +789,9 @@ void PocketApp::showPage (Page p, int morePage)
     singScreen.setVisible (onTool && tool == Tool::vocoder);
     synthScreen.setVisible (onTool && tool == Tool::synth);
     chordsScreen.setVisible (onTool && tool == Tool::chords);
+    if (! (onTool && tool == Tool::sampler))
+        sampler.leave();   // a take still running is kept
+    sampler.setVisible (onTool && tool == Tool::sampler);
     effects->setVisible (onTool && tool == Tool::effects);
     vocoderScreen.setVisible (p == Page::vocoderSettings);
     showMorePage (p == Page::more ? juce::jlimit (1, 4, morePage) : -1);
@@ -806,6 +830,14 @@ void PocketApp::goBack()
     {
         record.savePadEdits();
         record.endPadMode();
+        if (backPage == Page::tool && backTool == Tool::sampler && record.soundId().isNotEmpty() && lib.find (record.soundId()) != nullptr)
+        {
+            const int pad = sampler.target();
+            showTool (Tool::sampler, false);
+            sampler.loadSound (record.soundId());   // MORE EDITS: the sampler has the edited sound
+            sampler.setTarget (pad);
+            return;
+        }
     }
     if (backPage == Page::tool)
         showTool (backTool, false);
@@ -860,6 +892,8 @@ void PocketApp::noteStep()
     else if (page == Page::tool)
         s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords || tool == Tool::effects ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
           : beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
+    if (page == Page::tool && tool == Tool::sampler)
+        s = stepShape;
     if (s >= 0)
         ideas.reachedStep (s);
 }
@@ -902,6 +936,7 @@ void PocketApp::closeAllSheets()
     closeSoundBank();
     closeRecSetup();
     closeHeadphones();
+    closePadPicker();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -954,6 +989,48 @@ void PocketApp::closePadSheet()
             if (safe != nullptr && ! safe->padSheetOpen)
                 safe->padSheet.setVisible (false);
         });
+}
+
+void PocketApp::showDragSheet (pocket::DragSheet& sheetToShow, juce::Rectangle<int> bounds, bool& openFlag, bool shown)
+{
+    if (shown == openFlag)
+        return;
+    openFlag = shown;
+    if (shown)
+    {
+        holdCard.close();
+        dim->setVisible (true);
+        dim->toFront (false);
+        sheetToShow.setBounds (bounds.withY (getHeight()));
+        sheetToShow.setVisible (true);
+        sheetToShow.toFront (false);
+        toastBox->toFront (false);
+        slide (sheetToShow, bounds, true);
+        return;
+    }
+    dim->setVisible (false);
+    slide (sheetToShow, bounds, false);
+    if (! animate)
+        sheetToShow.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this), s = juce::Component::SafePointer<juce::Component> (&sheetToShow), &openFlag]
+        {
+            if (safe != nullptr && s != nullptr && ! openFlag)
+                s->setVisible (false);
+        });
+}
+
+void PocketApp::openPadPicker()
+{
+    if (padPickOpen)
+        return;
+    padPicker.show (sampler.target(), beats.currentBank(), sampler.soundName());
+    showDragSheet (padPicker, padPickerBounds(), padPickOpen, true);
+}
+
+void PocketApp::closePadPicker()
+{
+    showDragSheet (padPicker, padPickerBounds(), padPickOpen, false);
 }
 
 // TO PAD: the sound goes on the next empty pad of the current bank, and the pads open with it picked.
@@ -1177,48 +1254,27 @@ void PocketApp::fillEmptyIdea()
 // The pad sample page
 void PocketApp::padSoundEdited (const juce::String& soundId)
 {
-    auto& kit = beats.kit();
     int n = 0;
-    for (int p = 0; p < kPads; ++p)
-    {
-        auto old = kit.pads[(size_t) p];
-        if (old.empty() || old.soundId != soundId)
-            continue;
-        if (! kit.assign (p, soundId, old.from, old.to, old.name))
-            continue;
-        auto& now = kit.pads[(size_t) p];
-        now.volume = old.volume;
-        now.pan = old.pan;
-        now.tune = old.tune;
-        now.mode = old.mode;
-        ++n;
-    }
-    beats.padsChanged();
+    for (auto& p : beats.kit().pads)
+        n += (! p.empty() && p.soundId == soundId) ? 1 : 0;
+    repadSound (soundId, soundId, 0);
     if (n > 0)
         toast (n == 1 ? juce::String ("The pad has the new sound") : juce::String (n) + " pads have the new sound");
 }
 
 void PocketApp::padSoundSwapped (const juce::String& oldId, const juce::String& newId)
 {
-    auto& kit = beats.kit();
-    for (int p = 0; p < kPads; ++p)
-    {
-        const auto old = kit.pads[(size_t) p];
-        if (old.empty() || old.soundId != oldId || ! kit.assign (p, newId, old.from, old.to, old.name))
-            continue;
-        auto& now = kit.pads[(size_t) p];
-        now.volume = old.volume;
-        now.pan = old.pan;
-        now.tune = old.tune;
-        now.mode = old.mode;
-    }
-    beats.padsChanged();
+    repadSound (oldId, newId, 0);
 }
 
 void PocketApp::backToPads (int pad)
 {
+    const auto id = record.soundId();
     record.endPadMode();
-    showTool (Tool::pads);
+    showTool (Tool::sampler, false);
+    if (id.isNotEmpty() && lib.find (id) != nullptr)
+        sampler.loadSound (id);
+    sampler.setTarget (pad);
     beats.selectPad (pad);
 }
 
@@ -1694,7 +1750,7 @@ void PocketApp::thumbPressed (int button)
 
 bool PocketApp::recBusy() const
 {
-    return playingIn() || loopsScreen.busyLayer() >= 0 || beats.recordingPads();
+    return playingIn() || loopsScreen.busyLayer() >= 0 || beats.recordingPads() || sampler.isRecording();
 }
 
 void PocketApp::recPressed()
@@ -1713,6 +1769,7 @@ void PocketApp::recPressed()
         case Tool::loops: recLoops(); break;
         case Tool::drums: recDrums(); break;
         case Tool::pads: recPads(); break;
+        case Tool::sampler: sampler.startRecording(); break;   // a one-shot from the mic, at once (no count-in, no layer)
         case Tool::vocoder: recVocoder(); break;
         case Tool::synth: recSynth(); break;
         case Tool::chords: recChords(); break;
@@ -1725,6 +1782,8 @@ void PocketApp::recPressed()
 
 void PocketApp::stopRec()
 {
+    if (sampler.isRecording())
+        return sampler.stopRecording();
     if (playingIn())
     {
         // Still playing hits into the pattern: stop there. What's in the pattern stays.
@@ -2256,6 +2315,14 @@ PocketApp::RecView PocketApp::recView() const
     }
     else
         v.left = "BAR " + (running ? barText (beat) : juce::String ("1.1"));
+    // SAMPLER: REC samples a sound for the pads, not a layer
+    if (page == Page::tool && tool == Tool::sampler && busy < 0 && ! padsPass && v.kind != RecView::counting)
+    {
+        const bool rec = sampler.isRecording();
+        v.kind = rec ? RecView::recording : RecView::idle;
+        v.left = rec ? "REC " + juce::String (sampler.recordedSeconds(), 1) + "S" : juce::String ("SAMPLE");
+        v.right = sampler.target() >= 0 ? "FOR PAD " + Kit::padLabel (sampler.target()) : juce::String ("FROM THE MIC");
+    }
     return v;
 }
 
@@ -2597,8 +2664,9 @@ void PocketApp::resized()
     thumb.setVisible (thumbShown());
 
     const auto content = contentBounds();
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, effects.get(), remote.get(), macLink.get(), settings.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         c->setBounds (content);
+    padPicker.setBounds (padPickOpen ? padPickerBounds() : padPickerBounds().withY (h));
     countPanel.setBounds (16, content.getY() + 8, w - 32, 136);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
 
@@ -2999,9 +3067,26 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     openSoundBank();
     savePng (folder.getChildFile ("05d-sound-bank.png"));
     closeSoundBank();
-    padSheet.onTrim (4);   // SAMPLE PAGE: the pad's sound in the sound recorder
+    padSheet.onTrim (4);   // SAMPLE PAGE: the pad's sound on the SAMPLER
     savePng (folder.getChildFile ("05e-pad-sample-page.png"));
     record.endPadMode();
+
+    // SAMPLER: empty (REC samples a sound from the mic), a sound with IN / OUT, and SEND TO PAD > PICK PAD (the 4 x 4 grid)
+    showTool (Tool::sampler, false);
+    sampler.clear();
+    sampler.setTarget (-1);
+    savePng (folder.getChildFile ("30-sampler-empty.png"));
+    sampler.setTarget (6);
+    savePng (folder.getChildFile ("30a-sampler-empty-for-pad.png"));
+    {
+        const int n = take->getNumSamples();
+        sampler.showDemo (take, "Porch rain", { n * 22 / 100, n * 61 / 100 }, 6);
+    }
+    savePng (folder.getChildFile ("30b-sampler-sound.png"));
+    openPadPicker();
+    savePng (folder.getChildFile ("30c-sampler-pick-pad.png"));
+    closePadPicker();
+    sampler.clear();
 
     // SYNTH: KEYS (Rubber Funk with C held, as in the design), PATTERN (a line, step 5 picked), ARP, CHROMATIC
     {

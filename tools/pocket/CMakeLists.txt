@@ -64,6 +64,7 @@ target_sources(KaleidoboxPocket PRIVATE
     LoopsScreen.cpp
     PocketLooper.cpp
     RecordScreen.cpp
+    SamplerScreen.cpp
     SoundsScreen.cpp
     PocketVocoder.cpp
     PocketSynth.cpp

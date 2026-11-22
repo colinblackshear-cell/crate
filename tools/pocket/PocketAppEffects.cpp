@@ -10,7 +10,8 @@ int PocketApp::boardForTool (Tool t) const
     switch (t)
     {
         case Tool::drums: return boardDrums;
-        case Tool::pads: return boardPads;
+        case Tool::pads:
+        case Tool::sampler: return boardPads;   // (what it samples plays on the pads)
         case Tool::synth: return boardSynth;
         case Tool::chords: return boardChords;
         case Tool::vocoder: return appSettings.singMode == 0 ? boardVoice : boardVocoder;

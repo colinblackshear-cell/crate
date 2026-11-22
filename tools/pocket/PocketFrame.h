@@ -9,9 +9,8 @@
 // panel, and the two sheets that go with recording (Rec setup, Headphones on first).
 namespace pocket
 {
-// Every tool the row can show, in the row's order. Stage 1 shows the ones that exist (PocketApp's
-// tools list); SYNTH and CHORDS slot in between PADS and VOCODER when they come.
-enum class Tool { loops, drums, pads, synth, chords, vocoder, effects };
+// Every tool the row can show, in the row's order (PocketApp's tools list has them all).
+enum class Tool { loops, drums, pads, sampler, synth, chords, vocoder, effects };
 const char* toolName (Tool);
 juce::Colour toolColour (Tool);
 void drawToolIcon (juce::Graphics&, Tool, juce::Point<float> centre, juce::Colour);
@@ -66,6 +65,7 @@ public:
     void slideEnd (float x, float y);   // lifts: picks the tool under x (y well above the row calls it off)
 
     juce::Rectangle<float> cellRect (int index) const;
+    float labelHeight() const;   // the labels' one font size: the longest name fits the cell
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;

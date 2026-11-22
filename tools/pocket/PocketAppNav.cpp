@@ -183,6 +183,8 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         };
         toolRow.slideStart (cellX (Tool::loops));
         toolRow.slideTo (cellX (Tool::drums));
+        toolRow.slideTo (cellX (Tool::sampler));
+        expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::sampler, "Tool row: the finger on SAMPLER didn't light SAMPLER");
         toolRow.slideTo (cellX (Tool::synth));
         expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::synth, "Tool row: the finger on SYNTH didn't light SYNTH");
         expect (tool == Tool::loops, "Tool row: the tool changed before the finger lifted");
@@ -370,12 +372,12 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect (padSheetOpen && padSheet.pad() == 9, "Hold menu on a pad: VOLUME · PAN · TUNE didn't open the pad sheet");
         closePadSheet();
         choose (0);
-        expect (page == Page::recorder, "Hold menu on a pad: SOUND PAGE didn't open the sound recorder");
-        goBack();
-        expect (page == Page::tool && tool == Tool::pads, "Sound page: no way back to the pads");
+        expect (page == Page::tool && tool == Tool::sampler && sampler.target() == 9, "Hold menu on a pad: SOUND PAGE didn't open the SAMPLER on pad A10");
+        showTool (Tool::pads, false);
         choose (2);
-        expect (page == Page::recorder, "Hold menu on a pad: RECORD A NEW SOUND didn't open the sound recorder");
-        goBack();
+        expect (page == Page::tool && tool == Tool::sampler && sampler.target() == 9 && ! sampler.hasSound(),
+                "Hold menu on a pad: RECORD A NEW SOUND didn't open an empty SAMPLER aimed at pad A10");
+        showTool (Tool::pads, false);
         // SWAP SOUND: your sounds in the same card; the pad keeps its volume
         kit.pads[9].volume = 77;
         const auto oldId = kit.pads[9].soundId;
@@ -426,7 +428,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         kit.pads[9] = keep;
         beats.padsChanged();
         report << "hold menu on a pad: a touch sounds the pad in the very first block and the menu opens after the hold with the sound still playing; "
-                  "VOLUME · PAN · TUNE, SOUND PAGE, RECORD A NEW SOUND, SWAP SOUND (keeps volume), 16 LEVELS (the pads play quiet to loud), COPY (UNDO) and REMOVE SOUND (UNDO) work\n";
+                  "VOLUME · PAN · TUNE, SOUND PAGE (the SAMPLER on the pad), RECORD A NEW SOUND (an empty SAMPLER for the pad), SWAP SOUND (keeps volume), 16 LEVELS (the pads play quiet to loud), COPY (UNDO) and REMOVE SOUND (UNDO) work\n";
         settle();
     }
 

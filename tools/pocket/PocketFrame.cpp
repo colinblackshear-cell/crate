@@ -26,6 +26,7 @@ const char* toolName (Tool t)
         case Tool::loops: return "LOOPS";
         case Tool::drums: return "DRUMS";
         case Tool::pads: return "PADS";
+        case Tool::sampler: return "SAMPLER";
         case Tool::synth: return "SYNTH";
         case Tool::chords: return "CHORDS";
         case Tool::vocoder: return "VOCODER";
@@ -41,6 +42,7 @@ juce::Colour toolColour (Tool t)
         case Tool::loops: return col::ink;
         case Tool::drums: return juce::Colour (0xfff0674f);
         case Tool::pads: return col::amber;
+        case Tool::sampler: return juce::Colour (0xffe08fb0);
         case Tool::synth: return juce::Colour (0xff5fb3c4);
         case Tool::chords: return juce::Colour (0xffb9a3dc);
         case Tool::vocoder: return juce::Colour (0xff82cf6a);
@@ -77,6 +79,23 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
             for (int k = 0; k < 4; ++k)
                 g.fillRoundedRectangle (c.x - 10 + (float) (k % 2) * 11.0f, c.y - 10 + (float) (k / 2) * 11.0f, 9, 9, 2.0f);
             break;
+        case Tool::sampler:   // a sound's wave between its IN and OUT handles
+        {
+            const float bars[5] = { 5.0f, 11.0f, 7.0f, 13.0f, 6.0f };
+            for (int k = 0; k < 5; ++k)
+                g.fillRoundedRectangle (c.x - 7.0f + (float) k * 3.5f - 1.1f, c.y - bars[k] * 0.5f, 2.2f, bars[k], 1.0f);
+            juce::Path p;
+            p.startNewSubPath (c.x - 9, c.y - 10);
+            p.lineTo (c.x - 12, c.y - 10);
+            p.lineTo (c.x - 12, c.y + 10);
+            p.lineTo (c.x - 9, c.y + 10);
+            p.startNewSubPath (c.x + 9, c.y - 10);
+            p.lineTo (c.x + 12, c.y - 10);
+            p.lineTo (c.x + 12, c.y + 10);
+            p.lineTo (c.x + 9, c.y + 10);
+            g.strokePath (p, stroke);
+            break;
+        }
         case Tool::synth:   // a wave
         {
             juce::Path p;
@@ -279,7 +298,7 @@ void ToolRow::paint (juce::Graphics& g)
         auto cell = cellRect (i);
         const bool on = i == (sliding >= 0 ? sliding : selected);
         const auto t = tools[(size_t) i];
-        const float wellW = juce::jmin (56.0f, cell.getWidth() - 4.0f);   // seven tools on a 375-point phone: 47 wide
+        const float wellW = juce::jmin (56.0f, cell.getWidth() - 4.0f);   // eight tools on a 375-point phone: 41 wide
         auto well = juce::Rectangle<float> (cell.getCentreX() - wellW * 0.5f, cell.getY() + 2, wellW, 40);
         if (on)
         {
@@ -303,9 +322,21 @@ void ToolRow::paint (juce::Graphics& g)
         }
         drawToolIcon (g, t, well.getCentre(), on ? kPaper : col::inkDim.withAlpha (0.8f));
         g.setColour (on ? col::ink : col::inkDim);
-        g.setFont (spaced (condensedBold (12.0f), 0.1f));
-        g.drawFittedText (toolName (t), juce::Rectangle<float> (cell.getX(), well.getBottom() + 2, cell.getWidth(), 16).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+        // one size for every label, the size the narrowest cell lets the longest name have (eight tools at 390: 11.5)
+        g.setFont (spaced (condensedBold (labelHeight()), 0.06f));
+        g.drawFittedText (toolName (t), juce::Rectangle<float> (cell.getX() - 1.0f, well.getBottom() + 2, cell.getWidth() + 2.0f, 16).toNearestInt(), juce::Justification::centred, 1, 0.9f);
     }
+}
+
+float ToolRow::labelHeight() const
+{
+    if (tools.empty())
+        return 12.0f;
+    const float room = cellRect (0).getWidth();
+    float widest = 0.0f;
+    for (auto t : tools)
+        widest = juce::jmax (widest, juce::GlyphArrangement::getStringWidth (spaced (condensedBold (12.0f), 0.06f), toolName (t)));
+    return juce::jlimit (9.5f, 12.0f, 12.0f * room / juce::jmax (1.0f, widest));
 }
 
 // The outline is a time stamp, not a flag a timer has to clear: it can only ever show for these 2.8 seconds.

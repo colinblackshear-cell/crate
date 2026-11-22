@@ -277,7 +277,7 @@ private:
         add ("tool row: DRUMS", 500, [this] { tapTool (Tool::drums); });
         add ("PLAY/STOP", 900, [this] { tapThumb (pocket::ThumbBar::play); });
         add ("PLAY/STOP", 900, [this] { tapThumb (pocket::ThumbBar::play); });
-        for (auto t : { Tool::loops, Tool::drums, Tool::pads, Tool::synth, Tool::chords, Tool::vocoder, Tool::effects, Tool::drums, Tool::pads, Tool::drums })
+        for (auto t : { Tool::loops, Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::effects, Tool::drums, Tool::pads, Tool::drums })
             add (juce::String ("tool row: ") + pocket::toolName (t), 400, [this, t] { tapTool (t); });
         add ("REC on DRUMS", 3000, [this] { tapThumb (pocket::ThumbBar::rec); });
         add ("tool row: PADS", 600, [this] { tapTool (Tool::pads); });

@@ -422,7 +422,7 @@ void RecordScreen::editForPad (int pad, const juce::String& id)
     targetPad = pad;
     const auto label = pocket::Kit::padLabel (pad);
     saveButton.setText ("Save to pad " + label);
-    toPad.setText (U8("\xe2\x80\xb9 Pads"));
+    toPad.setText (U8("\xe2\x80\xb9 Sampler"));
     updateLabels();
     host.toast ("Pad " + label + U8("'s sound. Edit it, then SAVE TO PAD ") + label + ". Every pad playing it picks it up.");
 }
