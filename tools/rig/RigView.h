@@ -116,7 +116,29 @@ public:
     // The Song screen's Add a layer with: `track` opens in Edit, ready to record into the picked
     // section, with the song playing round it.
     void addLayerWith (int track);
-    // Rec moves (the rail): records the knobs you turn from the next bar, or stops at the end of
+    // The bottom bar's one Rec (as on the phone): the picked tool onto the next empty loop layer,
+    // after the count-in, for the length picked (or until pressed again); or wherever its arrow
+    // says Rec lands: a take on the song (Rec into), the Sampler or an MPC pad, the whole set.
+    // Pressed while anything of those records, it stops that.
+    enum class RecLands { layer, song, sample, set };
+    void pressRec();
+    void setRecLands (RecLands l) { recLands = l; updateDock(); }
+    RecLands getRecLands() const { return recLands; }
+    // Its arrow: count-in, length, click, where Rec lands, and the rest (To Song, Takes...).
+    void showRecMenu();
+    // Count-in bars (0-2) and length in bars (0: until pressed again) for the next take.
+    void setRecSetup (int countInBars, int lengthBars);
+    int getRecCountIn() const { return recCountIn; }
+    int getRecLength() const { return recLength; }
+    // Undo last take: throws away the take recording, or the last one recorded (its loop is
+    // cleared); with no take, the last Clear or overdub (Cmd+Z). False if nothing was undone.
+    bool undoLastTake();
+    // Where the next take goes, as the LCD says it ("LAYER 6 · 4 BARS"), and a count-in under
+    // way ("COUNT-IN 3"), empty when none.
+    juce::String recTargetText() const;
+    juce::String countInText() const;
+    const rigpanels::Dock& getDock() const { return dock; }
+    // Rec moves (the bottom bar): records the knobs you turn from the next bar, or stops at the end of
     // the bar. showAutomation opens the lanes (Cmd+Shift+A).
     void pressRecMoves();
     void showAutomation();
@@ -224,6 +246,19 @@ private:
     int tourStop = 0;   // the walkthrough's stop you were on
     std::array<int, 9> lastTake { -1, -1, -1, -1, -1, -1, -1, -1, -1 };   // by track
     void updateCaptureButtons();
+    // The bottom bar's state (Rec's words, the boxes), from the take, the set and the setup.
+    void updateDock();
+    void updateHeader();
+    struct ShownButton { juce::String text, sub; vintage::Lit lit = vintage::Lit::none; };
+    ShownButton shownTake, shownSet;
+    bool setArmed = false;
+    juce::String toSongSub;
+    RecLands recLands = RecLands::layer;
+    int recCountIn = 1, recLength = 4;
+    int lastTakeLayer = -1;
+    // The count-in and length are this Mac's (in the app), kept with the Timing file.
+    void loadRecSetup();
+    void saveRecSetup();
     int recSection = -1, recLayer = -1;   // the Rec into target as picked (-1: follow the song)
     bool recCycle = true, recFree = false, recAsSound = false;
     void openNoteEditor (int strip, double startBar);
@@ -272,6 +307,7 @@ private:
     rigpanels::Header header;
     rigpanels::ScreenBar screenBar;
     rigpanels::Footer footer;
+    rigpanels::Dock dock;
     rigpanels::TrackRail rail;
     class Drawer;
     std::unique_ptr<Drawer> soundsDrawer;

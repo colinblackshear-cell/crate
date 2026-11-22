@@ -420,14 +420,14 @@ public:
             expectEquals (other.getAutomation().getNumLanes(), 0, "New song clears it");
         }
 
-        beginTest ("the rail's Rec moves and Automation buttons do what they say");
+        beginTest ("the bottom bar's Rec moves and Automation buttons do what they say");
         {
             RigEngine engine;
             engine.prepare (48000.0, 480);
             RigView view (engine, nullptr);
             view.setSize (1440, 960);
             view.showView ("Play");
-            auto* rail = find<rigpanels::TrackRail> (view);
+            auto* rail = find<rigpanels::Dock> (view);
             expect (rail != nullptr);
             if (rail == nullptr)
                 return;

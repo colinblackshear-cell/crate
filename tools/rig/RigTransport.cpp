@@ -104,7 +104,7 @@ void RigTransport::endBlock (int numSamples, juce::AudioBuffer<float>* out)
     if (playing)
     {
         // A click at each beat that starts inside this block.
-        if (metronome.load())
+        if (metronome.load() || from < countInUntil.load() - 1.0e-9)
         {
             const double firstBeat = std::ceil (from - 1.0e-9);
             const double offset = (firstBeat - from) / beatsPerSample;
