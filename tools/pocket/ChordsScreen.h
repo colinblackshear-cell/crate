@@ -23,7 +23,9 @@ public:
     std::function<juce::Array<int>()> padSoundPads;
     std::function<bool (int pad)> onPadSound;              // false: that pad has no sound
     std::function<juce::String()> lockedText;              // "PROGRESSION ON LAYER 3": what's on a layer, or empty
-    pocket::HoldShow showHold;                             // press and hold a chord pad: PUT IN PROGRESSION BOX 1..n
+    pocket::HoldShow showHold;                             // press and hold a chord pad: EDIT CHORD, COPY CHORD TO, PUT IN PROGRESSION BOX 1..n
+    std::function<void (int pad)> onEditChord;             // EDIT CHORD: the app opens the chord editor
+    pocket::HoldSpec copyMenuSpec (int pad);               // COPY CHORD TO: the other seven pads
     pocket::HoldSpec padMenuSpec (int pad);
     void putInBox (int pad, int box);                      // what that menu row does
     void holdPad (int pad);                                // a long press on a chord pad (also for the self-checks)

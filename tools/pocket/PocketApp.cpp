@@ -376,6 +376,11 @@ PocketApp::PocketApp (Options o)
     chordsScreen.toast = [this] (const juce::String& t) { toast (t); };
     chordsScreen.showHold = [this] (const HoldSpec& spec, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight) { holdMenu (spec, source, at, highlight); };
     chordsScreen.onChanged = [this] { saveSong(); singScreen.repaint(); };
+    chordsScreen.onEditChord = [this] (int pad) { openChordEdit (pad); };
+    chordEdit.onDone = [this] { closeChordEdit(); };
+    chordEdit.onDismiss = [this] { closeChordEdit(); };
+    chordEdit.onChanged = [this] { saveSong(); chordsScreen.repaint(); singScreen.repaint(); };
+    chordEdit.toast = [this] (const juce::String& t) { toast (t); };
     chordsScreen.padSounds = [this]
     {
         juce::StringArray names;
@@ -468,6 +473,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (soundBank);
     addChildComponent (*sendSheet);
     addChildComponent (padPicker);
+    addChildComponent (chordEdit);
     addChildComponent (holdCard);
     addChildComponent (*toastBox);
     addChildComponent (*tour);
@@ -521,7 +527,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -728,7 +734,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -769,6 +775,7 @@ void PocketApp::showPage (Page p, int morePage)
     closeSendSheet();
     closeHeadphones();
     closePadPicker();
+    closeChordEdit();
     audio.stopPlaying();
     if (p == Page::songs || p == Page::recorder)
         stopEverything();   // the tools share the clock; your songs and the sound recorder don't
@@ -937,6 +944,7 @@ void PocketApp::closeAllSheets()
     closeRecSetup();
     closeHeadphones();
     closePadPicker();
+    closeChordEdit();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -1031,6 +1039,26 @@ void PocketApp::openPadPicker()
 void PocketApp::closePadPicker()
 {
     showDragSheet (padPicker, padPickerBounds(), padPickOpen, false);
+}
+
+juce::Rectangle<int> PocketApp::chordEditBounds() const
+{
+    const int top = insets.getTop() + 24;
+    return { 0, top, getWidth(), getHeight() - top };
+}
+
+void PocketApp::openChordEdit (int pad)
+{
+    if (chordEditOpen || ! juce::isPositiveAndBelow (pad, kChordPads))
+        return;
+    chordEdit.bottomInset = insets.getBottom();
+    chordEdit.open (pad);
+    showDragSheet (chordEdit, chordEditBounds(), chordEditOpen, true);
+}
+
+void PocketApp::closeChordEdit()
+{
+    showDragSheet (chordEdit, chordEditBounds(), chordEditOpen, false);
 }
 
 // TO PAD: the sound goes on the next empty pad of the current bank, and the pads open with it picked.
@@ -2667,6 +2695,8 @@ void PocketApp::resized()
     for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         c->setBounds (content);
     padPicker.setBounds (padPickOpen ? padPickerBounds() : padPickerBounds().withY (h));
+    chordEdit.bottomInset = insets.getBottom();
+    chordEdit.setBounds (chordEditOpen ? chordEditBounds() : chordEditBounds().withY (h));
     countPanel.setBounds (16, content.getY() + 8, w - 32, 136);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
 
@@ -3357,6 +3387,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = runSongDeleteChecks (deleteReport, folder); why.isNotEmpty())
         problems.add ("Delete songs: " + why);
 
+    // Own chords on the CHORDS pads: EDIT CHORD, the notes the pad plays, saved, and a key change
+    juce::String ownChordReport;
+    if (const auto why = runOwnChordChecks (ownChordReport, folder); why.isNotEmpty())
+        problems.add ("Own chords: " + why);
+
     // The sampler: a trimmed sound is what its pad plays, at once and after the song is opened again
     juce::String samplerReport;
     if (const auto why = runSamplerChecks (samplerReport); why.isNotEmpty())
@@ -3435,7 +3470,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nEffects in the app (97 BPM, 44.1 kHz):\n" + effectsReport
                           + "\nNavigation (drawer, hold menus, tool slide, sheets):\n" + navReport
                           + "\nDeleting songs (the open one, the last one):\n" + deleteReport
-                          + "\nSampler (trim onto a pad, save, reopen):\n" + samplerReport);
+                          + "\nSampler (trim onto a pad, save, reopen):\n" + samplerReport
+                          + "\nOwn chords (EDIT CHORD, save, reopen, key change):\n" + ownChordReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }

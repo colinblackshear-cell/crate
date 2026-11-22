@@ -3,6 +3,7 @@
 
 #include "PluginProcessor.h"   // the vocoder: its chord input (requestChord) and chord builder
 #include "dsp/Chords.h"
+#include "rig/RigChords.h"   // the Mac chord builder's namer (RigChords::nameOf)
 
 #include <cmath>
 
@@ -14,8 +15,128 @@ const char* chordColourName (int c)
     return names[juce::jlimit (0, kChordColours - 1, c)];
 }
 
+const std::vector<OwnChordType>& ownChordTypes()
+{
+    static const std::vector<OwnChordType> types {
+        { "MAJ", "", { 0, 4, 7 } }, { "MIN", "m", { 0, 3, 7 } }, { "7", "7", { 0, 4, 7, 10 } }, { "MAJ7", "maj7", { 0, 4, 7, 11 } },
+        { "MIN7", "m7", { 0, 3, 7, 10 } }, { "9", "9", { 0, 4, 7, 10, 14 } }, { "MAJ9", "maj9", { 0, 4, 7, 11, 14 } }, { "MIN9", "m9", { 0, 3, 7, 10, 14 } },
+        { "6", "6", { 0, 4, 7, 9 } }, { "ADD9", "add9", { 0, 4, 7, 14 } }, { "SUS2", "sus2", { 0, 2, 7 } }, { "SUS4", "sus4", { 0, 5, 7 } },
+        { "DIM", "dim", { 0, 3, 6 } }, { "AUG", "aug", { 0, 4, 8 } }, { "POWER", "5", { 0, 7, 12 } } };
+    return types;
+}
+
+juce::var OwnChord::toVar() const
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("on", on);
+    o->setProperty ("root", root);
+    o->setProperty ("type", type);
+    o->setProperty ("inversion", inversion);
+    o->setProperty ("octave", octave);
+    juce::Array<juce::var> n;
+    for (int v : notes)
+        n.add (v);
+    o->setProperty ("notes", n);
+    return juce::var (o);
+}
+
+OwnChord OwnChord::fromVar (const juce::var& v)
+{
+    OwnChord c;
+    if (! v.isObject())
+        return c;
+    c.root = juce::jlimit (0, 11, (int) v.getProperty ("root", 0));
+    c.type = juce::jlimit (-1, (int) ownChordTypes().size() - 1, (int) v.getProperty ("type", 0));
+    c.inversion = juce::jlimit (-8, 8, (int) v.getProperty ("inversion", 0));
+    c.octave = juce::jlimit (-4, 4, (int) v.getProperty ("octave", 0));
+    if (auto* a = v.getProperty ("notes", {}).getArray())
+        for (auto& x : *a)
+            if (c.notes.size() < kMaxChordNotes)
+                c.notes.addIfNotAlreadyThere (juce::jlimit (12, 115, (int) x));
+    c.notes.sort();
+    c.on = (bool) v.getProperty ("on", false) && ! c.notes.isEmpty();
+    return c;
+}
+
 namespace chordmath
 {
+juce::Array<int> buildOwn (int root, int type, int inversion, int octave)
+{
+    const auto& types = ownChordTypes();
+    const auto& t = types[(size_t) juce::jlimit (0, (int) types.size() - 1, type)];
+    juce::Array<int> n;
+    for (int i : t.intervals)
+        n.add (48 + juce::jlimit (0, 11, root) + i);
+    for (int k = 0; k < inversion && ! n.isEmpty(); ++k)
+    {
+        n.set (0, n[0] + 12);
+        n.sort();
+    }
+    for (int k = 0; k > inversion && ! n.isEmpty(); --k)
+    {
+        n.set (n.size() - 1, n.getLast() - 12);
+        n.sort();
+    }
+    for (auto& v : n)
+        v = juce::jlimit (12, 115, v + 12 * octave);
+    return n;
+}
+
+static juce::String prettyName (const juce::String& s)
+{
+    // "Eb" and "F#" as the app writes them (the flat and sharp signs), roots and slash basses alike
+    juce::String out;
+    for (int i = 0; i < s.length(); ++i)
+    {
+        const auto c = s[i];
+        const bool afterNote = i > 0 && juce::String ("ABCDEFG").containsChar (s[i - 1]);
+        if (c == 'b' && afterNote)
+            out << U8("\xe2\x99\xad");
+        else if (c == '#' && afterNote)
+            out << U8("\xe2\x99\xaf");
+        else
+            out << juce::String::charToString (c);
+    }
+    return out.replace ("dim", U8("\xc2\xb0"));
+}
+
+juce::String nameNotes (const juce::Array<int>& notes)
+{
+    const auto name = RigChords::nameOf (notes);
+    if (name.isEmpty() || name.containsChar (' '))
+        return {};   // notes it can't name ("C C# D"): CUSTOM
+    return prettyName (name);
+}
+
+bool detectOwn (const juce::Array<int>& notes, int& root, int& type)
+{
+    if (notes.isEmpty())
+        return false;
+    int pcs = 0;
+    for (int n : notes)
+        pcs |= 1 << (((n % 12) + 12) % 12);
+    juce::Array<int> roots;
+    auto sorted = notes;
+    sorted.sort();
+    for (int n : sorted)
+        roots.addIfNotAlreadyThere (((n % 12) + 12) % 12);
+    const auto& types = ownChordTypes();
+    for (int r : roots)
+        for (int t = 0; t < (int) types.size(); ++t)
+        {
+            int want = 0;
+            for (int i : types[(size_t) t].intervals)
+                want |= 1 << ((r + i) % 12);
+            if (want == pcs)
+            {
+                root = r;
+                type = t;
+                return true;
+            }
+        }
+    return false;
+}
+
 int flavourOf (int colour)
 {
     static const int flavours[kChordColours] = { vox::Chords::triad, vox::Chords::seventh, vox::Chords::ninth, vox::Chords::sus4, vox::Chords::power };
@@ -392,6 +513,8 @@ void ChordsTool::reset()
     padSoundId = {};
     editingBox = -1;
     live = -1;
+    ++auditionId;
+    own.fill ({});
     eng.setLivePad (-1);
     eng.setProgressionMuted (false);
     eng.setOrigin (0.0);
@@ -404,9 +527,14 @@ void ChordsTool::setKey (SongKey k)
     refreshNotes();
 }
 
+juce::Array<int> ChordsTool::keyNotes (int pad) const
+{
+    return chordmath::padNotes (key, juce::jlimit (0, kChordPads - 1, pad), chordmath::flavourOf (colour));
+}
+
 juce::Array<int> ChordsTool::padNotes (int pad) const
 {
-    auto n = chordmath::padNotes (key, pad, chordmath::flavourOf (colour));
+    auto n = isOwn (pad) ? ownChord (pad).notes : keyNotes (pad);
     if (bass && ! n.isEmpty())
         n.insert (0, n[0] - 12);
     while (n.size() > kMaxChordNotes)
@@ -414,8 +542,79 @@ juce::Array<int> ChordsTool::padNotes (int pad) const
     return n;
 }
 
-juce::String ChordsTool::padName (int pad) const { return chordmath::padName (key, pad, chordmath::flavourOf (colour)); }
-juce::String ChordsTool::padNumeral (int pad) const { return chordmath::padNumeral (key, pad, chordmath::flavourOf (colour)); }
+juce::String ChordsTool::padName (int pad) const
+{
+    if (isOwn (pad))
+    {
+        const auto n = chordmath::nameNotes (ownChord (pad).notes);
+        return n.isNotEmpty() ? n : juce::String ("CUSTOM");
+    }
+    return chordmath::padName (key, pad, chordmath::flavourOf (colour));
+}
+
+juce::String ChordsTool::padNumeral (int pad) const
+{
+    return isOwn (pad) ? juce::String ("OWN") : chordmath::padNumeral (key, pad, chordmath::flavourOf (colour));
+}
+
+void ChordsTool::setOwnChord (int pad, const OwnChord& c)
+{
+    if (! juce::isPositiveAndBelow (pad, kChordPads))
+        return;
+    auto& o = own[(size_t) pad];
+    o = c;
+    o.notes.sort();
+    while (o.notes.size() > kMaxChordNotes)
+        o.notes.removeLast();
+    o.on = c.on && ! o.notes.isEmpty();
+    eng.setPadNotes (pad, padNotes (pad));
+}
+
+void ChordsTool::resetToKey (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kChordPads))
+        return;
+    own[(size_t) pad] = {};
+    eng.setPadNotes (pad, padNotes (pad));
+}
+
+void ChordsTool::copyChord (int from, int to)
+{
+    if (! juce::isPositiveAndBelow (from, kChordPads) || ! juce::isPositiveAndBelow (to, kChordPads) || from == to)
+        return;
+    OwnChord c = own[(size_t) from];
+    if (! c.on)
+    {
+        c.notes = keyNotes (from);
+        c.on = true;
+        c.inversion = c.octave = 0;
+        if (! chordmath::detectOwn (c.notes, c.root, c.type))
+            c.type = -1;
+    }
+    setOwnChord (to, c);
+}
+
+void ChordsTool::audition (int pad, int ms)
+{
+    if (! juce::isPositiveAndBelow (pad, kChordPads))
+        return;
+    const int id = ++auditionId;
+    live = pad;
+    momentary = true;
+    eng.setLivePad (pad);
+    if (onPlay)
+        onPlay();
+    juce::Timer::callAfterDelay (ms, [this, id, pad, token = std::weak_ptr<bool> (alive)]
+    {
+        const auto still = token.lock();
+        if (still != nullptr && *still && id == auditionId && live == pad && momentary)
+        {
+            live = -1;
+            momentary = false;
+            eng.setLivePad (-1);
+        }
+    });
+}
 
 void ChordsTool::refreshNotes()
 {
@@ -511,6 +710,15 @@ juce::var ChordsTool::toVar() const
     o->setProperty ("sound", synthPresets()[(size_t) synthPreset].name);
     o->setProperty ("padSoundPad", padSoundPad);
     o->setProperty ("padSoundId", padSoundId);
+    juce::Array<juce::var> ownList;
+    bool anyOwn = false;
+    for (auto& c : own)
+    {
+        ownList.add (c.toVar());
+        anyOwn = anyOwn || c.on;
+    }
+    if (anyOwn)
+        o->setProperty ("own", ownList);
     return juce::var (o);
 }
 
@@ -535,6 +743,9 @@ void ChordsTool::fromVar (const juce::var& v)
         synthPreset = p;
     padSoundPad = (int) v.getProperty ("padSoundPad", -1);
     padSoundId = v.getProperty ("padSoundId", {}).toString();
+    if (auto* a = v.getProperty ("own", {}).getArray())
+        for (int i = 0; i < kChordPads && i < a->size(); ++i)
+            own[(size_t) i] = OwnChord::fromVar ((*a)[i]);
     apply();
 }
 
@@ -635,6 +846,42 @@ juce::String chordsSelfCheck (juce::String& report)
             problems.add ("the chords didn't all reach the vocoder (" + juce::String (lastSends) + " sent)");
         if (peak < 0.02f)
             problems.add ("the chords' synth is silent");
+    }
+
+    // own chords: what the pad plays (and sends the vocoder), its name (or CUSTOM), saved, and left alone by the key
+    {
+        BeatsEngine clock;
+        ChordsTool tool (clock);
+        tool.setKey ({ 9, true });
+        OwnChord own;
+        own.on = true;
+        own.root = 2;
+        own.type = 7;   // MIN9
+        own.notes = chordmath::buildOwn (own.root, own.type, 1, 0);
+        tool.setOwnChord (4, own);
+        auto& e = tool.engine();
+        tool.padDown (4, false);
+        std::vector<float> l (256), r (256);
+        for (int i = 0; i < 8; ++i)
+            e.renderAt (l.data(), r.data(), 256, false, 0.0, 120.0);
+        const auto sent = pcs (e.lastVocoderNotes()), wanted = pcs (own.notes);
+        tool.releaseAll();
+        report << "own chord on pad 5: " << tool.padName (4) << " " << pcs (tool.padNotes (4)) << ", sent to the vocoder " << sent << "\n";
+        if (tool.padNotes (4) != own.notes)
+            problems.add ("an own chord isn't the pad's notes");
+        if (sent != wanted)
+            problems.add ("an own chord sent " + sent + " to the vocoder, not " + wanted);
+        if (! tool.padName (4).startsWith ("D"))
+            problems.add ("D MIN9 is called " + tool.padName (4));
+        ChordsTool back (clock);
+        back.fromVar (tool.toVar());
+        if (! back.isOwn (4) || back.padNotes (4) != own.notes || back.isOwn (3))
+            problems.add ("an own chord didn't survive the song's save and load");
+        tool.setKey ({ 0, false });
+        if (tool.padNotes (4) != own.notes)
+            problems.add ("a key change overwrote an own chord");
+        if (chordmath::nameNotes ({ 48, 49, 50 }).isNotEmpty())
+            problems.add ("a C C# D cluster got a name, not CUSTOM");
     }
     return problems.joinIntoString ("; ");
 }

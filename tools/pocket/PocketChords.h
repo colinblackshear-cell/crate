@@ -23,8 +23,32 @@ enum class ChordColour { plain, seventh, ninth, sus, power };
 const char* chordColourName (int colour);   // "PLAIN", "7TH"
 enum ChordStyle { styleChord, styleStrum, styleArp, styleStabs };
 
+// EDIT CHORD: the chord types the builder offers (the Mac's chord builder names them the same way).
+struct OwnChordType { const char* label; const char* suffix; std::vector<int> intervals; };
+const std::vector<OwnChordType>& ownChordTypes();   // MAJ, MIN, 7, MAJ7, MIN7, 9, MAJ9, MIN9, 6, ADD9, SUS2, SUS4, DIM, AUG, POWER
+
+// A chord pad's own chord: any notes, from a root and a type (with inversion and octave) or toggled on the keys.
+struct OwnChord
+{
+    bool on = false;            // false: the pad plays the song key's chord
+    int root = 0;               // 0..11 (what the ROOT buttons show lit)
+    int type = 0;               // ownChordTypes(), -1 = notes from the keys that aren't one of them
+    int inversion = 0, octave = 0;
+    juce::Array<int> notes;     // what it plays, lowest first
+
+    juce::var toVar() const;
+    static OwnChord fromVar (const juce::var&);
+    bool operator== (const OwnChord& o) const { return on == o.on && root == o.root && type == o.type && notes == o.notes; }
+};
+
 namespace chordmath
 {
+    // The notes of a root (0..11) and type, inverted (the lowest note up an octave, `inversion` times) and moved by octaves.
+    juce::Array<int> buildOwn (int root, int type, int inversion, int octave);
+    // A chord's name from its notes ("F#7", "Dm/F"), with the app's flats and sharps; empty when it isn't a chord we can name.
+    juce::String nameNotes (const juce::Array<int>& notes);
+    // The root and type a set of notes is (the lowest note as the root first); false when none fits.
+    bool detectOwn (const juce::Array<int>& notes, int& root, int& type);
     int flavourOf (int colour);   // the vocoder's chord flavour (vox::Chords) for a COLOUR
     // A pad's notes (lowest first) for a key and a vocoder chord flavour; pad 7 is the dominant (V7, V9...).
     juce::Array<int> padNotes (SongKey, int pad, int flavour);
@@ -118,6 +142,7 @@ class ChordsTool
 {
 public:
     explicit ChordsTool (BeatsEngine&);
+    ~ChordsTool() { *alive = false; }
     ChordsEngine& engine() { return eng; }
 
     SongKey key;
@@ -146,7 +171,16 @@ public:
     int soundingPad() const { return eng.soundingPad(); }
     juce::Array<int> padNotes (int pad) const;
     juce::String padName (int pad) const;
-    juce::String padNumeral (int pad) const;
+    juce::String padNumeral (int pad) const;   // "OWN" for a pad with its own chord
+
+    // EDIT CHORD: a pad's own chord (saved with the song; the song's KEY and COLOUR leave it alone).
+    const OwnChord& ownChord (int pad) const { return own[(size_t) juce::jlimit (0, kChordPads - 1, pad)]; }
+    bool isOwn (int pad) const { return ownChord (pad).on; }
+    void setOwnChord (int pad, const OwnChord&);
+    void resetToKey (int pad);                 // RESET TO SONG KEY: the automatic chord again
+    juce::Array<int> keyNotes (int pad) const; // the song key's chord for the pad (with the COLOUR, without + BASS)
+    void copyChord (int from, int to);         // COPY CHORD TO: the pad's chord (own or the key's) becomes `to`'s own
+    void audition (int pad, int ms = 700);     // HEAR: the pad sounds for a moment
     int usedBoxes() const;     // the progression up to its last chord (0 = none)
     int progressionBars() const { return usedBoxes(); }
     void progressionEdited();  // a box changed, cleared or the progression switched: its sound back on
@@ -156,6 +190,9 @@ public:
 
 private:
     ChordsEngine eng;
+    std::array<OwnChord, kChordPads> own;
+    int auditionId = 0;
+    std::shared_ptr<bool> alive = std::make_shared<bool> (true);   // (a HEAR still timing out after the tool is gone)
     int live = -1;
     bool momentary = false;   // the pad sounds only while it's held
 };

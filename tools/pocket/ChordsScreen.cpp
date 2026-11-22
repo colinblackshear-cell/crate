@@ -185,12 +185,44 @@ void ChordsScreen::mouseDrag (const juce::MouseEvent& e)
 HoldSpec ChordsScreen::padMenuSpec (int pad)
 {
     HoldSpec s;
-    s.title = "CHORD " + tool.padName (pad) + U8(" \xc2\xb7 PROGRESSION");
+    s.title = "CHORD " + tool.padName (pad) + (tool.isOwn (pad) ? U8(" \xc2\xb7 YOUR OWN") : juce::String());
+    s.items.push_back ({ "EDIT CHORD", tool.isOwn (pad) ? juce::String ("your own") : juce::String (U8("root \xc2\xb7 type \xc2\xb7 keys")), false, true,
+                         [this, pad] { if (onEditChord) onEditChord (pad); } });
+    s.items.push_back ({ U8("COPY CHORD TO\xe2\x80\xa6"), "another pad", false, true,
+                         [this, pad] { if (showHold) showHold (copyMenuSpec (pad), *this, padR[(size_t) pad].getCentre(), padR[(size_t) pad]); } });
+    if (tool.isOwn (pad))
+        s.items.push_back ({ "RESET TO SONG KEY", tool.key.label().toLowerCase(), false, true, [this, pad]
+                             {
+                                 tool.resetToKey (pad);
+                                 changed();
+                                 if (toast)
+                                     toast ("Pad " + juce::String (pad + 1) + " plays " + tool.padName (pad) + " again, the song key's chord.");
+                             } });
     for (int box = 0; box < tool.progLength; ++box)
     {
         const int now = tool.progression[(size_t) box];
         s.items.push_back ({ "PUT IN PROGRESSION BOX " + juce::String (box + 1), now >= 0 ? "now " + tool.padName (now) : juce::String ("empty"),
                              false, true, [this, pad, box] { putInBox (pad, box); } });
+    }
+    return s;
+}
+
+HoldSpec ChordsScreen::copyMenuSpec (int pad)
+{
+    HoldSpec s;
+    s.title = "COPY " + tool.padName (pad) + " TO";
+    s.spotlight = true;
+    for (int to = 0; to < kChordPads; ++to)
+    {
+        if (to == pad)
+            continue;
+        s.items.push_back ({ "PAD " + juce::String (to + 1), "now " + tool.padName (to), false, true, [this, pad, to]
+                             {
+                                 tool.copyChord (pad, to);
+                                 changed();
+                                 if (toast)
+                                     toast ("Pad " + juce::String (to + 1) + " plays " + tool.padName (to) + " too, as its own chord.");
+                             } });
     }
     return s;
 }
@@ -518,7 +550,13 @@ void ChordsScreen::paint (juce::Graphics& g)
         g.setColour (lit ? col::ink : kPadText);
         g.setFont (condensedBold (p.getHeight() > 70.0f ? 20.0f : 17.0f));
         g.drawFittedText (tool.padName (i), p.translated (0, down).withTrimmedBottom (p.getHeight() * 0.42f).reduced (3, 0).toNearestInt(), juce::Justification::centredBottom, 1, 0.6f);
-        g.setColour (lit ? juce::Colour (0xff3a2a55) : juce::Colour (0xffa89a86));
+        if (tool.isOwn (i))
+        {
+            // your own chord: a lilac corner dot (amber on the lit pad)
+            g.setColour (lit ? col::ink : kChords);
+            g.fillEllipse (p.getRight() - 15.0f, p.getY() + 7.0f + down, 8.0f, 8.0f);
+        }
+        g.setColour (tool.isOwn (i) ? (lit ? juce::Colour (0xff3a2a55) : kChords) : lit ? juce::Colour (0xff3a2a55) : juce::Colour (0xffa89a86));
         g.setFont (lcdFont (15.0f));
         g.drawFittedText (tool.padNumeral (i), p.translated (0, down).withTrimmedTop (p.getHeight() * 0.6f).reduced (3, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.7f);
     }

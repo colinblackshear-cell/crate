@@ -25,6 +25,7 @@
 #include "SamplerScreen.h"
 #include "SynthScreen.h"
 #include "ChordsScreen.h"
+#include "ChordEditSheet.h"
 #include "PocketKey.h"
 #include "PocketIntro.h"
 #include "PocketLesson.h"
@@ -289,7 +290,8 @@ private:
     juce::String runLoopEditChecks (juce::String& report);
     juce::String runNavigationChecks (juce::String& report, const juce::File& folder);
     juce::String runSamplerChecks (juce::String& report);
-    juce::String runSongDeleteChecks (juce::String& report, const juce::File& folder);   // PocketAppNav.cpp   // PocketAppSampler.cpp: a trimmed sound is what the pad plays
+    juce::String runSongDeleteChecks (juce::String& report, const juce::File& folder);   // PocketAppNav.cpp
+    juce::String runOwnChordChecks (juce::String& report, const juce::File& folder);     // PocketAppNav.cpp: EDIT CHORD in the app   // PocketAppSampler.cpp: a trimmed sound is what the pad plays
 
     struct PocketLook : juce::LookAndFeel_V4 { PocketLook(); juce::Font getPopupMenuFont() override; juce::Font getTextButtonFont (juce::TextButton&, int) override; };
     PocketLook look;
@@ -321,6 +323,10 @@ private:
     RecordScreen record;
     SamplerScreen sampler;
     SamplerPadPicker padPicker;
+    ChordEditSheet chordEdit { chordsTool };   // CHORDS > hold a pad > EDIT CHORD
+    void openChordEdit (int pad);
+    void closeChordEdit();
+    juce::Rectangle<int> chordEditBounds() const;
     SoundsScreen sounds;
     std::unique_ptr<RemoteScreen> remote;
     std::unique_ptr<MacLinkScreen> macLink;
@@ -392,7 +398,7 @@ private:
     Tool tool = Tool::pads;
     int morePageShown = -1;
     bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false, bankOpen = false, recSetupOpen = false, phonesOpen = false,
-         padPickOpen = false;
+         padPickOpen = false, chordEditOpen = false;
     juce::String shownHeader;
     bool shownBusy = false, shownPlaying = false;
     void headerTickNow();
