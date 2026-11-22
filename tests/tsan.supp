@@ -1,7 +1,0 @@
-# ThreadSanitizer suppressions for CrateTests (run with TSAN_OPTIONS=suppressions=tests/tsan.supp).
-#
-# RigLooper::copyLayerAudio copies a playing loop without its lock while an overdub may be
-# writing into it. The audio thread notes every page it writes during the copy and copies those
-# pages again itself (under the lock) before the copy is used, so what this read there is
-# always replaced. Only this one function is excused.
-race:copyUnsynchronised

@@ -64,6 +64,12 @@ struct AudioThread
 {
     std::function<void (juce::AudioBuffer<float>&)> process;
     int tones = kTones;
+    // A bursty host: this many blocks back to back, then a wait for all of them.
+    std::atomic<int> burst { 1 };
+    // Once: a gap this long before the next block (a host that stalls), then catching up.
+    std::atomic<int> gapOnceMs { 0 };
+    // The longest a block took (ms), while measuring.
+    std::atomic<double> worstMs { 0 };
 
     std::atomic<bool> measuring { false };
     std::atomic<int> blocks { 0 }, late { 0 };
@@ -92,6 +98,7 @@ struct AudioThread
             m = 0;
         blocks = 0;
         late = 0;
+        worstMs = 0;
         measuring = true;
         f();
         juce::Thread::sleep (60);
@@ -117,8 +124,11 @@ private:
         {
             const auto t0 = juce::Time::getMillisecondCounterHiRes();
             process (out);
-            if (juce::Time::getMillisecondCounterHiRes() - t0 > period)
+            const auto took = juce::Time::getMillisecondCounterHiRes() - t0;
+            if (took > period)
                 ++late;
+            if (measuring && took > worstMs.load())
+                worstMs = took;
             for (int t = 0; t < tones; ++t)
             {
                 const float m = goertzel (out.getReadPointer (0), kBlock, kBins[t]);
@@ -135,8 +145,10 @@ private:
                 ++blocks;
             ++count;
             next += period;
+            if (const int gap = gapOnceMs.exchange (0); gap > 0)
+                juce::Thread::sleep (gap);   // then it catches up, block after block
             const auto wait = next - juce::Time::getMillisecondCounterHiRes();
-            if (wait > 1.0)
+            if (wait > 1.0 && (count + 1) % juce::jmax (1, burst.load()) == 0)
                 juce::Thread::sleep ((int) wait);
         }
     }
@@ -174,11 +186,13 @@ struct PlayingLooper
     ~PlayingLooper() { audio.stop(); }
 };
 
-// While a pause in the copy is set, the audio thread is known to run at least `ms` during it.
+// While a pause in the copy is set, the audio thread is known to run at least `ms` during it
+// (and copies `slice` samples a block, so a copy takes many blocks).
 struct CopyPause
 {
-    CopyPause (int ms, bool underLockToo = false, std::function<void (int)> during = {})
+    CopyPause (int ms, bool underLockToo = false, std::function<void (int)> during = {}, int slice = 8192)
     {
+        RigLooper::copySliceForTests = slice;
         RigLooper::copyPauseForTests = [ms, underLockToo, during] (int layer, bool underLock)
         {
             if (underLock && ! underLockToo)
@@ -192,6 +206,7 @@ struct CopyPause
     {
         RigLooper::copyPauseForTests = nullptr;
         RigLooper::copyUnderLockForTests = false;
+        RigLooper::copySliceForTests = 0;
     }
 };
 
@@ -228,6 +243,41 @@ int writtenRuns (const juce::AudioBuffer<float>& before, const juce::AudioBuffer
 }
 }
 
+// The same for an overdub that has gone round many times: how many passes each sample holds.
+// A copy of one moment holds k+1 passes before the write position and k after: at most two
+// stretches. Returns the stretches; `low`/`high` the fewest and most passes.
+int passStretches (const juce::AudioBuffer<float>& before, const juce::AudioBuffer<float>& after, int& low, int& high, bool& exact)
+{
+    const int n = before.getNumSamples();
+    exact = after.getNumSamples() == n;
+    low = 1 << 30;
+    high = -1;
+    if (! exact)
+        return 0;
+    std::vector<int> k ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const double d = ((double) after.getSample (ch, i) - before.getSample (ch, i)) * 1024.0;
+            const int passes = (int) std::lround (d);
+            if (std::abs (d - passes) > 1.0e-3)
+                exact = false;
+            if (ch == 0)
+                k[(size_t) i] = passes;
+            else if (passes != k[(size_t) i])
+                exact = false;
+        }
+        low = juce::jmin (low, k[(size_t) i]);
+        high = juce::jmax (high, k[(size_t) i]);
+    }
+    int edges = 0;
+    for (int i = 0; i < n; ++i)
+        if (k[(size_t) i] != k[(size_t) ((i + n - 1) % n)])
+            ++edges;
+    return juce::jmax (1, edges);
+}
+
 struct RigLoopCopyTests : juce::UnitTest
 {
     RigLoopCopyTests() : juce::UnitTest ("Rig loop copy while playing", "Rig") {}
@@ -259,8 +309,9 @@ struct RigLoopCopyTests : juce::UnitTest
             logMessage ("  " + juce::String (rig.audio.blocks.load()) + " blocks, " + juce::String (missing) + " missing, "
                         + juce::String (rig.audio.late.load()) + " late");
             expectEquals (missing, 0);
-            expectEquals (after.withoutLock - before.withoutLock, 1);
+            expectEquals (after.byAudioThread - before.byAudioThread, 1);
             expectEquals (after.underLock - before.underLock, 0);
+            expectEquals (after.finishedUnderLock - before.finishedUnderLock, 0);
             expect (same (copy, tone (0, 8.0)), "sample for sample");
             for (int t = 1; t < kTones; ++t)
                 expect (same (rig.looper.copyLayerAudio (t), tone (t, 8.0)));
@@ -275,24 +326,30 @@ struct RigLoopCopyTests : juce::UnitTest
             rig.looper.pressRecord (0);   // overdub the dc source over loop 1
             juce::Thread::sleep (400);
             expect (rig.looper.getState (0) == RigLooper::State::overdubbing);
-            const CopyPause pause (250);   // the overdub writes ~250 ms more while it's copied
+            // The overdub writes ~1 s more while it's copied (a page copied every 4 blocks).
+            const CopyPause pause (250, false, {}, 256);
             juce::AudioBuffer<float> copy;
             const auto before = rig.looper.getCopyStats();
             const int missing = rig.audio.during ([&] { copy = rig.looper.copyLayerAudio (0); });
             const auto after = rig.looper.getCopyStats();
-            int written = 0;
-            bool exact = false;
+            rig.looper.pressRecord (0);
+            juce::Thread::sleep (50);
+            int written = 0, writtenNow = 0;
+            bool exact = false, exactNow = false;
             const int runs = writtenRuns (original, copy, written, exact);
+            writtenRuns (original, rig.looper.copyLayerAudio (0), writtenNow, exactNow);
+            const int onWrite = after.pagesCopiedBeforeOverdub - before.pagesCopiedBeforeOverdub;
             logMessage ("  " + juce::String (missing) + " blocks missing; the copy has " + juce::String (written) + " samples overdubbed in "
-                        + juce::String (runs) + " run(s); " + juce::String (after.pagesCopiedAgain - before.pagesCopiedAgain)
-                        + " pages copied again by the audio thread");
+                        + juce::String (runs) + " run(s) (the loop now " + juce::String (writtenNow) + "); "
+                        + juce::String (onWrite) + " pages copied just before the overdub wrote them");
             expectEquals (missing, 0);
             expect (exact, "every sample is either the loop or the loop plus one pass of the overdub");
             expectEquals (runs, 1, "one moment: what was overdubbed is one unbroken stretch");
-            expectGreaterThan (written, (int) (0.5 * kRate), "it includes what was written during the copy");
-            expectGreaterThan (after.pagesCopiedAgain - before.pagesCopiedAgain, 5);
+            expectGreaterThan (written, (int) (0.3 * kRate), "what was overdubbed before it was asked for");
+            expectGreaterThan (writtenNow - written, (int) (0.4 * kRate), "and none of what came after");
+            expectGreaterThan (onWrite, 5);
+            expectEquals (after.byAudioThread - before.byAudioThread, 1);
             expectEquals (after.underLock - before.underLock, 0);
-            rig.looper.pressRecord (0);
         }
 
         beginTest ("A loop bank swapping in at the bar while it's copied: the copy is all the new loop");
@@ -342,29 +399,172 @@ struct RigLoopCopyTests : juce::UnitTest
             }
         }
 
-        beginTest ("An overdub that writes too much while it's copied: a few tries, then under the lock, still exact");
+        beginTest ("Replaced on every try: kCopyRounds tries, then under the lock, exact");
         {
-            PlayingLooper rig (1, 16.0);
-            const auto original = tone (0, 16.0);
-            rig.looper.getLayer (0).source = RigLooper::input;
-            rig.looper.pressRecord (0);
-            juce::Thread::sleep (100);
-            // 1.6 s of overdub per try is more than kCopyMaxPages pages.
-            const CopyPause pause (1600);
-            juce::AudioBuffer<float> copy;
+            PlayingLooper rig (1);
+            const auto a = tone (0, 8.0), b = tone (0, 8.0, -0.1f);
+            int calls = 0;
+            const CopyPause pause (30, false, [&] (int) { rig.looper.setLayerAudio (0, ++calls % 2 == 1 ? b : a, 8.0); });
             const auto before = rig.looper.getCopyStats();
             const auto t0 = juce::Time::getMillisecondCounterHiRes();
-            copy = rig.looper.copyLayerAudio (0);
+            juce::AudioBuffer<float> copy;
+            const int missing = rig.audio.during ([&] { copy = rig.looper.copyLayerAudio (0); });
+            const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
+            const auto after = rig.looper.getCopyStats();
+            logMessage ("  " + juce::String (calls) + " replacements, " + juce::String (after.retries - before.retries) + " retries, "
+                        + juce::String (ms, 0) + " ms, " + juce::String (missing) + " blocks missing");
+            expectEquals (after.retries - before.retries, RigLooper::kCopyRounds, "it tries kCopyRounds times");
+            expectEquals (after.underLock - before.underLock, 1, "then copies under the lock");
+            expect (same (copy, calls % 2 == 1 ? b : a), "the loop as it is then, whole");
+            expectLessThan (ms, 2000.0, "and it doesn't keep trying");
+            rig.looper.maintain();
+        }
+
+        beginTest ("Continuous overdub round and round a short loop during a slow copy: one moment, exact");
+        {
+            PlayingLooper rig (1, 1.0);   // 32 pages
+            const auto original = tone (0, 1.0);
+            rig.looper.getLayer (0).source = RigLooper::input;
+            rig.looper.pressRecord (0);
+            juce::Thread::sleep (1700);   // the loop is 0.68 s: 2 passes and more already
+            // A page every 16 blocks: ~2.7 s a copy, the overdub going round ~4 more times.
+            const CopyPause pause (100, false, {}, 64);
+            juce::AudioBuffer<float> copy;
+            const auto before = rig.looper.getCopyStats();
+            const int missing = rig.audio.during ([&] { copy = rig.looper.copyLayerAudio (0); });
+            const auto after = rig.looper.getCopyStats();
+            rig.looper.pressRecord (0);
+            juce::Thread::sleep (50);
+            int low = 0, high = 0, lowNow = 0, highNow = 0;
+            bool exact = false, exactNow = false;
+            const int stretches = passStretches (original, copy, low, high, exact);
+            passStretches (original, rig.looper.copyLayerAudio (0), lowNow, highNow, exactNow);
+            const int onWrite = after.pagesCopiedBeforeOverdub - before.pagesCopiedBeforeOverdub;
+            logMessage ("  copy holds " + juce::String (low) + "-" + juce::String (high) + " passes in " + juce::String (stretches)
+                        + " stretch(es); the loop now " + juce::String (lowNow) + "-" + juce::String (highNow) + "; "
+                        + juce::String (onWrite) + " of 32 pages copied before the overdub wrote them; " + juce::String (missing) + " missing");
+            expectEquals (missing, 0);
+            expect (exact, "every sample is the loop plus a whole number of passes");
+            expect (stretches <= 2 && high - low <= 1, "one moment: k+1 passes up to where it was writing, k after");
+            expectGreaterOrEqual (low, 2, "the passes from before it was asked for");
+            expectGreaterOrEqual (lowNow - high, 3, "none of the passes during the copy");
+            expectGreaterThan (onWrite, 16, "the overdub kept running into pages not yet copied");
+            expectEquals (after.byAudioThread - before.byAudioThread, 1);
+            expectEquals (after.underLock + after.finishedUnderLock - before.underLock - before.finishedUnderLock, 0);
+        }
+
+        beginTest ("A slow copy of a playing loop: many blocks, nothing missing, never the lock");
+        {
+            PlayingLooper rig;
+            const CopyPause pause (0, false, {}, 512);   // ~500 blocks
+            const auto before = rig.looper.getCopyStats();
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            juce::AudioBuffer<float> copy;
+            const int missing = rig.audio.during ([&] { copy = rig.looper.copyLayerAudio (3); });
+            const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
+            const auto after = rig.looper.getCopyStats();
+            logMessage ("  " + juce::String (ms, 0) + " ms, " + juce::String (missing) + " missing, worst block "
+                        + juce::String (rig.audio.worstMs.load(), 3) + " ms");
+            expectGreaterThan (ms, 1500.0);
+            expectEquals (missing, 0);
+            expect (same (copy, tone (3, 8.0)));
+            expectEquals (after.byAudioThread - before.byAudioThread, 1);
+            expectEquals (after.underLock + after.finishedUnderLock - before.underLock - before.finishedUnderLock, 0);
+        }
+
+        beginTest ("The audio stops partway through a copy: it finishes under the lock, exact");
+        {
+            PlayingLooper rig;
+            const auto original = tone (0, 8.0);
+            rig.looper.getLayer (0).source = RigLooper::input;
+            rig.looper.pressRecord (0);
+            juce::Thread::sleep (300);
+            const CopyPause pause (100, false, [&] (int) { rig.audio.stop(); }, 1024);
+            const auto before = rig.looper.getCopyStats();
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            const auto copy = rig.looper.copyLayerAudio (0);
             const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
             const auto after = rig.looper.getCopyStats();
             int written = 0;
             bool exact = false;
             const int runs = writtenRuns (original, copy, written, exact);
-            expectEquals (after.retries - before.retries, RigLooper::kCopyRounds, "it tries kCopyRounds times");
-            expectEquals (after.underLock - before.underLock, 1, "then copies under the lock");
-            expect (exact && runs == 1, "still one moment of the loop");
-            expectLessThan (ms, RigLooper::kCopyRounds * 1600.0 + 1000.0, "and it doesn't keep trying");
-            rig.looper.pressRecord (0);
+            logMessage ("  finished in " + juce::String (ms, 0) + " ms, " + juce::String (written) + " samples overdubbed in " + juce::String (runs) + " run(s)");
+            expectEquals (after.finishedUnderLock - before.finishedUnderLock, 1);
+            expect (exact && runs == 1, "still one moment");
+            expectGreaterThan (ms, (double) RigLooper::kStallFloorMs);
+            expectLessThan (ms, (double) RigLooper::kStallCapMs + 1000.0);
+        }
+
+        beginTest ("The audio stops before a copy starts: it's made under the lock");
+        {
+            PlayingLooper rig;
+            rig.audio.stop();
+            const auto before = rig.looper.getCopyStats();
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            const auto copy = rig.looper.copyLayerAudio (1);
+            const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
+            const auto after = rig.looper.getCopyStats();
+            logMessage ("  " + juce::String (ms, 0) + " ms");
+            expect (same (copy, tone (1, 8.0)));
+            expectEquals (after.underLock - before.underLock, 1);
+            expectLessThan (ms, (double) RigLooper::kStallCapMs + 1000.0);
+        }
+
+        beginTest ("A copy called off: the loop cleared from another thread mid-copy copies as nothing");
+        {
+            PlayingLooper rig;
+            const CopyPause pause (50, false, [&] (int) { rig.looper.reset (2); }, 1024);
+            const auto before = rig.looper.getCopyStats();
+            juce::AudioBuffer<float> copy;
+            const int missing = rig.audio.during ([&] { copy = rig.looper.copyLayerAudio (2); });
+            const auto after = rig.looper.getCopyStats();
+            expectEquals (copy.getNumSamples(), 0);
+            expectEquals (after.retries - before.retries, 1);
+            expectEquals (missing, rig.audio.missing[2].load(), "only the loop that was cleared");
+            expect (same (rig.looper.copyLayerAudio (1), tone (1, 8.0)), "the next copy is fine");
+        }
+
+        beginTest ("A bursty host and a long gap between callbacks: the copy still runs on the audio thread");
+        {
+            PlayingLooper rig;
+            rig.audio.burst = 24;   // 24 blocks at once, then ~128 ms of nothing
+            juce::Thread::sleep (600);
+            {
+                const CopyPause pause (0, false, {}, 2048);   // ~130 blocks, several bursts
+                const auto before = rig.looper.getCopyStats();
+                juce::AudioBuffer<float> copy;
+                const int missing = rig.audio.during ([&] { copy = rig.looper.copyLayerAudio (0); });
+                const auto after = rig.looper.getCopyStats();
+                logMessage ("  bursts: " + juce::String (missing) + " missing");
+                expectEquals (missing, 0);
+                expect (same (copy, tone (0, 8.0)));
+                expectEquals (after.byAudioThread - before.byAudioThread, 1, "no lock: a burst's tiny gaps aren't a stall");
+                expectEquals (after.underLock + after.finishedUnderLock - before.underLock - before.finishedUnderLock, 0);
+            }
+            rig.audio.burst = 1;
+            juce::Thread::sleep (300);
+            {
+                // A 700 ms gap while it copies, then a burst catching up.
+                const CopyPause pause (0, false, [&] (int) { rig.audio.gapOnceMs = 700; }, 2048);
+                const auto before = rig.looper.getCopyStats();
+                const auto copy = rig.looper.copyLayerAudio (1);
+                const auto after = rig.looper.getCopyStats();
+                expect (same (copy, tone (1, 8.0)));
+                expectEquals (after.byAudioThread - before.byAudioThread, 1, "a 700 ms gap isn't the audio stopping");
+                expectEquals (after.underLock + after.finishedUnderLock - before.underLock - before.finishedUnderLock, 0);
+            }
+            {
+                // Callbacks in bursts 300 ms apart (a host that's barely keeping up): still not a stall.
+                rig.audio.burst = 56;
+                juce::Thread::sleep (1500);
+                const CopyPause pause (0, false, {}, 4096);
+                const auto before = rig.looper.getCopyStats();
+                const auto copy = rig.looper.copyLayerAudio (2);
+                const auto after = rig.looper.getCopyStats();
+                expect (same (copy, tone (2, 8.0)));
+                expectEquals (after.byAudioThread - before.byAudioThread, 1);
+                rig.audio.burst = 1;
+            }
         }
 
         beginTest ("A copy on another thread while the window replaces loops and frees old ones");
@@ -407,6 +607,7 @@ struct RigLoopCopyTests : juce::UnitTest
             expectLessThan (juce::Time::getMillisecondCounterHiRes() - t0, 100.0);
             expect (same (copy, tone (0, 8.0)));
             expectEquals (looper.getCopyStats().underLock, 1);
+            expectEquals (looper.getCopyStats().byAudioThread, 0);
         }
 
         beginTest ("A layer recording copies as nothing, and a take that ends copies whole");
