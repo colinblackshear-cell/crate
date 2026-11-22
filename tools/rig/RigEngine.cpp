@@ -1,8 +1,11 @@
 #include "RigEngine.h"
 #include "RigSong.h"
+#include "FactoryKits.h"
 
 
 #include <algorithm>
+#include <map>
+#include <mutex>
 
 #include "core/AudioFiles.h"
 #include "core/Edits.h"
@@ -195,6 +198,9 @@ RigEngine::RigEngine()
     // This Mac's recording timing.
     if (std::unique_ptr<juce::XmlElement> xml { juce::XmlDocument::parse (timingFile()) }; xml != nullptr && xml->hasTagName ("Timing"))
         timingOffsetMs = juce::jlimit (-50.0f, 100.0f, (float) xml->getDoubleAttribute (timingKey(), 0.0));
+    // The phone's Street kit on the pads, so the pads play from the first launch (and after New song).
+    if (startWithFactoryKit.load())
+        loadFactoryKit (0, 0);
     blankShow = saveShow();
     blankShow.removeChild (blankShow.getChildWithName ("Quantize"), nullptr);   // kept by New song
     blankShow.removeChild (blankShow.getChildWithName (RigChords::kTreeType), nullptr);   // so are your chords
@@ -207,6 +213,10 @@ void RigEngine::newShow()
     const auto quantizeSettings = quantizer.settings;
     const auto keepChords = chords.toTree();
     loadShow (blankShow);
+    // The factory kit's own sounds again (not their saved copies, which a WAV round trip changes by
+    // a hair), so New song is blank.
+    if (startWithFactoryKit.load())
+        loadFactoryKit (0, 0);
     screens = keep;
     quantizer.settings = quantizeSettings;
     chords.fromTree (keepChords);
@@ -1374,6 +1384,50 @@ void RigEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     deviceRoundTrip = juce::jlimit (0, 48000, device->getInputLatencyInSamples() + device->getOutputLatencyInSamples() + 2 * buffer);
     prepare (device->getCurrentSampleRate(), buffer);
     applyTiming();
+}
+
+juce::String RigEngine::loadFactoryKit (int index, int kit)
+{
+    const auto& kits = crate::factory::kits();
+    if (! juce::isPositiveAndBelow (index, (int) kits.size()))
+        return {};
+    // Made once per run and shared (they're read-only), so a new Rig doesn't make them again.
+    static std::mutex madeLock;
+    static std::map<int, std::vector<std::pair<juce::String, crate::SharedAudio>>> made;
+    std::vector<std::pair<juce::String, crate::SharedAudio>> sounds;
+    {
+        const std::lock_guard<std::mutex> hold (madeLock);
+        auto& list = made[index];
+        if (list.empty())
+            for (auto& [name, audio] : crate::factory::makeSounds (index))
+                list.emplace_back (name, std::make_shared<const juce::AudioBuffer<float>> (std::move (audio)));
+        sounds = list;
+    }
+
+    auto& project = mpc.getProject();
+    const juce::String kitName (kits[(size_t) index].name);
+    if (kit < 0 || kit >= (int) project.getBanks().size())
+        kit = project.addBank (kitName);
+    auto& bank = project.getBanks()[(size_t) kit];
+    bank.name = kitName;
+    for (int i = 0; i < kPadsPerBank; ++i)
+    {
+        auto& pad = bank.pads[(size_t) i];
+        pad = {};
+        if (i >= (int) sounds.size())
+            continue;
+        pad.audio = sounds[(size_t) i].second;
+        pad.name = sounds[(size_t) i].first.substring (0, 16);   // the MPC keeps 16 characters
+        pad.mono = true;
+        if (pad.name.containsIgnoreCase ("hat"))
+            pad.muteGroup = 1;   // the open hat stops when the closed one plays
+    }
+    project.setCurrent (kit);
+    mpc.padBankOnScreen = 0;
+    routing.padBank = 0;
+    project.changed();
+    return kitName + " is on the pads, A01 to A" + juce::String (juce::jmin (16, (int) sounds.size())).paddedLeft ('0', 2)
+           + ": " + kits[(size_t) index].what + ".";
 }
 
 //==============================================================================

@@ -2422,7 +2422,7 @@ void GrooveView::timerCallback()
     if (track == loops)
         for (int i = 0; i < RigLooper::kLayers; ++i)
             sig << juce::roundToInt (engine.getLooper().getLayer (i).position.load() * 50.0);
-    if (sig != shownSignature)
+    if (sig != shownSignature || guideRow >= 0)   // (the lesson's glow pulses)
     {
         shownSignature = sig;
         repaint (wellArea);
@@ -2656,6 +2656,15 @@ void GrooveView::paint (juce::Graphics& g)
             {
                 g.setColour (juce::Colours::white.withAlpha (0.3f));
                 g.fillRoundedRectangle (r.withTrimmedBottom (3.0f), 8.0f);
+            }
+            // The Make a beat lesson's suggested steps: a pulsing amber ring until you click them.
+            if (row == guideRow && ! c.lit && i < 32 && (guideMask >> i) & 1u)
+            {
+                const float pulse = 0.55f + 0.45f * std::sin ((float) juce::Time::getMillisecondCounter() * 0.006f);
+                g.setColour (vintage::colours::lcdAmber.withAlpha (0.25f * pulse));
+                g.fillRoundedRectangle (r.withTrimmedBottom (3.0f), 8.0f);
+                g.setColour (vintage::colours::lcdAmber.withAlpha (0.6f + 0.4f * pulse));
+                g.drawRoundedRectangle (r.withTrimmedBottom (3.0f).reduced (1.5f), 8.0f, 3.0f);
             }
 
             auto text = r.withTrimmedBottom (3.0f).reduced (6.0f, 8.0f).toNearestInt();

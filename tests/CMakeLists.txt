@@ -48,6 +48,8 @@ target_sources(CrateTests PRIVATE
     RigLevelTests.cpp
     RigControllersTests.cpp
     RigClearTests.cpp
+    RigFactoryKitTests.cpp
+    RigLessonTests.cpp
     RigPhoneLinkTests.cpp
     RigLayers16Tests.cpp
     RigShowFilesTests.cpp

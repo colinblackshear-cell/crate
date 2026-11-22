@@ -39,6 +39,9 @@ RigPlugin::RigPlugin (int tool) : AudioProcessor (buses (tool)), onlyTool (tool)
     // The tools inside are the Rig's, not plugins of their own: they behave as they do in the
     // Rig app (they'd think they were in Logic otherwise).
     juce::AudioProcessor::setTypeOfNextNewPlugin (wrapperType_Undefined);
+   #ifndef KALEIDOBOX_TEST_FIXTURES
+    RigEngine::startWithFactoryKit = true;   // the phone's Street kit on the pads (not in the tests)
+   #endif
     engine = std::make_unique<RigEngine>();
     engine->micOn = true;   // Logic's Side Chain decides
     engine->setOnlyTool (onlyTool);

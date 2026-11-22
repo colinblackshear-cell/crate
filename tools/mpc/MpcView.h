@@ -43,6 +43,10 @@ public:
     // The sound bank under the pads shows this bank (the Rig's), rather than opening its own.
     void setSoundBank (std::shared_ptr<SoundBank> b) { browser.setSoundBank (std::move (b)); }
     BankBrowser& getBrowser() { return browser; }
+    // Kits the host offers under New kit (Kaleidobox's factory kits), and what picking one does
+    // (put it on a new kit). Without them New kit makes an empty kit straight away.
+    juce::StringArray factoryKitNames;
+    std::function<void (int index)> onFactoryKit;
     // Called when the pad bank on screen changes (A-D), so a keyboard's pads can follow it.
     std::function<void (int padBank)> onPadBankChanged;
 
