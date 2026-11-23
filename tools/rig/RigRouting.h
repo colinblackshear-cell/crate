@@ -46,6 +46,8 @@ public:
         nextScene, previousScene,                  // buttons
         drumsLevel,                                // a fader (the drum machine)
         drumsMute,                                 // a button
+        liveKeyC, liveKeyB = liveKeyC + 11,        // buttons: the chord builder's live key, C to B
+        liveOctaveDown, liveOctaveUp, liveKeyHome, // buttons: its octave, and back to its own key
         numControls
     };
     static juce::String controlName (int control);

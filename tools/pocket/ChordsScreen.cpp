@@ -60,8 +60,10 @@ void ChordsScreen::timerCallback()
         return;
     const int s = sounding(), st = step();
     const bool muted = tool.engine().progressionMuted();
-    if (s != shownPad || st != shownStep || muted != shownMuted)
+    const int live = tool.engine().playingShift() * 4 + (tool.liveWaiting() ? 1 + (int) ((juce::Time::getMillisecondCounter() / 250) % 2) : 0);
+    if (s != shownPad || st != shownStep || muted != shownMuted || live != shownLive)
     {
+        shownLive = live;
         shownPad = s;
         shownStep = st;
         shownMuted = muted;
@@ -82,12 +84,57 @@ void ChordsScreen::layout()
     // Chords · A minor, KEY, SOUND
     float y = 6.0f;
     {
-        const float soundW = juce::jlimit (110.0f, 170.0f, iw * 0.4f), keyW = 56.0f;
+        const float soundW = juce::jlimit (96.0f, 170.0f, iw * 0.34f), keyW = 52.0f, liveW = 56.0f;
         addHit ({ x0 + iw - soundW, y, soundW, rowH }, soundId);
         addHit ({ x0 + iw - soundW - 6.0f - keyW, y, keyW, rowH }, keyId);
-        titleR = { x0, y, iw - soundW - keyW - 18.0f, rowH };
+        addHit ({ x0 + iw - soundW - keyW - 12.0f - liveW, y, liveW, rowH }, liveId);
+        titleR = { x0, y, iw - soundW - keyW - liveW - 24.0f, rowH };
     }
     y += rowH + gap;
+
+    liveWell = {};
+    if (tool.liveOpen)
+    {
+        // LIVE KEY: a title with what plays, the twelve keys as a keyboard, then OCT - / OCT + / BACK / ON BAR
+        const float room = h - 8.0f - y - 22.0f - 150.0f;   // leave the pads at least 150
+        const float bedH = juce::jlimit (96.0f, 150.0f, room - 6.0f - 30.0f - 8.0f - rowH - 12.0f);
+        liveWell = { x0, y, iw, 6.0f + 30.0f + 8.0f + bedH + 8.0f + rowH + 10.0f };
+        liveTitle = { x0 + 12.0f, y + 6.0f, iw * 0.4f, 30.0f };
+        liveLcd = { x0 + iw * 0.4f + 12.0f, y + 6.0f, iw * 0.6f - 24.0f, 30.0f };
+        liveBed = { x0 + 10.0f, y + 6.0f + 30.0f + 8.0f, iw - 20.0f, bedH };
+        static const int whiteIndex[12] = { 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6 };
+        const float ww = liveBed.getWidth() / 7.0f;
+        for (int k = 0; k < 12; ++k)
+        {
+            const bool black = k == 1 || k == 3 || k == 6 || k == 8 || k == 10;
+            liveKeyR[(size_t) k] = black ? juce::Rectangle<float> (liveBed.getX() + (whiteIndex[k] + 1) * ww - ww * 0.36f, liveBed.getY(), ww * 0.72f, bedH * 0.56f)
+                                         : juce::Rectangle<float> (liveBed.getX() + whiteIndex[k] * ww + 2.0f, liveBed.getY(), ww - 4.0f, bedH);
+        }
+        // black keys first, so a touch on one isn't taken by the white key under it
+        for (int k : { 1, 3, 6, 8, 10, 0, 2, 4, 5, 7, 9, 11 })
+            hits.push_back ({ liveKeyR[(size_t) k], liveKeyBase + k });
+        const float cy = liveBed.getBottom() + 8.0f, cw = (iw - 20.0f - 3 * 6.0f) / 4.0f;
+        int n = 0;
+        for (int id : { liveOctDownId, liveOctUpId, liveHomeId, liveBarId })
+            addHit ({ x0 + 10.0f + (float) n++ * (cw + 6.0f), cy, cw, rowH }, id);
+        y = liveWell.getBottom() + gap;
+
+        const float roomPads = h - 8.0f - y - 22.0f;
+        const float wellH = juce::jmax (120.0f, roomPads);
+        padWell = { x0, h - 8.0f - wellH, iw, wellH };
+        statusR = { x0, y, iw, juce::jmax (18.0f, padWell.getY() - y - 4.0f) };
+        auto pw = padWell.reduced (8.0f);
+        const float pcw = pw.getWidth() / 4.0f, pch = pw.getHeight() / 2.0f;
+        for (int i = 0; i < kChordPads; ++i)
+        {
+            padR[(size_t) i] = { pw.getX() + (float) (i % 4) * pcw + 3.0f, pw.getY() + (float) (i / 4) * pch + 3.0f, pcw - 6.0f, pch - 6.0f };
+            addHit (padR[(size_t) i], padBase + i);
+        }
+        progWell = {};
+        boxR.fill ({});
+        colourLabel = playLabel = {};
+        return;
+    }
 
     // a label, then chips sharing the rest of the row by weight
     const float labelW = 60.0f;
@@ -173,6 +220,8 @@ void ChordsScreen::mouseDown (const juce::MouseEvent& e)
         pressPad (pressed - padBase, true);   // a pad sounds on the touch, not the lift; the hold only adds a menu later
         hold.press (e.position);
     }
+    else if (pressed >= liveKeyBase && pressed < liveKeyBase + 12)
+        pressLiveKey (pressed - liveKeyBase);   // a key changes on the touch too, in time
     repaint();
 }
 
@@ -252,6 +301,8 @@ void ChordsScreen::mouseUp (const juce::MouseEvent& e)
     hold.release();
     if (was >= padBase && was < padBase + kChordPads)
         pressPad (was - padBase, false);
+    else if (was >= liveKeyBase && was < liveKeyBase + 12)
+        {}   // (it changed on the touch)
     else if (id != 0 && id == was)
         press (id);
     repaint();
@@ -271,8 +322,53 @@ void ChordsScreen::pressPad (int pad, bool down)
     repaint();
 }
 
+void ChordsScreen::pressLiveKey (int pc)
+{
+    tool.setLiveKey (pc);
+    const int shift = tool.liveShift();
+    const bool waits = tool.liveOnBar && tool.engine().clockRunning() && tool.liveWaiting();
+    changed();
+    if (toast)
+    {
+        const auto name = SongKey::pitchName (pc);
+        toast ((waits ? "Next bar: " : "Playing in ") + name
+               + (shift == 0 ? juce::String (" (the song's key)") : " (" + juce::String (shift > 0 ? "+" : "") + juce::String (shift) + ")") + ".");
+    }
+}
+
 void ChordsScreen::press (int id)
 {
+    if (id == liveId)
+    {
+        tool.liveOpen = ! tool.liveOpen;
+        layout();
+        return changed();
+    }
+    if (id >= liveKeyBase && id < liveKeyBase + 12)
+        return pressLiveKey (id - liveKeyBase);
+    if (id == liveOctDownId || id == liveOctUpId)
+    {
+        tool.nudgeLiveOctave (id == liveOctUpId ? 1 : -1);
+        if (toast)
+            toast ("Octave " + juce::String (tool.liveOctave() > 0 ? "+" : "") + juce::String (tool.liveOctave()) + ".");
+        return changed();
+    }
+    if (id == liveHomeId)
+    {
+        tool.liveHome();
+        if (toast)
+            toast ("Back to the song's key.");
+        return changed();
+    }
+    if (id == liveBarId)
+    {
+        tool.liveOnBar = ! tool.liveOnBar;
+        tool.nudgeLiveOctave (0);   // passes ON BAR to the chords
+        if (toast)
+            toast (tool.liveOnBar ? "ON BAR: a new key lands on the next bar while the song plays."
+                                  : "A new key lands the moment you tap it.");
+        return changed();
+    }
     if (id == keyId)
     {
         for (auto& hit : hits)
@@ -435,6 +531,10 @@ void ChordsScreen::showSoundMenu()
 
 juce::String ChordsScreen::statusText() const
 {
+    if (tool.liveOpen)
+        return tool.liveOctave() != 0 || tool.liveShift() != 0
+                   ? "Your chords, moved to a new key. BACK returns to " + SongKey::pitchName (tool.key.root) + ". LIVE shows the chord settings again."
+                   : "Tap a key and the chords move to it, the shapes the same. ON BAR: it lands on the next bar.";
     if (tool.editingBox >= 0)
         return "Box " + juce::String (tool.editingBox + 1) + ": tap a chord for it. Tap the box again to empty it.";
     const auto locked = lockedText ? lockedText() : juce::String();
@@ -465,11 +565,62 @@ void ChordsScreen::paint (juce::Graphics& g)
         g.drawText (t, r, juce::Justification::centredLeft);
     }
 
+    // LIVE KEY: its well, what plays, the twelve keys
+    if (! liveWell.isEmpty())
+    {
+        drawWell (g, liveWell, 12.0f);
+        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setFont (spaced (condensedBold (15.0f), 0.12f));
+        g.drawText ("LIVE KEY", liveTitle, juce::Justification::centredLeft);
+        const int playingKey = tool.playingLiveKey(), asked = tool.liveKey(), home = tool.key.root;
+        const bool waiting = tool.liveWaiting() && asked != playingKey;
+        g.setColour (juce::Colour (0xff120f0c));
+        g.fillRoundedRectangle (liveLcd, 6.0f);
+        juce::String text = waiting ? "NEXT: " + SongKey::pitchName (asked) : "IN " + SongKey::pitchName (playingKey);
+        if (tool.liveOctave() != 0)
+            text << "  OCT " << (tool.liveOctave() > 0 ? "+" : "") << tool.liveOctave();
+        g.setColour (waiting ? col::lcdAmber.brighter (0.2f) : col::lcdAmber);
+        g.setFont (spaced (lcdFont (17.0f), 0.04f));
+        g.drawFittedText (text, liveLcd.reduced (8.0f, 0).toNearestInt(), juce::Justification::centredRight, 1, 0.7f);
+        const bool blinkOn = (juce::Time::getMillisecondCounter() / 250) % 2 == 0;
+        auto drawKey = [&] (int k)
+        {
+            const bool black = k == 1 || k == 3 || k == 6 || k == 8 || k == 10;
+            auto r = liveKeyR[(size_t) k];
+            const bool down = pressed == liveKeyBase + k;
+            juce::Colour top = black ? juce::Colour (0xff3a332c) : juce::Colour (0xfffbf6ea);
+            juce::Colour bottom = black ? juce::Colour (0xff1a1612) : juce::Colour (0xffe0d6c1);
+            const bool lit = k == playingKey || (waiting && k == asked && blinkOn);
+            if (lit)
+                top = col::lcdAmber.brighter (0.25f), bottom = col::lcdAmber;
+            g.setColour (black ? juce::Colours::black : juce::Colour (0xffa99c84));
+            g.fillRoundedRectangle (r.translated (0, 3.0f), 6.0f);
+            r = r.translated (0, down ? 2.0f : 0.0f);
+            g.setGradientFill (juce::ColourGradient (top, r.getX(), r.getY(), bottom, r.getX(), r.getBottom(), false));
+            g.fillRoundedRectangle (r, 6.0f);
+            if (k == home)
+            {
+                g.setColour (kChords);
+                g.fillRoundedRectangle (r.withHeight (4.0f).reduced (4.0f, 0.0f), 2.0f);
+            }
+            g.setColour (lit || ! black ? col::ink : kPadText);
+            g.setFont (condensedBold (black ? 15.0f : 18.0f));
+            g.drawFittedText (SongKey::pitchName (k), r.withTrimmedBottom (5.0f).removeFromBottom (24.0f).toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        };
+        for (int k : { 0, 2, 4, 5, 7, 9, 11 })
+            drawKey (k);
+        for (int k : { 1, 3, 6, 8, 10 })
+            drawKey (k);
+    }
+
     // the progression's well
-    drawWell (g, progWell, 12.0f);
-    g.setColour (juce::Colour (0xffcdbfa5));
-    g.setFont (spaced (lcdFont (14.0f), 0.04f));
-    g.drawFittedText (U8("PROGRESSION \xc2\xb7 ONE CHORD PER BAR"), progTitle.toNearestInt(), juce::Justification::centredLeft, 2, 0.7f);
+    if (! progWell.isEmpty())
+    {
+        drawWell (g, progWell, 12.0f);
+        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setFont (spaced (lcdFont (14.0f), 0.04f));
+        g.drawFittedText (U8("PROGRESSION \xc2\xb7 ONE CHORD PER BAR"), progTitle.toNearestInt(), juce::Justification::centredLeft, 2, 0.7f);
+    }
     const int st = step();
     const int s = sounding();
     for (int i = 0; i < tool.progLength; ++i)
@@ -487,20 +638,25 @@ void ChordsScreen::paint (juce::Graphics& g)
         }
         g.setColour (playing ? col::ink : (pad >= 0 ? kPadText : juce::Colour (0xff6a5c4e)));
         g.setFont (condensedBold (pad >= 0 ? 17.0f : 15.0f));
-        g.drawFittedText (pad >= 0 ? tool.padName (pad) : juce::String (i + 1), r.reduced (3, 0).toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        g.drawFittedText (pad >= 0 ? tool.livePadName (pad) : juce::String (i + 1), r.reduced (3, 0).toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
     // the chips
     for (auto& hit : hits)
     {
         const int id = hit.id;
-        if (id == 0 || (id >= boxBase && id < boxBase + kProgressionMax) || id >= padBase)
+        if (id == 0 || (id >= boxBase && id < boxBase + kProgressionMax) || (id >= padBase && id < liveId) || (id >= liveKeyBase && id < liveKeyBase + 12))
             continue;
         const bool down = pressed == id;
         juce::String text;
         bool lit = false;
         juce::Colour litColour;
         if (id == keyId) text = "KEY";
+        else if (id == liveId) { text = "LIVE"; lit = tool.liveOpen; }
+        else if (id == liveOctDownId) text = "OCT -";
+        else if (id == liveOctUpId) text = "OCT +";
+        else if (id == liveHomeId) { text = "BACK"; lit = false; }
+        else if (id == liveBarId) { text = "ON BAR"; lit = tool.liveOnBar; }
         else if (id == soundId) text = soundLabel();
         else if (id >= colourBase && id < colourBase + kChordColours) { text = chordColourName (id - colourBase); lit = tool.colour == id - colourBase; }
         else if (id == holdId) { text = "HOLD"; lit = tool.hold; }
@@ -549,7 +705,7 @@ void ChordsScreen::paint (juce::Graphics& g)
         }
         g.setColour (lit ? col::ink : kPadText);
         g.setFont (condensedBold (p.getHeight() > 70.0f ? 20.0f : 17.0f));
-        g.drawFittedText (tool.padName (i), p.translated (0, down).withTrimmedBottom (p.getHeight() * 0.42f).reduced (3, 0).toNearestInt(), juce::Justification::centredBottom, 1, 0.6f);
+        g.drawFittedText (tool.livePadName (i), p.translated (0, down).withTrimmedBottom (p.getHeight() * 0.42f).reduced (3, 0).toNearestInt(), juce::Justification::centredBottom, 1, 0.6f);
         if (tool.isOwn (i))
         {
             // your own chord: a lilac corner dot (amber on the lit pad)

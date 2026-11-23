@@ -605,6 +605,14 @@ void RigEngine::applyControls (const RigRouting::Result& r)
             moved = true;
         }
     }
+    // The chord builder's live key (learned buttons: a key, its octave, home).
+    for (int k = 0; k < 12; ++k)
+        if (r.presses[(size_t) (RigRouting::liveKeyC + k)] > 0)
+            chords.setLiveKey (k);
+    if (const int down = r.presses[RigRouting::liveOctaveDown], up = r.presses[RigRouting::liveOctaveUp]; down != up)
+        chords.nudgeLiveOctave (up - down);
+    if (r.presses[RigRouting::liveKeyHome] > 0)
+        chords.liveKeyHome();
     scenes.nextPresses += r.presses[RigRouting::nextScene];
     scenes.backPresses += r.presses[RigRouting::previousScene];
     if (r.presses[RigRouting::inputHear] % 2 == 1)

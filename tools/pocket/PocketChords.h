@@ -75,6 +75,11 @@ public:
     bool progressionMuted() const { return progMuted.load(); }
     void setPlays (bool synth, bool pad, bool toVocoder) { playSynth = synth; playPad = pad; playVocoder = toVocoder; }
     void setVocoder (VocoderProcessor* p) { vocoder = p; }
+    // LIVE KEY: everything the chords play moved by `semitones`, landing now (0), on the next beat (1) or on the
+    // next bar (2) while the clock runs (stopped: at once). A chord sounding then moves with it.
+    void setLiveShift (int semitones, int when) { liveWhen = juce::jlimit (0, 2, when); liveTarget = semitones; }
+    int playingShift() const { return liveApplied.load(); }   // what plays now (differs while a change waits)
+    bool clockRunning() const;   // the song playing (a LIVE KEY change waits for its bar only then)
     void setSynthSettings (const crate::synthtool::Settings& s) { voice.setSettings (s); }
     void setPadSound (crate::SharedAudio a, double tune) { padPlayer.setSound (std::move (a), tune); }
     bool hasPadSound() const { return padPlayer.hasSound(); }
@@ -114,6 +119,7 @@ private:
     std::atomic<double> origin { 0.0 };
     std::atomic<int> current { -1 }, progStep { -1 }, sends { 0 };
     std::atomic<bool> currentFromProg { false };
+    std::atomic<int> liveTarget { 0 }, liveWhen { 2 }, liveApplied { 0 };
     std::atomic<float> peak { 0.0f };
     std::array<std::atomic<int>, 6> sentNotes;
     std::array<std::atomic<double>, 64> logBeat;
@@ -124,6 +130,8 @@ private:
     juce::MidiBuffer midi;
     juce::Array<int> forVocoder;
     int playing = -1, playingVersion = -1, playingStyle = -1;
+    int shiftNow = 0, playingShiftNow = 0;   // the live key's shift, and the one the sounding chord was played with
+    double liveWaitUntil = -1;                // the beat a waiting live key change lands on, -1 none
     bool playingProg = false, playingAudible = false, wasRunning = false, wasSynth = true, wasPad = false;
     std::array<int, kMaxChordNotes> notes {};
     int numNotes = 0;
@@ -188,7 +196,27 @@ public:
     juce::var toVar() const;
     void fromVar (const juce::var&);
 
+    // LIVE KEY (the Mac's Live key, the same way): the twelve keys move everything the chords play so the song's
+    // key becomes the key tapped, the nearest way (A to G is down 2), and OCT - / OCT + move it by octaves on top.
+    // Nothing is rewritten: it's a shift on what plays, saved with the song. ON BAR: the change lands on the next
+    // bar while the song plays; off, at once.
+    static constexpr int kLiveOctaves = 2;
+    bool liveOpen = false;     // the LIVE KEY panel showing on the CHORDS screen
+    bool liveOnBar = true;
+    void setLiveKey (int pitchClass);
+    void nudgeLiveOctave (int delta);
+    void liveHome();           // back to the song's key, octave 0
+    void resetLiveKey() { liveKeyShift = 0; applyLive(); }   // the song key changed: the live key starts from it
+    int liveKey() const { return ((key.root + liveKeyShift) % 12 + 12) % 12; }   // the key asked for
+    int liveOctave() const { return liveOct; }
+    int liveShift() const { return liveKeyShift + 12 * liveOct; }
+    int playingLiveKey() const { return ((key.root + eng.playingShift()) % 12 + 12) % 12; }
+    bool liveWaiting() const { return eng.playingShift() != liveShift(); }
+    juce::String livePadName (int pad) const;   // the pad's chord as it plays now (after the live key)
+
 private:
+    void applyLive() { eng.setLiveShift (liveShift(), liveOnBar ? 2 : 0); }
+    int liveKeyShift = 0, liveOct = 0;
     ChordsEngine eng;
     std::array<OwnChord, kChordPads> own;
     int auditionId = 0;
