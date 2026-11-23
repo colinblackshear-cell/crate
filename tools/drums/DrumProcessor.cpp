@@ -1,5 +1,6 @@
 #include "DrumProcessor.h"
 #include "DrumView.h"
+#include "core/AudioFiles.h"
 
 using namespace crate;
 
@@ -27,7 +28,7 @@ float get (const juce::AudioProcessorValueTreeState& p, const juce::String& id)
 
 juce::String percent (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)) + "%"; }
 
-// A beat written out: one string per sound ('x' a hit, '2'-'4' a roll, '.' rest) and the accents ('>').
+// A beat written out: one string per sound ('x' a hit, '2'-'8' a roll, '.' rest) and the accents ('>').
 struct Written
 {
     const char* name;
@@ -188,6 +189,142 @@ DrumProcessor::DrumProcessor()
     // The first patterns are ready-made beats, so there's something to hear straight away.
     for (int i = 0; i < (int) std::size (written) && i < drums::kPatterns; ++i)
         patterns[(size_t) i] = groove (i);
+    formats.registerBasicFormats();
+}
+
+//==============================================================================
+// Your own kit
+void DrumProcessor::setParamValue (const juce::String& id, float value)
+{
+    if (auto* p = params.getParameter (id))
+        p->setValueNotifyingHost (p->convertTo0to1 (value));
+}
+
+void DrumProcessor::setVoiceSample (int voice, drums::SharedSample sample)
+{
+    if (! juce::isPositiveAndBelow (voice, drums::kVoices))
+        return;
+    if (sample != nullptr)
+        keptSamples.push_back (sample);
+    voiceSamples[(size_t) voice] = sample;
+    engine.setSample (voice, sample.get());
+}
+
+bool DrumProcessor::setVoiceSample (int voice, const juce::File& file, juce::String& error)
+{
+    auto audio = AudioFiles::load (file, formats, error);
+    if (audio == nullptr)
+        return false;
+    auto s = std::make_shared<drums::Sample>();
+    s->audio = audio;
+    s->name = file.getFileName();
+    s->file = file;
+    setVoiceSample (voice, std::shared_ptr<const drums::Sample> (s));
+    return true;
+}
+
+drums::SharedSample DrumProcessor::getVoiceSample (int voice) const
+{
+    return juce::isPositiveAndBelow (voice, drums::kVoices) ? voiceSamples[(size_t) voice] : nullptr;
+}
+
+bool DrumProcessor::hasSamples() const
+{
+    for (auto& s : voiceSamples)
+        if (s != nullptr)
+            return true;
+    return false;
+}
+
+void DrumProcessor::clearSamples()
+{
+    for (int v = 0; v < drums::kVoices; ++v)
+        setVoiceSample (v, nullptr);
+    kitName = {};
+}
+
+int DrumProcessor::loadKitFolder (const juce::File& folder)
+{
+    return loadKitFiles (drums::kits::audioFilesIn (folder, formats), folder.getFileName());
+}
+
+int DrumProcessor::loadKitFiles (const juce::Array<juce::File>& list, const juce::String& name)
+{
+    const auto files = drums::kits::mapFiles (list);
+    bool any = false;
+    for (auto& f : files)
+        any = any || f != juce::File();
+    if (! any)
+        return 0;
+    std::array<drums::SharedSample, drums::kVoices> loadedSamples;
+    int loaded = 0;
+    for (int v = 0; v < drums::kVoices; ++v)
+    {
+        if (files[(size_t) v] == juce::File())
+            continue;
+        juce::String error;
+        if (auto audio = AudioFiles::load (files[(size_t) v], formats, error))
+        {
+            auto s = std::make_shared<drums::Sample>();
+            s->audio = audio;
+            s->name = files[(size_t) v].getFileName();
+            s->file = files[(size_t) v];
+            loadedSamples[(size_t) v] = s;
+            ++loaded;
+        }
+    }
+    if (loaded == 0)
+        return 0;
+    clearSamples();   // a new kit replaces the old one
+    for (int v = 0; v < drums::kVoices; ++v)
+        if (loadedSamples[(size_t) v] != nullptr)
+            setVoiceSample (v, loadedSamples[(size_t) v]);
+    kitName = name;
+    return loaded;
+}
+
+bool DrumProcessor::saveUserKit (const juce::String& name, juce::File* savedTo)
+{
+    drums::kits::Kit kit;
+    kit.name = name.trim().isEmpty() ? juce::String ("My kit") : name.trim();
+    const auto settings = readSettings();
+    kit.voices = settings.voices;
+    kit.hasVoices = true;
+    for (int v = 0; v < drums::kVoices; ++v)
+        if (auto s = voiceSamples[(size_t) v]; s != nullptr)
+            kit.files[(size_t) v] = s->file;
+    auto file = drums::kits::userKitsFolder().getChildFile (juce::File::createLegalFileName (kit.name) + ".drumkit");
+    if (! drums::kits::save (kit, file))
+        return false;
+    kitName = kit.name;
+    if (savedTo != nullptr)
+        *savedTo = file;
+    return true;
+}
+
+bool DrumProcessor::loadUserKit (const juce::File& file)
+{
+    drums::kits::Kit kit;
+    if (! drums::kits::load (file, kit))
+        return false;
+    for (int v = 0; v < drums::kVoices; ++v)
+    {
+        juce::String error;
+        const auto& f = kit.files[(size_t) v];
+        if (f == juce::File() || ! setVoiceSample (v, f, error))
+            setVoiceSample (v, nullptr);
+        if (kit.hasVoices)
+        {
+            const auto& s = kit.voices[(size_t) v];
+            setParamValue (voiceParam (v, "Level"), s.level);
+            setParamValue (voiceParam (v, "Tune"), s.tune);
+            setParamValue (voiceParam (v, "Decay"), s.decay);
+            setParamValue (voiceParam (v, "Tone"), s.tone);
+            setParamValue (voiceParam (v, "Pan"), s.pan);
+        }
+    }
+    kitName = kit.name;
+    return true;
 }
 
 juce::StringArray DrumProcessor::grooveNames()
@@ -210,7 +347,7 @@ drums::Pattern DrumProcessor::groove (int index)
         for (int s = 0; s < juce::jmin (drums::kMaxSteps, row.length()); ++s)
         {
             const auto c = row[s];
-            p.hits[(size_t) v][(size_t) s] = (std::uint8_t) (c == 'x' ? 1 : (c >= '2' && c <= '4') ? c - '0' : 0);
+            p.hits[(size_t) v][(size_t) s] = (std::uint8_t) (c == 'x' ? 1 : (c >= '2' && c <= '8') ? c - '0' : 0);
         }
     }
     const juce::String accent (w.accent);
@@ -462,6 +599,8 @@ void DrumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     plan.chainLength = playChainLength;
     plan.chain = playChain;
     engine.setBank (bankA.data(), bankB.data(), plan);
+    if (recLive.load())
+        noteRecordedHits (midi, clock);
     if (fillRequested.exchange (false))
         engine.requestFill();
 
@@ -475,6 +614,60 @@ void DrumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     playingCode = engine.getCurrentCode();
     chainPosition = plan.chainOn && playingCode >= 0 ? engine.getChainPosition() : -1;
     midi.clear();
+}
+
+// Audio thread: the drum notes in this block, each with the step of the playing pattern nearest to it.
+void DrumProcessor::noteRecordedHits (const juce::MidiBuffer& midi, const drums::Clock& clock)
+{
+    if (! clock.playing || get (params, "sequencer") < 0.5f)
+        return;
+    const double sb = drums::stepBeats ((int) get (params, "stepRate"));
+    const double beatsPerSample = clock.bpm / (60.0 * juce::jmax (1.0, getSampleRate()));
+    const int cur = currentStep.load();
+    int code = playingCode.load();
+    const bool known = code >= 0 && cur >= 0;
+    if (! known)
+        code = playingPattern.load() * 2 + (getVariation() == 1 ? 1 : 0);
+    const auto& pattern = (code & 1) != 0 ? bankB[(size_t) juce::jlimit (0, drums::kPatterns - 1, code >> 1)]
+                                          : bankA[(size_t) juce::jlimit (0, drums::kPatterns - 1, code >> 1)];
+    const int length = juce::jmax (1, pattern.length);
+    const long long rawStart = (long long) std::floor (clock.ppq / sb + 1.0e-9);
+    for (const auto meta : midi)
+    {
+        const auto m = meta.getMessage();
+        if (! m.isNoteOn())
+            continue;
+        const int voice = drums::voiceForNote (m.getNoteNumber());
+        if (voice < 0)
+            continue;
+        const double at = (clock.ppq + meta.samplePosition * beatsPerSample) / sb;
+        const long long nearest = (long long) std::floor (at + 0.5);
+        const long long step = known ? cur + (nearest - rawStart) : nearest;
+        int start1, size1, start2, size2;
+        recFifo.prepareToWrite (1, start1, size1, start2, size2);
+        if (size1 > 0)
+        {
+            recHits[(size_t) start1] = { voice, (int) (((step % length) + length) % length), code };
+            recFifo.finishedWrite (1);
+        }
+    }
+}
+
+bool DrumProcessor::popRecordedHit (RecordedHit& out)
+{
+    int start1, size1, start2, size2;
+    recFifo.prepareToRead (1, start1, size1, start2, size2);
+    if (size1 == 0)
+        return false;
+    out = recHits[(size_t) start1];
+    recFifo.finishedRead (1);
+    return true;
+}
+
+void DrumProcessor::clearRecordedHits()
+{
+    RecordedHit ignored;
+    while (popRecordedHit (ignored)) {}
 }
 
 juce::AudioProcessorEditor* DrumProcessor::createEditor() { return new DrumView (*this); }
@@ -501,7 +694,7 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
         juce::ValueTree life ("Life");
         for (int v = 0; v < drums::kVoices; ++v)
         {
-            juce::StringArray chance, cond, nudge, pitch, decay, velocity;
+            juce::StringArray chance, cond, nudge, pitch, decay, velocity, shape;
             for (int s = 0; s < drums::kMaxSteps; ++s)
             {
                 chance.add (juce::String ((int) p.chance[(size_t) v][(size_t) s]));
@@ -510,6 +703,7 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
                 pitch.add (juce::String ((int) p.pitch[(size_t) v][(size_t) s]));
                 decay.add (juce::String ((int) p.decayLock[(size_t) v][(size_t) s]));
                 velocity.add (juce::String ((int) p.velocity[(size_t) v][(size_t) s]));
+                shape.add (juce::String ((int) p.shape[(size_t) v][(size_t) s]));
             }
             juce::ValueTree row ("Row");
             row.setProperty ("voice", v, nullptr);
@@ -520,6 +714,7 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
             row.setProperty ("pitch", pitch.joinIntoString (","), nullptr);
             row.setProperty ("decay", decay.joinIntoString (","), nullptr);
             row.setProperty ("velocity", velocity.joinIntoString (","), nullptr);
+            row.setProperty ("shape", shape.joinIntoString (","), nullptr);
             life.appendChild (row, nullptr);
         }
         t.appendChild (life, nullptr);
@@ -535,7 +730,7 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
     {
         const auto row = t.getProperty (voiceKeys[v]).toString();
         for (int s = 0; s < juce::jmin (drums::kMaxSteps, row.length()); ++s)
-            p.hits[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (0, 4, (int) (row[s] - '0'));
+            p.hits[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (0, drums::kMaxRoll, (int) (row[s] - '0'));
     }
     const auto accent = t.getProperty ("accent").toString();
     for (int s = 0; s < juce::jmin (drums::kMaxSteps, accent.length()); ++s)
@@ -552,6 +747,7 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
         const auto pitch = juce::StringArray::fromTokens (row.getProperty ("pitch").toString(), ",", "");
         const auto decay = juce::StringArray::fromTokens (row.getProperty ("decay").toString(), ",", "");
         const auto velocity = juce::StringArray::fromTokens (row.getProperty ("velocity").toString(), ",", "");
+        const auto shape = juce::StringArray::fromTokens (row.getProperty ("shape").toString(), ",", "");
         for (int s = 0; s < drums::kMaxSteps; ++s)
         {
             if (s < chance.size())
@@ -566,6 +762,8 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
                 p.decayLock[(size_t) v][(size_t) s] = (std::int8_t) juce::jlimit (-50, 50, decay[s].getIntValue());
             if (s < velocity.size())
                 p.velocity[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (1, 100, velocity[s].getIntValue());
+            if (s < shape.size())
+                p.shape[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (0, (int) drums::numShapes - 1, shape[s].getIntValue());
         }
     }
     return p;
@@ -590,6 +788,29 @@ void DrumProcessor::getStateInformation (juce::MemoryBlock& dest)
         entries.add (juce::String (code));
     chainTree.setProperty ("entries", entries.joinIntoString (" "), nullptr);
     state.appendChild (chainTree, nullptr);
+    // Your own kit: each sample's file, and the sound itself when it's short (under 10 seconds), so
+    // the project plays on another Mac or after the file moves.
+    state.removeChild (state.getChildWithName ("Samples"), nullptr);
+    if (hasSamples())
+    {
+        juce::ValueTree samplesTree ("Samples");
+        samplesTree.setProperty ("kit", kitName, nullptr);
+        for (int v = 0; v < drums::kVoices; ++v)
+            if (auto smp = voiceSamples[(size_t) v]; smp != nullptr && smp->audio != nullptr)
+            {
+                juce::ValueTree one ("Sample");
+                one.setProperty ("voice", v, nullptr);
+                one.setProperty ("name", smp->name, nullptr);
+                one.setProperty ("file", smp->file.getFullPathName(), nullptr);
+                if (smp->audio->getNumSamples() <= 44100 * 10)
+                {
+                    const auto wav = AudioFiles::toWavData (*smp->audio);
+                    one.setProperty ("wav", wav.toBase64Encoding(), nullptr);
+                }
+                samplesTree.appendChild (one, nullptr);
+            }
+        state.appendChild (samplesTree, nullptr);
+    }
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, dest);
 }
@@ -619,5 +840,33 @@ void DrumProcessor::setStateInformation (const void* data, int size)
             entries.push_back (e.getIntValue());
     setChain (entries);
     state.removeChild (chainTree, nullptr);
+    // Your own kit (older projects have none: all analog).
+    const auto samplesTree = state.getChildWithName ("Samples");
+    for (int v = 0; v < drums::kVoices; ++v)
+        setVoiceSample (v, nullptr);
+    kitName = samplesTree.getProperty ("kit", "").toString();
+    for (const auto& one : samplesTree)
+    {
+        const int v = one.getProperty ("voice", -1);
+        if (! juce::isPositiveAndBelow (v, drums::kVoices))
+            continue;
+        auto smp = std::make_shared<drums::Sample>();
+        smp->name = one.getProperty ("name", "").toString();
+        const auto path = one.getProperty ("file", "").toString();
+        if (juce::File::isAbsolutePath (path))
+            smp->file = juce::File (path);
+        juce::String error;
+        if (smp->file.existsAsFile())
+            smp->audio = AudioFiles::load (smp->file, formats, error);
+        if (smp->audio == nullptr && one.hasProperty ("wav"))
+        {
+            juce::MemoryBlock wav;
+            if (wav.fromBase64Encoding (one.getProperty ("wav").toString()))
+                smp->audio = AudioFiles::fromWavData (wav.getData(), wav.getSize());
+        }
+        if (smp->audio != nullptr)
+            setVoiceSample (v, std::shared_ptr<const drums::Sample> (smp));
+    }
+    state.removeChild (samplesTree, nullptr);
     params.replaceState (state);
 }

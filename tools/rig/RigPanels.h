@@ -296,9 +296,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    // What it shows. lands: 0 layer, 1 song, 2 sample, 3 set; tool mode has no "where".
+    // What it shows. lands: 0 layer, 1 song, 2 sample, 3 set, 4 MPC pattern; tool mode has no "where".
     void setState (int countIn, int length, bool click, int lands, bool toolMode);
-    int preferredHeight() const { return whereShown ? 560 : 250; }
+    int preferredHeight() const { return whereShown ? 624 : 250; }
     static constexpr int kWidth = 640;
 
     std::function<void (int bars)> onCountIn, onLength;

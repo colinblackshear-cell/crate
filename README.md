@@ -87,9 +87,12 @@ It's a virtual MPC: kits, pads and a sequencer.
   **Tune** (a semitone a pad, so you play it as a scale), **Filter** (dark to open), **Tune +
   filter**, **Velocity** (soft to loud) or **Decay** (short to long). Hits you record keep their
   level when the sequence plays them back.
-- **Note repeat** (above the pads): hold a pad and it plays again every 1/8, 1/16, 1/32 or
-  triplet, in time with the sequence and its metronome, whether it's playing, recording or
-  stopped. **Full level** plays every hit at full velocity.
+- **Note repeat** (the red NOTE REPEAT button by the pads): hold the button (it repeats while
+  it's down), or double-tap it to latch it on and press once to switch it off. While it's on,
+  a held pad plays again every 1/4, 1/8, 1/16, 1/32, 1/64 or triplet (the rate buttons beside
+  it), in time with the sequence and its metronome, whether it's playing, recording or
+  stopped. Right-click the button to Learn it onto a keyboard button or pedal (held = on),
+  or to Learn a second button that steps the rate. **Full level** plays every hit at full velocity.
 - **Keyboard pads:** a Launchkey's drum pads (Drum mode, channel 10) play the 16 pads of the bank
   on screen. In Kaleidobox a Novation Launchpad (Drum mode) plays them too, with all four banks
   under your hands: the bank on screen bottom left, the next three on its other blocks.
@@ -113,8 +116,8 @@ MPC2000XL.
   in and out. It records onto the selected track and adds to what's there (overdub).
 - **Timing** corrects what you record to 1/8, 1/16, 1/32 or triplets, with **Swing** (50% is
   straight, 66% is a triplet feel). **Fix timing** snaps a track you already recorded.
-- **Note repeat:** hold a pad and it repeats on every step of the timing grid (or the rate picked
-  above the pads), also while stopped.
+- **Note repeat:** hold NOTE REPEAT (or double-tap it to latch it), then hold a pad and it repeats
+  at the rate picked beside the button (1/4 to 1/64), also while stopped.
 - **Steps:** shows the sequence as a grid for the 16 pads of the bank you're on. Click or drag
   across steps to add or remove hits; right-click a step for soft or hard hits. The selected
   track is bright and the others are faint. Click a pad's name to play it.
@@ -152,10 +155,33 @@ don't have to come from the MPC).
   clave to a woodblock, the cowbell to an agogo, the closed hat to Tight or Shaker, the open hat
   to Trashy and the cymbal to a ride. **Kits...** sets the whole machine up for a style: Classic,
   Deep sub, Punchy electro, Latin (congas and maracas), Dirty, Tight and dry, Big room.
-- **Steps:** up to 32 steps for all twelve sounds, with the classic red, orange, yellow and cream
-  step keys. Click to add a hit, drag to paint; right-click (or Option-click) a hit to make it a
-  roll of 2, 3 or 4. The top row is the **accent**: the whole step hits harder (**Accent** sets
-  how much).
+- **Your own kits:** every sound can be a sample of your own instead of its analog sound. Drag a
+  folder of drum hits onto the drum machine, or **Load kit...** > a folder (Splice, Cymatics, your
+  MPC folders, an external drive): the file names (kick, snare, hat, tom...) pick which sound each
+  hit goes on. Drag one file onto a sound's column to change just that sound; right-click a
+  sound's SELECT key for **Load sample...**, **Hear**, **Back to analog** and **Show file in
+  Finder**. Each column shows where its sound comes from (Analog, or the file's name in blue).
+  **Save kit as...** keeps the kit under your name (in Music/Crate/Drum Kits), and **All analog
+  again** puts the machine's own sounds back. A kit saves with the project and the Rig show. On
+  the phone, DRUMS has a **KIT** button: pick a sound from your sounds for the picked drum sound,
+  or use a pad's sounds as a kit.
+- **Steps:** up to 64 steps (four bars of 16) for all twelve sounds, with the classic red, orange,
+  yellow and cream step keys. To write a beat: pick a sound with its **SELECT** key (it plays),
+  then press the 16 big **step keys** (a lamp over a key means a hit there). The **STEP TOOL**
+  strip says what a key does: **Hit** (on or off), **Roll x N** (pick N, 2 to 8, then press a step
+  for a stutter roll of N quick hits; press it again to go back to one hit), **Builds** (a roll that
+  gets louder), **Flam** (a hit with a grace hit before it), **Accent** (the whole step hits
+  harder), **Soft/Loud** (steps a hit's level: full, soft, very soft) and **Erase**. The same tools
+  work on the grid of every sound below the keys: click a step, drag to paint hits; right-click (or
+  Option-click) a step still cycles a roll (2, 3, 4, 6, 8 hits, then one). **Bar 1-4** pick which
+  16 steps the keys and the grid show (a bar past the end makes the pattern longer), **Follow**
+  turns the page to the bar that's playing, and **Copy bar** and **Double** repeat what you have.
+  Each grid row has shift left and right, reverse and a **...** menu: copy, paste, clear, spread
+  hits evenly (Euclid) and its own length (polymeter). **Rec live** writes the notes you play
+  (keys, pads, a controller) into the pattern, at the nearest step, while it plays. **Undo** and
+  **Redo** go back 50 changes. The top row of the grid is the **accent**: the whole step hits
+  harder (**Accent** sets how much). In a short window the keys and the grid take turns (KEYS,
+  GRID); a tall one shows both.
 - **16 patterns, each with an A and a B:** **A**, **B** or **A+B** (A then B, back and forth: a
   two-bar beat) picks what plays and which one you edit (click A+B again to switch). **A to B**
   copies A into B to start a variation. The first eleven are ready-made beats (electro, boom bap,
@@ -174,8 +200,10 @@ don't have to come from the MPC).
   A# open hat...), in any octave, so a keyboard's drum pads work as they are. In its own app it
   has **Start** and a **Tempo**; in Logic and the Rig it follows their clock.
 
-In the Rig it's the **Machine** track on the Groove screen: five rows of its sounds (click a
-name to change one), Pattern 1-8 and **Fill**, **Play**/**Stop**, and eight knobs (kick tune,
+In the Rig it's the **Machine** track on the Groove screen: rows of its sounds (click a
+name to change one), **Bar 1-4** for the 64 steps, the **ROLL x N**, **BUILDS**, **FLAM** and
+**SOFT/LOUD** chips (pick one, then click a step; with none picked a click lights or clears a step),
+Pattern 1-8 and **Fill**, **Play**/**Stop**, and eight knobs (kick tune,
 boom, snap, hat decay, accent, swing, drive, level). Picking it sends the keys and your
 keyboard's drum pads to it (picking **Drums** sends the pads back to the MPC). The whole panel is
 **More > Drum machine**. It has its own mixer strip with effects, its own lane on the song

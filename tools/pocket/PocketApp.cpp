@@ -302,6 +302,13 @@ PocketApp::PocketApp (Options o)
         appSettings.save();
         repaint();
     };
+    recSetup.getPadsTo = [this] { return appSettings.padsRecTo; };
+    recSetup.setPadsTo = [this] (int to)
+    {
+        appSettings.padsRecTo = juce::jlimit (0, 1, to);
+        appSettings.save();
+        repaint();
+    };
     recSetup.onDone = [this] { closeRecSetup(); };
     headphones.route = [this] { return route; };
     headphones.onHeadphones = [this] { chooseHeadphones (true); };
@@ -309,6 +316,7 @@ PocketApp::PocketApp (Options o)
 
     soundBank.onLoad = [this] (int k) { loadKit (k); };
     soundBank.onDone = [this] { closeSoundBank(); };
+    soundBank.onSets = [this] { showSetsMenu(); };
     soundBank.onOpenSounds = [this] { closeSoundBank(); showPage (Page::more, 1); };
     soundBank.loadedKitName = [this] { return beats.kit().name; };
     soundBank.onImport = [this]
@@ -371,6 +379,13 @@ PocketApp::PocketApp (Options o)
             kit.push_back (beats.kit().pads[(size_t) p].setup());
         return kit;
     };
+    loopsScreen.drumSampleSounds = [this]
+    {
+        std::array<crate::drums::SharedSample, crate::drums::kVoices> sounds;
+        for (int v = 0; v < crate::drums::kVoices; ++v)
+            sounds[(size_t) v] = beats.engine().getDrumSample (v);
+        return sounds;
+    };
     synthScreen.songKey = [this] { return songKey; };
     synthScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
     synthScreen.toast = [this] (const juce::String& t) { toast (t); };
@@ -387,6 +402,27 @@ PocketApp::PocketApp (Options o)
     chordsScreen.showHold = [this] (const HoldSpec& spec, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight) { holdMenu (spec, source, at, highlight); };
     chordsScreen.onChanged = [this] { saveSong(); singScreen.repaint(); };
     chordsScreen.onEditChord = [this] (int pad) { openChordEdit (pad); };
+    drumKit.onDone = [this] { closeDrumKit(); };
+    drumKit.onDismiss = [this] { closeDrumKit(); };
+    drumKit.onPick = [this] (const juce::String& id)
+    {
+        if (! beats.setDrumSound (beats.drumVoice(), id))
+            return toast ("That sound couldn't be opened");
+        refreshDrumKit();
+    };
+    drumKit.onBackToAnalog = [this]
+    {
+        beats.clearDrumSound (beats.drumVoice());
+        refreshDrumKit();
+    };
+    drumKit.onUsePads = [this]
+    {
+        const int n = beats.useBankAsKit();
+        if (n == 0)
+            return toast ("No pad is named kick, snare, hat or tom. Name the pads (or load a factory kit) first.");
+        refreshDrumKit();
+        toast (juce::String (n) + (n == 1 ? " sound" : " sounds") + " from the pads are on the drum sounds");
+    };
     chordEdit.onDone = [this] { closeChordEdit(); };
     chordEdit.onDismiss = [this] { closeChordEdit(); };
     chordEdit.onChanged = [this] { saveSong(); chordsScreen.repaint(); singScreen.repaint(); };
@@ -491,6 +527,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (*sendSheet);
     addChildComponent (padPicker);
     addChildComponent (chordEdit);
+    addChildComponent (drumKit);
     addChildComponent (holdCard);
     addChildComponent (*toastBox);
     addChildComponent (*tour);
@@ -544,7 +581,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -668,6 +705,54 @@ void PocketApp::openSamplePage (int pad)
     sampler.editForPad (pad);
 }
 
+// EDIT THIS SLICE (a pad's hold menu): the pad's part of its sound, alone in the sound editor and aimed at the pad.
+// A part of a longer sound, a sound other pads play too, or a factory sound becomes the pad's own copy first, so the
+// edit changes this pad only (UNDO puts the pad back on the sound it played).
+void PocketApp::editPadSlice (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads))
+        return;
+    auto& kit = beats.kit();
+    const auto old = kit.pads[(size_t) pad];
+    const auto* item = lib.find (old.soundId);
+    auto whole = item != nullptr ? lib.load (old.soundId) : nullptr;
+    if (old.empty() || whole == nullptr)
+        return toast (old.empty() ? "Pad " + Kit::padLabel (pad) + " is empty" : juce::String ("That sound is gone from Sounds"));
+    const int n = whole->getNumSamples();
+    const int from = juce::jlimit (0, juce::jmax (0, n - 1), old.from);
+    const int to = old.to < 0 ? n : juce::jlimit (from + 1, n, old.to);
+    int sharing = 0;
+    for (int i = 0; i < kPads; ++i)
+        sharing += (i != pad && ! kit.pads[(size_t) i].empty() && kit.pads[(size_t) i].soundId == old.soundId) ? 1 : 0;
+    auto id = old.soundId;
+    if (from > 0 || to < n || sharing > 0 || item->tag == pocket::kTagFactory)
+    {
+        juce::AudioBuffer<float> part (whole->getNumChannels(), to - from);
+        for (int c = 0; c < part.getNumChannels(); ++c)
+            part.copyFrom (c, 0, *whole, c, from, to - from);
+        const auto name = old.name.isNotEmpty() ? old.name : item->name + " " + Kit::padLabel (pad);
+        const auto fx = item->fx;
+        id = lib.add (name, pocket::kTagRecorded, part, fx, {});
+        const auto* copy = lib.find (id);
+        auto copied = copy != nullptr ? lib.load (id) : nullptr;
+        if (copied == nullptr)
+            return toast ("The slice couldn't be saved");
+        kit.assign (pad, *copy, copied, 0, -1, old.name);
+        beats.padsChanged();
+    }
+    closePadSheet();
+    showPage (Page::recorder);
+    record.editForPad (pad, id);
+    if (id != old.soundId)
+        toastAction ("Pad " + Kit::padLabel (pad) + U8(" has its slice as its own sound now: edit it, then SAVE TO PAD"), "UNDO",
+                     [this, pad, old]
+                     {
+                         beats.kit().pads[(size_t) pad] = old;
+                         beats.padsChanged();
+                         record.endPadMode();
+                     });
+}
+
 // RECORD A NEW SOUND (a pad's hold menu, PADS): the SAMPLER, empty and aimed at the pad, for REC
 void PocketApp::openSampler (int pad)
 {
@@ -758,7 +843,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -800,6 +885,7 @@ void PocketApp::showPage (Page p, int morePage)
     closeHeadphones();
     closePadPicker();
     closeChordEdit();
+    closeDrumKit();
     audio.stopPlaying();
     if (p == Page::songs || p == Page::recorder)
         stopEverything();   // the tools share the clock; your songs and the sound recorder don't
@@ -970,6 +1056,7 @@ void PocketApp::closeAllSheets()
     closeHeadphones();
     closePadPicker();
     closeChordEdit();
+    closeDrumKit();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -1070,6 +1157,38 @@ juce::Rectangle<int> PocketApp::chordEditBounds() const
 {
     const int top = insets.getTop() + 24;
     return { 0, top, getWidth(), getHeight() - top };
+}
+
+juce::Rectangle<int> PocketApp::drumKitBounds() const
+{
+    const int top = insets.getTop() + 24;
+    return { 0, top, getWidth(), getHeight() - top };
+}
+
+// What the sheet shows: the picked drum sound and what is on it.
+void PocketApp::refreshDrumKit()
+{
+    const int v = beats.drumVoice();
+    drumKit.bottomInset = insets.getBottom();
+    drumKit.open (juce::String (crate::drums::voiceName (juce::jlimit (0, crate::drums::kVoices - 1, v))).toUpperCase(), beats.drumSoundId (v),
+                  beats.drumSoundName (v));
+}
+
+void PocketApp::openDrumKit()
+{
+    if (drumKitOpen)
+        return;
+    closeSheet();
+    closePadSheet();
+    closeSendSheet();
+    closeTempo();
+    refreshDrumKit();
+    showDragSheet (drumKit, drumKitBounds(), drumKitOpen, true);
+}
+
+void PocketApp::closeDrumKit()
+{
+    showDragSheet (drumKit, drumKitBounds(), drumKitOpen, false);
 }
 
 void PocketApp::openChordEdit (int pad)
@@ -1638,7 +1757,7 @@ void PocketApp::closeTempo()
 
 juce::Rectangle<int> PocketApp::recSetupBounds() const
 {
-    const int h = 390 + insets.getBottom();
+    const int h = 482 + insets.getBottom();
     return { 0, getHeight() - h, getWidth(), h };
 }
 
@@ -1988,7 +2107,8 @@ void PocketApp::recPads()
     // Pads: hits you play go into the pattern (snapped), and when it has gone round it is locked onto the
     // next layer from its start, so it keeps looping. A pattern that's already there just locks.
     auto& b = beats.engine();
-    if (loopsScreen.nextLayer() < 0)
+    const bool patternOnly = appSettings.padsRecTo == 1;   // Rec setup > PADS RECORD INTO > THE PAD PATTERN
+    if (! patternOnly && loopsScreen.nextLayer() < 0)
         return toast ("All 8 layers are used. Clear one in LOOPS to record.");
     auto& p = beats.drums().padPattern;
     const bool empty = p.hits.empty();
@@ -2011,6 +2131,13 @@ void PocketApp::recPads()
     lockArmed = false;
     lockLayer = -1;
     lockWatch.startTimer (20);
+    if (patternOnly)
+    {
+        lockStart = 1.0e15;   // never locked onto a layer: the pattern loops, taking every pass, until REC stops it
+        toast ("Play the pads " + juce::String (running ? "now" : "after the count-in")
+               + U8(": the hits go into the pad pattern and it keeps looping, so each pass adds. REC again stops. (Rec setup \xe2\x80\xba PADS RECORD INTO)"));
+        return;
+    }
     if (empty)
         toast ("Play the pads " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (lockBars).toLowerCase()
                + ". Then it goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + " and keeps looping.");
@@ -2215,6 +2342,7 @@ void PocketApp::lockWatchTick()
                 return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::synth, lockBars))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
             auto part = std::make_shared<pocket::NotePart>();
             part->kind = pocket::NotePart::synth;
             part->notes = synthPart.pattern;
@@ -2252,6 +2380,7 @@ void PocketApp::lockWatchTick()
                 return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
             lockLayer = layer;
             lockArmed = true;
             beats.setRecordingDrums (false);
@@ -2278,6 +2407,7 @@ void PocketApp::lockWatchTick()
                 return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars, (int) pocket::LayerTool::pads))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
             // the notes it's printed from, for QUANTIZE: the pattern, the drum machine if it plays along, the kit
             auto part = std::make_shared<pocket::NotePart>();
             part->kind = pocket::NotePart::pads;
@@ -2287,6 +2417,8 @@ void PocketApp::lockWatchTick()
                 part->drums = beats.drums();
             for (int p = 0; p < kPads; ++p)
                 part->kit.push_back (beats.kit().pads[(size_t) p].setup());
+            for (int v = 0; v < crate::drums::kVoices; ++v)
+                part->drumSamples[(size_t) v] = b.getDrumSample (v);
             part->board = loopsScreen.engine().board (pocket::boardDrums).settings();
             part->padsBoard = loopsScreen.engine().board (pocket::boardPads).settings();
             part->lengthBeats = lockBars * 4.0;
@@ -2839,6 +2971,8 @@ void PocketApp::resized()
     padPicker.setBounds (padPickOpen ? padPickerBounds() : padPickerBounds().withY (h));
     chordEdit.bottomInset = insets.getBottom();
     chordEdit.setBounds (chordEditOpen ? chordEditBounds() : chordEditBounds().withY (h));
+    drumKit.bottomInset = insets.getBottom();
+    drumKit.setBounds (drumKitOpen ? drumKitBounds() : drumKitBounds().withY (h));
     countPanel.setBounds (16, content.getY() + 8, w - 32, 136);
     sendSheet->setBounds (sendOpen ? sendSheetBounds() : sendSheetBounds().withY (h));
 
@@ -3264,6 +3398,23 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("04b-drums-play-live.png"));
     beats.setDrumMode (0);
     beats.selectVoice (0);
+
+    // DRUMS > KIT: a few of your own sounds on drum sounds (a blue dot on each), and the KIT sheet for the snare
+    {
+        const auto& own = lib.items();
+        int put = 0;
+        for (int v : { 0, 1, 9 })
+            if (put < (int) own.size() && beats.setDrumSound (v, own[(size_t) put++].id, false))
+                continue;
+        beats.selectVoice (1);
+        savePng (folder.getChildFile ("04c-drums-your-sounds.png"));
+        openDrumKit();
+        savePng (folder.getChildFile ("04d-drums-kit-sheet.png"));
+        closeDrumKit();
+        for (int v = 0; v < 12; ++v)
+            beats.clearDrumSound (v);
+        beats.selectVoice (0);
+    }
 
     // PADS: a demo kit, then a pattern, the pad sheet, the sound bank and the pad's sample page
     beats.fillDemoKit();

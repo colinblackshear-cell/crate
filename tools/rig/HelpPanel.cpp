@@ -81,7 +81,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Sounds (under the pads) opens your sound bank: click a sound to hear it, double-click to put it on the picked pad.",
             "FX (by the knobs) turns the picked pad's filter, decay, delay and reverb, live while it plays.",
             "16 Levels spreads the picked pad over all 16 pads: Tune plays it as a scale, Filter opens up, Velocity soft to loud, Decay short to long.",
-            "Repeat: hold a pad and it plays again every 1/16 (or the rate you pick), in time. Record with the click on to keep the repeats.",
+            "NOTE REPEAT (the red button by the pads): hold it, then hold a pad and the pad plays again every 1/16 (or the rate you pick: 1/4 to 1/64, triplets too), in time. Let go of the button and the repeats stop. Double-tap it to latch it on; press once to switch it off. Record with the click on to keep the repeats.",
             "The Sequencer + Kits side (beside the same pads) is the rest of the MPC: Play, Rec and steps, songs, your kits, and the picked pad's settings. Tapping a pad only plays it; Edit (or a triple-click on the pad) opens its sound editor.",
             "Remove A01 (over the pads), or right-click a pad, takes its sound off. Undo remove puts it back.",
             "Beat on/off: the MPC's sequence plays whenever the Rig plays, or stays quiet (the pads still play). Its Play, Stop and Rec are the Rig's.",
@@ -222,7 +222,8 @@ const std::vector<HelpPanel::Stop>& HelpPanel::tour()
           "- Under them: Rec take and To Song, the two capture buttons (coming up). Above them: + New / start over.",
           "Play:Drums" },
         { "Make a beat (Play, F1)",
-          "Drums is picked. Each row is a sound of the 808, the top row is the accent; click steps to put hits in. A and B are two variations "
+          "Drums is picked. Each row is a sound of the 808, the top row is the accent; click steps to put hits in. For a stutter roll pick the "
+          "ROLL x3 chip first, then click a step (Bar 1-4 show the 64 steps). A and B are two variations "
           "of the pattern, the numbered buttons are its patterns.\n\n"
           "Press Play on the Drums track (or the space bar) to hear it. Turn the 8 knobs. Clear empties the pattern (Undo or Cmd+Z puts it back). "
           "Quantize tightens what you played in.",
@@ -230,6 +231,11 @@ const std::vector<HelpPanel::Stop>& HelpPanel::tour()
         { "The whole drum machine (Edit, F2)",
           "This is the full 808: every sound's level, tune, decay and tone, pattern lengths, rolls, A/B and fills. What you change here is what "
           "Play shows: it's one machine.\n\n"
+          "To write a beat: pick a sound with its SELECT key (it plays), then press the step keys. A lamp over a key means a hit. Pick ROLL x3 in the "
+          "STEP TOOL strip and press a step for a stutter roll (Builds makes it get louder, Flam adds a grace hit, Soft/Loud and Accent change how hard). "
+          "Bar 1-4 give you 64 steps; Copy bar and Double repeat what you have; Rec live writes what you play while it runs; Undo steps back.\n\n"
+          "Your own kits: drag a folder of drum hits onto the drum machine, or Load kit... > a folder (Splice, Cymatics, your MPC folders). "
+          "Drag one file onto a sound to change just that sound. Save kit as... keeps it under your name.\n\n"
           "For pads, sampled kits and sequences, the MPC track is a full MPC (pick it, then Edit).",
           "Edit:Drums" },
         { "Find sounds (Sounds, F5)",

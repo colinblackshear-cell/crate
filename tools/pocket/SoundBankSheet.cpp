@@ -11,7 +11,7 @@ SoundBankSheet::SoundBankSheet()
         loads[i].onClick = [this, i] { if (onLoad) onLoad (i); };
         addAndMakeVisible (loads[i]);
     }
-    for (auto* b : { &import, &openSounds, &done })
+    for (auto* b : { &import, &openSounds, &done, &sets })
     {
         b->setFontHeight (16.0f);
         addAndMakeVisible (*b);
@@ -19,6 +19,7 @@ SoundBankSheet::SoundBankSheet()
     import.onClick = [this] { if (onImport) onImport(); };
     openSounds.onClick = [this] { if (onOpenSounds) onOpenSounds(); };
     done.onClick = [this] { if (onDone) onDone(); };
+    sets.onClick = [this] { if (onSets) onSets(); };
 }
 
 void SoundBankSheet::resized()
@@ -29,6 +30,7 @@ void SoundBankSheet::resized()
         loads[i].setBounds ((int) r.getRight() - 78, (int) r.getY() + 8, 70, 36);
     }
     done.setBounds (getWidth() - 100, 12, 84, 38);
+    sets.setBounds (done.getX() - 8 - 96, 12, 96, 38);
     const int y = (int) row (4).getBottom() + 112;
     import.setBounds (16, y, (getWidth() - 40) * 3 / 5, 44);
     openSounds.setBounds (import.getRight() + 8, y, getWidth() - 16 - import.getRight() - 8, 44);
