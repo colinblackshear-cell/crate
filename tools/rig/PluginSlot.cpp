@@ -56,11 +56,20 @@ PluginHost::PluginHost()
         list.recreateFromXml (*xml);
         scannedOnce = true;
     }
+    // Still written down from last time: those were opening when Kaleidobox stopped.
+    if (openingFile().existsAsFile())
+    {
+        frozeWhileOpening.addLines (openingFile().loadFileAsString());
+        frozeWhileOpening.removeEmptyStrings();
+        openingFile().deleteFile();
+    }
 }
 
 PluginHost::~PluginHost()
 {
+    *alive = false;
     stopTimer();
+    helperScan.reset();
 }
 
 juce::File PluginHost::listFile()
@@ -68,24 +77,247 @@ juce::File PluginHost::listFile()
     return crateDataFolder().getChildFile ("Rig Plugins.xml");
 }
 
-std::vector<juce::PluginDescription> PluginHost::instruments() const
+namespace
 {
+// Each plugin once: where it's installed as an Audio Unit and as a VST3 (as Arturia's are), the
+// Audio Unit (the one Logic uses too). Shows saved with the VST3 still open it.
+std::vector<juce::PluginDescription> onePerPlugin (const juce::Array<juce::PluginDescription>& types,
+                                                   std::function<bool (const juce::PluginDescription&)> wanted)
+{
+    auto key = [] (const juce::PluginDescription& d) { return (d.manufacturerName + "\n" + d.name).toLowerCase(); };
+    juce::StringArray audioUnits;
+    for (const auto& d : types)
+        if (wanted (d) && d.pluginFormatName == "AudioUnit")
+            audioUnits.add (key (d));
     std::vector<juce::PluginDescription> out;
-    for (const auto& d : list.getTypes())
-        if (d.isInstrument)
+    for (const auto& d : types)
+        if (wanted (d) && ! (d.pluginFormatName == "VST3" && audioUnits.contains (key (d))))
             out.push_back (d);
     std::sort (out.begin(), out.end(), byMakerThenName);
     return out;
 }
+}
+
+std::vector<juce::PluginDescription> PluginHost::instruments() const
+{
+    return onePerPlugin (list.getTypes(), [] (const juce::PluginDescription& d) { return d.isInstrument; });
+}
 
 std::vector<juce::PluginDescription> PluginHost::effects() const
 {
-    std::vector<juce::PluginDescription> out;
-    for (const auto& d : list.getTypes())
-        if (! d.isInstrument && d.numOutputChannels > 0)
-            out.push_back (d);
-    std::sort (out.begin(), out.end(), byMakerThenName);
-    return out;
+    return onePerPlugin (list.getTypes(), [] (const juce::PluginDescription& d) { return ! d.isInstrument && d.numOutputChannels > 0; });
+}
+
+//==============================================================================
+// Looking at plugins in the helper.
+struct PluginHost::Outcome
+{
+    Looked kind = Looked::crashed;
+    size_t job = 0;
+    juce::OwnedArray<juce::PluginDescription> types;
+};
+
+class PluginHost::HelperScan : public juce::Thread
+{
+public:
+    HelperScan (PluginHost& h, std::vector<Job> j) : juce::Thread ("Kaleidobox plugin scan"), host (h), jobs (std::move (j))
+    {
+        for (const auto& job : jobs)
+            formatNames.add (host.formats.getFormat (job.format)->getName());
+    }
+    ~HelperScan() override { stopThread (5000); }
+
+    void run() override
+    {
+        for (size_t i = 0; i < jobs.size() && ! threadShouldExit(); ++i)
+        {
+            say (jobs[i].name);
+            auto outcome = std::make_shared<Outcome>();
+            outcome->job = i;
+            outcome->kind = lookInHelper (formatNames[(int) i], jobs[i].id, outcome->types, [this] { return threadShouldExit(); });
+            if (outcome->kind == Looked::cancelled)
+                return;
+            juce::MessageManager::callAsync ([&h = host, weak = std::weak_ptr<bool> (host.alive), outcome]
+                                             {
+                                                 if (! weak.expired())
+                                                     h.finished (*outcome);
+                                             });
+        }
+        if (! threadShouldExit())
+            juce::MessageManager::callAsync ([&h = host, weak = std::weak_ptr<bool> (host.alive)]
+                                             {
+                                                 if (! weak.expired())
+                                                     h.allDone();
+                                             });
+    }
+
+private:
+    void say (const juce::String& name)
+    {
+        juce::MessageManager::callAsync ([&h = host, weak = std::weak_ptr<bool> (host.alive), name]
+                                         {
+                                             if (! weak.expired() && h.onProgress)
+                                                 h.onProgress (name, false);
+                                         });
+    }
+
+    PluginHost& host;
+    const std::vector<Job> jobs;
+    juce::StringArray formatNames;
+};
+
+PluginHost::Looked PluginHost::lookInHelper (const juce::String& formatName, const juce::String& id,
+                                            juce::OwnedArray<juce::PluginDescription>& found, std::function<bool()> cancelled)
+{
+    const auto out = juce::File::createTempFile (".kaleidobox-scan.xml");
+    juce::ChildProcess helper;
+    if (! helper.start (juce::StringArray { scanHelper.getFullPathName(), kScanArgument, formatName, out.getFullPathName(), id }, 0))
+        return Looked::crashed;
+    const auto started = juce::Time::getMillisecondCounter();
+    while (helper.isRunning())
+    {
+        const bool stop = cancelled != nullptr && cancelled();
+        if (stop || juce::Time::getMillisecondCounter() - started > (juce::uint32) scanTimeoutMs)
+        {
+            helper.kill();
+            out.deleteFile();
+            return stop ? Looked::cancelled : Looked::froze;
+        }
+        juce::Thread::sleep (50);
+    }
+    // What it found is only believed when the file is whole (a plugin that crashes on the way
+    // out, after it was looked at, still counts as looked at).
+    auto xml = juce::XmlDocument::parse (out);
+    out.deleteFile();
+    if (xml == nullptr || ! xml->hasTagName ("KaleidoboxScan"))
+        return Looked::crashed;
+    for (auto* e : xml->getChildIterator())
+    {
+        auto d = std::make_unique<juce::PluginDescription>();
+        if (d->loadFromXml (*e))
+            found.add (d.release());
+    }
+    return Looked::found;
+}
+
+bool PluginHost::isScanHelperLaunch (const juce::StringArray& commandLine)
+{
+    return commandLine.contains (kScanArgument);
+}
+
+bool PluginHost::runScanHelper (const juce::StringArray& commandLine)
+{
+    const int at = commandLine.indexOf (kScanArgument);
+    if (at < 0 || at + 3 >= commandLine.size())
+        return false;
+   #if JUCE_MAC
+    juce::Process::setDockIconVisible (false);
+   #endif
+    // Made here, on the message thread, and looked at from a thread of its own while this
+    // thread keeps running: plugins are opened on the message thread, and some Audio Units
+    // need it free while they open. Nothing is cleaned up: when the file is written, the helper
+    // simply ends (a plugin that crashes while it's closed can't spoil what was found).
+    struct Helper : juce::Thread
+    {
+        Helper (juce::String f, juce::File o, juce::String i) : juce::Thread ("Kaleidobox plugin scan helper"), formatName (f), out (o), id (i)
+        {
+           #if JUCE_PLUGINHOST_AU && JUCE_MAC
+            formats.addFormat (new juce::AudioUnitPluginFormat());
+           #endif
+           #if JUCE_PLUGINHOST_VST3
+            formats.addFormat (new juce::VST3PluginFormat());
+           #endif
+        }
+        void run() override
+        {
+            juce::OwnedArray<juce::PluginDescription> found;
+            for (auto* format : formats.getFormats())
+                if (format->getName() == formatName)
+                    format->findAllTypesForFile (found, id);
+            juce::XmlElement xml ("KaleidoboxScan");
+            for (auto* d : found)
+                if (auto e = d->createXml())
+                    xml.addChildElement (e.release());
+            const bool written = xml.writeTo (out);
+            std::_Exit (written ? 0 : 2);
+        }
+        juce::AudioPluginFormatManager formats;
+        const juce::String formatName;
+        const juce::File out;
+        const juce::String id;
+    };
+    auto* helper = new Helper (commandLine[at + 1], juce::File (commandLine[at + 2]), commandLine[at + 3]);
+    helper->startThread();
+    return true;
+}
+
+void PluginHost::finished (const Outcome& outcome)
+{
+    if (outcome.job >= jobs.size())
+        return;
+    const auto& job = jobs[outcome.job];
+    if (outcome.kind == Looked::found)
+    {
+        list.removeFromBlacklist (job.id);
+        for (auto* d : outcome.types)
+            list.addType (*d);
+    }
+    else if (outcome.kind != Looked::cancelled)
+    {
+        // Left out of the menus; tried again at the next scan.
+        list.addToBlacklist (job.id);
+        skippedThisScan.add (job.name + (outcome.kind == Looked::froze ? " (it froze)" : " (it crashed)"));
+    }
+}
+
+void PluginHost::allDone()
+{
+    helperScan.reset();
+    jobs.clear();
+    scanning = false;
+    scannedOnce = true;
+    save();
+    if (onProgress)
+    {
+        auto text = "Found " + juce::String (list.getNumTypes()) + " plugins";
+        if (! skippedThisScan.isEmpty())
+            text << ". Skipped " << skippedThisScan.joinIntoString (", ") << ": Kaleidobox stayed safe, and tries "
+                 << (skippedThisScan.size() == 1 ? "it" : "them") << " again next scan";
+        onProgress (text, true);
+    }
+}
+
+juce::File PluginHost::openingFile()
+{
+    return crateDataFolder().getChildFile ("Rig Plugin Opening.txt");
+}
+
+void PluginHost::opening (const juce::PluginDescription& d, bool starting)
+{
+    const auto id = d.createIdentifierString();
+    if (starting)
+        openingNow.add (id);
+    else
+        openingNow.removeString (id);   // (one of them, when the same plugin opens twice at once)
+    if (starting)
+        frozeWhileOpening.removeString (id);   // picked again by hand: it gets another go
+    crateDataFolder().createDirectory();
+    if (openingNow.isEmpty())
+        openingFile().deleteFile();
+    else
+        openingFile().replaceWithText (openingNow.joinIntoString ("\n"));
+}
+
+bool PluginHost::frozeLastTime (const juce::PluginDescription& d) const
+{
+    return frozeWhileOpening.contains (d.createIdentifierString());
+}
+
+juce::StringArray PluginHost::takeLeftClosed()
+{
+    auto names = closedAtOpen;
+    closedAtOpen.clear();
+    return names;
 }
 
 void PluginHost::startScan (std::function<void (const juce::String&, bool)> progress)
@@ -101,7 +333,29 @@ void PluginHost::startScan (std::function<void (const juce::String&, bool)> prog
     scanning = true;
     formatIndex = 0;
     scanner.reset();
-    startTimer (10);
+    skippedThisScan.clear();
+    if (scanHelper == juce::File())
+    {
+        startTimer (10);   // in here, a few at a time
+        return;
+    }
+    // In the helper: what to look at (what's new or changed, and what was skipped before), then
+    // one at a time on a thread of its own, so the window never waits.
+    jobs.clear();
+    for (int f = 0; f < formats.getNumFormats(); ++f)
+    {
+        auto* format = formats.getFormat (f);
+        for (const auto& id : format->searchPathsForPlugins (format->getDefaultLocationsToSearch(), true, false))
+            if (list.getBlacklistedFiles().contains (id) || ! list.isListingUpToDate (id, *format))
+            {
+                auto name = format->getNameOfPluginFromIdentifier (id);
+                if (name.isEmpty() || name == id)
+                    name = juce::File::createFileWithoutCheckingPath (id).getFileNameWithoutExtension();
+                jobs.push_back ({ f, id, name.isNotEmpty() ? name : id });
+            }
+    }
+    helperScan = std::make_unique<HelperScan> (*this, jobs);
+    helperScan->startThread();
 }
 
 void PluginHost::timerCallback()
@@ -178,12 +432,18 @@ void PluginSlot::setPlayHead (juce::AudioPlayHead* p)
 
 void PluginSlot::load (const juce::PluginDescription& description, std::function<void (const juce::String&)> done)
 {
+    // Written down while it opens: if it freezes or crashes Kaleidobox now, the next launch knows.
+    host->opening (description, true);
     host->formats.createPluginInstanceAsync (description, rate, block,
-                                            [this, weak = std::weak_ptr<bool> (alive), done] (std::unique_ptr<juce::AudioPluginInstance> made,
-                                                                                               const juce::String& error)
+                                            [this, weak = std::weak_ptr<bool> (alive), done, description] (std::unique_ptr<juce::AudioPluginInstance> made,
+                                                                                                            const juce::String& error)
                                             {
                                                 if (weak.expired())
+                                                {
+                                                    juce::SharedResourcePointer<PluginHost>()->opening (description, false);
                                                     return;
+                                                }
+                                                host->opening (description, false);
                                                 if (made != nullptr)
                                                     setInstance (std::move (made));
                                                 if (done)
@@ -193,6 +453,7 @@ void PluginSlot::load (const juce::PluginDescription& description, std::function
 
 void PluginSlot::setInstance (std::unique_ptr<juce::AudioPluginInstance> made)
 {
+    leftClosed = {};
     closeWindow();
     releaseEmbeddedEditor();
     if (made != nullptr)
@@ -287,6 +548,8 @@ void PluginSlot::setProgram (int i)
 
 juce::ValueTree PluginSlot::toTree() const
 {
+    if (instance == nullptr && leftClosed.isValid())
+        return leftClosed.createCopy();   // as the show had it, settings and all
     juce::ValueTree tree ("Plugin");
     if (instance == nullptr)
         return tree;
@@ -317,6 +580,15 @@ void PluginSlot::fromTree (const juce::ValueTree& tree)
     juce::PluginDescription description;
     if (auto xml = juce::XmlDocument::parse (tree.getProperty ("description").toString()); xml == nullptr || ! description.loadFromXml (*xml))
         return;
+    if (host->frozeLastTime (description))
+    {
+        // It froze or crashed Kaleidobox last time it opened: left closed (the show keeps it, and
+        // picking it again by hand opens it).
+        clear();
+        leftClosed = tree.createCopy();
+        host->leftClosed (description.name);
+        return;
+    }
     bypassed = (bool) tree.getProperty ("bypassed", false);
     level = juce::jlimit (0.0f, 2.0f, (float) tree.getProperty ("level", 1.0f));
     const auto stateText = tree.getProperty ("state").toString();

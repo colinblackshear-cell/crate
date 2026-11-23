@@ -3,6 +3,7 @@
 #include "RigEngine.h"
 #include "RigView.h"
 #include "RigLastShow.h"
+#include "PluginSlot.h"
 
 // The Rig: a standalone app that plays the Crate tools live, together, on one clock.
 class RigApplication : public juce::JUCEApplication
@@ -10,10 +11,15 @@ class RigApplication : public juce::JUCEApplication
 public:
     const juce::String getApplicationName() override { return "Kaleidobox"; }
     const juce::String getApplicationVersion() override { return "0.1.0"; }
-    bool moreThanOneInstanceAllowed() override { return false; }
+    // (The plugin scan's helper is a second copy of the app, for a moment: PluginSlot.h.)
+    bool moreThanOneInstanceAllowed() override { return PluginHost::isScanHelperLaunch (getCommandLineParameterArray()); }
 
     void initialise (const juce::String&) override
     {
+        if (PluginHost::runScanHelper (getCommandLineParameterArray()))
+            return;   // it ends by itself; no window, no audio, no show
+        PluginHost::scanHelper = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+
         juce::PropertiesFile::Options options;
         // The settings keep their old Crate Rig file name, so your audio and MIDI setup survive the
         // rename to Kaleidobox.
@@ -75,6 +81,16 @@ public:
 
         window = std::make_unique<Window> (*engine, devices);
 
+        // A plugin that froze or crashed Kaleidobox while it opened last time isn't opened again
+        // by itself: say which.
+        const auto leftClosed = juce::SharedResourcePointer<PluginHost>()->takeLeftClosed();
+        if (! leftClosed.isEmpty())
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "A plugin was left closed",
+                leftClosed.joinIntoString (", ") + (leftClosed.size() == 1 ? " was" : " were")
+                + " opening when Kaleidobox stopped last time, so this time Kaleidobox didn't open "
+                + (leftClosed.size() == 1 ? "it" : "them") + ". Your show keeps its settings. To try again, pick it "
+                  "from the Synth or Bass page's plugin menu.");
+
         // A Last show that couldn't be saved at the last quit: say so (this is the one from before).
         const auto lastQuit = riglastshow::takeFailureFromLastQuit (*settings);
         if (lastQuit.isNotEmpty())
@@ -83,6 +99,8 @@ public:
 
     void shutdown() override
     {
+        if (settings == nullptr)
+            return;   // the scan helper
         if (engine != nullptr)
         {
             if (! lastShowSaved)
