@@ -200,7 +200,9 @@ struct NoteRepeatKeyboardTests : juce::UnitTest
     {
         beginTest ("the controls are new at the end, so saved shows keep their numbers");
         expect (RigRouting::noteRepeatHold > RigRouting::liveKeyHome && RigRouting::noteRepeatRate == RigRouting::noteRepeatHold + 1);
-        expectEquals ((int) RigRouting::numControls, (int) RigRouting::noteRepeatRate + 1);
+        // Later controls go after them (Chords on/off), so these keep their numbers too.
+        expectEquals ((int) RigRouting::chordsOnOff, (int) RigRouting::noteRepeatRate + 1);
+        expectEquals ((int) RigRouting::numControls, (int) RigRouting::chordsOnOff + 1);
         expect (RigRouting::controlName (RigRouting::noteRepeatHold).isNotEmpty() && RigRouting::controlName (RigRouting::noteRepeatRate).isNotEmpty());
         expect (RigRouting::isHold (RigRouting::noteRepeatHold) && ! RigRouting::isHold (RigRouting::noteRepeatRate));
 
