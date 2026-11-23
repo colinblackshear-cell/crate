@@ -23,7 +23,7 @@ SamplerScreen::SamplerScreen (PocketHost& h, PocketAudio& a, Library& lib, Kit& 
 {
     setOpaque (false);
     for (auto* c : std::initializer_list<juce::Component*> { &wave, &soundsButton, &allButton, &undoButton, &moreButton, &hearButton, &trimButton,
-                                                             &sendButton, &pickButton })
+                                                             &sendButton, &pickButton, &clearButton, &chopButton })
         addAndMakeVisible (c);
     wave.setEmptyText ("Press REC to sample a sound from the mic, or SOUNDS to open one");
     wave.onSelectionChange = [this] { updateLabels(); };
@@ -34,6 +34,10 @@ SamplerScreen::SamplerScreen (PocketHost& h, PocketAudio& a, Library& lib, Kit& 
     allButton.onClick = [this] { selectAll(); };
     undoButton.setFontHeight (16.0f);
     undoButton.onClick = [this] { undo(); };
+    clearButton.setFontHeight (16.0f);
+    clearButton.onClick = [this] { clearSound(); };
+    chopButton.setFontHeight (16.0f);
+    chopButton.onClick = [this] { showChopMenu(); };
     moreButton.setFontHeight (16.0f);
     moreButton.onClick = [this]
     {
@@ -60,7 +64,7 @@ SamplerScreen::SamplerScreen (PocketHost& h, PocketAudio& a, Library& lib, Kit& 
         g.drawText (text, juce::Rectangle<float> (x + 20, r.getY(), tw + 4, r.getHeight()), juce::Justification::centredLeft);
     };
     hearButton.onClick = [this] { hear(); };
-    trimButton.setFontHeight (18.0f);
+    trimButton.setFontHeight (16.0f);
     trimButton.onClick = [this] { trim(); };
     sendButton.setFontHeight (20.0f);
     sendButton.onClick = [this]
@@ -142,6 +146,8 @@ void SamplerScreen::updateLabels()
     const bool partial = hasSound() && sel.getLength() > 0 && sel.getLength() < wave.getAudio()->getNumSamples();
     trimButton.setLook (partial ? Look::amber : Look::cream);
     undoButton.setLook (undoStack.empty() ? Look::ghost : Look::cream);
+    clearButton.setLook (hasSound() ? Look::cream : Look::ghost);
+    chopButton.setLook (hasSound() ? Look::cream : Look::ghost);
     repaint();
 }
 
@@ -367,13 +373,18 @@ void SamplerScreen::undo()
         if (onRepad)
             onRepad (currentId, s.id, s.trimStart);
     }
+    const bool wasCleared = ! hasSound();
     currentId = s.id;
     if (const auto* item = library.find (currentId))
         name = item->name;
+    else if (s.name.isNotEmpty())
+        name = s.name;
     wave.setAudio (s.audio);
+    wave.setMarkers ({});
     wave.setSelection (s.sel);
     updateLabels();
-    host.toast (s.saved ? juce::String ("The trim is undone, on the pads too") : juce::String ("Back to the sound before"));
+    host.toast (s.saved ? juce::String ("The trim is undone, on the pads too")
+                : wasCleared ? "\"" + name + "\" is back" : juce::String ("Back to the sound before"));
 }
 
 bool SamplerScreen::sendTo (int pad)
@@ -412,6 +423,117 @@ bool SamplerScreen::sendTo (int pad)
                               safe->onPadSet (pad);
                       });
     return true;
+}
+
+void SamplerScreen::clearSound()
+{
+    if (recording)
+        return;
+    if (! hasSound())
+        return host.toast ("The sampler is already empty: press REC to sample, or SOUNDS to open one");
+    audio.stopPlaying();
+    undoStack.push_back ({ wave.getAudio(), wave.getSelection(), currentId, 0, false, name });
+    const auto was = name;
+    currentId = {};
+    name = {};
+    wave.setAudio (nullptr);
+    wave.setMarkers ({});
+    updateLabels();
+    host.toastAction ("Cleared \"" + was + "\". Sounds and the pads keep their copies.", "UNDO",
+                      [safe = juce::Component::SafePointer<SamplerScreen> (this)] { if (safe != nullptr) safe->undo(); });
+}
+
+int SamplerScreen::chopToPads (int slices)
+{
+    if (recording || ! needSound() || ! ensureSaved())
+        return 0;
+    const auto* item = library.find (currentId);
+    if (item == nullptr)
+        return 0;
+    audio.stopPlaying();
+    const auto& a = *wave.getAudio();
+    const int n = a.getNumSamples();
+    std::vector<int> markers;
+    if (slices <= 0)
+    {
+        for (int m : crate::SoundFx::findHits (a, 0.5f, 16))
+            if (m > 64 && m < n - 64)
+                markers.push_back (m);
+    }
+    else
+        for (int i = 1; i < slices; ++i)
+            markers.push_back ((int) ((juce::int64) n * i / slices));
+    if (markers.empty())
+    {
+        host.toast ("No separate hits found. Try 8 or 16 equal slices.");
+        return 0;
+    }
+    if ((int) markers.size() > 15)
+        markers.resize (15);   // one bank: 16 pads
+
+    // The slices live on the sound as its chop markers (a factory sound gets your own copy, as TRIM does).
+    const auto fx = item->fx;
+    if (item->tag == kTagFactory)
+    {
+        const auto copy = library.add (name, kTagRecorded, a, fx, markers);
+        if (copy.isEmpty())
+        {
+            host.toast ("Couldn't save that sound");
+            return 0;
+        }
+        currentId = copy;
+    }
+    else if (! library.update (currentId, name, a, fx, markers))
+    {
+        host.toast ("Couldn't save that sound");
+        return 0;
+    }
+
+    const int bank = targetPad >= 0 ? targetPad / 16 : (currentBank != nullptr ? juce::jlimit (0, 3, currentBank()) : 0);
+    const int first = bank * 16;
+    std::array<KitPad, 16> before;
+    for (int i = 0; i < 16; ++i)
+        before[(size_t) i] = kit.pads[(size_t) (first + i)];
+    const int used = kit.chop (first, currentId, false);
+    if (used <= 0)
+    {
+        host.toast ("That sound couldn't be opened");
+        return 0;
+    }
+    wave.setMarkers (markers);
+    targetPad = first;
+    updateLabels();
+    if (onPadSet)
+        onPadSet (first);
+    host.toastAction ("Chopped into " + juce::String (used) + " pads, " + Kit::padLabel (first) + " to " + Kit::padLabel (first + used - 1)
+                          + ". Hold a pad > SOUND PAGE to edit its slice.",
+                      "UNDO",
+                      [safe = juce::Component::SafePointer<SamplerScreen> (this), first, before]
+                      {
+                          if (safe == nullptr)
+                              return;
+                          for (int i = 0; i < 16; ++i)
+                              safe->kit.pads[(size_t) (first + i)] = before[(size_t) i];
+                          if (safe->onPadSet)
+                              safe->onPadSet (first);
+                      });
+    return used;
+}
+
+void SamplerScreen::showChopMenu()
+{
+    if (recording || ! needSound())
+        return;
+    const int bank = targetPad >= 0 ? targetPad / 16 : (currentBank != nullptr ? juce::jlimit (0, 3, currentBank()) : 0);
+    const auto range = Kit::padLabel (bank * 16) + U8("\xe2\x80\x93") + Kit::padLabel (bank * 16 + 15);
+    HoldSpec s;
+    s.title = "CHOP " + name.toUpperCase() + " ONTO PADS " + range;
+    s.spotlight = false;
+    s.items.push_back ({ "FIND THE HITS", "drums, notes, words", false, true, [this] { chopToPads (0); } });
+    for (int n : { 4, 8, 16 })
+        s.items.push_back ({ juce::String (n) + " EQUAL SLICES", n == 16 ? juce::String ("a loop in time") : juce::String(), false, true,
+                             [this, n] { chopToPads (n); } });
+    host.holdMenu (s, *this, chopButton.getBounds().getCentre().toFloat(), chopButton.getBounds().toFloat());
 }
 
 void SamplerScreen::showSounds()
@@ -507,12 +629,17 @@ void SamplerScreen::resized()
     pickButton.setBounds (sendRow.removeFromRight (92));
     sendRow.removeFromRight (8);
     sendButton.setBounds (sendRow);
-    hearButton.setBounds (hearRow.removeFromLeft (hearRow.getWidth() * 2 / 5));
+    hearButton.setBounds (hearRow.removeFromLeft (hearRow.getWidth() * 3 / 10));
     hearRow.removeFromLeft (8);
+    chopButton.setBounds (hearRow.removeFromRight (hearRow.getWidth() * 11 / 20));
+    hearRow.removeFromRight (8);
     trimButton.setBounds (hearRow);
-    allButton.setBounds (row1.removeFromLeft (84));
+    const int small = juce::jmin (72, (row1.getWidth() - 3 * 8) / 4);
+    allButton.setBounds (row1.removeFromLeft (small));
     row1.removeFromLeft (8);
-    undoButton.setBounds (row1.removeFromLeft (84));
+    undoButton.setBounds (row1.removeFromLeft (small));
+    row1.removeFromLeft (8);
+    clearButton.setBounds (row1.removeFromLeft (small));
     row1.removeFromLeft (8);
     moreButton.setBounds (row1);
 }

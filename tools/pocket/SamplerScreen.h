@@ -54,6 +54,13 @@ public:
     void selectAll();
     bool sendTo (int pad);                     // IN..OUT onto that pad; false when there's no sound
     void showSounds();                         // SOUNDS: your sounds in a card
+    // CLEAR: an empty page for a new sound (UNDO brings it back; Sounds and the pads keep theirs)
+    void clearSound();
+    // CHOP TO PADS: cuts the sound at its hits (slices <= 0) or into `slices` equal parts and puts them on the bank's
+    // pads from its pad 1 (the target pad's bank, or the bank on screen), one slice a pad. Each pad keeps its slice as
+    // its part of the one sound, so its sample page opens that slice. Returns how many pads it filled.
+    int chopToPads (int slices);
+    void showChopMenu();                       // CHOP TO PADS: hits, or 4, 8 or 16 equal slices
     void leave();                              // another tool or page: stops a take and the playback
 
     // Screenshots: a sound on screen as if it had just been recorded.
@@ -64,7 +71,7 @@ public:
     void resized() override;
 
 private:
-    struct State { crate::SharedAudio audio; juce::Range<int> sel; juce::String id; int trimStart = 0; bool saved = false; };
+    struct State { crate::SharedAudio audio; juce::Range<int> sel; juce::String id; int trimStart = 0; bool saved = false; juce::String name; };
 
     void timerCallback() override;
     bool needSound();
@@ -79,8 +86,8 @@ private:
 
     PocketWave wave;
     pocket::PButton soundsButton { "Sounds" }, allButton { "All" }, undoButton { "Undo" }, moreButton { U8("More edits \xe2\x80\xba") },
-        hearButton { "Hear", pocket::Look::green }, trimButton { "Trim to in / out" }, sendButton { "Send to pad", pocket::Look::amber },
-        pickButton;
+        hearButton { "Hear", pocket::Look::green }, trimButton { "Trim" }, sendButton { "Send to pad", pocket::Look::amber },
+        pickButton, clearButton { "Clear" }, chopButton { U8("Chop to pads\xe2\x80\xa6") };
     std::vector<State> undoStack;
     juce::String currentId, name;
     int targetPad = -1;

@@ -3,6 +3,7 @@
 #include "EditorView.h"
 #include "MpcView.h"
 #include "core/SoundFx.h"
+#include "FactoryKits.h"
 
 using namespace vintage;
 
@@ -38,7 +39,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     chopButtons[even16].setTooltip ("Cuts the sound into 16 equal slices, one per pad.");
     chopButtons[byHand].setTooltip ("Click the strip above the wave to add a marker, drag one to move it, right-click one to remove it.");
 
-    for (auto* b : { &snapButton, &zoomOut, &zoomIn, &openButton, &editorButton })
+    for (auto* b : { &snapButton, &zoomOut, &zoomIn, &openButton, &editorButton, &clearButton })
     {
         setInWell (*b, true);
         b->getProperties().set ("fontSize", 16.0f);
@@ -74,6 +75,8 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     };
     openButton.setTooltip ("Open a sound file (or drop one here).");
     openButton.onClick = [this] { editor.chooseSoundFile(); };
+    clearButton.setTooltip ("Empties the Sampler for a new sound (the pads keep theirs). Then it says Undo clear, to bring it back.");
+    clearButton.onClick = [this] { canUndoClear() ? editor.runEdit ("undo") : pressClear(); updateClearButton(); };
     editorButton.setTooltip ("The full sample editor: record, trim, fades, effects, keys.");
     editorButton.onClick = [this] { setEditMode (true); };
 
@@ -237,7 +240,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     addAndMakeVisible (fxButton);
 
     // Pad tools, under the pads.
-    for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton })
+    for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton, &kitsButton })
     {
         setLit (*b, Lit::current);
         b->getProperties().set ("fontSize", 15.0f);
@@ -288,6 +291,9 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
                                 safe->updatePadTools();
                             });
     };
+    kitsButton.setTooltip ("Kits: the factory kits (the same as the phone's), your kits, and putting a factory kit's "
+                           "own sounds back after you've put yours over them.");
+    kitsButton.onClick = [this] { showKitsMenu(); };
     soundsButton.setClickingTogglesState (true);
     soundsButton.setTooltip ("Your sound bank, over the wave: click a sound to hear it, double-click to put it on the picked pad.");
     soundsButton.onClick = [this] { showSounds (soundsButton.getToggleState()); };
@@ -401,7 +407,7 @@ void SamplerScreen::setSide (int side)
     const bool chop = mode == chopSide, pads = mode != editSide;
     // The pads and their tools are on the right of the Chop and Sequencer sides.
     const std::initializer_list<juce::Component*> padSide { &bankButtons[0], &bankButtons[1], &bankButtons[2], &bankButtons[3], &fullLevel,
-                                                            &levelsButton, &repeatButton, &rateButton, &soundsButton };
+                                                            &levelsButton, &repeatButton, &rateButton, &soundsButton, &kitsButton };
     const std::initializer_list<juce::Component*> top { &chopModeButton, &mpcModeButton, &editModeButton, &beatButton, &loopPadsButton,
                                                         &loopBarsButton };
     for (auto* c : getChildren())
@@ -542,6 +548,8 @@ void SamplerScreen::showPadMenu (int padInBank)
     menu.addItem ("Remove its sound", full, false, [this] { pressRemovePad(); });
     if (canUndoRemovePad())
         menu.addItem ("Undo remove (put \"" + removedPad.name + "\" back)", [this] { pressUndoRemovePad(); });
+    if (engine.padDiffersFromFactory (pad))
+        menu.addItem ("Put back the factory sound (" + engine.factoryPadName (pad) + ")", [this] { pressRestoreFactoryPad(); });
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
 }
 
@@ -556,6 +564,110 @@ void SamplerScreen::updateTopButtons()
     if (loopPadsButton.getButtonText() != loopText)
         loopPadsButton.setButtonText (loopText);
     loopBarsButton.setButtonText (loopBars <= 0 ? juce::String ("Free") : juce::String (loopBars) + (loopBars == 1 ? " bar" : " bars"));
+}
+
+bool SamplerScreen::canUndoClear() const
+{
+    auto& doc = engine.getSampler().getDocument();
+    return ! doc.hasAudio() && doc.canUndo() && doc.getUndoName() == EditorView::kClearAction;
+}
+
+void SamplerScreen::pressClear()
+{
+    auto& doc = engine.getSampler().getDocument();
+    if (! doc.hasAudio())
+    {
+        if (onSay)
+            onSay ("The Sampler is already empty.");
+        return;
+    }
+    const auto name = doc.getName().isNotEmpty() ? doc.getName() : juce::String ("the sound");
+    editor.clearSound();
+    selectedSlice = 0;
+    if (onSay)
+        onSay ("Cleared " + name + " from the Sampler. The pads keep their sounds; Undo clear brings it back.");
+    refresh();
+}
+
+void SamplerScreen::updateClearButton()
+{
+    const bool undo = canUndoClear();
+    const auto text = undo ? juce::String ("Undo clear") : juce::String ("Clear");
+    if (clearButton.getButtonText() != text)
+    {
+        clearButton.setButtonText (text);
+        resized();
+    }
+    clearButton.setEnabled (undo || engine.getSampler().getDocument().hasAudio());
+}
+
+void SamplerScreen::pressRestoreFactoryPad()
+{
+    const int pad = getSelectedPad();
+    if (! engine.padDiffersFromFactory (pad))
+    {
+        if (onSay)
+            onSay ("Pad " + padLabel (pad) + " already plays its factory sound.");
+        return;
+    }
+    const auto text = engine.restoreFactoryPad (pad);
+    updateKnobs();
+    updateRemoveButton();
+    repaint();
+    if (onSay)
+        onSay (text);
+}
+
+void SamplerScreen::showKitsMenu()
+{
+    auto& project = engine.getMpc().getProject();
+    const int pad = getSelectedPad();
+    const int factory = engine.factoryKitOf (project.getCurrentIndex());
+    juce::PopupMenu menu;
+    if (factory >= 0)
+    {
+        menu.addSectionHeader (project.currentBank().name + ": its factory sounds");
+        menu.addItem ("Put back pad " + padLabel (pad) + "'s factory sound" + (engine.factoryPadName (pad).isNotEmpty() ? " (" + engine.factoryPadName (pad) + ")" : juce::String()),
+                      engine.padDiffersFromFactory (pad), false, [this] { pressRestoreFactoryPad(); });
+        bool any = false;
+        for (int p = 0; p < kPadsPerBank; ++p)
+            any = any || engine.padDiffersFromFactory (p);
+        menu.addItem ("Put back all 16 factory sounds (A01 to A16)", any, false, [this]
+        {
+            const auto text = engine.resetFactoryKit();
+            refresh();
+            if (onSay)
+                onSay (text);
+        });
+        menu.addSeparator();
+    }
+    menu.addSectionHeader ("Factory kits (each goes on a new kit; yours stay)");
+    const auto& kits = crate::factory::kits();
+    for (int i = 0; i < (int) kits.size(); ++i)
+        menu.addItem (juce::String (kits[(size_t) i].name) + juce::String::fromUTF8 ("  \xc2\xb7  ") + kits[(size_t) i].what, [this, i]
+        {
+            const auto text = engine.loadFactoryKit (i);
+            pressBank (0);
+            refresh();
+            if (onSay)
+                onSay (text);
+        });
+    if (project.getBanks().size() > 1)
+    {
+        menu.addSeparator();
+        menu.addSectionHeader ("Your kits in this show");
+        for (int k = 0; k < (int) project.getBanks().size(); ++k)
+            menu.addItem (project.getBanks()[(size_t) k].name.isNotEmpty() ? project.getBanks()[(size_t) k].name : "Kit " + juce::String (k + 1),
+                          true, k == project.getCurrentIndex(), [this, k]
+                          {
+                              engine.getMpc().getProject().setCurrent (k);
+                              engine.getMpc().getProject().changed();
+                              refresh();
+                              if (onSay)
+                                  onSay ("The pads play " + engine.getMpc().getProject().currentBank().name + " now.");
+                          });
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&kitsButton));
 }
 
 size_t SamplerScreen::capacityOf (int m)
@@ -929,6 +1041,7 @@ void SamplerScreen::rebuildPeaks()
 void SamplerScreen::timerCallback()
 {
     updateRemoveButton();
+    updateClearButton();
     // Pads that played light for a moment.
     const auto played = engine.getMpc().takePlayedPads (1);
     const int bank = engine.getMpc().padBankOnScreen.load();
@@ -1348,8 +1461,8 @@ void SamplerScreen::resized()
     {
         // The pad tools.
         auto tools = right.removeFromBottom (34);
-        const int w = (tools.getWidth() - 3 * 6) / 4;
-        for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton })
+        const int w = (tools.getWidth() - 4 * 6) / 5;
+        for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton, &kitsButton })
         {
             b->setBounds (tools.removeFromLeft (w));
             tools.removeFromLeft (6);
@@ -1388,6 +1501,8 @@ void SamplerScreen::resized()
         editorButton.setBounds (z.removeFromRight (86));
         z.removeFromRight (6);
         openButton.setBounds (z.removeFromRight (74));
+        z.removeFromRight (6);
+        clearButton.setBounds (z.removeFromRight (canUndoClear() ? 116 : 74));
         z.removeFromRight (16);
         zoomOut.setBounds (z.removeFromLeft (46));
         zoomIn.setBounds (z.removeFromRight (46));

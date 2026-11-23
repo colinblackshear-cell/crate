@@ -56,6 +56,16 @@ public:
     // `index` on the MPC's pads A01-A16 of kit `kit` (-1 = a new kit) and makes it the kit that plays.
     // A new Rig starts with the Street kit on its first kit, as the phone does. Returns what to say.
     juce::String loadFactoryKit (int index, int kit = -1);
+    // The factory kit MPC kit `kit` came from (by its name, "Street kit"), or -1.
+    int factoryKitOf (int kit);
+    // The factory sound that pad `pad` (0..63) of the current kit had, when the kit is a factory kit
+    // and that pad is one of its 16 ("Street kick"), or {}. hasFactoryPad: it's playing something else.
+    juce::String factoryPadName (int pad);
+    bool padDiffersFromFactory (int pad);
+    // Puts that factory sound back on the pad (its settings back to the kit's). Returns what to say.
+    juce::String restoreFactoryPad (int pad);
+    // Puts all 16 of the current factory kit's sounds back, on the same kit. Returns what to say.
+    juce::String resetFactoryKit();
     // Set by the app and the Logic plugin before they make their Rig: a new Rig (and New song) has
     // the Street kit on the pads. Off for the tests, whose Rigs start with empty pads.
     static inline std::atomic<bool> startWithFactoryKit { false };

@@ -72,6 +72,13 @@ public:
     void pressRemovePad();
     bool canUndoRemovePad() const;
     void pressUndoRemovePad();
+    // Clear: empties the Sampler (the pads keep their sounds). Until something else goes in, the
+    // button says Undo clear and brings the sound back (the editor's Undo does too).
+    void pressClear();
+    bool canUndoClear() const;
+    // Kits (under the pads): the factory kits, your kits, and putting a factory kit's sounds back.
+    void showKitsMenu();
+    void pressRestoreFactoryPad();
 
     std::function<void (const juce::String&)> onSay;
     // Opens a page of the Rig ("Sampler editor", "MPC").
@@ -161,9 +168,11 @@ private:
 
     juce::TextButton chopButtons[3] { juce::TextButton ("Transients"), juce::TextButton ("Even 16"), juce::TextButton ("By hand") };
     juce::TextButton snapButton { "Snap to zero" }, toPadsButton { "To pads" }, openButton { "Open" }, editorButton { "Editor" },
-        zoomOut { juce::String::fromUTF8 ("\xe2\x88\x92") }, zoomIn { "+" }, fullLevel { "Full level" }, sendButton { "Send to MPC" };
+        zoomOut { juce::String::fromUTF8 ("\xe2\x88\x92") }, zoomIn { "+" }, fullLevel { "Full level" }, sendButton { "Send to MPC" },
+        clearButton { "Clear" };
     juce::TextButton levelsButton { "16 Levels" }, repeatButton { "Repeat" }, rateButton { "1/16" }, soundsButton { "Sounds" },
-        fxButton { "FX" };
+        fxButton { "FX" }, kitsButton { "Kits" };
+    void updateClearButton();
     BankBrowser browser { engine.getMpc() };
     bool fxShown = false, soundsShown = false;
     juce::TextButton bankButtons[4] { juce::TextButton ("A"), juce::TextButton ("B"), juce::TextButton ("C"), juce::TextButton ("D") };

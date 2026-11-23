@@ -351,7 +351,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect ((beats.engine().soundingPads() >> 9 & 1) != 0, "Pad: a touch didn't sound the pad in the first block");
         expect (! holdCard.isOpen(), "Pad: the hold menu came before the hold time");
         beats.testHoldElapsed();
-        expect (holdCard.isOpen() && holdCard.itemCount() == 7, "Hold menu on a pad: no menu after the hold");
+        expect (holdCard.isOpen() && holdCard.itemCount() >= 7, "Hold menu on a pad: no menu after the hold");
         renderPads (1);
         expect ((beats.engine().soundingPads() >> 9 & 1) != 0, "Pad: the hold menu cut the sound");
         beats.testLiftPad();
@@ -360,7 +360,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         beats.holdPad (9);
         const auto spec = holdCard.current();
         holdCard.close();
-        expect (spec.items.size() == 7 && spec.items[0].text == "SOUND PAGE" && spec.items[1].text.startsWith ("SWAP SOUND") && spec.items[2].text == "RECORD A NEW SOUND"
+        expect ((spec.items.size() == 7 || (spec.items.size() == 8 && spec.items[7].text == "FACTORY SOUND BACK")) && spec.items[0].text == "SOUND PAGE" && spec.items[1].text.startsWith ("SWAP SOUND") && spec.items[2].text == "RECORD A NEW SOUND"
                     && spec.items[3].text.startsWith ("VOLUME") && spec.items[4].text == "16 LEVELS" && spec.items[5].text == "COPY TO ANOTHER PAD"
                     && spec.items[6].text == "REMOVE SOUND" && spec.items[6].danger && spec.title.startsWith ("PAD A10"), "Hold menu on a pad: the rows are not the agreed ones");
         auto choose = [&] (int item)
@@ -423,7 +423,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         const auto keep = kit.pads[9];
         kit.clear (9);
         beats.holdPad (9);
-        expect (holdCard.itemCount() == 2 && holdCard.current().items[0].text.startsWith ("PUT A SOUND"), "Hold menu on an empty pad: the rows are not the agreed ones");
+        expect ((holdCard.itemCount() == 2 || (holdCard.itemCount() == 3 && holdCard.current().items[2].text == "FACTORY SOUND BACK")) && holdCard.current().items[0].text.startsWith ("PUT A SOUND"), "Hold menu on an empty pad: the rows are not the agreed ones");
         holdCard.close();
         kit.pads[9] = keep;
         beats.padsChanged();

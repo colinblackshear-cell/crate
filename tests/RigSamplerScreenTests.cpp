@@ -160,6 +160,44 @@ struct RigSamplerScreenTests : juce::UnitTest
             expect (! screen.getBrowser().isVisible());
         }
 
+        beginTest ("Clear empties the Sampler (the pads keep theirs), and Undo clear brings it back");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            std::unique_ptr<juce::AudioProcessorEditor> editor (engine.getSampler().createEditorAndMakeActive());
+            auto* full = dynamic_cast<EditorView*> (editor.get());
+            SamplerScreen screen (engine, *full);
+            screen.setSize (1400, 560);
+            auto& doc = engine.getSampler().getDocument();
+
+            expect (! screen.canUndoClear());
+            screen.pressClear();   // nothing to clear: says so, changes nothing
+            expect (! doc.hasAudio() && ! doc.canUndo());
+
+            doc.load (hits(), "Dusty break", "Load");
+            screen.pressChop (SamplerScreen::even16);
+            screen.pressToPads();
+            const auto onPad = engine.getMpc().getProject().currentBank().pads[0].audio;
+            expect (onPad != nullptr);
+
+            screen.pressClear();
+            expect (! doc.hasAudio(), "the Sampler is empty");
+            expectEquals (screen.numSlices(), 0, "and has no slices");
+            expect (screen.canUndoClear(), "Clear turns into Undo clear");
+            expect (engine.getMpc().getProject().currentBank().pads[0].audio == onPad, "the pads keep their slices");
+
+            full->runEdit ("undo");
+            expect (doc.hasAudio(), "Undo clear brings the sound back");
+            expectEquals (doc.getName(), juce::String ("Dusty break"));
+            expect (! screen.canUndoClear());
+
+            // Cleared, then something new goes in: no Undo clear any more.
+            full->clearSound();
+            expect (screen.canUndoClear());
+            doc.load (hits(), "Next one", "Load");
+            expect (! screen.canUndoClear());
+        }
+
         beginTest ("the full editor is on the Sampler screen: Edit shows it, Chop shows the pads");
         {
             RigEngine engine;

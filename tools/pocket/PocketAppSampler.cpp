@@ -218,6 +218,79 @@ juce::String PocketApp::runSamplerChecks (juce::String& report)
                                                                           + juce::String (kit.pads[(size_t) pad].audio->getNumSamples()) + " samples, not " + juce::String (m / 2) + ")");
     }
 
+    // ------------------------------------------------------------------ FACTORY SOUND BACK, CLEAR, CHOP TO PADS
+    {
+        showIdeasList();
+        const auto fresh = ideas.create ("Chop check");
+        switchIdea (fresh);
+        auto& k = beats.kit();
+        const int a03 = 2;
+        const auto factoryA03 = k.pads[(size_t) a03].soundId;
+        expect (factoryA03.isNotEmpty(), "Factory: a new song has no sound on A03");
+
+        // your own sound over a factory pad, then FACTORY SOUND BACK from the pad's hold menu
+        showTool (Tool::sampler, false);
+        sampler.useTake (lib.load (lib.items().back().id));
+        expect (sampler.sendTo (a03), "Factory: SEND TO PAD A03 refused");
+        hideToast();
+        expect (k.pads[(size_t) a03].soundId != factoryA03, "Factory: A03 still plays the factory sound after SEND");
+        showTool (Tool::pads, false);
+        beats.holdPad (a03);
+        int back = -1;
+        if (holdCard.isOpen())
+            for (int i = 0; i < holdCard.itemCount(); ++i)
+                if (holdCard.current().items[(size_t) i].text == "FACTORY SOUND BACK")
+                    back = i;
+        expect (back >= 0, "Factory: A03's hold menu has no FACTORY SOUND BACK");
+        if (back >= 0)
+            holdCard.choose (back);
+        expect (k.pads[(size_t) a03].soundId == factoryA03, "Factory: FACTORY SOUND BACK didn't put the kit's own sound back on A03");
+        hideToast();
+
+        // CLEAR empties the page (the pad keeps its sound), UNDO brings it back
+        showTool (Tool::sampler, false);
+        sampler.editForPad (a03);
+        const auto shown = sampler.sound();
+        sampler.clearSound();
+        expect (! sampler.hasSound(), "Clear: the sampler still has a sound");
+        expect (k.pads[(size_t) a03].soundId == factoryA03 && ! k.pads[(size_t) a03].empty(), "Clear: the pad lost its sound");
+        expect (toastHasAction(), "Clear: no UNDO after CLEAR");
+        pressToastAction();
+        expect (sampler.hasSound() && sampler.sound() == shown, "Clear: UNDO didn't bring the sound back");
+        hideToast();
+
+        // CHOP TO PADS: 16 equal slices onto A01-A16, each pad its own part of one sound; UNDO puts the kit back
+        sampler.useTake (lib.load (lib.items().back().id));
+        sampler.setTarget (-1);
+        const int whole = sampler.sound()->getNumSamples();
+        const auto before = k.pads[0].soundId;
+        expect (sampler.chopToPads (16) == 16, "Chop: 16 EQUAL SLICES didn't fill 16 pads");
+        const auto id = sampler.soundId();
+        int sum = 0;
+        bool same = true;
+        for (int p = 0; p < 16; ++p)
+        {
+            same = same && k.pads[(size_t) p].soundId == id;
+            sum += k.pads[(size_t) p].audio != nullptr ? k.pads[(size_t) p].audio->getNumSamples() : 0;
+        }
+        expect (same, "Chop: the 16 pads don't all play slices of the one sound");
+        expect (std::abs (sum - whole) < 16, "Chop: the slices don't add up to the whole sound (" + juce::String (sum) + " of " + juce::String (whole) + ")");
+        expect (k.pads[(size_t) 16].soundId.isEmpty() || k.pads[(size_t) 16].soundId != id, "Chop: a slice went past A16");
+        // a slice's pad opens that slice on its sample page
+        sampler.editForPad (4);
+        expect (sampler.selection().getStart() == k.pads[4].from && sampler.selection().getLength() > 0, "Chop: A05's sample page doesn't show its slice");
+        expect (toastHasAction(), "Chop: no UNDO after CHOP TO PADS");
+        if (toastHasAction())
+            pressToastAction();
+        expect (k.pads[0].soundId == before, "Chop: UNDO didn't put A01 back");
+        hideToast();
+        showIdeasList();
+        switchIdea (songId);
+        ideas.remove (fresh);
+        report << "sampler: FACTORY SOUND BACK on a pad's hold menu; CLEAR empties the page (the pad keeps it), UNDO brings it back; "
+                  "CHOP TO PADS puts 16 slices of one sound on A01-A16, each pad's sample page shows its slice, UNDO puts the kit back\n";
+    }
+
     showIdeasList();
     hideToast();
     return problems.joinIntoString ("\n");
