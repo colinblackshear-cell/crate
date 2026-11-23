@@ -97,6 +97,8 @@ public:
     RecSetupSheet();
     std::function<int()> getCountIn, getLength;      // bars 0..2; choice 0..4 (1, 2, 4, 8 bars, FREE)
     std::function<void (int)> setCountIn, setLength;
+    std::function<int()> getPadsTo;                  // where PADS records: 0 a loop layer, 1 the pad pattern only
+    std::function<void (int)> setPadsTo;
     std::function<void()> onDone;
 
     void refresh();
@@ -104,7 +106,7 @@ public:
     void resized() override;
 
 private:
-    PButton countButtons[3], lengthButtons[5], done { "Done", Look::amber };
+    PButton countButtons[3], lengthButtons[5], padsButtons[2], done { "Done", Look::amber };
 };
 
 //==============================================================================

@@ -1296,12 +1296,14 @@ RecSetup::RecSetup()
     click.onClick = [this] { if (onClick) onClick(); };
     addAndMakeVisible (click);
 
-    const char* titles[] = { "Next loop layer", "A take on the song", "Into the Sampler or next MPC pad", "The whole set, to stems" };
+    const char* titles[] = { "Next loop layer", "A take on the song", "Into the Sampler or next MPC pad", "The whole set, to stems",
+                             "Pads into the MPC pattern" };
     const char* subs[] = { "As editable notes where the tool has notes. The default, the same as the phone.",
                            "Into a section on the Song timeline, at this bar (was Rec take into the song).",
                            "Resample what plays (was Rec sample / Rec beat).",
-                           "Stems, the mix and MIDI for Logic (was Rec set)." };
-    for (int i = 0; i < 4; ++i)
+                           "Stems, the mix and MIDI for Logic (was Rec set).",
+                           "What you play on the pads goes into the MPC's sequence as hits you can edit (Sequencer)." };
+    for (int i = 0; i < 5; ++i)
     {
         auto* row = lands.add (new LandRow (titles[i], subs[i]));
         row->onClick = [this, i] { if (onLands) onLands (i); };

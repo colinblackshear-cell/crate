@@ -294,6 +294,13 @@ PocketApp::PocketApp (Options o)
         appSettings.save();
         repaint();
     };
+    recSetup.getPadsTo = [this] { return appSettings.padsRecTo; };
+    recSetup.setPadsTo = [this] (int to)
+    {
+        appSettings.padsRecTo = juce::jlimit (0, 1, to);
+        appSettings.save();
+        repaint();
+    };
     recSetup.onDone = [this] { closeRecSetup(); };
     headphones.route = [this] { return route; };
     headphones.onHeadphones = [this] { chooseHeadphones (true); };
@@ -1615,7 +1622,7 @@ void PocketApp::closeTempo()
 
 juce::Rectangle<int> PocketApp::recSetupBounds() const
 {
-    const int h = 336 + insets.getBottom();
+    const int h = 428 + insets.getBottom();
     return { 0, getHeight() - h, getWidth(), h };
 }
 
@@ -1965,7 +1972,8 @@ void PocketApp::recPads()
     // Pads: hits you play go into the pattern (snapped), and when it has gone round it is locked onto the
     // next layer from its start, so it keeps looping. A pattern that's already there just locks.
     auto& b = beats.engine();
-    if (loopsScreen.nextLayer() < 0)
+    const bool patternOnly = appSettings.padsRecTo == 1;   // Rec setup > PADS RECORD INTO > THE PAD PATTERN
+    if (! patternOnly && loopsScreen.nextLayer() < 0)
         return toast ("All 8 layers are used. Clear one in LOOPS to record.");
     auto& p = beats.drums().padPattern;
     const bool empty = p.hits.empty();
@@ -1985,6 +1993,13 @@ void PocketApp::recPads()
     lockArmed = false;
     lockLayer = -1;
     lockWatch.startTimer (20);
+    if (patternOnly)
+    {
+        lockStart = 1.0e15;   // never locked onto a layer: the pattern loops, taking every pass, until REC stops it
+        toast ("Play the pads " + juce::String (running ? "now" : "after the count-in")
+               + U8(": the hits go into the pad pattern and it keeps looping, so each pass adds. REC again stops. (Rec setup \xe2\x80\xba PADS RECORD INTO)"));
+        return;
+    }
     if (empty)
         toast ("Play the pads " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (lockBars).toLowerCase()
                + ". Then it goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + " and keeps looping.");

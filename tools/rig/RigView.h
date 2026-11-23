@@ -120,7 +120,7 @@ public:
     // after the count-in, for the length picked (or until pressed again); or wherever its arrow
     // says Rec lands: a take on the song (Rec into), the Sampler or an MPC pad, the whole set.
     // Pressed while anything of those records, it stops that.
-    enum class RecLands { layer, song, sample, set };
+    enum class RecLands { layer, song, sample, set, pattern };   // pattern: the pads into the MPC sequence
     void pressRec();
     void setRecLands (RecLands l) { recLands = l; updateDock(); }
     RecLands getRecLands() const { return recLands; }

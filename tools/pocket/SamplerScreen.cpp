@@ -30,6 +30,14 @@ SamplerScreen::SamplerScreen (PocketHost& h, PocketAudio& a, Library& lib, Kit& 
 
     soundsButton.setFontHeight (16.0f);
     soundsButton.onClick = [this] { showSounds(); };
+    static const char* stepNames[5] = { "1 Get", "2 Shape", "3 Chop", "4 Pads", "5 Save set" };
+    for (int i = 0; i < 5; ++i)
+    {
+        steps[i].setText (stepNames[i]);
+        steps[i].setFontHeight (13.0f);
+        steps[i].onClick = [this, i] { pressStep (i); };
+        addAndMakeVisible (steps[i]);
+    }
     toolButton.setFontHeight (16.0f);
     toolButton.onClick = [this] { if (onSampleTool) onSampleTool(); };
     allButton.setFontHeight (16.0f);
@@ -150,6 +158,8 @@ void SamplerScreen::updateLabels()
     undoButton.setLook (undoStack.empty() ? Look::ghost : Look::cream);
     clearButton.setLook (hasSound() ? Look::cream : Look::ghost);
     chopButton.setLook (hasSound() ? Look::cream : Look::ghost);
+    for (int i = 0; i < 5; ++i)
+        steps[i].setLook (i == currentStep() ? Look::dark : Look::ghost);
     repaint();
 }
 
@@ -184,6 +194,7 @@ void SamplerScreen::editForPad (int pad)
 
 void SamplerScreen::loadSound (const juce::String& id)
 {
+    chopped = false;
     auto* item = library.find (id);
     auto loaded = library.load (id);
     if (item == nullptr || loaded == nullptr)
@@ -201,6 +212,7 @@ void SamplerScreen::loadSound (const juce::String& id)
 
 void SamplerScreen::clear()
 {
+    chopped = false;
     audio.stopPlaying();
     currentId = {};
     name = {};
@@ -264,6 +276,7 @@ void SamplerScreen::useTake (crate::SharedAudio loaded, const juce::String& take
 {
     if (loaded == nullptr)
         return;
+    chopped = false;
     if (hasSound())
         undoStack.push_back ({ wave.getAudio(), wave.getSelection(), currentId, 0, false });
     currentId = {};
@@ -519,6 +532,8 @@ int SamplerScreen::chopToPads (int slices)
                           if (safe->onPadSet)
                               safe->onPadSet (first);
                       });
+    chopped = used > 0;
+    updateLabels();
     return used;
 }
 
@@ -574,6 +589,30 @@ void SamplerScreen::timerCallback()
     hearButton.repaint();
 }
 
+void SamplerScreen::pressStep (int step)
+{
+    switch (step)
+    {
+        case 0:
+        {
+            HoldSpec s;
+            s.title = "1 GET A SOUND";
+            s.items.push_back ({ "REC FROM THE MIC", "at once, a one-shot", false, true, [this] { startRecording(); } });
+            s.items.push_back ({ "A TOOL", "a loop layer, or the loops mixed", false, true, [this] { if (onSampleTool) onSampleTool(); } });
+            s.items.push_back ({ "SOUNDS", "yours and the factory's", false, true, [this] { showSounds(); } });
+            host.holdMenu (s, *this, steps[0].getBounds().getCentre().toFloat(), steps[0].getBounds().toFloat());
+            break;
+        }
+        case 1:
+            if (needSound())
+                host.toast (U8("Shape it: drag IN and OUT, then TRIM. MORE EDITS \xe2\x80\xba has fades, effects and the name."));
+            break;
+        case 2: if (needSound()) showChopMenu(); break;
+        case 3: if (onShowPads) onShowPads(); break;
+        default: if (onSaveSet) onSaveSet(); break;
+    }
+}
+
 void SamplerScreen::paint (juce::Graphics& g)
 {
     g.setColour (col::ink);
@@ -620,14 +659,25 @@ void SamplerScreen::paint (juce::Graphics& g)
 void SamplerScreen::resized()
 {
     const int w = getWidth(), h = getHeight(), x0 = 16, iw = w - 32;
-    soundsButton.setBounds (x0 + iw - 104, 6, 104, 44);
-    toolButton.setBounds (x0 + iw - 104 - 8 - 88, 6, 88, 44);
-    titleArea = { (float) x0, 6.0f, (float) (iw - 104 - 8 - 88 - 8), 44.0f };
+    {
+        const float widths[5] = { 1.0f, 1.2f, 1.1f, 1.0f, 1.5f };
+        const int gap = 6;
+        float x = (float) x0;
+        const float unit = (float) (iw - 4 * gap) / 5.8f;
+        for (int i = 0; i < 5; ++i)
+        {
+            steps[i].setBounds (juce::roundToInt (x), 4, juce::roundToInt (unit * widths[i]), 32);
+            x += unit * widths[i] + (float) gap;
+        }
+    }
+    soundsButton.setBounds (x0 + iw - 104, 42, 104, 44);
+    toolButton.setBounds (x0 + iw - 104 - 8 - 88, 42, 88, 44);
+    titleArea = { (float) x0, 42.0f, (float) (iw - 104 - 8 - 88 - 8), 44.0f };
     auto sendRow = juce::Rectangle<int> (x0, h - 8 - 56, iw, 56);
     auto hearRow = sendRow.withY (sendRow.getY() - 8 - 52).withHeight (52);
     auto row1 = juce::Rectangle<int> (x0, hearRow.getY() - 8 - 44, iw, 44);
     infoArea = { (float) x0, (float) (row1.getY() - 6 - 24), (float) iw, 24.0f };
-    wave.setBounds (x0, 58, iw, juce::jmax (90, (int) infoArea.getY() - 4 - 58));
+    wave.setBounds (x0, 94, iw, juce::jmax (90, (int) infoArea.getY() - 4 - 94));
 
     pickButton.setBounds (sendRow.removeFromRight (92));
     sendRow.removeFromRight (8);

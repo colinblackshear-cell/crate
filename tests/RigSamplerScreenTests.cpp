@@ -357,6 +357,37 @@ struct RigSamplerScreenTests : juce::UnitTest
             temp.getFile().deleteRecursively();
         }
 
+        beginTest ("the steps: 1 Get lit on an empty Sampler, 2 Shape opens the editor, 3 Chop the chop side");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            expectEquals (screen.currentStep(), 0);
+            screen.pressStep (1);
+            expect (screen.isEditMode(), "2 Shape shows the editor");
+            engine.getSampler().getDocument().load (hits(), "Dusty break", "Load");
+            expectEquals (screen.currentStep(), 1);
+            screen.pressStep (2);
+            expect (! screen.isEditMode());
+            expectEquals (screen.currentStep(), 2);
+            bool shown = false;
+            for (auto* c : screen.getChildren())
+                if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText().endsWith ("Save set"))
+                    shown = b->isVisible() && b->getWidth() > 60;
+            expect (shown, "5 Save set is on screen");
+            if (const auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_SAMPLER_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                screen.openPadInSampler (0);   // nothing on A01: stays on the chop side
+                juce::File file (path + "-steps.png");
+                file.deleteFile();
+                juce::FileOutputStream stream (file);
+                juce::PNGImageFormat().writeImageToStream (screen.createComponentSnapshot (screen.getLocalBounds(), true, 1.0f), stream);
+            }
+        }
+
         beginTest ("the full editor is on the Sampler screen: Edit shows it, Chop shows the pads");
         {
             RigEngine engine;

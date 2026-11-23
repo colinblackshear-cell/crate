@@ -144,6 +144,18 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
             showSampleToolMenu();
     };
     addAndMakeVisible (sampleToolButton);
+    const char* stepTips[5] = { "Get a sound: record the mic, sample a tool, open a file or pick from Sounds.",
+                                "Shape it: the editor (trim, fades, effects, keys).",
+                                "Chop it: find the hits or cut it even, then To pads.",
+                                "Play it: the pads, the sequencer and your kits.",
+                                "Save the bank on screen as a set (its sounds and pad settings), for the phone and Logic too." };
+    for (int i = 0; i < 5; ++i)
+    {
+        stepButtons[i].getProperties().set ("fontSize", 15.0f);
+        stepButtons[i].setTooltip (stepTips[i]);
+        stepButtons[i].onClick = [this, i] { pressStep (i); };
+        addAndMakeVisible (stepButtons[i]);
+    }
 
     toPadsButton.getProperties().set ("fontSize", 16.0f);
     toPadsButton.setTooltip ("Puts the slices on the MPC's pads as a new kit, slice 1 on A01.");
@@ -440,7 +452,8 @@ void SamplerScreen::setSide (int side)
     const std::initializer_list<juce::Component*> padSide { &bankButtons[0], &bankButtons[1], &bankButtons[2], &bankButtons[3], &fullLevel,
                                                             &levelsButton, &repeatButton, &rateButton, &soundsButton, &kitsButton };
     const std::initializer_list<juce::Component*> top { &chopModeButton, &mpcModeButton, &editModeButton, &beatButton, &loopPadsButton,
-                                                        &loopBarsButton };
+                                                        &loopBarsButton, &stepButtons[0], &stepButtons[1], &stepButtons[2], &stepButtons[3],
+                                                        &stepButtons[4] };
     const std::initializer_list<juce::Component*> padBarButtons { &padPrevButton, &padNextButton, &padBackButton, &padNewButton, &padSaveButton };
     for (auto* c : getChildren())
     {
@@ -729,6 +742,46 @@ void SamplerScreen::updatePadBar()
     if (padSaveButton.getButtonText() != text)
         padSaveButton.setButtonText (text);
     padSaveButton.setEnabled (engine.getSampler().getDocument().hasAudio());
+}
+
+int SamplerScreen::currentStep() const
+{
+    if (! engine.getSampler().getDocument().hasAudio() && mode != mpcSide)
+        return 0;
+    return mode == editSide ? 1 : mode == mpcSide ? 3 : 2;
+}
+
+void SamplerScreen::updateSteps()
+{
+    const int now = currentStep();
+    for (int i = 0; i < 5; ++i)
+        if (stepButtons[i].getToggleState() != (i == now))
+        {
+            stepButtons[i].setToggleState (i == now, juce::dontSendNotification);
+            setLit (stepButtons[i], i == now ? Lit::current : Lit::none);
+        }
+}
+
+void SamplerScreen::pressStep (int step)
+{
+    switch (step)
+    {
+        case 0:
+        {
+            juce::PopupMenu menu;
+            menu.addItem ("Rec sample (your audio input)", [this] { editor.toggleRecord(); });
+            menu.addItem (juce::String::fromUTF8 ("Sample a tool\xe2\x80\xa6"), [this] { showSampleToolMenu(); });
+            menu.addItem (juce::String::fromUTF8 ("Open a file\xe2\x80\xa6"), [this] { editor.chooseSoundFile(); });
+            menu.addItem ("Sounds (your sound bank, Splice)", [this] { showSounds (true); });
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (stepButtons[0]));
+            break;
+        }
+        case 1: setSide (editSide); break;
+        case 2: setSide (chopSide); break;
+        case 3: setSide (mpcSide); break;
+        default: askSaveSet (engine.getMpc().padBankOnScreen.load()); break;
+    }
+    updateSteps();
 }
 
 bool SamplerScreen::isSamplingTool() const
@@ -1383,6 +1436,7 @@ void SamplerScreen::timerCallback()
     updateRemoveButton();
     updateClearButton();
     updateSampleToolButton();
+    updateSteps();
     if (editPad >= 0)
     {
         if (editKit >= (int) engine.getMpc().getProject().getBanks().size())
@@ -1781,7 +1835,18 @@ void SamplerScreen::resized()
         m.removeFromRight (10);
         beatButton.setBounds (m.removeFromRight (112));
     }
-    r.removeFromTop (10);
+    r.removeFromTop (8);
+    stepRow = r.removeFromTop (30);
+    {
+        auto s = stepRow;
+        const int w = juce::jmin (150, (s.getWidth() - 4 * 6) / 5);
+        for (auto& b : stepButtons)
+        {
+            b.setBounds (s.removeFromLeft (w));
+            s.removeFromLeft (6);
+        }
+    }
+    r.removeFromTop (8);
     padBar = {};
     if (editPad >= 0)
     {

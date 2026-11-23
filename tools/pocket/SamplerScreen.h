@@ -27,7 +27,7 @@ public:
     std::function<void()> onPickPad;                        // PICK PAD: the 4 x 4 grid
     std::function<void (const juce::String& soundId, int pad)> onMoreEdits;   // the sound recorder, on this sound
     std::function<int()> currentBank;
-    std::function<void()> onSampleTool;                     // A TOOL: a loop layer (any tool's take) or the loops mixed, onto the page
+    std::function<void()> onSampleTool, onShowPads, onSaveSet;   // A TOOL; the steps' 4 PADS and 5 SAVE SET                     // A TOOL: a loop layer (any tool's take) or the loops mixed, onto the page
 
     void editForPad (int pad);                 // the pad's sound (its part as IN / OUT), aimed at the pad
     void loadSound (const juce::String& id);   // another sound (the target stays)
@@ -63,6 +63,9 @@ public:
     int chopToPads (int slices);
     void showChopMenu();                       // CHOP TO PADS: hits, or 4, 8 or 16 equal slices
     void leave();                              // another tool or page: stops a take and the playback
+    // The steps along the top: 1 GET, 2 SHAPE, 3 CHOP, 4 PADS, 5 SAVE SET. The lit one is where you are; each runs its step.
+    int currentStep() const { return ! hasSound() ? 0 : chopped ? 3 : 1; }
+    void pressStep (int step);
 
     // Screenshots: a sound on screen as if it had just been recorded.
     void showDemo (crate::SharedAudio, const juce::String& soundName, juce::Range<int> sel, int pad);
@@ -88,7 +91,8 @@ private:
     PocketWave wave;
     pocket::PButton soundsButton { "Sounds" }, allButton { "All" }, undoButton { "Undo" }, moreButton { U8("More edits \xe2\x80\xba") },
         hearButton { "Hear", pocket::Look::green }, trimButton { "Trim" }, sendButton { "Send to pad", pocket::Look::amber },
-        pickButton, clearButton { "Clear" }, chopButton { U8("Chop to pads\xe2\x80\xa6") }, toolButton { "A tool" };
+        pickButton, clearButton { "Clear" }, chopButton { U8("Chop to pads\xe2\x80\xa6") }, toolButton { "A tool" }, steps[5];
+    bool chopped = false;   // the sound on the page went onto the pads (CHOP TO PADS)
     std::vector<State> undoStack;
     juce::String currentId, name;
     int targetPad = -1;

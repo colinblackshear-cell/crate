@@ -94,6 +94,9 @@ public:
     bool canUndoLoadSet() const;
     void pressUndoLoadSet();
     void askSaveSet (int bank);
+    // The steps across the top: 1 Get, 2 Shape, 3 Chop, 4 Pads, 5 Save set. The lit one is where you are.
+    int currentStep() const;
+    void pressStep (int step);
     bool isSamplingTool() const;
     // Remove: takes the sound off the picked pad (its name, settings and effects with it). Until
     // something goes on that pad again, the button says Undo and puts it all back.
@@ -194,6 +197,10 @@ private:
     void showPadMenu (int padInBank);
     void updateTopButtons();
     juce::Rectangle<int> modeRow;
+    juce::TextButton stepButtons[5] { juce::TextButton ("1  Get"), juce::TextButton ("2  Shape"), juce::TextButton ("3  Chop"),
+                                      juce::TextButton ("4  Pads"), juce::TextButton ("5  Save set") };
+    juce::Rectangle<int> stepRow;
+    void updateSteps();
 
     juce::TextButton chopButtons[3] { juce::TextButton ("Transients"), juce::TextButton ("Even 16"), juce::TextButton ("By hand") };
     juce::TextButton snapButton { "Snap to zero" }, toPadsButton { "To pads" }, openButton { "Open" }, editorButton { "Editor" },

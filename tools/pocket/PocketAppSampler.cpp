@@ -52,7 +52,7 @@ void PocketApp::showSampleToolMenu()
     holdMenu (s, sampler, sampler.getLocalBounds().getCentre().toFloat().withY (60.0f), {});
 }
 
-void PocketApp::showSetsMenu()
+void PocketApp::showSetsMenu (juce::Component* anchor)
 {
     pocket::HoldSpec s;
     const int bank = beats.currentBank();
@@ -77,7 +77,8 @@ void PocketApp::showSetsMenu()
         if (const auto set = SoundSet::peek (folder))
             s.items.push_back ({ "LOAD " + set->name.toUpperCase(), set->describe() + (set->wholeKit ? juce::String() : U8(" \xc2\xb7 onto bank ") + bankName),
                                  false, true, [this, folder] { loadSetFolder (folder); } });
-    holdMenu (s, soundBank, soundBank.getLocalBounds().getCentre().toFloat().withY (40.0f), {});
+    auto& over = anchor != nullptr ? *anchor : static_cast<juce::Component&> (soundBank);
+    holdMenu (s, over, over.getLocalBounds().getCentre().toFloat().withY (40.0f), {});
 }
 
 juce::File PocketApp::saveBankAsSet (const juce::String& name, bool wholeKit)
@@ -175,6 +176,8 @@ void PocketApp::setupSampler()
     sampler.onPickPad = [this] { openPadPicker(); };
     sampler.currentBank = [this] { return beats.currentBank(); };
     sampler.onSampleTool = [this] { showSampleToolMenu(); };
+    sampler.onShowPads = [this] { showTool (Tool::pads, false); };
+    sampler.onSaveSet = [this] { showSetsMenu (&sampler); };
     sampler.onMoreEdits = [this] (const juce::String& id, int pad)
     {
         // the sound recorder: fades, normalize, reverse, effects, chop and the name. On the pad's own sound it is the
@@ -538,13 +541,46 @@ juce::String PocketApp::runSamplerChecks (juce::String& report)
             hideToast();
             folder.deleteRecursively();
         }
+
+        // the steps: 1 GET lit on an empty page, 4 PADS after CHOP TO PADS, and 1 GET opens its menu
+        {
+            showTool (Tool::sampler, false);
+            sampler.clear();
+            expect (sampler.currentStep() == 0, "Steps: an empty SAMPLER doesn't light 1 GET");
+            sampler.pressStep (0);
+            expect (holdCard.isOpen() && holdCard.itemCount() == 3, "Steps: 1 GET didn't offer the mic, a tool and sounds");
+            holdCard.close();
+            sampler.useTake (lib.load (lib.items().back().id));
+            expect (sampler.currentStep() == 1, "Steps: a sound on the page doesn't light 2 SHAPE");
+            sampler.chopToPads (4);
+            hideToast();
+            expect (sampler.currentStep() == 3, "Steps: after CHOP TO PADS, 4 PADS isn't lit");
+            sampler.pressStep (3);
+            expect (page == Page::tool && tool == Tool::pads, "Steps: 4 PADS didn't go to the pads");
+        }
+
+        // Rec setup > PADS RECORD INTO > THE PAD PATTERN: REC on PADS plays into the pattern and never arms a layer
+        {
+            const int keepTo = appSettings.padsRecTo;
+            appSettings.padsRecTo = 1;
+            showTool (Tool::pads, false);
+            const int layersBefore = loopsScreen.layerCount();
+            recPads();
+            expect (lockKind == LockKind::pads && playingIn() && lockStart > 1.0e14, "Pads into the pattern: REC didn't start playing into the pad pattern");
+            lockWatchTick();
+            stopRec();
+            expect (lockKind == LockKind::none && ! beats.recordingPads() && loopsScreen.busyLayer() < 0 && loopsScreen.layerCount() == layersBefore,
+                    "Pads into the pattern: REC again didn't stop, or a layer got armed");
+            appSettings.padsRecTo = keepTo;
+            hideToast();
+        }
         showIdeasList();
         switchIdea (songId);
         ideas.remove (fresh);
         report << "sampler: FACTORY SOUND BACK on a pad's hold menu; CLEAR empties the page (the pad keeps it), UNDO brings it back; "
                   "CHOP TO PADS puts 16 slices of one sound on A01-A16, each pad's sample page shows its slice, UNDO puts the kit back; "
                   "EDIT THIS SLICE makes a chop its pad's own sound and opens it alone in the sound editor (UNDO puts the chop back); "
-                  "A TOOL brings a loop layer (any tool's take) onto the SAMPLER at its length; SETS saves bank A and loads it back with its pad settings (UNDO)\n";
+                  "A TOOL brings a loop layer (any tool's take) onto the SAMPLER at its length; SETS saves bank A and loads it back with its pad settings (UNDO); PADS RECORD INTO THE PAD PATTERN plays REC into the pattern only (no layer)\n";
     }
 
     showIdeasList();

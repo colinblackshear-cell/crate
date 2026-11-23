@@ -201,7 +201,7 @@ private:
     // Sets (PADS > Sounds > SETS): the bank on screen saved as a set (core/SoundSet.h) in Documents/Sets, the same
     // folder layout as the Mac's ~/Music/Crate/Sets; a set loaded onto the bank (a whole-kit set onto all 64 pads), UNDO.
     juce::File setsFolder() const { return lib.getRoot().getChildFile ("Sets"); }
-    void showSetsMenu();
+    void showSetsMenu (juce::Component* anchor = nullptr);   // the menu over `anchor` (the Sounds sheet when null)
     juce::File saveBankAsSet (const juce::String& name, bool wholeKit);
     bool loadSetFolder (const juce::File&);
     // A bottom sheet over the dim, sliding up (shown) or down: the pad picker, the chord editor.
