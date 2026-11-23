@@ -636,7 +636,7 @@ TimelineView::TimelineView (RigEngine& e) : engine (e), timeline (e.getTimeline(
     onButton.setClickingTogglesState (true);
     onButton.setTooltip ("On: while the clock plays, the timeline brings loops and tools in and out. Off: they play as you set them "
                          "(to jam, or to use the Song builder's parts).");
-    onButton.onClick = [this] { timeline.on = onButton.getToggleState(); };
+    onButton.onClick = [this] { timeline.on = onButton.getToggleState(); engine.getDirty().authoredField (RigDirty::timelineOn, 0); };
     recOnto.setClickingTogglesState (true);
     recOnto.setTooltip ("While the song plays, a loop you record (Looper > Rec next layer) goes on its lane, at the bar you started it.");
     recOnto.onClick = [this] { recordOntoSong = recOnto.getToggleState(); };

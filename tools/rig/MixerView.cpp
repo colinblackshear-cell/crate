@@ -114,7 +114,7 @@ MixerView::Channel::Channel (MixerView& d, Kind k, int i) : kind (k), index (i),
     {
         auto& strip = e.getStrip (index);
         fader.onValueChange = [this, &strip] { strip.level = (float) fader.getValue(); };
-        mute.onClick = [this, &strip] { strip.mute = ! strip.mute.load(); refresh(); };
+        mute.onClick = [this, &strip] { strip.mute = ! strip.mute.load(); engine().getDirty().authoredField (RigDirty::stripMute, index); refresh(); };
         setUpButton (solo, Lit::next, "Solo: hear only this (and anything else soloed). The sends still reach the Reverb and Echo.");
         solo.onClick = [this, &strip] { strip.solo = ! strip.solo.load(); desk.refresh(); };
         addAndMakeVisible (solo);
@@ -131,13 +131,13 @@ MixerView::Channel::Channel (MixerView& d, Kind k, int i) : kind (k), index (i),
     {
         auto& strip = e.getStrip (RigEngine::masterStrip);
         fader.onValueChange = [this, &strip] { strip.level = (float) fader.getValue(); };
-        mute.onClick = [this, &strip] { strip.mute = ! strip.mute.load(); refresh(); };
+        mute.onClick = [this, &strip] { strip.mute = ! strip.mute.load(); engine().getDirty().authoredField (RigDirty::stripMute, RigEngine::masterStrip); refresh(); };
     }
     else if (kind == Kind::layer)
     {
         auto& layer = e.getLooper().getLayer (index);
         fader.onValueChange = [this, &layer] { layer.level = (float) fader.getValue(); };
-        mute.onClick = [this, &layer] { layer.mute = ! layer.mute.load(); refresh(); };
+        mute.onClick = [this, &layer] { layer.mute = ! layer.mute.load(); engine().getDirty().authoredField (RigDirty::loopMute, index); refresh(); };
         setUpButton (rec, Lit::arm, "Records this layer from the next bar; press again to stop and loop it. (Overdub is on the Looper.)");
         rec.onClick = [this] { engine().getLooper().recordOrClose (index); };
         addAndMakeVisible (rec);

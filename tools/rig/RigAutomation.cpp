@@ -1,4 +1,5 @@
 #include "RigAutomation.h"
+#include "RigDirty.h"
 
 #include <algorithm>
 #include <cmath>
@@ -693,7 +694,14 @@ void RigAutomation::process (const Clock& c)
         }
         const float target = lane.valueAt (at);
         if (std::abs (target - v) > kMoved)
+        {
+            // Playback's write, not yours: the dirty model keeps the value you set.
+            if (dirty != nullptr)
+                dirty->runtimeParam (l.param, target);
             l.param->setValueNotifyingHost (target);
+            if (dirty != nullptr)
+                dirty->runtimeParamWritten (l.param);
+        }
         l.written = target;
         l.seen = l.param->getValue();
     }

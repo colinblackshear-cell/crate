@@ -333,6 +333,13 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     setLookAndFeel (&vintageLook);
     setWantsKeyboardFocus (true);
     setOpaque (true);
+    if (engine.getDirty().isEnabled())
+    {
+        activity = std::make_unique<Activity> (engine);
+        juce::Desktop::getInstance().addGlobalMouseListener (activity.get());
+        juce::Desktop::getInstance().addFocusChangeListener (activity.get());
+        addKeyListener (activity.get());
+    }
     vintage::setStage ((bool) engine.screens.getProperty ("dark", false));
 
     for (auto* c : std::initializer_list<juce::Component*> { &header, &screenBar, &footer, &dock, &rail })
@@ -871,7 +878,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         keysTo.addItem (RigRouting::destName ((int) d), 1 + (int) d);
         lowerKeysTo.addItem (RigRouting::destName ((int) d), 1 + (int) d);
     }
-    keysTo.onChange = [this] { engine.getRouting().keysTo = keysTo.getSelectedId() - 1; };
+    keysTo.onChange = [this] { engine.getRouting().keysTo = keysTo.getSelectedId() - 1; engine.getDirty().authoredField (RigDirty::keysTo, 0); };
     lowerKeysTo.onChange = [this] { engine.getRouting().lowerKeysTo = lowerKeysTo.getSelectedId() - 1; };
     lowerKeysTo.setTooltip ("What the keys below the split play, e.g. the bass with your left hand.");
     splitNote.addItem ("No split", 1);
@@ -928,6 +935,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
 RigView::~RigView()
 {
+    if (activity != nullptr)
+    {
+        juce::Desktop::getInstance().removeGlobalMouseListener (activity.get());
+        juce::Desktop::getInstance().removeFocusChangeListener (activity.get());
+        removeKeyListener (activity.get());
+    }
     phoneLink.reset();
     if (controllersWindow != nullptr)
         delete controllersWindow.getComponent();
@@ -1030,14 +1043,19 @@ void RigView::showTab (const juce::String& name)
         tabs.setCurrentTabIndex (i);
     // The keyboard's drum pads play the tool on screen: the MPC's pads (in the bank it shows) on
     // the MPC and Sampler · MPC pages, the drum machine on its own.
+    // (Following the screen, as the Groove screen's tracks do: playback-like for the dirty model.)
     auto& routing = engine.getRouting();
     if (name == "MPC" || name == "Sampler")
     {
+        engine.getDirty().runtimeField (RigDirty::padsTo, 0, (float) routing.padsTo.load(), (float) RigRouting::Dest::mpc);
         routing.padsTo = (int) RigRouting::Dest::mpc;
         routing.padBank = juce::jlimit (0, 3, engine.getMpc().padBankOnScreen.load());
     }
     else if (name == "Drum machine")
+    {
+        engine.getDirty().runtimeField (RigDirty::padsTo, 0, (float) routing.padsTo.load(), (float) RigRouting::Dest::drums);
         routing.padsTo = (int) RigRouting::Dest::drums;
+    }
     pageChanged();
 }
 
@@ -3682,7 +3700,7 @@ void RigView::saveShowAs()
 
 bool RigView::writeShowTo (const juce::File& file)
 {
-    const auto result = engine.saveShowFile (file);
+    const auto result = engine.saveShowFile (file, rigshow::SaveKind::document);
     if (! result.ok)
     {
         say ("Couldn't save " + file.getFileName() + ": " + result.error);

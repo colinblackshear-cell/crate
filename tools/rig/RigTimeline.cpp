@@ -37,6 +37,7 @@ int RigTimeline::laneForStrip (int strip)
 //==============================================================================
 void RigTimeline::changed()
 {
+    ++edits;
     blocks.erase (std::remove_if (blocks.begin(), blocks.end(), [] (const Block& b) { return ! juce::isPositiveAndBelow (b.lane, kLanes); }),
                   blocks.end());
     if ((int) blocks.size() > kMaxBlocks)

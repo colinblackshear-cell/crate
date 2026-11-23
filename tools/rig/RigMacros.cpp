@@ -1,4 +1,5 @@
 #include "RigMacros.h"
+#include "RigDirty.h"
 
 RigMacros::RigMacros()
 {
@@ -270,7 +271,13 @@ void RigMacros::process()
                 const auto& t = macro.targets[i];
                 const float to = juce::jlimit (0.0f, 1.0f, t.from + (t.to - t.from) * v);
                 if (std::abs (p->getValue() - to) > 1.0e-6f)
+                {
+                    if (dirty != nullptr)
+                        dirty->runtimeParam (p, to);
                     p->setValueNotifyingHost (to);
+                    if (dirty != nullptr)
+                        dirty->runtimeParamWritten (p);
+                }
             }
     }
 }

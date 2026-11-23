@@ -7,6 +7,8 @@
 #include <functional>
 #include <vector>
 
+class RigDirty;
+
 // Macros: eight big knobs for the show, each turning many settings at once (one knob that
 // opens the bass's filter, adds the delay and thins the drums, for a build).
 //
@@ -35,6 +37,8 @@ public:
     std::function<juce::AudioProcessorParameter* (int tool, int parameter)> getParameter;
     std::function<int (int tool)> numParameters;
     std::function<juce::String (int tool)> toolName;
+    // The engine's dirty model: a macro's writes go through its runtime hooks (null: none).
+    RigDirty* dirty = nullptr;
 
     RigMacros();
 
