@@ -100,6 +100,11 @@ public:
     void chooseSoundFile() { chooseFile(); }
     void openSoundFile (const juce::File& file) { openFile (file); }
     void toggleRecord() { toggleRecording(); }
+    // Clear: an empty editor, as an undoable step (Undo brings the sound back). Libraries, pads and
+    // files that have the sound keep it.
+    void clearSound();
+    void saveSoundToLibrary() { saveToLibrary(); }
+    static inline const juce::String kClearAction { "Clear the sound" };
 
 private:
     static constexpr int kEffectsWidth = 330;
@@ -148,7 +153,7 @@ private:
     juce::TextButton recordButton { "Record" };
     LevelMeter meter;
     juce::Label recordTime;
-    juce::TextButton openButton { "Open..." }, saveButton { "Save to library" }, exportButton { "Export..." };
+    juce::TextButton openButton { "Open..." }, saveButton { "Save to library" }, exportButton { "Export..." }, clearButton { "Clear" };
     juce::Label nameLabel { {}, "Name" };
     juce::TextEditor nameEditor;
 

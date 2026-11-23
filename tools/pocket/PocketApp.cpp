@@ -302,6 +302,13 @@ PocketApp::PocketApp (Options o)
         appSettings.save();
         repaint();
     };
+    recSetup.getPadsTo = [this] { return appSettings.padsRecTo; };
+    recSetup.setPadsTo = [this] (int to)
+    {
+        appSettings.padsRecTo = juce::jlimit (0, 1, to);
+        appSettings.save();
+        repaint();
+    };
     recSetup.onDone = [this] { closeRecSetup(); };
     headphones.route = [this] { return route; };
     headphones.onHeadphones = [this] { chooseHeadphones (true); };
@@ -309,6 +316,7 @@ PocketApp::PocketApp (Options o)
 
     soundBank.onLoad = [this] (int k) { loadKit (k); };
     soundBank.onDone = [this] { closeSoundBank(); };
+    soundBank.onSets = [this] { showSetsMenu(); };
     soundBank.onOpenSounds = [this] { closeSoundBank(); showPage (Page::more, 1); };
     soundBank.loadedKitName = [this] { return beats.kit().name; };
     soundBank.onImport = [this]
@@ -666,6 +674,54 @@ void PocketApp::openSamplePage (int pad)
     closePadSheet();
     showTool (Tool::sampler, false);
     sampler.editForPad (pad);
+}
+
+// EDIT THIS SLICE (a pad's hold menu): the pad's part of its sound, alone in the sound editor and aimed at the pad.
+// A part of a longer sound, a sound other pads play too, or a factory sound becomes the pad's own copy first, so the
+// edit changes this pad only (UNDO puts the pad back on the sound it played).
+void PocketApp::editPadSlice (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads))
+        return;
+    auto& kit = beats.kit();
+    const auto old = kit.pads[(size_t) pad];
+    const auto* item = lib.find (old.soundId);
+    auto whole = item != nullptr ? lib.load (old.soundId) : nullptr;
+    if (old.empty() || whole == nullptr)
+        return toast (old.empty() ? "Pad " + Kit::padLabel (pad) + " is empty" : juce::String ("That sound is gone from Sounds"));
+    const int n = whole->getNumSamples();
+    const int from = juce::jlimit (0, juce::jmax (0, n - 1), old.from);
+    const int to = old.to < 0 ? n : juce::jlimit (from + 1, n, old.to);
+    int sharing = 0;
+    for (int i = 0; i < kPads; ++i)
+        sharing += (i != pad && ! kit.pads[(size_t) i].empty() && kit.pads[(size_t) i].soundId == old.soundId) ? 1 : 0;
+    auto id = old.soundId;
+    if (from > 0 || to < n || sharing > 0 || item->tag == pocket::kTagFactory)
+    {
+        juce::AudioBuffer<float> part (whole->getNumChannels(), to - from);
+        for (int c = 0; c < part.getNumChannels(); ++c)
+            part.copyFrom (c, 0, *whole, c, from, to - from);
+        const auto name = old.name.isNotEmpty() ? old.name : item->name + " " + Kit::padLabel (pad);
+        const auto fx = item->fx;
+        id = lib.add (name, pocket::kTagRecorded, part, fx, {});
+        const auto* copy = lib.find (id);
+        auto copied = copy != nullptr ? lib.load (id) : nullptr;
+        if (copied == nullptr)
+            return toast ("The slice couldn't be saved");
+        kit.assign (pad, *copy, copied, 0, -1, old.name);
+        beats.padsChanged();
+    }
+    closePadSheet();
+    showPage (Page::recorder);
+    record.editForPad (pad, id);
+    if (id != old.soundId)
+        toastAction ("Pad " + Kit::padLabel (pad) + U8(" has its slice as its own sound now: edit it, then SAVE TO PAD"), "UNDO",
+                     [this, pad, old]
+                     {
+                         beats.kit().pads[(size_t) pad] = old;
+                         beats.padsChanged();
+                         record.endPadMode();
+                     });
 }
 
 // RECORD A NEW SOUND (a pad's hold menu, PADS): the SAMPLER, empty and aimed at the pad, for REC
@@ -1638,7 +1694,7 @@ void PocketApp::closeTempo()
 
 juce::Rectangle<int> PocketApp::recSetupBounds() const
 {
-    const int h = 390 + insets.getBottom();
+    const int h = 482 + insets.getBottom();
     return { 0, getHeight() - h, getWidth(), h };
 }
 
@@ -1988,7 +2044,8 @@ void PocketApp::recPads()
     // Pads: hits you play go into the pattern (snapped), and when it has gone round it is locked onto the
     // next layer from its start, so it keeps looping. A pattern that's already there just locks.
     auto& b = beats.engine();
-    if (loopsScreen.nextLayer() < 0)
+    const bool patternOnly = appSettings.padsRecTo == 1;   // Rec setup > PADS RECORD INTO > THE PAD PATTERN
+    if (! patternOnly && loopsScreen.nextLayer() < 0)
         return toast ("All 8 layers are used. Clear one in LOOPS to record.");
     auto& p = beats.drums().padPattern;
     const bool empty = p.hits.empty();
@@ -2011,6 +2068,13 @@ void PocketApp::recPads()
     lockArmed = false;
     lockLayer = -1;
     lockWatch.startTimer (20);
+    if (patternOnly)
+    {
+        lockStart = 1.0e15;   // never locked onto a layer: the pattern loops, taking every pass, until REC stops it
+        toast ("Play the pads " + juce::String (running ? "now" : "after the count-in")
+               + U8(": the hits go into the pad pattern and it keeps looping, so each pass adds. REC again stops. (Rec setup \xe2\x80\xba PADS RECORD INTO)"));
+        return;
+    }
     if (empty)
         toast ("Play the pads " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (lockBars).toLowerCase()
                + ". Then it goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + " and keeps looping.");

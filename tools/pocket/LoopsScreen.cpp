@@ -1246,24 +1246,79 @@ void LoopsScreen::save()
     settingsDirty = false;
 }
 
+int LoopsScreen::layersWithLoops() const
+{
+    int n = 0;
+    for (int l = 0; l < kLoopLayers; ++l)
+        n += hasLoop (loops.state (l)) ? 1 : 0;
+    return n;
+}
+
+crate::SharedAudio LoopsScreen::layerSound (int layer, juce::String* name, double* beats) const
+{
+    if (layer < 0)
+    {
+        // every layer, mixed from their starts; the shorter ones go round under the longest
+        std::vector<crate::SharedAudio> parts;
+        double most = 0;
+        for (int l = 0; l < kLoopLayers; ++l)
+        {
+            double b = 0;
+            if (! loops.isMuted (l))
+                if (auto s = layerSound (l, nullptr, &b))
+                {
+                    parts.push_back (s);
+                    most = juce::jmax (most, b);
+                }
+        }
+        if (parts.empty())
+            return nullptr;
+        int length = 0;
+        for (auto& p : parts)
+            length = juce::jmax (length, p->getNumSamples());
+        juce::AudioBuffer<float> mix (2, length);
+        mix.clear();
+        for (auto& p : parts)
+            for (int start = 0; start < length; start += p->getNumSamples())
+                for (int c = 0; c < 2; ++c)
+                    mix.addFrom (c, start, *p, juce::jmin (c, p->getNumChannels() - 1), 0, juce::jmin (p->getNumSamples(), length - start));
+        if (const float peak = mix.getMagnitude (0, length); peak > 0.98f)
+            mix.applyGain (0.98f / peak);
+        if (name != nullptr)
+            *name = "Pocket loops mixed";
+        if (beats != nullptr)
+            *beats = most;
+        return crate::share (std::move (mix));
+    }
+    if (! juce::isPositiveAndBelow (layer, kLoopLayers) || ! hasLoop (loops.state (layer)))
+        return nullptr;
+    auto take = loops.copyOf (layer);
+    if (take == nullptr || take->length.load() <= 0)
+        return nullptr;
+    juce::AudioBuffer<float> b (1, take->length.load());
+    b.copyFrom (0, 0, take->data.data(), b.getNumSamples());
+    if (! loops.fxOf (layer).isNeutral() || ! loops.board (layerBoardId (layer)).isNeutral())
+        if (auto printed = loops.printed (layer))
+            b = std::move (*printed);   // with its effects and moves and its board, in stereo
+    if (std::abs (take->sampleRate - crate::kSampleRate) > 1.0)
+        b = crate::AudioFiles::resample (b, take->sampleRate);   // the phone records at its own rate; sounds travel at 44.1 kHz
+    if (name != nullptr)
+        *name = "Pocket loop " + juce::String (layer + 1) + " " + titleCase (layerToolName (take->tool));
+    if (beats != nullptr)
+        *beats = take->lengthBeats.load();
+    return crate::share (std::move (b));
+}
+
 void LoopsScreen::sendToMac (bool onlyPicked)
 {
     // The picked layer, or every layer with a loop, onto the Mac's loop layers (stretched to its tempo).
     pocket::MacSend send;
     auto addLayer = [&] (int l)
     {
-        auto take = loops.copyOf (l);
-        if (take == nullptr || take->length.load() <= 0)
-            return;
-        juce::AudioBuffer<float> b (1, take->length.load());
-        b.copyFrom (0, 0, take->data.data(), b.getNumSamples());
-        if (! loops.fxOf (l).isNeutral() || ! loops.board (layerBoardId (l)).isNeutral())
-            if (auto printed = loops.printed (l))
-                b = std::move (*printed);   // with its effects and moves and its board, in stereo
-        if (std::abs (take->sampleRate - crate::kSampleRate) > 1.0)
-            b = crate::AudioFiles::resample (b, take->sampleRate);   // the phone records at its own rate; sounds travel at 44.1 kHz
-        send.items.push_back ({ "Pocket loop " + juce::String (l + 1) + " " + titleCase (layerToolName (take->tool)),
-                                crate::share (std::move (b)), take->lengthBeats.load() });
+        juce::String name;
+        double beats = 0;
+        if (auto sound = layerSound (l, &name, &beats))
+            send.items.push_back ({ name, sound, beats });
     };
     if (onlyPicked && selected >= 0 && hasLoop (loops.state (selected)))
         addLayer (selected);

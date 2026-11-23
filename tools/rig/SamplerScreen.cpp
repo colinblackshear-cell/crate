@@ -3,6 +3,7 @@
 #include "EditorView.h"
 #include "MpcView.h"
 #include "core/SoundFx.h"
+#include "FactoryKits.h"
 
 using namespace vintage;
 
@@ -38,7 +39,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     chopButtons[even16].setTooltip ("Cuts the sound into 16 equal slices, one per pad.");
     chopButtons[byHand].setTooltip ("Click the strip above the wave to add a marker, drag one to move it, right-click one to remove it.");
 
-    for (auto* b : { &snapButton, &zoomOut, &zoomIn, &openButton, &editorButton })
+    for (auto* b : { &snapButton, &zoomOut, &zoomIn, &openButton, &editorButton, &clearButton })
     {
         setInWell (*b, true);
         b->getProperties().set ("fontSize", 16.0f);
@@ -74,6 +75,8 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     };
     openButton.setTooltip ("Open a sound file (or drop one here).");
     openButton.onClick = [this] { editor.chooseSoundFile(); };
+    clearButton.setTooltip ("Empties the Sampler for a new sound (the pads keep theirs). Then it says Undo clear, to bring it back.");
+    clearButton.onClick = [this] { canUndoClear() ? editor.runEdit ("undo") : pressClear(); updateClearButton(); };
     editorButton.setTooltip ("The full sample editor: record, trim, fades, effects, keys.");
     editorButton.onClick = [this] { setEditMode (true); };
 
@@ -129,6 +132,30 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     recordButton.setTooltip ("Rec sample: records from your audio input into the Sampler. Press again to stop. (To sample a tool of Kaleidobox, use Settings > Sample.)");
     recordButton.onClick = [this] { editor.toggleRecord(); };
     addAndMakeVisible (recordButton);
+    setLit (sampleToolButton, Lit::arm);
+    sampleToolButton.getProperties().set ("fontSize", 17.0f);
+    sampleToolButton.setTooltip ("Sample a tool: records the synth, the drums, a loop, the whole mix... into the Sampler, "
+                                 "as you hear it, from the next bar. Then chop it onto the pads.");
+    sampleToolButton.onClick = [this]
+    {
+        if (isSamplingTool())
+            pressSampleTool (engine.captureSource, engine.captureBars);   // stops it
+        else
+            showSampleToolMenu();
+    };
+    addAndMakeVisible (sampleToolButton);
+    const char* stepTips[5] = { "Get a sound: record the mic, sample a tool, open a file or pick from Sounds.",
+                                "Shape it: the editor (trim, fades, effects, keys).",
+                                "Chop it: find the hits or cut it even, then To pads.",
+                                "Play it: the pads, the sequencer and your kits.",
+                                "Save the bank on screen as a set (its sounds and pad settings), for the phone and Logic too." };
+    for (int i = 0; i < 5; ++i)
+    {
+        stepButtons[i].getProperties().set ("fontSize", 15.0f);
+        stepButtons[i].setTooltip (stepTips[i]);
+        stepButtons[i].onClick = [this, i] { pressStep (i); };
+        addAndMakeVisible (stepButtons[i]);
+    }
 
     toPadsButton.getProperties().set ("fontSize", 16.0f);
     toPadsButton.setTooltip ("Puts the slices on the MPC's pads as a new kit, slice 1 on A01.");
@@ -237,7 +264,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     addAndMakeVisible (fxButton);
 
     // Pad tools, under the pads.
-    for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton })
+    for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton, &kitsButton })
     {
         setLit (*b, Lit::current);
         b->getProperties().set ("fontSize", 15.0f);
@@ -288,6 +315,9 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
                                 safe->updatePadTools();
                             });
     };
+    kitsButton.setTooltip ("Kits: the factory kits (the same as the phone's), your kits, and putting a factory kit's "
+                           "own sounds back after you've put yours over them.");
+    kitsButton.onClick = [this] { showKitsMenu(); };
     soundsButton.setClickingTogglesState (true);
     soundsButton.setTooltip ("Your sound bank, over the wave: click a sound to hear it, double-click to put it on the picked pad.");
     soundsButton.onClick = [this] { showSounds (soundsButton.getToggleState()); };
@@ -357,6 +387,25 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     fullLevel.onClick = [this] { engine.getMpc().fullLevel = fullLevel.getToggleState(); };
     addAndMakeVisible (fullLevel);
 
+    // The pad open in the Sampler: which pad, the pads either side, Back, As a new sound, Save.
+    for (auto* b : { &padPrevButton, &padNextButton, &padBackButton, &padNewButton, &padSaveButton })
+    {
+        b->getProperties().set ("fontSize", 16.0f);
+        addChildComponent (*b);
+    }
+    setLit (padSaveButton, Lit::next);
+    padSaveButton.setToggleState (true, juce::dontSendNotification);
+    padPrevButton.setTooltip ("The pad before: saves an edit onto this pad first, then opens that one.");
+    padNextButton.setTooltip ("The pad after: saves an edit onto this pad first, then opens that one.");
+    padBackButton.setTooltip ("Back to the pads (an edit goes onto the pad first).");
+    padNewButton.setTooltip ("Saves what's in the Sampler to your library as a new sound; the pad keeps its own.");
+    padSaveButton.setTooltip ("Puts what's in the Sampler on the pad now: it plays the edit straight away.");
+    padPrevButton.onClick = [this] { pressStepPad (-1); };
+    padNextButton.onClick = [this] { pressStepPad (1); };
+    padBackButton.onClick = [this] { pressBackToPads(); };
+    padNewButton.onClick = [this] { pressPadAsNewSound(); };
+    padSaveButton.onClick = [this] { pressSaveToPad(); };
+
     refresh();
     startTimerHz (30);
 }
@@ -401,12 +450,16 @@ void SamplerScreen::setSide (int side)
     const bool chop = mode == chopSide, pads = mode != editSide;
     // The pads and their tools are on the right of the Chop and Sequencer sides.
     const std::initializer_list<juce::Component*> padSide { &bankButtons[0], &bankButtons[1], &bankButtons[2], &bankButtons[3], &fullLevel,
-                                                            &levelsButton, &repeatButton, &rateButton, &soundsButton };
+                                                            &levelsButton, &repeatButton, &rateButton, &soundsButton, &kitsButton };
     const std::initializer_list<juce::Component*> top { &chopModeButton, &mpcModeButton, &editModeButton, &beatButton, &loopPadsButton,
-                                                        &loopBarsButton };
+                                                        &loopBarsButton, &stepButtons[0], &stepButtons[1], &stepButtons[2], &stepButtons[3],
+                                                        &stepButtons[4] };
+    const std::initializer_list<juce::Component*> padBarButtons { &padPrevButton, &padNextButton, &padBackButton, &padNewButton, &padSaveButton };
     for (auto* c : getChildren())
     {
-        if (c == ownedEditor.get())
+        if (std::find (padBarButtons.begin(), padBarButtons.end(), c) != padBarButtons.end())
+            c->setVisible (editPad >= 0);
+        else if (c == ownedEditor.get())
             c->setVisible (mode == editSide);
         else if (c == ownedMpc.get())
             c->setVisible (mode == mpcSide);
@@ -453,6 +506,11 @@ void SamplerScreen::pressLoopPads()
 }
 
 void SamplerScreen::pressEditPad()
+{
+    openPadInSampler (getSelectedPad());
+}
+
+void SamplerScreen::pressQuickEditPad()
 {
     if (mpcView == nullptr)
         return;
@@ -538,10 +596,13 @@ void SamplerScreen::showPadMenu (int padInBank)
     const bool full = ! engine.getMpc().getProject().currentBank().pads[(size_t) pad].isEmpty();
     juce::PopupMenu menu;
     menu.addSectionHeader ("Pad " + padLabel (pad));
-    menu.addItem ("Edit its sound (trim, fades, effects)...", full, false, [this] { pressEditPad(); });
+    menu.addItem ("Open it alone in the Sampler (edit, effects, keys)", full, false, [this] { pressEditPad(); });
+    menu.addItem ("Quick pad editor (trim, fades, effects)...", full, false, [this] { pressQuickEditPad(); });
     menu.addItem ("Remove its sound", full, false, [this] { pressRemovePad(); });
     if (canUndoRemovePad())
         menu.addItem ("Undo remove (put \"" + removedPad.name + "\" back)", [this] { pressUndoRemovePad(); });
+    if (engine.padDiffersFromFactory (pad))
+        menu.addItem ("Put back the factory sound (" + engine.factoryPadName (pad) + ")", [this] { pressRestoreFactoryPad(); });
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
 }
 
@@ -556,6 +617,450 @@ void SamplerScreen::updateTopButtons()
     if (loopPadsButton.getButtonText() != loopText)
         loopPadsButton.setButtonText (loopText);
     loopBarsButton.setButtonText (loopBars <= 0 ? juce::String ("Free") : juce::String (loopBars) + (loopBars == 1 ? " bar" : " bars"));
+}
+
+juce::String SamplerScreen::editLabel() const
+{
+    auto& project = engine.getMpc().getProject();
+    if (editPad < 0 || ! juce::isPositiveAndBelow (editKit, (int) project.getBanks().size()))
+        return {};
+    const auto& pad = project.getBanks()[(size_t) editKit].pads[(size_t) editPad];
+    return "Editing pad " + padLabel (editPad) + juce::String::fromUTF8 (" \xc2\xb7 ") + (pad.name.isNotEmpty() ? pad.name : editName);
+}
+
+void SamplerScreen::openPadInSampler (int pad)
+{
+    auto& project = engine.getMpc().getProject();
+    if (! juce::isPositiveAndBelow (pad, mpc::kPadCount))
+        return;
+    const auto& slot = project.currentBank().pads[(size_t) pad];
+    if (slot.isEmpty())
+    {
+        if (onSay)
+            onSay ("Pad " + padLabel (pad) + " is empty. Put a sound on it first (To pads, Sounds, Kits, or drop one on it).");
+        return;
+    }
+    saveEditIfChanged();   // the pad you were on keeps its edit
+    auto& doc = engine.getSampler().getDocument();
+    const auto name = slot.name.isNotEmpty() ? slot.name : "Pad " + padLabel (pad);
+    engine.getSampler().setChops ({});
+    doc.load (slot.audio, name, "Open pad " + padLabel (pad));
+    editPad = pad;
+    editKit = project.getCurrentIndex();
+    editOpenedAudio = doc.getAudio().get();
+    editName = name;
+    if (pad / kPadsPerBank != engine.getMpc().padBankOnScreen.load())
+        pressBank (pad / kPadsPerBank);
+    selectedSlice = pad;
+    if (mpcView != nullptr)
+        mpcView->selectPad (pad);
+    setSide (editSide);
+    updatePadBar();
+    resized();
+    if (onSay)
+        onSay ("Pad " + padLabel (pad) + "'s sound is open alone in the Sampler: trim, fades, effects, keys. Save to "
+               + padLabel (pad) + " puts it back on the pad (leaving does too).");
+}
+
+bool SamplerScreen::padEditChanged() const
+{
+    if (editPad < 0)
+        return false;
+    const auto& doc = engine.getSampler().getDocument();
+    // Only an edit of the pad's own sound: a sound opened or recorded over it since isn't the pad's.
+    return doc.hasAudio() && doc.getAudio().get() != editOpenedAudio && doc.getName() == editName;
+}
+
+bool SamplerScreen::saveEditIfChanged()
+{
+    if (! padEditChanged())
+        return false;
+    pressSaveToPad();
+    return true;
+}
+
+void SamplerScreen::pressSaveToPad()
+{
+    auto& project = engine.getMpc().getProject();
+    auto& doc = engine.getSampler().getDocument();
+    if (editPad < 0 || ! juce::isPositiveAndBelow (editKit, (int) project.getBanks().size()) || ! doc.hasAudio())
+        return;
+    auto& slot = project.getBanks()[(size_t) editKit].pads[(size_t) editPad];
+    if (editKit == project.getCurrentIndex())
+        engine.getMpc().releasePad (editPad);
+    slot.audio = doc.getAudio();
+    if (slot.name.isEmpty())
+        slot.name = editName.substring (0, 16);
+    slot.mono = slot.audio->getNumChannels() == 1 || slot.mono;
+    project.changed();
+    editOpenedAudio = doc.getAudio().get();
+    editName = doc.getName();
+    updateKnobs();
+    repaint();
+    if (onSay)
+        onSay ("Pad " + padLabel (editPad) + " plays the edit now (" + juce::String (slot.audio->getNumSamples() / crate::kSampleRate, 2) + " s).");
+}
+
+void SamplerScreen::pressBackToPads()
+{
+    const bool saved = saveEditIfChanged();
+    const int was = editPad;
+    editPad = editKit = -1;
+    editOpenedAudio = nullptr;
+    setSide (chopSide);
+    resized();
+    if (onSay && was >= 0)
+        onSay (saved ? "Saved onto pad " + padLabel (was) + ". Back to the pads." : juce::String ("Back to the pads."));
+}
+
+void SamplerScreen::pressStepPad (int delta)
+{
+    if (editPad < 0)
+        return;
+    auto& kit = engine.getMpc().getProject().currentBank();
+    // the next pad with a sound, either way, wrapping round the kit
+    for (int step = 1; step < mpc::kPadCount; ++step)
+    {
+        const int pad = ((editPad + delta * step) % mpc::kPadCount + mpc::kPadCount) % mpc::kPadCount;
+        if (! kit.pads[(size_t) pad].isEmpty())
+            return openPadInSampler (pad);
+    }
+}
+
+void SamplerScreen::pressPadAsNewSound()
+{
+    if (! engine.getSampler().getDocument().hasAudio())
+        return;
+    editor.saveSoundToLibrary();
+}
+
+void SamplerScreen::updatePadBar()
+{
+    if (editPad < 0)
+        return;
+    const auto text = "Save to " + padLabel (editPad);
+    if (padSaveButton.getButtonText() != text)
+        padSaveButton.setButtonText (text);
+    padSaveButton.setEnabled (engine.getSampler().getDocument().hasAudio());
+}
+
+int SamplerScreen::currentStep() const
+{
+    if (! engine.getSampler().getDocument().hasAudio() && mode != mpcSide)
+        return 0;
+    return mode == editSide ? 1 : mode == mpcSide ? 3 : 2;
+}
+
+void SamplerScreen::updateSteps()
+{
+    const int now = currentStep();
+    for (int i = 0; i < 5; ++i)
+        if (stepButtons[i].getToggleState() != (i == now))
+        {
+            stepButtons[i].setToggleState (i == now, juce::dontSendNotification);
+            setLit (stepButtons[i], i == now ? Lit::current : Lit::none);
+        }
+}
+
+void SamplerScreen::pressStep (int step)
+{
+    switch (step)
+    {
+        case 0:
+        {
+            juce::PopupMenu menu;
+            menu.addItem ("Rec sample (your audio input)", [this] { editor.toggleRecord(); });
+            menu.addItem (juce::String::fromUTF8 ("Sample a tool\xe2\x80\xa6"), [this] { showSampleToolMenu(); });
+            menu.addItem (juce::String::fromUTF8 ("Open a file\xe2\x80\xa6"), [this] { editor.chooseSoundFile(); });
+            menu.addItem ("Sounds (your sound bank, Splice)", [this] { showSounds (true); });
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (stepButtons[0]));
+            break;
+        }
+        case 1: setSide (editSide); break;
+        case 2: setSide (chopSide); break;
+        case 3: setSide (mpcSide); break;
+        default: askSaveSet (engine.getMpc().padBankOnScreen.load()); break;
+    }
+    updateSteps();
+}
+
+bool SamplerScreen::isSamplingTool() const
+{
+    const auto state = engine.getCapture().getState();
+    return state == RigCapture::State::armed || state == RigCapture::State::recording;
+}
+
+void SamplerScreen::pressSampleTool (int source, int bars)
+{
+    auto& capture = engine.getCapture();
+    if (isSamplingTool())
+    {
+        engine.stopCapture();   // the window (or serviceCapture) puts it in the Sampler
+        updateSampleToolButton();
+        return;
+    }
+    if (capture.getState() != RigCapture::State::idle || ! juce::isPositiveAndBelow (source, (int) RigCapture::numSources)
+        || source == RigCapture::sampler)
+        return;
+    engine.captureSource = source;
+    engine.captureBars = bars;
+    engine.captureDestOnce = RigCapture::toSampler;
+    if (! engine.startCapture (source, bars))
+    {
+        engine.captureDestOnce = -1;
+        return;
+    }
+    updateSampleToolButton();
+    if (onSay)
+        onSay ("Sampling " + RigCapture::sourceName (source) + (engine.getTransport().isPlaying() ? " from the next bar" : juce::String (" now"))
+               + (bars > 0 ? ", for " + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String (": press Stop when you have it"))
+               + ". It lands here in the Sampler.");
+}
+
+void SamplerScreen::showSampleToolMenu()
+{
+    juce::PopupMenu menu, length;
+    for (int bars : RigCapture::barChoices())
+        length.addItem (bars == 0 ? juce::String ("Free (until you press Stop)") : juce::String (bars) + (bars == 1 ? " bar" : " bars"), true,
+                        engine.captureBars == bars, [this, bars] { engine.captureBars = bars; showSampleToolMenu(); });
+    menu.addSectionHeader ("Sample into the Sampler, as you hear it");
+    for (int s = 0; s < RigCapture::numSources; ++s)
+        if (s != RigCapture::sampler)
+            menu.addItem (RigCapture::sourceName (s), true, engine.captureSource == s,
+                          [this, s] { pressSampleTool (s, engine.captureBars); });
+    menu.addSeparator();
+    const int bars = engine.captureBars;
+    menu.addSubMenu ("How long: " + (bars == 0 ? juce::String ("free") : juce::String (bars) + (bars == 1 ? " bar" : " bars")), length);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (sampleToolButton));
+}
+
+void SamplerScreen::updateSampleToolButton()
+{
+    const auto& capture = engine.getCapture();
+    const auto state = capture.getState();
+    juce::String text = juce::String::fromUTF8 ("Sample a tool \xe2\x96\xbe");
+    if (state == RigCapture::State::armed)
+        text = juce::String::fromUTF8 ("Next bar\xe2\x80\xa6 Stop");
+    else if (state == RigCapture::State::recording)
+    {
+        const int seconds = (int) capture.getRecordedSeconds();
+        text = "Stop " + juce::String (seconds / 60) + ":" + juce::String (seconds % 60).paddedLeft ('0', 2);
+    }
+    sampleToolButton.setToggleState (state == RigCapture::State::recording
+                                         || (state == RigCapture::State::armed && (juce::Time::getMillisecondCounter() / 400) % 2 == 0),
+                                     juce::dontSendNotification);
+    if (sampleToolButton.getButtonText() != text)
+        sampleToolButton.setButtonText (text);
+}
+
+bool SamplerScreen::canUndoClear() const
+{
+    auto& doc = engine.getSampler().getDocument();
+    return ! doc.hasAudio() && doc.canUndo() && doc.getUndoName() == EditorView::kClearAction;
+}
+
+void SamplerScreen::pressClear()
+{
+    auto& doc = engine.getSampler().getDocument();
+    if (! doc.hasAudio())
+    {
+        if (onSay)
+            onSay ("The Sampler is already empty.");
+        return;
+    }
+    const auto name = doc.getName().isNotEmpty() ? doc.getName() : juce::String ("the sound");
+    editor.clearSound();
+    selectedSlice = 0;
+    if (onSay)
+        onSay ("Cleared " + name + " from the Sampler. The pads keep their sounds; Undo clear brings it back.");
+    refresh();
+}
+
+void SamplerScreen::updateClearButton()
+{
+    const bool undo = canUndoClear();
+    const auto text = undo ? juce::String ("Undo clear") : juce::String ("Clear");
+    if (clearButton.getButtonText() != text)
+    {
+        clearButton.setButtonText (text);
+        resized();
+    }
+    clearButton.setEnabled (undo || engine.getSampler().getDocument().hasAudio());
+}
+
+void SamplerScreen::pressRestoreFactoryPad()
+{
+    const int pad = getSelectedPad();
+    if (! engine.padDiffersFromFactory (pad))
+    {
+        if (onSay)
+            onSay ("Pad " + padLabel (pad) + " already plays its factory sound.");
+        return;
+    }
+    const auto text = engine.restoreFactoryPad (pad);
+    updateKnobs();
+    updateRemoveButton();
+    repaint();
+    if (onSay)
+        onSay (text);
+}
+
+void SamplerScreen::showKitsMenu()
+{
+    auto& project = engine.getMpc().getProject();
+    const int pad = getSelectedPad();
+    const int factory = engine.factoryKitOf (project.getCurrentIndex());
+    juce::PopupMenu menu;
+    if (factory >= 0)
+    {
+        menu.addSectionHeader (project.currentBank().name + ": its factory sounds");
+        menu.addItem ("Put back pad " + padLabel (pad) + "'s factory sound" + (engine.factoryPadName (pad).isNotEmpty() ? " (" + engine.factoryPadName (pad) + ")" : juce::String()),
+                      engine.padDiffersFromFactory (pad), false, [this] { pressRestoreFactoryPad(); });
+        bool any = false;
+        for (int p = 0; p < kPadsPerBank; ++p)
+            any = any || engine.padDiffersFromFactory (p);
+        menu.addItem ("Put back all 16 factory sounds (A01 to A16)", any, false, [this]
+        {
+            const auto text = engine.resetFactoryKit();
+            refresh();
+            if (onSay)
+                onSay (text);
+        });
+        menu.addSeparator();
+    }
+    {
+        const int bank = engine.getMpc().padBankOnScreen.load();
+        const auto bankName = juce::String::charToString ((juce::juce_wchar) ('A' + bank));
+        bool bankUsed = false;
+        for (int p = 0; p < kPadsPerBank; ++p)
+            bankUsed = bankUsed || ! project.currentBank().pads[(size_t) (bank * kPadsPerBank + p)].isEmpty();
+        menu.addSectionHeader ("Sets: your sounds and pad settings, for the phone and Logic too");
+        menu.addItem ("Save bank " + bankName + " as a set...", bankUsed, false, [this, bank] { askSaveSet (bank); });
+        menu.addItem ("Save the whole kit as a set...", project.currentBank().usedPads() > 0, false, [this] { askSaveSet (-1); });
+        juce::PopupMenu banks, kits;
+        for (const auto& folder : SoundSet::list (setsFolder))
+            if (const auto set = SoundSet::peek (folder))
+                (set->wholeKit ? kits : banks).addItem (set->name + juce::String::fromUTF8 ("  \xc2\xb7  ") + set->describe(), [this, folder] { loadSetFile (folder); });
+        menu.addSubMenu ("Load a set onto bank " + bankName, banks, banks.getNumItems() > 0);
+        menu.addSubMenu ("Load a whole-kit set (on a new kit)", kits, kits.getNumItems() > 0);
+        if (canUndoLoadSet())
+            menu.addItem ("Undo loading " + setUndoName, [this] { pressUndoLoadSet(); });
+        menu.addItem ("Show the sets folder", [this]
+        {
+            setsFolder.createDirectory();
+            setsFolder.revealToUser();
+        });
+        menu.addSeparator();
+    }
+    menu.addSectionHeader ("Factory kits (each goes on a new kit; yours stay)");
+    const auto& kits = crate::factory::kits();
+    for (int i = 0; i < (int) kits.size(); ++i)
+        menu.addItem (juce::String (kits[(size_t) i].name) + juce::String::fromUTF8 ("  \xc2\xb7  ") + kits[(size_t) i].what, [this, i]
+        {
+            const auto text = engine.loadFactoryKit (i);
+            pressBank (0);
+            refresh();
+            if (onSay)
+                onSay (text);
+        });
+    if (project.getBanks().size() > 1)
+    {
+        menu.addSeparator();
+        menu.addSectionHeader ("Your kits in this show");
+        for (int k = 0; k < (int) project.getBanks().size(); ++k)
+            menu.addItem (project.getBanks()[(size_t) k].name.isNotEmpty() ? project.getBanks()[(size_t) k].name : "Kit " + juce::String (k + 1),
+                          true, k == project.getCurrentIndex(), [this, k]
+                          {
+                              engine.getMpc().getProject().setCurrent (k);
+                              engine.getMpc().getProject().changed();
+                              refresh();
+                              if (onSay)
+                                  onSay ("The pads play " + engine.getMpc().getProject().currentBank().name + " now.");
+                          });
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&kitsButton));
+}
+
+juce::File SamplerScreen::saveSet (int bank, const juce::String& name)
+{
+    juce::String error;
+    const auto set = engine.padsAsSet (bank, name.trim().isNotEmpty() ? name.trim() : engine.getMpc().getProject().currentBank().name);
+    const auto folder = set.save (setsFolder, error);
+    if (onSay)
+        onSay (folder.exists() ? "Saved the set " + set.name + " (" + set.describe() + "). Kits > Load a set brings it back, here or on the phone."
+                               : error);
+    return folder;
+}
+
+void SamplerScreen::askSaveSet (int bank)
+{
+    auto& kit = engine.getMpc().getProject().currentBank();
+    const auto suggest = kit.name + (bank >= 0 ? " " + juce::String::charToString ((juce::juce_wchar) ('A' + bank)) : juce::String());
+    auto* w = new juce::AlertWindow (bank >= 0 ? "Save bank as a set" : "Save the kit as a set",
+                                     bank >= 0 ? "The 16 pads' sounds and settings, named:" : "All 64 pads' sounds and settings, named:",
+                                     juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", suggest);
+    w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<SamplerScreen> (this), w, bank] (int result)
+    {
+        if (safe != nullptr && result == 1)
+            safe->saveSet (bank, w->getTextEditorContents ("name"));
+    }), true);
+}
+
+bool SamplerScreen::loadSetFile (const juce::File& folder)
+{
+    juce::String error;
+    const auto set = SoundSet::load (folder, error);
+    if (! set)
+    {
+        if (onSay)
+            onSay (error);
+        return false;
+    }
+    auto& project = engine.getMpc().getProject();
+    const int bank = engine.getMpc().padBankOnScreen.load();
+    setUndoKit = -1;
+    if (! set->wholeKit)
+    {
+        // Undo puts the bank's 16 pads back
+        for (int p = 0; p < kPadsPerBank; ++p)
+            setUndoPads[(size_t) p] = project.currentBank().pads[(size_t) (bank * kPadsPerBank + p)];
+        setUndoKit = project.getCurrentIndex();
+        setUndoBank = bank;
+        setUndoName = set->name;
+    }
+    const auto said = engine.loadSet (*set, bank);
+    if (set->wholeKit)
+        pressBank (0);
+    refresh();
+    if (onSay)
+        onSay (said);
+    return true;
+}
+
+bool SamplerScreen::canUndoLoadSet() const
+{
+    return setUndoKit >= 0 && setUndoKit < (int) engine.getMpc().getProject().getBanks().size();
+}
+
+void SamplerScreen::pressUndoLoadSet()
+{
+    if (! canUndoLoadSet())
+        return;
+    auto& kit = engine.getMpc().getProject().getBanks()[(size_t) setUndoKit];
+    for (int p = 0; p < kPadsPerBank; ++p)
+    {
+        if (setUndoKit == engine.getMpc().getProject().getCurrentIndex())
+            engine.getMpc().releasePad (setUndoBank * kPadsPerBank + p);
+        kit.pads[(size_t) (setUndoBank * kPadsPerBank + p)] = setUndoPads[(size_t) p];
+    }
+    engine.getMpc().getProject().changed();
+    setUndoKit = -1;
+    refresh();
+    if (onSay)
+        onSay ("Bank " + juce::String::charToString ((juce::juce_wchar) ('A' + setUndoBank)) + " has its sounds back from before " + setUndoName + ".");
 }
 
 size_t SamplerScreen::capacityOf (int m)
@@ -929,6 +1434,16 @@ void SamplerScreen::rebuildPeaks()
 void SamplerScreen::timerCallback()
 {
     updateRemoveButton();
+    updateClearButton();
+    updateSampleToolButton();
+    updateSteps();
+    if (editPad >= 0)
+    {
+        if (editKit >= (int) engine.getMpc().getProject().getBanks().size())
+            pressBackToPads();
+        else
+            updatePadBar();
+    }
     // Pads that played light for a moment.
     const auto played = engine.getMpc().takePlayedPads (1);
     const int bank = engine.getMpc().padBankOnScreen.load();
@@ -1311,6 +1826,8 @@ void SamplerScreen::resized()
             mpcModeButton.setBounds (m.removeFromLeft (200));
         editModeButton.setBounds (m.removeFromLeft (230));
         recordButton.setBounds (m.removeFromRight (90));
+        m.removeFromRight (8);
+        sampleToolButton.setBounds (m.removeFromRight (150));
         m.removeFromRight (10);
         loopBarsButton.setBounds (m.removeFromRight (78));
         m.removeFromRight (4);
@@ -1318,7 +1835,34 @@ void SamplerScreen::resized()
         m.removeFromRight (10);
         beatButton.setBounds (m.removeFromRight (112));
     }
-    r.removeFromTop (10);
+    r.removeFromTop (8);
+    stepRow = r.removeFromTop (30);
+    {
+        auto s = stepRow;
+        const int w = juce::jmin (150, (s.getWidth() - 4 * 6) / 5);
+        for (auto& b : stepButtons)
+        {
+            b.setBounds (s.removeFromLeft (w));
+            s.removeFromLeft (6);
+        }
+    }
+    r.removeFromTop (8);
+    padBar = {};
+    if (editPad >= 0)
+    {
+        padBar = r.removeFromTop (46);
+        auto b = padBar.reduced (12, 4);
+        padSaveButton.setBounds (b.removeFromRight (128));
+        b.removeFromRight (8);
+        padNewButton.setBounds (b.removeFromRight (140));
+        b.removeFromRight (8);
+        padBackButton.setBounds (b.removeFromRight (124));
+        b.removeFromRight (8);
+        padNextButton.setBounds (b.removeFromRight (44));
+        b.removeFromRight (6);
+        padPrevButton.setBounds (b.removeFromRight (44));
+        r.removeFromTop (10);
+    }
     if (ownedEditor != nullptr)
         ownedEditor->setBounds (r.withTrimmedLeft (-10).withTrimmedRight (-10).withTrimmedBottom (-8));
     const float scale = juce::jlimit (0.7f, 1.0f, r.getHeight() / 500.0f);
@@ -1348,8 +1892,8 @@ void SamplerScreen::resized()
     {
         // The pad tools.
         auto tools = right.removeFromBottom (34);
-        const int w = (tools.getWidth() - 3 * 6) / 4;
-        for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton })
+        const int w = (tools.getWidth() - 4 * 6) / 5;
+        for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton, &kitsButton })
         {
             b->setBounds (tools.removeFromLeft (w));
             tools.removeFromLeft (6);
@@ -1388,6 +1932,8 @@ void SamplerScreen::resized()
         editorButton.setBounds (z.removeFromRight (86));
         z.removeFromRight (6);
         openButton.setBounds (z.removeFromRight (74));
+        z.removeFromRight (6);
+        clearButton.setBounds (z.removeFromRight (canUndoClear() ? 116 : 74));
         z.removeFromRight (16);
         zoomOut.setBounds (z.removeFromLeft (46));
         zoomIn.setBounds (z.removeFromRight (46));

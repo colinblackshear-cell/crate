@@ -46,6 +46,7 @@ public:
     void swapSound (int pad, const juce::String& soundId);   // SWAP SOUND: the pad keeps its volume, pan, tune and mode
     void removePad (int pad);                                // REMOVE SOUND: UNDO (the note's button) puts it back
     void undoRemovePad();
+    void addFactoryItem (pocket::HoldSpec&, int pad);              // FACTORY SOUND BACK, on a factory kit's bank
     bool canUndoRemovePad() const { return haveRemoved; }
     // 16 LEVELS: the bank's 16 pads play one pad's sound from quiet (the first pad) to loud (the last).
     void startLevels (int pad);

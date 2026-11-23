@@ -23,6 +23,10 @@ const std::vector<FactoryKit>& factoryKits();
 // Returns how many pads it filled.
 int loadFactoryKit (Library&, Kit&, int index, int bank = 0);
 
+// When bank `pad / 16` of the kit holds a factory kit (the kit has its name and the bank still plays one of its sounds),
+// the factory sound pad `pad` had: its Sounds id (made again if it was deleted), and its name in `name`. {} otherwise.
+juce::String factorySoundFor (Library&, const Kit&, int pad, juce::String* name = nullptr);
+
 // Makes one kit's sounds (for tests): name and audio at 44.1 kHz, mono.
 std::vector<std::pair<juce::String, juce::AudioBuffer<float>>> makeFactorySounds (int index);
 }

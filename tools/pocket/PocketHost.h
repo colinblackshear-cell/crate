@@ -27,6 +27,8 @@ struct PocketHost
     // A note with one button on it (UNDO), for a few seconds.
     virtual void toastAction (const juce::String& text, const juce::String& button, std::function<void()> then) = 0;
     virtual void openSamplePage (int pad) = 0;             // the pad's sound on the SAMPLER (IN / OUT, trim, send to a pad)
+    // EDIT THIS SLICE: the pad's own part of its sound, alone in the sound editor; leaving it saves onto the pad.
+    virtual void editPadSlice (int pad) = 0;
     // Play/Stop for the whole song (the thumb bar's button): loops, else the pad pattern, else the drum machine.
     virtual void togglePlay() = 0;
     // The pad sample page: the Record tab edited the sound a pad plays and saved it. Every pad playing
