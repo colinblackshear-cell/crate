@@ -160,6 +160,9 @@ private:
     // Ideas (Your songs)
     void openIdea (const juce::String& id);
     void newIdea();          // + NEW SONG
+    void catchIdea();        // My ideas' CATCH AN IDEA: a new song, LOOPS on the mic, recording (free length) at once
+    void startSpark (const crate::spark::Spark&);   // START THIS SPARK: a new song with its tempo, key and kit, on its first tool
+    void startWithTool (Tool, bool voice);          // START A SONG FROM ANY TOOL (MY VOICE: LOOPS on the mic)
     void switchIdea (const juce::String& id);
     void renameIdea (const juce::String& id);
     void deleteIdea (const juce::String& id);    // asks first (a card where the song's menu was), then removeIdea

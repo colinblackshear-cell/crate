@@ -109,7 +109,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     loopPadsButton.setTooltip ("Play the pads into the looper: the next empty loop layer records the MPC from the next bar "
                                "(for the bars beside it, or until you press again). Switch Beat off to loop just what you play.");
     loopPadsButton.onClick = [this] { pressLoopPads(); };
-    loopBarsButton.setTooltip ("How long Loop pads records: Free (until you press Loop pads again), or 1 to 16 bars.");
+    loopBarsButton.setTooltip ("How long Loop pads records: Free (until you press Loop pads again), or 1 to 64 bars.");
     loopBarsButton.onClick = [this]
     {
         const auto& choices = RigLooper::barChoices();

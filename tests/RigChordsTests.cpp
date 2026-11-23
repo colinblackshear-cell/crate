@@ -557,6 +557,168 @@ public:
             }
         }
 
+        beginTest ("Live key: change key on the fly, the nearest way, on the beat or bar");
+        {
+            expectEquals (RigChords::shiftName ("Dm7", 2), juce::String ("Em7"));
+            expectEquals (RigChords::shiftName ("C/E", 1), juce::String ("C#/F"));
+            expectEquals (RigChords::shiftName ("Bbmaj7", -3), juce::String ("Gmaj7"));
+            expectEquals (RigChords::shiftName ("Big F", 2), juce::String ("Big F"), "your own names stay");
+
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            auto& chords = engine.getChords();
+            chords.target = (int) RigRouting::Dest::synth;
+            chords.fillFromKey (2, 1, 1);   // D minor sevenths: pad 1 Dm7
+            expectEquals (chords.getLiveKey(), 2);
+            expect (chords.isLiveKeyHome());
+
+            // Stopped: at once. D to E is up 2, D to B down 3 (not up 9).
+            chords.setLiveKey (4);
+            expectEquals (chords.getLiveShift(), 2);
+            run (engine);
+            expectEquals (chords.getPlayingShift(), 2);
+            expectEquals (chords.livePadName (0), juce::String ("Em7"));
+            chords.press (0);
+            run (engine);
+            const auto dm7 = chords.getPad (0).notes;
+            for (int n : dm7)
+                expect (synthHas (engine, n + 2), "the pad plays Em7");
+            chords.release (0);
+            run (engine);
+            expectEquals (synthCount (engine), 0, "and lets go of the moved notes");
+            chords.setLiveKey (11);
+            expectEquals (chords.getLiveShift(), -3, "the nearest way down");
+            chords.nudgeLiveOctave (1);
+            expectEquals (chords.getLiveShift(), 9);
+            chords.nudgeLiveOctave (5);
+            expectEquals (chords.getLiveOctave(), 2, "two octaves at most");
+            chords.liveKeyHome();
+            expect (chords.isLiveKeyHome() && chords.getLiveOctave() == 0);
+            run (engine);
+
+            // Playing, Next bar: a held chord waits for the bar line, then moves there.
+            engine.getTransport().setBpm (120.0);
+            chords.hold = true;
+            chords.press (0);
+            engine.getTransport().play();
+            run (engine, 10);   // beat 0.2
+            expect (synthHas (engine, dm7[0]));
+            chords.setLiveKey (7);   // G: up 5
+            run (engine, 50);   // a beat later: still waiting for the bar
+            expect (chords.isLiveKeyWaiting());
+            expect (synthHas (engine, dm7[0]) && ! synthHas (engine, dm7[0] + 5));
+            run (engine, 150);   // past beat 4
+            expect (! chords.isLiveKeyWaiting());
+            expectEquals (chords.getPlayingKey(), 7);
+            for (int n : dm7)
+                expect (synthHas (engine, n + 5), "the held chord moved to Gm7 on the bar");
+            expect (! synthHas (engine, dm7[0]), "and let go of the old one");
+
+            // Next beat.
+            chords.liveChange = (int) RigChords::LiveChange::beat;
+            chords.setLiveKey (2);
+            run (engine, 10);
+            expect (chords.isLiveKeyWaiting() || chords.getPlayingShift() == 0);
+            run (engine, 55);
+            expectEquals (chords.getPlayingShift(), 0, "home on the next beat");
+            chords.press (0);   // Hold: the same again lets go
+            run (engine);
+            expectEquals (synthCount (engine), 0);
+            engine.getTransport().stop();
+            run (engine);
+
+            // The key map moves too: with C major mapped, D (up 2) makes D3 play Em, not Dm.
+            chords.liveChange = (int) RigChords::LiveChange::now;
+            chords.hold = false;
+            engine.getRouting().keysTo = (int) RigRouting::Dest::synth;
+            chords.trigger = (int) RigChords::Trigger::keyMap;
+            chords.setKey (0, 0, 0);
+            chords.setLiveKey (2);
+            run (engine);
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 50, 0.9f));
+            run (engine);
+            expect (synthHas (engine, 52) && synthHas (engine, 55) && synthHas (engine, 59), "D3 plays Em from E3");
+            expectEquals (chords.liveMapChordName (50), juce::String ("Em"));
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 50));
+            run (engine);
+            expectEquals (synthCount (engine), 0);
+
+            // A new home key starts the live key from it.
+            chords.setKey (5, 0, 0);
+            expect (chords.isLiveKeyHome());
+
+            // Learned keyboard buttons.
+            auto& routing = engine.getRouting();
+            routing.setAssignment (RigRouting::liveKeyC + 9, 1, 40);
+            routing.setAssignment (RigRouting::liveOctaveUp, 1, 41);
+            routing.setAssignment (RigRouting::liveKeyHome, 1, 42);
+            engine.addMidiNow (juce::MidiMessage::controllerEvent (1, 40, 127));
+            run (engine);
+            engine.addMidiNow (juce::MidiMessage::controllerEvent (1, 40, 0));
+            engine.addMidiNow (juce::MidiMessage::controllerEvent (1, 41, 127));
+            run (engine);
+            expectEquals (chords.getLiveKey(), 9, "a learned button picks A");
+            expectEquals (chords.getLiveOctave(), 1, "and one goes up an octave");
+            expectEquals (RigRouting::controlName (RigRouting::liveKeyC + 1), juce::String ("Live key C#"));
+
+            // Saved with the show (and its buttons); a set keeps the key you're in.
+            const auto show = engine.saveShow();
+            RigEngine other;
+            other.loadShow (show);
+            expectEquals (other.getChords().getLiveKey(), 9);
+            expectEquals (other.getChords().getLiveOctave(), 1);
+            expectEquals (other.getRouting().getAssignment (RigRouting::liveKeyC + 9).second, 40);
+            engine.addMidiNow (juce::MidiMessage::controllerEvent (1, 41, 0));
+            engine.addMidiNow (juce::MidiMessage::controllerEvent (1, 42, 127));
+            run (engine);
+            expect (chords.isLiveKeyHome(), "a learned Back");
+        }
+
+        beginTest ("Live key on the Chords drawer: the keys, octaves, Back and Learn");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            RigView view (engine, nullptr);
+            view.setSize (1440, 960);
+            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::F7Key)));
+            auto& cv = view.getChordsView();
+            auto& chords = engine.getChords();
+            cv.setKey (2, 1, 1);
+            cv.pressFill();
+            cv.pressLiveKey (4);
+            run (engine);
+            expectEquals (chords.getPlayingKey(), 4);
+            expectEquals (chords.livePadName (0), juce::String ("Em7"));
+            cv.pressLiveOctave (-1);
+            expectEquals (chords.getLiveShift(), 2 - 12);
+            cv.pressLiveHome();
+            expect (chords.isLiveKeyHome());
+            cv.setLiveChange ((int) RigChords::LiveChange::beat);
+            expectEquals (chords.liveChange.load(), (int) RigChords::LiveChange::beat);
+            // Every Live key button is on screen, inside the drawer.
+            int found = 0;
+            for (auto* c : cv.getChildren())
+                if (auto* b = dynamic_cast<juce::TextButton*> (c))
+                    for (auto* name : { "Oct -", "Oct +", "Learn" })
+                        if (b->getButtonText() == name && cv.getLocalBounds().contains (b->getBounds()) && ! b->getBounds().isEmpty())
+                            ++found;
+            expect (found >= 5, "Oct - / Oct + twice (pad and live) and Learn: " + juce::String (found));
+
+            if (const auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_LIVEKEY_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                cv.setLiveChange ((int) RigChords::LiveChange::bar);
+                cv.pressLiveKey (4);
+                run (engine);
+                cv.selectPad (2);
+                cv.refresh();
+                const auto image = view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f);
+                juce::FileOutputStream out { juce::File (path) };
+                out.setPosition (0);
+                out.truncate();
+                juce::PNGImageFormat().writeImageToStream (image, out);
+            }
+        }
+
         beginTest ("MIDI files for Logic: the progression, and a take");
         {
             RigEngine engine;

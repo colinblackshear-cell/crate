@@ -12,13 +12,13 @@ public:
 
     void runTest() override
     {
-        beginTest ("the Rig opens on the Guide, with an entry for every tool it has");
+        beginTest ("the Rig opens on My ideas; the Guide has an entry for every tool it has");
         {
             RigEngine engine;
             engine.prepare (48000.0, 480);
             RigView view (engine, nullptr);
             view.setSize (1440, 960);
-            expectEquals (view.getPage(), juce::String ("Guide"));
+            expectEquals (view.getPage(), juce::String ("Ideas"), "the Rig opens on My ideas");
             auto* guide = view.getGuide();
             expect (guide != nullptr);
             if (guide == nullptr)

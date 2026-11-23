@@ -226,6 +226,11 @@ ChordsEngine::ChordsEngine (BeatsEngine& b) : beats (b)
     prepare (44100.0);
 }
 
+bool ChordsEngine::clockRunning() const
+{
+    return beats.clockRunning();
+}
+
 void ChordsEngine::setPadNotes (int pad, const juce::Array<int>& n)
 {
     if (! juce::isPositiveAndBelow (pad, kChordPads))
@@ -284,7 +289,8 @@ int ChordsEngine::notesOf (int pad, int* out) const
         const int v = padNotesLive[(size_t) pad][(size_t) i].load();
         if (v < 0)
             break;
-        out[n++] = v;
+        if (v + shiftNow >= 0 && v + shiftNow <= 127)   // LIVE KEY
+            out[n++] = v + shiftNow;
     }
     return n;
 }
@@ -366,9 +372,31 @@ void ChordsEngine::renderAt (float* left, float* right, int n, bool running, dou
         on[(size_t) numOn++] = note;
     };
 
+    const int liveWant = liveTarget.load(), liveMode = liveWhen.load();
     for (int i = 0; i < n; ++i)
     {
         const double t = t0 + i * bps;
+
+        // LIVE KEY: a change lands now, or on the next beat or bar of the clock
+        if (liveWant != shiftNow)
+        {
+            bool land = ! running || liveMode == 0;
+            if (! land)
+            {
+                const double unit = liveMode == 1 ? 1.0 : 4.0;
+                if (liveWaitUntil < 0)
+                    liveWaitUntil = std::ceil (t / unit - 1.0e-9) * unit;
+                land = t >= liveWaitUntil - 1.0e-9;
+            }
+            if (land)
+            {
+                shiftNow = liveWant;
+                liveApplied = liveWant;
+                liveWaitUntil = -1;
+            }
+        }
+        else
+            liveWaitUntil = -1;
 
         // what should sound: the pad held, else the progression's chord for this bar
         int want = livePad.load(), step = -1;
@@ -384,7 +412,8 @@ void ChordsEngine::renderAt (float* left, float* right, int n, bool running, dou
         if (i == 0 || prog)
             progStep = step;
         const bool aud = want >= 0 && ! (prog && muted);
-        if (want != playing || prog != playingProg || version != playingVersion || style != playingStyle || aud != playingAudible)
+        if (want != playing || prog != playingProg || version != playingVersion || style != playingStyle || aud != playingAudible
+            || shiftNow != playingShiftNow)
         {
             // the chord changes here
             synthOff (i);
@@ -392,7 +421,8 @@ void ChordsEngine::renderAt (float* left, float* right, int n, bool running, dou
             padPlayer.release();
             offBeat = -1;
             strumLeft.fill (-1);
-            const bool newChord = want != playing || version != playingVersion;
+            const bool newChord = want != playing || version != playingVersion || shiftNow != playingShiftNow;
+            playingShiftNow = shiftNow;
             playing = want;
             playingProg = prog;
             playingVersion = version;
@@ -515,6 +545,10 @@ void ChordsTool::reset()
     live = -1;
     ++auditionId;
     own.fill ({});
+    liveKeyShift = 0;
+    liveOct = 0;
+    liveOnBar = true;
+    liveOpen = false;
     eng.setLivePad (-1);
     eng.setProgressionMuted (false);
     eng.setOrigin (0.0);
@@ -625,6 +659,7 @@ void ChordsTool::refreshNotes()
 void ChordsTool::apply()
 {
     refreshNotes();
+    applyLive();
     eng.setStyle (style);
     eng.setProgression (progression, juce::jmax (1, usedBoxes()), progressionOn && usedBoxes() > 0);
     eng.setPlays (playsSynth, playsPad && eng.hasPadSound(), playsVocoder);
@@ -691,6 +726,40 @@ void ChordsTool::progressionEdited()
         onPlay();
 }
 
+void ChordsTool::setLiveKey (int pitchClass)
+{
+    int d = ((juce::jlimit (0, 11, pitchClass) - key.root) % 12 + 12) % 12;
+    if (d > 6)
+        d -= 12;   // the nearest way
+    liveKeyShift = d;
+    applyLive();
+}
+
+void ChordsTool::nudgeLiveOctave (int delta)
+{
+    liveOct = juce::jlimit (-kLiveOctaves, kLiveOctaves, liveOct + delta);
+    applyLive();
+}
+
+void ChordsTool::liveHome()
+{
+    liveKeyShift = 0;
+    liveOct = 0;
+    applyLive();
+}
+
+juce::String ChordsTool::livePadName (int pad) const
+{
+    const int shift = eng.playingShift();
+    if (shift % 12 == 0)
+        return padName (pad);
+    auto notes = padNotes (pad);
+    for (auto& n : notes)
+        n += shift;
+    const auto name = chordmath::nameNotes (notes);
+    return name.isNotEmpty() ? name : padName (pad);
+}
+
 juce::var ChordsTool::toVar() const
 {
     auto* o = new juce::DynamicObject();
@@ -719,6 +788,10 @@ juce::var ChordsTool::toVar() const
     }
     if (anyOwn)
         o->setProperty ("own", ownList);
+    o->setProperty ("liveKeyShift", liveKeyShift);
+    o->setProperty ("liveOctave", liveOct);
+    o->setProperty ("liveOnBar", liveOnBar);
+    o->setProperty ("liveOpen", liveOpen);
     return juce::var (o);
 }
 
@@ -746,6 +819,10 @@ void ChordsTool::fromVar (const juce::var& v)
     if (auto* a = v.getProperty ("own", {}).getArray())
         for (int i = 0; i < kChordPads && i < a->size(); ++i)
             own[(size_t) i] = OwnChord::fromVar ((*a)[i]);
+    liveKeyShift = juce::jlimit (-5, 6, (int) v.getProperty ("liveKeyShift", 0));
+    liveOct = juce::jlimit (-kLiveOctaves, kLiveOctaves, (int) v.getProperty ("liveOctave", 0));
+    liveOnBar = (bool) v.getProperty ("liveOnBar", true);
+    liveOpen = (bool) v.getProperty ("liveOpen", false);
     apply();
 }
 
@@ -882,6 +959,59 @@ juce::String chordsSelfCheck (juce::String& report)
             problems.add ("a key change overwrote an own chord");
         if (chordmath::nameNotes ({ 48, 49, 50 }).isNotEmpty())
             problems.add ("a C C# D cluster got a name, not CUSTOM");
+    }
+
+    // LIVE KEY: A minor to B (the nearest way, +2) waits for the bar line with ON BAR, moves a held chord there,
+    // goes down to G (-2), adds an octave, comes back, and survives the song's save
+    {
+        BeatsEngine clock;
+        ChordsTool tool (clock);
+        tool.setKey ({ 9, true });
+        auto& e = tool.engine();
+        std::vector<float> l (256), r (256);
+        const double bps = 120.0 / (60.0 * 44100.0);
+        double beat = 0.5;
+        auto run = [&] (double until, bool running)
+        {
+            while (beat < until)
+            {
+                e.renderAt (l.data(), r.data(), 256, running, beat, 120.0);
+                beat += 256 * bps;
+            }
+        };
+        tool.padDown (0, false);   // Am, held
+        run (1.0, true);
+        const auto before = pcs (e.lastVocoderNotes());
+        tool.setLiveKey (11);      // B
+        run (3.5, true);
+        const bool waited = e.playingShift() == 0 && pcs (e.lastVocoderNotes()) == before;
+        run (4.3, true);           // past the bar line at beat 4
+        const auto moved = pcs (e.lastVocoderNotes());
+        report << "live key A -> B: before " << before << ", waited for the bar " << (waited ? "yes" : "no") << ", then " << moved
+               << " (" << tool.livePadName (0) << ")\n";
+        if (tool.liveShift() != 2)
+            problems.add ("A to B isn't up 2 (" + juce::String (tool.liveShift()) + ")");
+        if (! waited)
+            problems.add ("a live key change with ON BAR didn't wait for the bar line");
+        if (moved != want ({ "B", "D", "F\xe2\x99\xaf", "A" }) || e.playingShift() != 2)
+            problems.add ("the held Am7 didn't move to Bm7 on the bar (" + moved + ")");
+        if (! tool.livePadName (0).startsWith ("Bm"))
+            problems.add ("pad 1 shows " + tool.livePadName (0) + " in B, not Bm7");
+        tool.setLiveKey (7);       // G: down 2
+        tool.nudgeLiveOctave (1);
+        if (tool.liveShift() != 10)
+            problems.add ("G and OCT + aren't -2 + 12 (" + juce::String (tool.liveShift()) + ")");
+        tool.liveOnBar = false;
+        tool.liveHome();
+        run (4.6, true);
+        if (e.playingShift() != 0)
+            problems.add ("BACK with ON BAR off didn't land at once");
+        tool.setLiveKey (2);
+        ChordsTool back (clock);
+        back.fromVar (tool.toVar());
+        if (back.liveShift() != tool.liveShift() || back.liveOnBar)
+            problems.add ("the live key didn't survive the song's save and load");
+        tool.releaseAll();
     }
     return problems.joinIntoString ("; ");
 }

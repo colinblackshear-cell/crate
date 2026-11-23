@@ -218,6 +218,8 @@ void RigChords::fillFromKey (int key, int scale, int type)
     fillKey = juce::jlimit (0, 11, key);
     fillScale = juce::jlimit (0, vox::Chords::numScales - 1, scale);
     fillType = juce::jlimit (0, vox::Chords::numFlavours - 1, type);
+    liveKeyShift = 0;   // a new home key: the live key starts from it
+    updateLiveTarget();
     rebuildMap();
     for (int degree = 0; degree < 7; ++degree)
         setPad (degree, toArray (vox::Chords::build (fillKey, fillScale, degree, fillType)));
@@ -226,10 +228,144 @@ void RigChords::fillFromKey (int key, int scale, int type)
 
 void RigChords::setKey (int key, int scale, int type)
 {
+    if (juce::jlimit (0, 11, key) != fillKey)
+    {
+        liveKeyShift = 0;   // a new home key: the live key starts from it
+        updateLiveTarget();
+    }
     fillKey = juce::jlimit (0, 11, key);
     fillScale = juce::jlimit (0, vox::Chords::numScales - 1, scale);
     fillType = juce::jlimit (0, vox::Chords::numFlavours - 1, type);
     rebuildMap();
+}
+
+//==============================================================================
+juce::String RigChords::liveChangeName (int i)
+{
+    switch ((LiveChange) i)
+    {
+        case LiveChange::now:  return "Now";
+        case LiveChange::beat: return "Next beat";
+        case LiveChange::bar:  return "Next bar";
+        default:               return {};
+    }
+}
+
+void RigChords::setLiveKey (int key)
+{
+    int d = ((juce::jlimit (0, 11, key) - fillKey) % 12 + 12) % 12;
+    if (d > 6)
+        d -= 12;   // the nearest way: down to B from D, not up
+    liveKeyShift = d;
+    updateLiveTarget();
+}
+
+void RigChords::setLiveOctave (int octave)
+{
+    liveOctave = juce::jlimit (-kLiveOctaves, kLiveOctaves, octave);
+    updateLiveTarget();
+}
+
+void RigChords::liveKeyHome()
+{
+    liveKeyShift = 0;
+    liveOctave = 0;
+    updateLiveTarget();
+}
+
+juce::String RigChords::shiftName (const juce::String& name, int semitones)
+{
+    const int shift = ((semitones % 12) + 12) % 12;
+    if (shift == 0 || name.isEmpty())
+        return name;
+    auto shiftRootAt = [shift] (const juce::String& text, int at, int& length) -> juce::String
+    {
+        static const juce::String letters ("C D EF G A B");
+        const int letter = letters.indexOfChar (text[at]);
+        if (text[at] == ' ' || letter < 0)
+        {
+            length = 0;
+            return {};
+        }
+        int pc = letter;
+        length = 1;
+        if (text[at + 1] == '#') { ++pc; ++length; }
+        else if (text[at + 1] == 'b') { --pc; ++length; }
+        return noteNames[((pc + shift) % 12 + 12) % 12];
+    };
+    int length = 0;
+    const auto root = shiftRootAt (name, 0, length);
+    if (length == 0)
+        return name;
+    juce::String out = root;
+    auto rest = name.substring (length);
+    // Only a chord's name moves ("Dm7", "C/E"), not your own ("Big F") or a list of notes.
+    bool chordName = rest.isEmpty();
+    for (const char* start : { "m", "M", "5", "6", "7", "9", "1", "sus", "dim", "aug", "add", "/", "+", "(" })
+        chordName = chordName || rest.startsWith (start);
+    if (! chordName || rest.containsChar (' '))
+        return name;
+    const int slash = rest.lastIndexOfChar ('/');
+    if (slash >= 0)
+    {
+        int bassLength = 0;
+        const auto bass = shiftRootAt (rest, slash + 1, bassLength);
+        if (bassLength > 0)
+            rest = rest.substring (0, slash + 1) + bass + rest.substring (slash + 1 + bassLength);
+    }
+    return out + rest;
+}
+
+juce::String RigChords::livePadName (int pad) const
+{
+    const int shift = liveApplied.load();
+    if (shift % 12 == 0 || isEmpty (pad) || getPad (pad).name.isNotEmpty())
+        return padName (pad);
+    juce::Array<int> notes;
+    for (int n : getPad (pad).notes)
+        notes.add (n + shift);
+    return nameOf (notes);
+}
+
+juce::String RigChords::liveMapChordName (int note) const
+{
+    const int shift = liveApplied.load();
+    const auto& e = getMapEntry (note);
+    if (e.kind == MapEntry::padChord && e.pad >= 0)
+        return isEmpty (e.pad) ? juce::String() : livePadName (e.pad);
+    return shiftName (mapChordName (note), shift);
+}
+
+void RigChords::shiftSounding (int delta, int at, std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to)
+{
+    // Every note off first, then the moved ones on, so a note one chord lets go and another takes
+    // up (C in Am moving to C in F) sounds again rather than being cut.
+    for (auto& voice : voices)
+        if (voice.source >= 0)
+            for (int i = 0; i < voice.count; ++i)
+                noteOff (voice.dest, voice.notes[(size_t) i], at, to);
+    for (auto& voice : voices)
+    {
+        if (voice.source < 0)
+            continue;
+        int kept = 0;
+        for (int i = 0; i < voice.count; ++i)
+        {
+            const int moved = voice.notes[(size_t) i] + delta;
+            if (moved < 0 || moved > 127)
+                continue;
+            noteOn (voice.dest, moved, voice.velocity, at, to);
+            voice.notes[(size_t) kept++] = moved;
+        }
+        voice.count = kept;
+    }
+    for (int p = numPending; --p >= 0;)
+    {
+        auto& note = pending[(size_t) p];
+        note.note += delta;
+        if (note.note < 0 || note.note > 127)
+            pending[(size_t) p] = pending[(size_t) --numPending];
+    }
 }
 
 int RigChords::fullKeyboardFlavour (int octave)
@@ -1010,10 +1146,12 @@ void RigChords::startNotes (int source, const int* chord, int numNotes, float ve
     voice.source = source;
     voice.dest = dest;
     voice.count = 0;
+    voice.velocity = velocity;
+    const int shift = liveApplied.load();   // the live key
     int index = 0;
     for (int i = 0; i < numNotes; ++i)
     {
-        const int played = chord[i];
+        const int played = chord[i] + shift;
         if (played < 0 || played > 127)
             continue;
         const int when = at + index * strumSamples;
@@ -1093,6 +1231,26 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
         lastMapCentre = -1;
         progressionStepNow = -1;
         playingStep = -1;
+    }
+
+    // The live key: a change asked for lands now, or on the next beat or bar of the clock.
+    if (const int want = liveTarget.load(), had = liveApplied.load(); want != had)
+    {
+        int at = 0;
+        const int when = liveChange.load();
+        if (clock.playing && when != (int) LiveChange::now)
+        {
+            const double unit = when == (int) LiveChange::beat ? 1.0 : (double) juce::jmax (1, clock.beatsPerBar);
+            const double beatsPerSample = clock.bpm / 60.0 / juce::jmax (1.0, clock.sampleRate);
+            const double start = juce::jmax (0.0, clock.beat);
+            const double boundary = std::ceil (start / unit - 1.0e-9) * unit;
+            at = (int) std::ceil ((boundary - start) / beatsPerSample - 1.0e-6);
+        }
+        if (at >= 0 && at < numSamples)
+        {
+            shiftSounding (want - had, at, to);
+            liveApplied = want;
+        }
     }
 
     // Strummed notes whose time has come.
@@ -1380,6 +1538,8 @@ void RigChords::reset()
     mapVoicing = (int) MapVoicing::followKeys;
     mapBass = false;
     mapOctave = 0;
+    liveKeyHome();
+    liveChange = (int) LiveChange::bar;
     lastMapCentre = -1;
     for (auto& k : keyChords)
         k.clearQuick();
@@ -1406,6 +1566,9 @@ juce::ValueTree RigChords::toTree() const
     t.setProperty ("mapVoicing", mapVoicing.load(), nullptr);
     t.setProperty ("mapBass", mapBass.load(), nullptr);
     t.setProperty ("mapOctave", mapOctave.load(), nullptr);
+    t.setProperty ("liveKeyShift", liveKeyShift.load(), nullptr);
+    t.setProperty ("liveOctave", liveOctave.load(), nullptr);
+    t.setProperty ("liveChange", liveChange.load(), nullptr);
     juce::StringArray stepText;
     for (const auto& s : steps)
         stepText.add (juce::String (s.load()));
@@ -1484,6 +1647,10 @@ void RigChords::fromTree (const juce::ValueTree& t)
     mapVoicing = juce::jlimit (0, 2, (int) t.getProperty ("mapVoicing", 0));
     mapBass = (bool) t.getProperty ("mapBass", false);
     mapOctave = juce::jlimit (-2, 2, (int) t.getProperty ("mapOctave", 0));
+    liveKeyShift = juce::jlimit (-5, 6, (int) t.getProperty ("liveKeyShift", 0));
+    liveOctave = juce::jlimit (-kLiveOctaves, kLiveOctaves, (int) t.getProperty ("liveOctave", 0));
+    liveChange = juce::jlimit (0, 2, (int) t.getProperty ("liveChange", (int) LiveChange::bar));
+    updateLiveTarget();
     juce::StringArray stepText;
     stepText.addTokens (t.getProperty ("steps").toString(), " ", "");
     for (int i = 0; i < kSteps; ++i)
@@ -1525,10 +1692,19 @@ bool RigChords::loadSet (const juce::File& file)
         if (t.hasType (kTreeType))
         {
             // A set is your chords and progression; where they play stays as it is.
+            // So does the live key: the set's chords come in in the key you're playing in.
             const int keepTarget = target.load(), keepTrigger = trigger.load();
+            const bool wasHome = liveKeyShift.load() == 0;
+            const int keepKey = getLiveKey(), keepOctave = liveOctave.load(), keepChange = liveChange.load();
             fromTree (t);
             target = keepTarget;
             trigger = keepTrigger;
+            liveChange = keepChange;
+            setLiveOctave (keepOctave);
+            if (wasHome)
+                setLiveKey (fillKey);   // still home: the set's own key
+            else
+                setLiveKey (keepKey);
             return true;
         }
     }

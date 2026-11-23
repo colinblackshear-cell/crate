@@ -79,8 +79,11 @@ bool LoopsEngine::arm (int layer, LoopSource source, int bars, int tool, int tap
 
     const double tempo = juce::jmax (40.0, beats.getBpm());
     const int lat = latency.load();
-    const int room = bars > 0 ? (int) (bars * 4.0 * 60.0 / tempo * sampleRate * 1.6) + lat + 8192
-                              : (int) (600.0 * sampleRate) + lat;   // FREE: up to 10 minutes
+    // FREE: up to 10 minutes. A set length (up to 64 bars) gets room for it with headroom for a tempo
+    // change, never more than FREE's (a long take at a slow tempo keeps the whole bars that fit).
+    const int freeRoom = (int) (600.0 * sampleRate) + lat;
+    const int room = bars > 0 ? (int) juce::jmin ((double) freeRoom, bars * 4.0 * 60.0 / tempo * sampleRate * 1.6 + lat + 8192)
+                              : freeRoom;
     auto take = makeTake (room, sampleRate);
     take->source = (int) source;
     take->tool = tool >= 0 ? tool : toolForSource ((int) source);

@@ -649,6 +649,20 @@ LooperView::LooperView (RigEngine& e) : engine (e)
         button->onClick = [this, b] { setNextBars (b); };
         addAndMakeVisible (button);
     }
+    longerButton.getProperties().set ("fontSize", 17.0f);
+    longerButton.setTooltip ("Longer loops: the next layer records 16, 32 or 64 bars. (Free records as long as you like.)");
+    longerButton.onClick = [this]
+    {
+        const int next = nextEmptyLayer();
+        const int now = next >= 0 ? engine.getLooper().getLayer (next).bars.load() : -1;
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("The next layer records");
+        for (int b : RigLooper::barChoices())
+            if (b > lengthChoices.back())
+                menu.addItem (juce::String (b) + " bars", true, now == b, [this, b] { setNextBars (b); });
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&longerButton));
+    };
+    addAndMakeVisible (longerButton);
     for (const auto& [source, name] : sourceChoices)
     {
         auto* button = sourceButtons.add (new juce::TextButton (name));
@@ -1027,6 +1041,8 @@ void LooperView::updateTop()
     const int source = next >= 0 ? looper.getLayer (next).source.load() : -1;
     for (int i = 0; i < (int) lengthChoices.size(); ++i)
         lengthButtons[i]->setToggleState (bars == lengthChoices[(size_t) i], juce::dontSendNotification);
+    longerButton.setToggleState (bars > lengthChoices.back(), juce::dontSendNotification);
+    longerButton.setButtonText (bars > lengthChoices.back() ? juce::String (bars) : juce::String ("16+"));
     for (int i = 0; i < (int) sourceChoices.size(); ++i)
         sourceButtons[i]->setToggleState (source == sourceChoices[(size_t) i].first, juce::dontSendNotification);
 
@@ -1239,13 +1255,14 @@ void LooperView::resized()
         t.removeFromLeft (8);
         quantizeButton.setBounds (t.removeFromLeft (narrow ? 92 : 104).reduced (0, 6));
         t.removeFromLeft (18);
-        auto lengths = t.removeFromLeft (5 * 46 + 4 * 6);
+        auto lengths = t.removeFromLeft (5 * 46 + 4 * 6 + 6 + 46);
         lengthLabel = lengths.removeFromTop (16);
         for (auto* b : lengthButtons)
         {
             b->setBounds (lengths.removeFromLeft (b == lengthButtons[0] ? 52 : 40).reduced (0, 1));
             lengths.removeFromLeft (6);
         }
+        longerButton.setBounds (lengths.removeFromLeft (46).reduced (0, 1));
         t.removeFromLeft (14);
         const int sw = narrow ? 66 : 76;
         auto sources = t.removeFromLeft (4 * sw + 3 * 6);

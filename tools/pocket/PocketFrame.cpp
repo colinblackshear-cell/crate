@@ -1,4 +1,5 @@
 #include "PocketFrame.h"
+#include "PocketSettings.h"
 
 namespace pocket
 {
@@ -453,7 +454,6 @@ void CountInPanel::paint (juce::Graphics& g)
 RecSetupSheet::RecSetupSheet()
 {
     static const char* counts[3] = { "Off", "1 bar", "2 bars" };
-    static const char* lengths[5] = { "1 bar", "2 bars", "4 bars", "8 bars", "Free" };
     for (int i = 0; i < 3; ++i)
     {
         countButtons[i].setText (counts[i]);
@@ -461,11 +461,13 @@ RecSetupSheet::RecSetupSheet()
         countButtons[i].onClick = [this, i] { if (setCountIn) setCountIn (i); refresh(); };
         addAndMakeVisible (countButtons[i]);
     }
-    for (int i = 0; i < 5; ++i)
+    // In bar order, two rows of four: 1, 2, 4, 8 / 16, 32, 64, Free.
+    for (int i = 0; i < AppSettings::kLengthChoices; ++i)
     {
-        lengthButtons[i].setText (lengths[i]);
+        const int choice = AppSettings::kLengthOrder[i];
+        lengthButtons[i].setText (AppSettings::lengthText (choice).toLowerCase().replace ("free", "Free"));
         lengthButtons[i].setFontHeight (16.0f);
-        lengthButtons[i].onClick = [this, i] { if (setLength) setLength (i); refresh(); };
+        lengthButtons[i].onClick = [this, choice] { if (setLength) setLength (choice); refresh(); };
         addAndMakeVisible (lengthButtons[i]);
     }
     static const char* padsTo[2] = { "A loop layer", "The pad pattern" };
@@ -487,8 +489,8 @@ void RecSetupSheet::refresh()
     const int c = getCountIn ? getCountIn() : 1, l = getLength ? getLength() : 2;
     for (int i = 0; i < 3; ++i)
         countButtons[i].setLook (i == c ? Look::amber : Look::cream);
-    for (int i = 0; i < 5; ++i)
-        lengthButtons[i].setLook (i == l ? Look::amber : Look::cream);
+    for (int i = 0; i < AppSettings::kLengthChoices; ++i)
+        lengthButtons[i].setLook (AppSettings::kLengthOrder[i] == l ? Look::amber : Look::cream);
     const int p = getPadsTo ? getPadsTo() : 0;
     for (int i = 0; i < 2; ++i)
         padsButtons[i].setLook (i == p ? Look::amber : Look::cream);
@@ -502,12 +504,12 @@ void RecSetupSheet::resized()
     const int cw = (w - 48 - 16) / 3;
     for (int i = 0; i < 3; ++i)
         countButtons[i].setBounds (24 + i * (cw + 8), 104, cw, 48);
-    const int lw = (w - 48 - 4 * 6) / 5;
-    for (int i = 0; i < 5; ++i)
-        lengthButtons[i].setBounds (24 + i * (lw + 6), 196, lw, 48);
+    const int lw = (w - 48 - 3 * 6) / 4;
+    for (int i = 0; i < AppSettings::kLengthChoices; ++i)
+        lengthButtons[i].setBounds (24 + (i % 4) * (lw + 6), 196 + (i / 4) * 54, lw, 48);
     const int pw = (w - 48 - 8) / 2;
     for (int i = 0; i < 2; ++i)
-        padsButtons[i].setBounds (24 + i * (pw + 8), 288, pw, 48);
+        padsButtons[i].setBounds (24 + i * (pw + 8), 342, pw, 48);
 }
 
 void RecSetupSheet::paint (juce::Graphics& g)
@@ -522,11 +524,11 @@ void RecSetupSheet::paint (juce::Graphics& g)
     g.setFont (spaced (condensedBold (13.0f), 0.12f));
     g.drawText (U8("COUNT-IN \xc2\xb7 WHEN REC STARTS THE SONG"), 24, 74, getWidth() - 48, 24, juce::Justification::centredLeft);
     g.drawText (U8("LENGTH \xc2\xb7 HOW LONG A TAKE IS"), 24, 166, getWidth() - 48, 24, juce::Justification::centredLeft);
-    g.drawText (U8("PADS RECORD INTO"), 24, 258, getWidth() - 48, 24, juce::Justification::centredLeft);
+    g.drawText (U8("PADS RECORD INTO"), 24, 312, getWidth() - 48, 24, juce::Justification::centredLeft);
     g.setFont (small (14.0f));
     g.drawFittedText (U8("The same on every tool. The click plays through the count-in even with CLICK off. "
                          "When the song is already playing, a take starts on the next bar. FREE runs until you press STOP."),
-                      juce::Rectangle<int> (24, 350, getWidth() - 48, 64), juce::Justification::topLeft, 3);
+                      juce::Rectangle<int> (24, 404, getWidth() - 48, 64), juce::Justification::topLeft, 3);
 }
 
 //==============================================================================

@@ -95,7 +95,7 @@ class RecSetupSheet : public DragSheet
 {
 public:
     RecSetupSheet();
-    std::function<int()> getCountIn, getLength;      // bars 0..2; choice 0..4 (1, 2, 4, 8 bars, FREE)
+    std::function<int()> getCountIn, getLength;      // bars 0..2; choice: an AppSettings length choice
     std::function<void (int)> setCountIn, setLength;
     std::function<int()> getPadsTo;                  // where PADS records: 0 a loop layer, 1 the pad pattern only
     std::function<void (int)> setPadsTo;
@@ -106,7 +106,7 @@ public:
     void resized() override;
 
 private:
-    PButton countButtons[3], lengthButtons[5], padsButtons[2], done { "Done", Look::amber };
+    PButton countButtons[3], lengthButtons[8], padsButtons[2], done { "Done", Look::amber };
 };
 
 //==============================================================================

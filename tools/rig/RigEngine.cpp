@@ -605,6 +605,14 @@ void RigEngine::applyControls (const RigRouting::Result& r)
             moved = true;
         }
     }
+    // The chord builder's live key (learned buttons: a key, its octave, home).
+    for (int k = 0; k < 12; ++k)
+        if (r.presses[(size_t) (RigRouting::liveKeyC + k)] > 0)
+            chords.setLiveKey (k);
+    if (const int down = r.presses[RigRouting::liveOctaveDown], up = r.presses[RigRouting::liveOctaveUp]; down != up)
+        chords.nudgeLiveOctave (up - down);
+    if (r.presses[RigRouting::liveKeyHome] > 0)
+        chords.liveKeyHome();
     scenes.nextPresses += r.presses[RigRouting::nextScene];
     scenes.backPresses += r.presses[RigRouting::previousScene];
     if (r.presses[RigRouting::inputHear] % 2 == 1)
@@ -2124,6 +2132,10 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     // A one-tool plugin's keys and pads always play its tool, whatever the show says.
     if (onlyTool.load() >= 0)
         setOnlyTool (onlyTool.load());
+    // A show opens silent: the clock is stopped (above), and the Drone, the one thing that
+    // sounds without the clock, waits for its On button (its other settings stay as saved).
+    if (auto* droneOn = drone.params.getParameter ("droneOn"))
+        droneOn->setValueNotifyingHost (0.0f);
     controlsMoved = true;
     // Nothing to compare with until it's opened (readLoopAudio, or markOpened).
     dirty.showLoaded();

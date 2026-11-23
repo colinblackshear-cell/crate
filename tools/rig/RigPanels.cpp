@@ -1290,7 +1290,7 @@ RecSetup::RecSetup()
     for (int bars : { 0, 1, 2 })
         chip (countIns, bars == 0 ? juce::String ("Off") : juce::String (bars) + (bars == 1 ? " bar" : " bars"),
               [this, bars] { if (onCountIn) onCountIn (bars); });
-    for (int bars : { 1, 2, 4, 8, 16, 0 })
+    for (int bars : { 1, 2, 4, 8, 16, 32, 64, 0 })
         chip (lengths, bars == 0 ? juce::String ("Free") : juce::String (bars), [this, bars] { if (onLength) onLength (bars); });
     click.fontSize = 16.0f;
     click.onClick = [this] { if (onClick) onClick(); };
@@ -1321,7 +1321,7 @@ RecSetup::RecSetup()
 
 void RecSetup::setState (int countIn, int length, bool clickOn, int landsOn, bool toolMode)
 {
-    const int countValues[] = { 0, 1, 2 }, lengthValues[] = { 1, 2, 4, 8, 16, 0 };
+    const int countValues[] = { 0, 1, 2 }, lengthValues[] = { 1, 2, 4, 8, 16, 32, 64, 0 };
     for (int i = 0; i < countIns.size(); ++i)
         countIns[i]->lit = countValues[i] == countIn ? Lit::next : Lit::none;
     for (int i = 0; i < lengths.size(); ++i)
