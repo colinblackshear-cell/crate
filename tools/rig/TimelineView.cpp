@@ -874,13 +874,20 @@ void TimelineView::tick()
     }
     if (playing)
         seenPlaying = true;
+    if (recordingSong && playing && recordUntilBeat >= 0 && transport.getPositionInBeats() >= recordUntilBeat)
+        transport.stop();   // a bounce: its end (and tail) reached
     if (recordingSong && seenPlaying && ! playing)
     {
         recordingSong = false;
+        const bool bounce = recordUntilBeat >= 0;
+        if (bounce)
+            timeline.stopAtEnd = stopAtEndBefore;
+        recordUntilBeat = -1;
         if (engine.getRecorder().getState() != RigRecorder::State::idle)
         {
             engine.stopRecording();
-            say ("Recorded the song. Every tool is its own WAV in Music > Crate > Rig > Recordings.");
+            if (! bounce)
+                say ("Recorded the song. Every tool is its own WAV in Music > Crate > Rig > Recordings.");
         }
     }
     wasPlaying = playing;
@@ -1179,6 +1186,30 @@ void TimelineView::recordSong()
     engine.playTimeline (0);
     onButton.setToggleState (true, juce::dontSendNotification);
     say ("Recording the song from bar 1. It stops by itself at the end (or press Stop). Sing along!");
+}
+
+bool TimelineView::recordSongRange (const juce::File& folder, double fromBar, double untilBeat, juce::String* why)
+{
+    const auto fail = [why] (const juce::String& text) { if (why != nullptr) *why = text; return false; };
+    if (recordingSong)
+        return fail ("The song is already being recorded.");
+    if (timeline.isEmpty())
+        return fail ("Put the song on the timeline first.");
+    if (engine.getRecorder().getState() != RigRecorder::State::idle)
+        return fail ("The set is already recording (Rec, top bar). Stop that first.");
+    engine.getTransport().stop();
+    if (! engine.startRecording (folder))
+        return fail ("Couldn't start recording in " + folder.getFullPathName() + ".");
+    timeline.cycle = false;
+    stopAtEndBefore = timeline.stopAtEnd.load();
+    timeline.stopAtEnd = false;   // it stops after the tail itself
+    startBar = juce::jmax (0.0, fromBar);
+    recordingSong = true;
+    seenPlaying = false;
+    recordUntilBeat = untilBeat;
+    engine.playTimeline (startBar);
+    onButton.setToggleState (true, juce::dontSendNotification);
+    return true;
 }
 
 void TimelineView::exportForLogic()

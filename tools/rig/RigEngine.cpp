@@ -1129,7 +1129,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     // The safety limiter (and NaN guard), before the mix is recorded.
     masterLimiter.process (mix.getWritePointer (0), mix.getWritePointer (1), n);
 
-    recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
+    recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock, &droneBlock }, n);
     capture.process (recClock, { &rawInput, &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
 
     const float clickGain = masterGain.getTargetValue();
@@ -1296,7 +1296,7 @@ juce::File RigEngine::recordingsFolder()
 
 bool RigEngine::startRecording (const juce::File& folder)
 {
-    return recorder.start (folder, { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops", "Mix", "Drum machine" },
+    return recorder.start (folder, { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops", "Mix", "Drum machine", "Drone" },
                            { "MPC pads", "Sampler", "Vocoder", "Bass", "Synth", "Drum machine" }, sampleRate > 0 ? sampleRate : 44100.0);
 }
 

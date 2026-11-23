@@ -1,6 +1,7 @@
 #include "TestHelpers.h"
 
 #include "RigEngine.h"
+#include "RigBounce.h"
 #include "RigLiveSong.h"
 #include "RigSong.h"
 #include "RigTimeline.h"
@@ -320,6 +321,83 @@ struct RigLiveSongTests : juce::UnitTest
             expectWithinAbsoluteError (q.to (5.0), 0.1f, 0.01f, "bar 2: the loop's bar 2, at half level");
             expectWithinAbsoluteError (q.to (13.0), 0.4f, 0.01f, "bar 4: carries on to the loop's bar 4 across the split");
             expectWithinAbsoluteError (q.to (17.0), 0.1f, 0.01f, "bar 5: round again to its bar 1");
+        }
+
+        beginTest ("Bounce: loop stems over the song keep the slip; a section; the loops playing now");
+        {
+            RigEngine engine;
+            fresh (engine);
+            engine.getLooper().setLayerAudio (0, countingBars (4), 16.0);
+            auto& tl = engine.getTimeline();
+            RigTimeline::Block a;
+            a.lane = 0;
+            a.start = 0;
+            a.length = 4;
+            a.offset = 2;   // starts on the loop's bar 3
+            RigTimeline::Block b = a;
+            b.start = 4;
+            b.length = 2;
+            b.offset = 0;
+            tl.getBlocks() = { a, b };
+            tl.getMarkers() = { { 0.0, "A", 0.0, -1 }, { 4.0, "B", 0.0, -1 } };
+            tl.changed();
+            const auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("bounce-test-" + juce::String (juce::Random().nextInt()));
+            auto read = [] (const juce::File& f)
+            {
+                juce::WavAudioFormat wav;
+                juce::AudioBuffer<float> out;
+                if (std::unique_ptr<juce::AudioFormatReader> r { wav.createReaderFor (f.createInputStream().release(), true) })
+                {
+                    out.setSize (2, (int) r->lengthInSamples);
+                    r->read (&out, 0, (int) r->lengthInSamples, 0, true, true);
+                }
+                return out;
+            };
+            auto at = [] (const juce::AudioBuffer<float>& audio, double beat)
+            {
+                const int i = (int) (beat * kPerBeat);
+                return i < audio.getNumSamples() ? audio.getSample (0, i) : -1.0f;
+            };
+
+            RigBounce::Options o;
+            o.wav = true;
+            o.mp3 = false;
+            o.dry = true;
+            o.tailSeconds = 0;
+            o.name = "Test";
+            expect (RigBounce::loopsFor (engine, o).size() == 1);
+            expectEquals (RigBounce::barsFor (engine, o).getEnd(), 6.0);
+            auto r = RigBounce::bounceLoops (engine, o, temp.getChildFile ("song"));
+            expect (r.error.isEmpty(), r.error);
+            expect (r.files.contains ("Song - Loop 1 - 120 BPM.wav") && r.files.contains ("Song - Mix - 120 BPM.wav") && r.files.contains ("Song markers.mid"),
+                    r.files.joinIntoString (", "));
+            const auto stem = read (temp.getChildFile ("song").getChildFile ("Song - Loop 1 - 120 BPM.wav"));
+            expectEquals (stem.getNumSamples(), 6 * 4 * kPerBeat, "6 bars long");
+            expectWithinAbsoluteError (at (stem, 2.0), 0.3f, 0.002f, "bar 1: the loop's bar 3 (its slip)");
+            expectWithinAbsoluteError (at (stem, 10.0), 0.1f, 0.002f, "bar 3: round to its bar 1");
+            expectWithinAbsoluteError (at (stem, 18.0), 0.1f, 0.002f, "bar 5: the second block from its top");
+
+            o.what = RigBounce::What::section;
+            o.section = 1;
+            o.split = RigBounce::Split::mix;
+            r = RigBounce::bounceLoops (engine, o, temp.getChildFile ("section"));
+            expect (r.files.contains ("B - Mix - 120 BPM.wav") && ! r.files.contains ("B - Loop 1 - 120 BPM.wav"), r.files.joinIntoString (", "));
+            const auto part = read (temp.getChildFile ("section").getChildFile ("B - Mix - 120 BPM.wav"));
+            expectEquals (part.getNumSamples(), 4 * 4 * kPerBeat, "the section as the Song screen has it (the last one: 4 bars)");
+            expectWithinAbsoluteError (at (part, 6.0), 0.2f, 0.002f, "its bar 2: the loop's bar 2");
+
+            o.what = RigBounce::What::loops;
+            o.split = RigBounce::Split::eachLoop;
+            o.tailSeconds = 2.0;
+            r = RigBounce::bounceLoops (engine, o, temp.getChildFile ("loops"));
+            const auto pass = read (temp.getChildFile ("loops").getChildFile ("Loops - Loop 1 - 120 BPM.wav"));
+            expectEquals (pass.getNumSamples(), 4 * 4 * kPerBeat + 2 * (int) kRate, "one pass of the loop and its 2 s tail");
+            expectWithinAbsoluteError (at (pass, 14.0), 0.4f, 0.002f, "from its top");
+            expectWithinAbsoluteError (at (pass, 17.0), 0.0f, 0.0001f, "the tail is quiet (dry)");
+            expect (! r.files.contains ("Loops markers.mid"), "no markers for the loops");
+            engine.getLooper().getLayer (0).mute = true;
+            expect (RigBounce::loopsFor (engine, o).isEmpty() && RigBounce::describe (engine, o).startsWith ("No loops"), "a muted loop isn't playing");
+            temp.deleteRecursively();
         }
 
         beginTest ("nothing to play: says so");

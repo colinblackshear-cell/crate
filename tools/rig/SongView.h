@@ -1,5 +1,7 @@
 #pragma once
 
+#include "RigBounce.h"
+
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
@@ -109,6 +111,16 @@ public:
     void showTakesMenu();
     bool isLivePanelShown() const;
 
+    // Bounce + stems (the Bounce button's panel). startBounce writes the loops at once; with Everything it plays
+    // the song once and recordingSaved() (RigView calls it when the recorder has saved a take) finishes it.
+    void showBouncePanel();
+    bool startBounce (const RigBounce::Options&);
+    bool bounceRunning() const { return bouncing; }
+    bool recordingSaved();   // true when the take was the bounce's (then it said so itself)
+    const juce::File& lastBounceFolder() const { return bounceFolder; }
+    std::function<juce::String()> getShowName;
+    bool revealAfterBounce = true;   // opens the folder in the Finder (the tests turn it off)
+
     // The lanes the board shows, top to bottom.
     std::vector<int> shownLanes() const;
     bool showingAllLanes = false;
@@ -120,6 +132,11 @@ private:
     class Names;
     class Inspector;
     class LivePads;
+    RigBounce::Options bounceOptions;
+    RigBounce::Options bounceRunningOptions;
+    bool bouncing = false;
+    juce::File bounceFolder;
+    juce::StringArray bounceFiles;
     void timerCallback() override;
     void mouseUp (const juce::MouseEvent&) override;
     void say (const juce::String& s) { if (onSay) onSay (s); }
@@ -134,7 +151,7 @@ private:
 
     RigEngine& engine;
     rigpanels::PanelButton addButton { "+ Section" }, jamButton { "Jam" }, songButton { "Song" }, playButton { "From start" },
-        loopButton { "Loop section" }, barsButton { "Bars view" }, recButton { "Rec song" }, exportButton { "Export" },
+        loopButton { "Loop section" }, barsButton { "Bars view" }, recButton { "Rec song" }, exportButton { "Bounce" },
         moreButton { juce::String::fromUTF8 ("\xe2\x8b\xaf") }, deleteButton { "Delete" }, undoButton { "Undo" }, bigAdd { "+ First section: what's playing now" },
         bigEmpty { "+ Empty section" }, liveButton { "Rec live" }, takesButton { "Takes" };
     std::unique_ptr<Board> board;

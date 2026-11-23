@@ -47,6 +47,10 @@ public:
     void stop();
     void fromParts();     // replaces the timeline with the Song grid's parts
     void recordSong();
+    // Bounce's real-time pass: plays the song from `fromBar` and records every tool into `folder` (as Record song
+    // does), stopping by itself at `untilBeat` (the end bar plus the tail). False (and why) when it can't start.
+    bool recordSongRange (const juce::File& folder, double fromBar, double untilBeat, juce::String* why = nullptr);
+    bool isRecordingSong() const { return recordingSong; }
     void exportForLogic();
     void deleteSelected();
     void duplicateSelected();
@@ -98,6 +102,8 @@ private:
     std::array<double, RigLooper::kLayers> recordStart {};
     // Record song: waits to see the clock play, then stops recording when it stops.
     bool recordingSong = false, seenPlaying = false;
+    double recordUntilBeat = -1;   // a bounce stops here
+    bool stopAtEndBefore = true;
     bool wasPlaying = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TimelineView)

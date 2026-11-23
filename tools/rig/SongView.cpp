@@ -1,4 +1,6 @@
 #include "SongView.h"
+
+#include "BouncePanel.h"
 #include "GrooveView.h"
 #include "RigColours.h"
 #include "RigExport.h"
@@ -956,18 +958,10 @@ SongView::SongView (RigEngine& e) : engine (e)
     recButton.sub = "stems for Logic";
     recButton.setTooltip ("Plays the song once from bar 1 and records every track as its own WAV (and the mix, and MIDI). Sing along!");
     recButton.onClick = [this] { if (bars != nullptr) bars->recordSong(); };
-    exportButton.sub = "loops for Logic";
-    exportButton.setTooltip ("Saves the loops, each on its own and laid out over the song, for Logic.");
-    exportButton.onClick = [this]
-    {
-        if (onExport)
-            onExport();
-        else
-        {
-            const auto result = RigExport::exportForLogic (engine, RigExport::defaultFolder());
-            say (result.files > 0 ? "Exported " + juce::String (result.files) + " files to " + result.folder.getFullPathName() : result.error);
-        }
-    };
+    exportButton.sub = "stems, MP3, Logic";
+    exportButton.setTooltip ("Bounce the song, a section or the loops playing now: the mix, each loop as a stem, or everything "
+                             "(every tool too), as WAV and MP3, into Music > Crate > Rig > To Logic.");
+    exportButton.onClick = [this] { showBouncePanel(); };
     liveButton.sub = "tap loops in, out";
     liveButton.icon = rigpanels::PanelButton::Icon::rec;
     liveButton.setTooltip ("Records the song as you play it: after a count-in, bring loops and tools in and out (the pads, their M, "
@@ -1900,4 +1894,82 @@ void SongView::showTakesMenu()
                           say (name + " deleted from the list (the song on screen stays until you pick another).");
                   });
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&takesButton));
+}
+
+//==============================================================================
+void SongView::showBouncePanel()
+{
+    if (bouncing)
+        return say ("A bounce is playing the song: it stops by itself at the end.");
+    auto panel = std::make_unique<BouncePanel> (engine, bounceOptions);
+    panel->onChange = [this] (const RigBounce::Options& o) { bounceOptions = o; };
+    panel->onBounce = [this, safe = juce::Component::SafePointer<BouncePanel> (panel.get())] (const RigBounce::Options& o)
+    {
+        bounceOptions = o;
+        if (startBounce (o) && safe != nullptr)
+            if (auto* box = safe->findParentComponentOfClass<juce::CallOutBox>())
+                box->dismiss();
+    };
+    const auto area = getLocalArea (&exportButton, exportButton.getLocalBounds());
+    juce::CallOutBox::launchAsynchronously (std::move (panel), area, this);
+}
+
+bool SongView::startBounce (const RigBounce::Options& given)
+{
+    if (bouncing)
+        return false;
+    auto o = given;
+    if (o.name.isEmpty() && getShowName)
+        o.name = getShowName();
+    const auto bars = RigBounce::barsFor (engine, o);
+    if (bars.getLength() <= 0.0)
+    {
+        say (RigBounce::describe (engine, o));
+        return false;
+    }
+    const auto folder = RigBounce::newFolder (RigBounce::toLogicFolder(), o);
+    const auto result = RigBounce::bounceLoops (engine, o, folder);
+    if (result.error.isNotEmpty() && result.files.isEmpty() && o.split != RigBounce::Split::everything)
+    {
+        say (result.error);
+        return false;
+    }
+    if (o.split != RigBounce::Split::everything)
+    {
+        say ("Bounced " + juce::String (result.files.size()) + " files to To Logic/" + folder.getFileName() + ". Drag them into Logic at bar "
+             + juce::String ((int) bars.getStart() + 1) + ".");
+        if (revealAfterBounce)
+            folder.revealToUser();
+        bounceFolder = folder;
+        return true;
+    }
+    // Everything: the loops are written; now the song plays once and the recorder takes every tool.
+    auto* view = getBarsView();
+    juce::String why;
+    const int bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
+    const double tailBeats = o.tailSeconds * engine.getTransport().getBpm() / 60.0;
+    if (view == nullptr || ! view->recordSongRange (folder, bars.getStart(), bars.getEnd() * bpb + tailBeats, &why))
+    {
+        say (why.isNotEmpty() ? why : juce::String ("Couldn't start the bounce."));
+        return false;
+    }
+    bouncing = true;
+    bounceRunningOptions = o;
+    bounceFolder = folder;
+    bounceFiles = result.files;
+    say ("Bouncing: the song plays once from bar " + juce::String ((int) bars.getStart() + 1) + " and every tool is recorded. It stops by itself.");
+    return true;
+}
+
+bool SongView::recordingSaved()
+{
+    if (! bouncing)
+        return false;
+    bouncing = false;
+    auto files = bounceFiles;
+    RigBounce::convertRecorded (engine.getRecorder().getSavedFiles(), bounceRunningOptions, files);
+    say ("Bounced " + juce::String (files.size()) + " files to To Logic/" + bounceFolder.getFileName() + ": every tool, each loop and the mix.");
+    if (revealAfterBounce)
+        bounceFolder.revealToUser();
+    return true;
 }

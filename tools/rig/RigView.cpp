@@ -767,6 +767,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     songView->setLookAndFeel (&vintageLook);
     songView->onSay = [this] (const juce::String& text) { say (text); };
     songView->onExport = [this] { exportForLogic(); };
+    songView->getShowName = [this] { return currentShow.existsAsFile() ? currentShow.getFileNameWithoutExtension() : juce::String ("Song"); };
     songView->onImportFromLogic = [this] { askImportFromLogic(); };
     if (auto* barsView = songView->getBarsView())
         barsView->onOpenAutomation = [this] { showAutomation(); };
@@ -3232,7 +3233,11 @@ void RigView::timerCallback()
     engine.tickScenes();
     if (engine.serviceRecorder())
     {
-        if (toolMode())
+        if (song != nullptr && song->recordingSaved())
+        {
+            // a bounce's real-time pass: it said where the files are
+        }
+        else if (toolMode())
         {
             printTake();
         }
