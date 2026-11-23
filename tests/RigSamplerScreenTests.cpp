@@ -160,6 +160,234 @@ struct RigSamplerScreenTests : juce::UnitTest
             expect (! screen.getBrowser().isVisible());
         }
 
+        beginTest ("Clear empties the Sampler (the pads keep theirs), and Undo clear brings it back");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            std::unique_ptr<juce::AudioProcessorEditor> editor (engine.getSampler().createEditorAndMakeActive());
+            auto* full = dynamic_cast<EditorView*> (editor.get());
+            SamplerScreen screen (engine, *full);
+            screen.setSize (1400, 560);
+            auto& doc = engine.getSampler().getDocument();
+
+            expect (! screen.canUndoClear());
+            screen.pressClear();   // nothing to clear: says so, changes nothing
+            expect (! doc.hasAudio() && ! doc.canUndo());
+
+            doc.load (hits(), "Dusty break", "Load");
+            screen.pressChop (SamplerScreen::even16);
+            screen.pressToPads();
+            const auto onPad = engine.getMpc().getProject().currentBank().pads[0].audio;
+            expect (onPad != nullptr);
+
+            screen.pressClear();
+            expect (! doc.hasAudio(), "the Sampler is empty");
+            expectEquals (screen.numSlices(), 0, "and has no slices");
+            expect (screen.canUndoClear(), "Clear turns into Undo clear");
+            expect (engine.getMpc().getProject().currentBank().pads[0].audio == onPad, "the pads keep their slices");
+
+            full->runEdit ("undo");
+            expect (doc.hasAudio(), "Undo clear brings the sound back");
+            expectEquals (doc.getName(), juce::String ("Dusty break"));
+            expect (! screen.canUndoClear());
+
+            // Cleared, then something new goes in: no Undo clear any more.
+            full->clearSound();
+            expect (screen.canUndoClear());
+            doc.load (hits(), "Next one", "Load");
+            expect (! screen.canUndoClear());
+        }
+
+        beginTest ("a pad's chop opens alone in the Sampler: edit it, Save to the pad, step to the next, Back saves too");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            auto& doc = engine.getSampler().getDocument();
+
+            doc.load (hits(), "Dusty break", "Load");
+            screen.pressChop (SamplerScreen::even16);
+            screen.pressToPads();
+            auto& kit = engine.getMpc().getProject().currentBank();
+            for (int i = 4; i < 16; ++i)
+                kit.pads[(size_t) i] = {};   // only A01..A04 have chops
+            const auto slice3 = kit.pads[2].audio;
+            const int slice3Length = slice3->getNumSamples();
+
+            screen.openPadInSampler (2);
+            expect (screen.isEditingPad() && screen.getEditPad() == 2);
+            expect (screen.isEditMode(), "the Sampler's editor shows");
+            expect (doc.getAudio() == slice3, "it holds just that chop");
+            expect (! screen.padEditChanged());
+            bool barShows = false;
+            for (auto* c : screen.getChildren())
+                if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText() == "Save to A03")
+                    barShows = b->isVisible();
+            expect (barShows, "Save to A03 is on screen");
+
+            full->runEdit ("reverse");
+            expect (screen.padEditChanged());
+            expect (kit.pads[2].audio == slice3, "nothing changes on the pad until it's saved");
+            screen.pressSaveToPad();
+            expect (kit.pads[2].audio != slice3 && kit.pads[2].audio == doc.getAudio(), "Save puts the edit on the pad");
+            expectEquals (kit.pads[2].audio->getNumSamples(), slice3Length);
+            expect (! screen.padEditChanged());
+
+            // Step on: an unsaved edit goes onto the pad first.
+            full->runEdit ("fadeOut");
+            const auto edited = doc.getAudio();
+            screen.pressStepPad (1);
+            expect (kit.pads[2].audio == edited, "stepping saves the edit onto A03");
+            expectEquals (screen.getEditPad(), 3);
+            screen.pressStepPad (1);
+            expectEquals (screen.getEditPad(), 0, "it skips the empty pads and wraps round");
+            screen.pressStepPad (-1);
+            expectEquals (screen.getEditPad(), 3);
+
+            // A different sound opened over it isn't saved onto the pad.
+            const auto a04 = kit.pads[3].audio;
+            doc.load (hits(), "Something else", "Load");
+            expect (! screen.padEditChanged());
+            screen.pressBackToPads();
+            expect (kit.pads[3].audio == a04, "the pad keeps its own sound");
+            expect (! screen.isEditingPad() && ! screen.isEditMode(), "back on the pads");
+
+            // An empty pad doesn't open; Edit opens the selected pad.
+            screen.openPadInSampler (9);
+            expect (! screen.isEditingPad());
+            screen.pressPad (1);
+            screen.pressEditPad();
+            expect (screen.isEditingPad() && screen.getEditPad() == 1);
+            juce::Image image (juce::Image::ARGB, 1500, 760, true);
+            juce::Graphics g (image);
+            screen.paintEntireComponent (g, false);
+        }
+
+        beginTest ("Sample a tool: the synth, one bar, lands in the Sampler (whatever Settings > Sample is set to)");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            engine.vocoderOn = false;
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            engine.captureDest = RigCapture::toMpcPad;   // Settings > Sample goes elsewhere
+            engine.getTransport().setBpm (120.0);
+            engine.getRouting().keysTo = (int) RigRouting::Dest::synth;
+            engine.getTransport().play();
+            runBlocks (engine, 10);
+            screen.pressSampleTool (RigCapture::synth, 1);
+            expect (screen.isSamplingTool(), "it waits for the bar");
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 64, 0.9f));
+            runBlocks (engine, (int) (5.0 * kRate / kBlock));   // past the next bar and one bar on, at 120
+            expect (! screen.isSamplingTool());
+            const auto said = engine.serviceCapture();
+            expect (said.contains ("Sampler"), said);
+            auto& doc = engine.getSampler().getDocument();
+            expect (doc.hasAudio() && doc.getName().startsWith ("Synth"), "the synth is in the Sampler");
+            if (doc.hasAudio())
+                expectWithinAbsoluteError ((double) doc.getAudio()->getNumSamples() / crate::kSampleRate, 2.0, 0.02, "one bar at 120 BPM");
+            expect (engine.getMpc().getProject().currentBank().pads[0].isEmpty(), "nothing went onto a pad");
+            expectEquals (engine.captureDest, (int) RigCapture::toMpcPad, "Settings > Sample keeps its own choice");
+
+            // free: pressed again, it stops
+            screen.pressSampleTool (RigCapture::mix, 0);
+            runBlocks (engine, (int) (2.5 * kRate / kBlock));
+            expect (screen.isSamplingTool());
+            screen.pressSampleTool (RigCapture::mix, 0);
+            runBlocks (engine, 2);
+            expect (! screen.isSamplingTool());
+            engine.serviceCapture();
+            screen.pressSampleTool (RigCapture::sampler, 1);
+            expect (! screen.isSamplingTool(), "the Sampler can't sample itself");
+        }
+
+        beginTest ("Sets: save bank A, load it onto bank B (Undo), and a whole kit onto a new kit");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            juce::TemporaryFile temp;
+            screen.setsFolder = temp.getFile();
+            auto& doc = engine.getSampler().getDocument();
+            doc.load (hits(), "Dusty break", "Load");
+            screen.pressChop (SamplerScreen::even16);
+            screen.pressToPads();
+            auto& project = engine.getMpc().getProject();
+            project.currentBank().pads[2].volume = 61;
+            project.currentBank().pads[2].tune = -30;
+            project.currentBank().pads[2].mode = PadMode::noteOff;
+            const auto slice3 = project.currentBank().pads[2].audio;
+
+            const auto folder = screen.saveSet (0, "Dusty chops");
+            expect (folder.isDirectory() && folder.getChildFile ("set.json").existsAsFile(), "the set is a folder with set.json");
+            expectEquals (folder.findChildFiles (juce::File::findFiles, false, "*.wav").size(), 16, "one WAV a pad");
+            const auto peeked = SoundSet::peek (folder);
+            expect (peeked && peeked->padCount() == 16 && ! peeked->wholeKit && peeked->name == "Dusty chops");
+            expect (screen.saveSet (0, "Dusty chops").getFileName() == "Dusty chops 2", "the same name again doesn't overwrite it");
+            expectEquals (SoundSet::list (screen.setsFolder).size(), 2);
+
+            screen.pressBank (1);
+            expect (screen.loadSetFile (folder));
+            const auto& b3 = project.currentBank().pads[16 + 2];
+            expect (! b3.isEmpty() && b3.audio->getNumSamples() == slice3->getNumSamples(), "B03 has A03's slice");
+            expectEquals (b3.volume, 61);
+            expectEquals (b3.tune, -30);
+            expect (b3.mode == PadMode::noteOff);
+            expect (b3.name == project.currentBank().pads[2].name);
+            expect (screen.canUndoLoadSet());
+            screen.pressUndoLoadSet();
+            expect (project.currentBank().pads[16 + 2].isEmpty(), "Undo puts bank B back as it was (empty)");
+            expect (! screen.canUndoLoadSet());
+
+            const int kits = (int) project.getBanks().size(), mine = project.getCurrentIndex();
+            const auto whole = screen.saveSet (-1, "All of it");
+            expect (SoundSet::peek (whole)->wholeKit);
+            expect (screen.loadSetFile (whole));
+            expectEquals ((int) project.getBanks().size(), kits + 1, "a whole-kit set goes on a new kit");
+            expectEquals (project.currentBank().usedPads(), 16);
+            expect (project.getBanks()[(size_t) mine].usedPads() == 16 && project.getCurrentIndex() != mine, "your kit stays");
+            temp.getFile().deleteRecursively();
+        }
+
+        beginTest ("the steps: 1 Get lit on an empty Sampler, 2 Shape opens the editor, 3 Chop the chop side");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            expectEquals (screen.currentStep(), 0);
+            screen.pressStep (1);
+            expect (screen.isEditMode(), "2 Shape shows the editor");
+            engine.getSampler().getDocument().load (hits(), "Dusty break", "Load");
+            expectEquals (screen.currentStep(), 1);
+            screen.pressStep (2);
+            expect (! screen.isEditMode());
+            expectEquals (screen.currentStep(), 2);
+            bool shown = false;
+            for (auto* c : screen.getChildren())
+                if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText().endsWith ("Save set"))
+                    shown = b->isVisible() && b->getWidth() > 60;
+            expect (shown, "5 Save set is on screen");
+            if (const auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_SAMPLER_SNAPSHOT", {}); path.isNotEmpty())
+            {
+                screen.openPadInSampler (0);   // nothing on A01: stays on the chop side
+                juce::File file (path + "-steps.png");
+                file.deleteFile();
+                juce::FileOutputStream stream (file);
+                juce::PNGImageFormat().writeImageToStream (screen.createComponentSnapshot (screen.getLocalBounds(), true, 1.0f), stream);
+            }
+        }
+
         beginTest ("the full editor is on the Sampler screen: Edit shows it, Chop shows the pads");
         {
             RigEngine engine;

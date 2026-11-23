@@ -67,12 +67,50 @@ public:
     void pressBeat();
     void pressLoopPads();
     int loopBars = 0;
+    // Edit (and right-click > Open in the Sampler, or a triple-click): the picked pad's sound opens
+    // alone in the Sampler's full editor (Edit · Effects · Keys), aimed at that pad. A bar across the
+    // top says which pad, steps to the pad before or after, Back to pads, As a new sound, and Save to
+    // A04. Leaving by any of those saves an edit onto the pad first, so nothing is lost.
     void pressEditPad();
+    void openPadInSampler (int pad);   // 0..63 in the current kit
+    bool isEditingPad() const { return editPad >= 0; }
+    int getEditPad() const { return editPad; }
+    bool padEditChanged() const;       // the Sampler holds an edit not on the pad yet
+    void pressSaveToPad();
+    void pressBackToPads();
+    void pressStepPad (int delta);
+    void pressPadAsNewSound();
+    // The MPC's own small pad editor (trim, fades, effects), as Edit opened before.
+    void pressQuickEditPad();
+    // Sample a tool: records `source` (a RigCapture::Source) into the Sampler, from the next bar
+    // (now when stopped), for `bars` (0: until pressed again). Pressed again while it waits or
+    // records, it stops. The menu picks the tool and the length.
+    void pressSampleTool (int source, int bars);
+    void showSampleToolMenu();
+    // Sets (Kits menu): bank 0..3 (-1: the whole kit) saved as a set in setsFolder; a set loaded onto
+    // the bank on screen (a whole-kit set goes on a new kit), with Undo for a bank.
+    juce::File setsFolder = SoundSet::macFolder();
+    juce::File saveSet (int bank, const juce::String& name);
+    bool loadSetFile (const juce::File& set);
+    bool canUndoLoadSet() const;
+    void pressUndoLoadSet();
+    void askSaveSet (int bank);
+    // The steps across the top: 1 Get, 2 Shape, 3 Chop, 4 Pads, 5 Save set. The lit one is where you are.
+    int currentStep() const;
+    void pressStep (int step);
+    bool isSamplingTool() const;
     // Remove: takes the sound off the picked pad (its name, settings and effects with it). Until
     // something goes on that pad again, the button says Undo and puts it all back.
     void pressRemovePad();
     bool canUndoRemovePad() const;
     void pressUndoRemovePad();
+    // Clear: empties the Sampler (the pads keep their sounds). Until something else goes in, the
+    // button says Undo clear and brings the sound back (the editor's Undo does too).
+    void pressClear();
+    bool canUndoClear() const;
+    // Kits (under the pads): the factory kits, your kits, and putting a factory kit's sounds back.
+    void showKitsMenu();
+    void pressRestoreFactoryPad();
 
     std::function<void (const juce::String&)> onSay;
     // Opens a page of the Rig ("Sampler editor", "MPC").
@@ -152,22 +190,42 @@ private:
         mpcModeButton { juce::String::fromUTF8 ("Sequencer \xc2\xb7 Kits") },
         editModeButton { juce::String::fromUTF8 ("Edit \xc2\xb7 Effects \xc2\xb7 Keys") },
         recordButton { "Rec sample" }, beatButton { "Beat on" }, loopPadsButton { "Loop pads" }, loopBarsButton { "Free" },
-        editPadButton { "Edit" }, removePadButton { "Remove A01" };
+        editPadButton { "Edit" }, removePadButton { "Remove A01" }, sampleToolButton { juce::String::fromUTF8 ("Sample a tool \xe2\x96\xbe") };
+    void updateSampleToolButton();
     Pad removedPad;
     int removedPadIndex = -1, removedPadKit = -1;
     void updateRemoveButton();
     void showPadMenu (int padInBank);
     void updateTopButtons();
     juce::Rectangle<int> modeRow;
+    juce::TextButton stepButtons[5] { juce::TextButton ("1  Get"), juce::TextButton ("2  Shape"), juce::TextButton ("3  Chop"),
+                                      juce::TextButton ("4  Pads"), juce::TextButton ("5  Save set") };
+    juce::Rectangle<int> stepRow;
+    void updateSteps();
 
     juce::TextButton chopButtons[3] { juce::TextButton ("Transients"), juce::TextButton ("Even 16"), juce::TextButton ("By hand") };
     juce::TextButton snapButton { "Snap to zero" }, toPadsButton { "To pads" }, openButton { "Open" }, editorButton { "Editor" },
-        zoomOut { juce::String::fromUTF8 ("\xe2\x88\x92") }, zoomIn { "+" }, fullLevel { "Full level" }, sendButton { "Send to MPC" };
-    juce::TextButton levelsButton { "16 Levels" }, soundsButton { "Sounds" }, fxButton { "FX" };
+        zoomOut { juce::String::fromUTF8 ("\xe2\x88\x92") }, zoomIn { "+" }, fullLevel { "Full level" }, sendButton { "Send to MPC" },
+        clearButton { "Clear" };
+    juce::TextButton levelsButton { "16 Levels" }, soundsButton { "Sounds" }, fxButton { "FX" }, kitsButton { "Kits" };
     // NOTE REPEAT: the red hold button (double-tap to latch) and its rates, shared with every pad screen.
     noterepeatui::HoldButton repeatButton { engine.getMpc().getSequencer() };
     noterepeatui::RateButtons rateButtons { engine.getMpc().getSequencer() };
     void showRepeatLearnMenu (juce::Point<int> screenPosition);
+    void updateClearButton();
+    std::array<Pad, kPadsPerBank> setUndoPads;
+    int setUndoKit = -1, setUndoBank = -1;
+    juce::String setUndoName;
+    // The pad open in the Sampler (-1: none), its kit, and what the Sampler held when it opened.
+    int editPad = -1, editKit = -1;
+    const void* editOpenedAudio = nullptr;
+    juce::String editName;
+    juce::Rectangle<int> padBar;
+    juce::TextButton padPrevButton { "<" }, padNextButton { ">" }, padBackButton { "Back to pads" },
+        padNewButton { "As a new sound" }, padSaveButton { "Save to A01" };
+    bool saveEditIfChanged();
+    void updatePadBar();
+    juce::String editLabel() const;
     BankBrowser browser { engine.getMpc() };
     bool fxShown = false, soundsShown = false;
     juce::TextButton bankButtons[4] { juce::TextButton ("A"), juce::TextButton ("B"), juce::TextButton ("C"), juce::TextButton ("D") };

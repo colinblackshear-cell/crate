@@ -1194,6 +1194,8 @@ juce::String RigEngine::serviceCapture()
         return {};
     double rate = 0, beats = 0;
     const int source = capture.getSource(), bars = capture.getBars();
+    const int dest = captureDestOnce >= 0 ? captureDestOnce : captureDest;
+    captureDestOnce = -1;
     auto taken = capture.take (rate, beats);   // sets the rate, so first
     auto audio = crate::Edits::collapseFakeStereo (crate::AudioFiles::resample (taken, rate));
     if (audio.getNumSamples() < crate::samples (0.02) || audio.getMagnitude (0, audio.getNumSamples()) < 1.0e-4f)
@@ -1201,7 +1203,7 @@ juce::String RigEngine::serviceCapture()
 
     const auto name = RigCapture::sourceName (source).upToFirstOccurrenceOf (" /", false, false)
                       + (bars > 0 ? " " + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String());
-    if (captureDest == RigCapture::toLogic)
+    if (dest == RigCapture::toLogic)
     {
         // A WAV, exactly the bars recorded from the bar it started on, to drag onto a Logic track
         // at that bar.
@@ -1223,7 +1225,7 @@ juce::String RigEngine::serviceCapture()
         lastLogicFile = file;
         return "Recorded " + RigCapture::sourceName (source) + " for Logic: drag it from Drag to Logic (Effects screen) onto a track, at the bar you started it.";
     }
-    if (captureDest == RigCapture::toMpcPad)
+    if (dest == RigCapture::toMpcPad)
     {
         const auto padName = putOnMpcPad (std::move (audio), name, bars > 0 ? beats : 0);
         if (padName.isEmpty())
@@ -1452,23 +1454,39 @@ void RigEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     applyTiming();
 }
 
+namespace
+{
+// A factory kit's sounds, made once per run and shared (they're read-only), so a new Rig doesn't make them again.
+std::vector<std::pair<juce::String, crate::SharedAudio>> factorySounds (int index)
+{
+    static std::mutex madeLock;
+    static std::map<int, std::vector<std::pair<juce::String, crate::SharedAudio>>> made;
+    const std::lock_guard<std::mutex> hold (madeLock);
+    auto& list = made[index];
+    if (list.empty())
+        for (auto& [name, audio] : crate::factory::makeSounds (index))
+            list.emplace_back (name, std::make_shared<const juce::AudioBuffer<float>> (std::move (audio)));
+    return list;
+}
+
+// A factory sound on a pad, as loadFactoryKit puts it there.
+void putFactorySound (Pad& pad, const std::pair<juce::String, crate::SharedAudio>& sound)
+{
+    pad = {};
+    pad.audio = sound.second;
+    pad.name = sound.first.substring (0, 16);   // the MPC keeps 16 characters
+    pad.mono = true;
+    if (pad.name.containsIgnoreCase ("hat"))
+        pad.muteGroup = 1;   // the open hat stops when the closed one plays
+}
+}
+
 juce::String RigEngine::loadFactoryKit (int index, int kit)
 {
     const auto& kits = crate::factory::kits();
     if (! juce::isPositiveAndBelow (index, (int) kits.size()))
         return {};
-    // Made once per run and shared (they're read-only), so a new Rig doesn't make them again.
-    static std::mutex madeLock;
-    static std::map<int, std::vector<std::pair<juce::String, crate::SharedAudio>>> made;
-    std::vector<std::pair<juce::String, crate::SharedAudio>> sounds;
-    {
-        const std::lock_guard<std::mutex> hold (madeLock);
-        auto& list = made[index];
-        if (list.empty())
-            for (auto& [name, audio] : crate::factory::makeSounds (index))
-                list.emplace_back (name, std::make_shared<const juce::AudioBuffer<float>> (std::move (audio)));
-        sounds = list;
-    }
+    const auto sounds = factorySounds (index);
 
     auto& project = mpc.getProject();
     const juce::String kitName (kits[(size_t) index].name);
@@ -1480,13 +1498,8 @@ juce::String RigEngine::loadFactoryKit (int index, int kit)
     {
         auto& pad = bank.pads[(size_t) i];
         pad = {};
-        if (i >= (int) sounds.size())
-            continue;
-        pad.audio = sounds[(size_t) i].second;
-        pad.name = sounds[(size_t) i].first.substring (0, 16);   // the MPC keeps 16 characters
-        pad.mono = true;
-        if (pad.name.containsIgnoreCase ("hat"))
-            pad.muteGroup = 1;   // the open hat stops when the closed one plays
+        if (i < (int) sounds.size())
+            putFactorySound (pad, sounds[(size_t) i]);
     }
     project.setCurrent (kit);
     mpc.padBankOnScreen = 0;
@@ -1494,6 +1507,144 @@ juce::String RigEngine::loadFactoryKit (int index, int kit)
     project.changed();
     return kitName + " is on the pads, A01 to A" + juce::String (juce::jmin (16, (int) sounds.size())).paddedLeft ('0', 2)
            + ": " + kits[(size_t) index].what + ".";
+}
+
+int RigEngine::factoryKitOf (int kit)
+{
+    const auto& banks = mpc.getProject().getBanks();
+    if (! juce::isPositiveAndBelow (kit, (int) banks.size()))
+        return -1;
+    const auto& kits = crate::factory::kits();
+    for (int i = 0; i < (int) kits.size(); ++i)
+        if (banks[(size_t) kit].name.trim().equalsIgnoreCase (kits[(size_t) i].name))
+            return i;
+    return -1;
+}
+
+juce::String RigEngine::factoryPadName (int pad)
+{
+    const int index = factoryKitOf (mpc.getProject().getCurrentIndex());
+    if (index < 0 || ! juce::isPositiveAndBelow (pad, kPadsPerBank))
+        return {};
+    const auto names = crate::factory::soundNames (index);
+    return pad < (int) names.size() ? names[(size_t) pad].substring (0, 16) : juce::String();
+}
+
+bool RigEngine::padDiffersFromFactory (int pad)
+{
+    const auto name = factoryPadName (pad);
+    if (name.isEmpty())
+        return false;
+    const auto& slot = mpc.getProject().currentBank().pads[(size_t) pad];
+    const auto sounds = factorySounds (factoryKitOf (mpc.getProject().getCurrentIndex()));
+    return slot.isEmpty() || slot.audio != sounds[(size_t) pad].second;
+}
+
+juce::String RigEngine::restoreFactoryPad (int pad)
+{
+    const int index = factoryKitOf (mpc.getProject().getCurrentIndex());
+    if (index < 0 || ! juce::isPositiveAndBelow (pad, kPadsPerBank))
+        return "Pad " + padLabel (pad) + " isn't part of a factory kit. Pick one with Kits.";
+    const auto sounds = factorySounds (index);
+    if (pad >= (int) sounds.size())
+        return {};
+    mpc.releasePad (pad);
+    putFactorySound (mpc.getProject().currentBank().pads[(size_t) pad], sounds[(size_t) pad]);
+    mpc.getProject().changed();
+    return "Pad " + padLabel (pad) + " plays the factory " + sounds[(size_t) pad].first + " again.";
+}
+
+SoundSet RigEngine::padsAsSet (int bank, const juce::String& name)
+{
+    auto& kit = mpc.getProject().currentBank();
+    SoundSet set;
+    set.name = name;
+    set.wholeKit = bank < 0;
+    set.bpm = kit.bpm;
+    set.madeOn = "Mac";
+    set.saved = juce::Time::getCurrentTime();
+    const int first = bank < 0 ? 0 : juce::jlimit (0, 3, bank) * kPadsPerBank;
+    const int count = bank < 0 ? mpc::kPadCount : kPadsPerBank;
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& p = kit.pads[(size_t) (first + i)];
+        if (p.isEmpty())
+            continue;
+        SoundSet::Pad s;
+        s.index = i;
+        s.name = p.name;
+        s.audio = p.audio;
+        s.volume = p.volume;
+        s.pan = p.pan;
+        s.tune = p.tune;
+        s.mode = p.mode == PadMode::noteOff ? 2 : p.mode == PadMode::mono ? 1 : 0;
+        s.mono = p.mono;
+        s.muteGroup = p.muteGroup;
+        s.cutoff = p.cutoff;
+        s.resonance = p.resonance;
+        s.attack = p.attack;
+        s.decay = p.decay;
+        s.beats = p.beats;
+        set.pads.push_back (s);
+    }
+    return set;
+}
+
+juce::String RigEngine::loadSet (const SoundSet& set, int bank)
+{
+    auto& project = mpc.getProject();
+    int first = 0;
+    if (set.wholeKit)
+        project.setCurrent (project.addBank (set.name.substring (0, 16)));
+    else
+    {
+        first = juce::jlimit (0, 3, bank) * kPadsPerBank;
+        for (int i = 0; i < kPadsPerBank; ++i)
+        {
+            mpc.releasePad (first + i);
+            project.currentBank().pads[(size_t) (first + i)] = {};
+        }
+    }
+    auto& kit = project.currentBank();
+    if (set.wholeKit && set.bpm > 0)
+        kit.bpm = set.bpm;
+    for (const auto& s : set.pads)
+    {
+        const int pad = first + s.index;
+        if (! juce::isPositiveAndBelow (pad, mpc::kPadCount) || s.audio == nullptr)
+            continue;
+        auto& p = kit.pads[(size_t) pad];
+        p = {};
+        p.audio = s.audio;
+        p.name = s.name.substring (0, 16);
+        p.volume = s.volume;
+        p.pan = s.pan;
+        p.tune = s.tune;
+        p.mode = s.mode == 2 ? PadMode::noteOff : s.mode == 1 ? PadMode::mono : PadMode::oneShot;
+        p.mono = s.mono;
+        p.muteGroup = s.muteGroup;
+        p.cutoff = s.cutoff;
+        p.resonance = s.resonance;
+        p.attack = s.attack;
+        p.decay = s.decay;
+        p.beats = s.beats;
+    }
+    project.changed();
+    const juce::String what = juce::String (set.padCount()) + (set.padCount() == 1 ? " pad" : " pads");
+    return set.wholeKit ? "The set " + set.name + " is on a new kit (" + what + "); your kits stay in Kits."
+                        : "The set " + set.name + " is on bank " + juce::String::charToString ((juce::juce_wchar) ('A' + first / kPadsPerBank)) + " (" + what + ").";
+}
+
+juce::String RigEngine::resetFactoryKit()
+{
+    auto& project = mpc.getProject();
+    const int index = factoryKitOf (project.getCurrentIndex());
+    if (index < 0)
+        return "This kit isn't a factory kit. Pick one with Kits (it goes on a new kit).";
+    for (int p = 0; p < kPadsPerBank; ++p)
+        mpc.releasePad (p);
+    loadFactoryKit (index, project.getCurrentIndex());
+    return project.currentBank().name + " has all 16 of its factory sounds again, A01 to A16.";
 }
 
 //==============================================================================
@@ -2819,6 +2970,8 @@ std::vector<rigshow::Asset> RigEngine::loopAssets() const
 
 rigshow::Result RigEngine::saveShowFile (const juce::File& showFile, rigshow::SaveKind kind)
 {
+    // The dirty model's hashing makes no loop copies while this one copies them (every way out).
+    const RigDirty::SaveGuard saving (dirty);
     const juce::ScopedLock sl (rigshow::saveLock());
     // The dirty model's baseline moves only when this save is committed (and is a document's).
     auto ticket = dirty.beginSave();
@@ -2864,6 +3017,7 @@ juce::ValueTree RigEngine::saveShowForHost (const juce::File& loopsShowFile, rig
     // tidied first, and the state only names a revision that is complete on disk. Nothing here
     // deletes a revision, so whichever state the host ends up keeping (this one, an older one,
     // an undo step) still finds its own sound.
+    const RigDirty::SaveGuard saving (dirty);
     const juce::ScopedLock sl (rigshow::saveLock());
     result = {};
     rigshow::Staged staged;

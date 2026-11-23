@@ -102,10 +102,23 @@ public:
     struct SaveTicket { juce::uint64 serial = 0; int epoch = 0; };
     SaveTicket beginSave();
     // Just before the save takes the show's tree.
-    void beforeTree (SaveTicket& t) const { t.epoch = fieldEpoch.load(); }
+    // Just before the save reads the show's tree: notes which settings you'd edited by then.
+    void beforeTree (SaveTicket&);
     // `show`: the tree being committed; `staged`: its audio's hashes; `assets`: what they are.
     void captureSave (SaveTicket, const juce::ValueTree& show, const rigshow::Staged&, const std::vector<rigshow::Asset>&);
     void finishSave (SaveTicket, bool ok, rigshow::SaveKind);
+    // A save is copying loops (any thread that saves): the hashing thread starts no copy of its
+    // own meanwhile. Use SaveGuard, which covers every way out of the save.
+    bool saveStarting();
+    void saveEnded();
+    struct SaveGuard
+    {
+        explicit SaveGuard (RigDirty& d) : dirty (d), counted (d.saveStarting()) {}
+        ~SaveGuard() { if (counted) dirty.saveEnded(); }
+        RigDirty& dirty;
+        const bool counted;
+        JUCE_DECLARE_NON_COPYABLE (SaveGuard)
+    };
     // Loop banks: the layers were kept in `bank` (with the versions copied, -1 for not copied);
     // `bank` is going onto the layers (with the swaps' serials), before it's queued and after;
     // banks were added, removed or cleared by you.
@@ -129,11 +142,21 @@ public:
     // Tools whose settings couldn't be matched to their saved form (no playback override for them).
     juce::StringArray unmatchedTools() const;
 
+    // Tests only: a slot's state (false if there's none), the baseline's settings, and a call
+    // made just after beforeTree (to change things between it and the tree being read).
+    bool paramSlotForTests (juce::AudioProcessorParameter*, float& authored, bool& active) const;
+    bool fieldSlotForTests (Field, int index, float& authored, bool& active);
+    Flat baselineForTests() const;
+    static inline std::function<void()> afterBeforeTreeForTests;
+
     struct Stats
     {
         int checks = 0, retries = 0, discarded = 0;
         double lastCheckMs = 0, maxCheckMs = 0;
         int hashJobsPosted = 0, hashJobsCompleted = 0, staleResults = 0, seedsUsed = 0, layerCopies = 0;
+        int jobsStarted = 0;            // jobs the hashing thread began (copies included)
+        int jobsSatisfiedBySave = 0;    // queued jobs dropped because a save's own hashes answered them
+        int slotsAdopted = 0, slotsKeptForEdits = 0, slotsRacedEdits = 0;   // document saves making what they wrote yours
         int takeFallbacks = 0;
         int pinnedBuffers = 0;   // bank sounds the cache holds, after the last check
         double maxJobMs = 0;     // the longest single copy-and-hash
@@ -159,6 +182,8 @@ private:
         std::atomic<float> authored { 0 }, runtime { 0 };
         std::atomic<bool> writing { false };
         std::atomic<juce::Thread::ThreadID> writer { nullptr };
+        std::atomic<juce::uint32> edits { 0 };      // bumped whenever it's made yours (a hand edit)
+        std::atomic<bool> poisoned { false };       // a hand edit raced a save taking it: reads as edited
     };
     struct ParamWatch;
     struct Hasher;
@@ -279,6 +304,24 @@ private:
     // Saves in flight: their serial and the baseline each would make.
     juce::uint64 saveSerial = 0;
     std::map<juce::uint64, std::unique_ptr<Baseline>> candidates;
+    // Per save (message thread): each slot's edit count before the tree was read, and the
+    // values the tree wrote (what becomes yours if that save is adopted).
+    struct SlotValues
+    {
+        std::vector<juce::uint32> paramEdits;
+        std::array<juce::uint32, kMaxStrips> stripEdits {};
+        std::array<juce::uint32, RigLooper::kLayers> loopEdits {};
+        std::array<juce::uint32, numFields> fieldEdits {};
+        std::vector<std::pair<bool, float>> params;
+        std::vector<std::string> paramTexts;
+        std::array<std::pair<bool, float>, kMaxStrips> strips {};
+        std::array<std::pair<bool, float>, RigLooper::kLayers> loops {};
+        std::array<std::pair<bool, float>, numFields> fields {};
+    };
+    std::map<juce::uint64, SlotValues> saveSlots;
+    void adopt (const SlotValues&);
+    void dropAnsweredJobs();
+    std::atomic<int> savesWaiting { 0 };
 
     std::unique_ptr<Hasher> hasher;
     std::mutex jobsLock, doneLock;
@@ -294,7 +337,8 @@ private:
 
     Canon build (const juce::ValueTree& show, bool withAudio);
     void flatten (const juce::ValueTree& show, Flat&);
-    void normalise (Flat&, int currentBank);
+    void normalise (Flat&, int currentBank, bool withPlayback = true);
+    void playbackValues (Flat&, int currentBank);
     void currentAudio (Canon&);
     bool lookupLayer (int layer, int version, juce::uint64& hash);
     bool lookupBuffer (const std::shared_ptr<const juce::AudioBuffer<float>>&, juce::uint64& hash);

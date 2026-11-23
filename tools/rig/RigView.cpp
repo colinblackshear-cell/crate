@@ -1455,6 +1455,12 @@ void RigView::pressRec()
         return toggleRecordSet();
     if (engine.getCapture().getState() != RigCapture::State::idle)
         return toggleSampling();
+    if (engine.getMpc().getSequencer().isRecording())
+    {
+        engine.getMpc().toggleRecord();   // the pads stop going into the pattern (it keeps playing)
+        say ("The pads stopped recording into the MPC pattern. Sequencer · Kits shows the hits to edit; Undo takes the pass back.");
+        return updateDock();
+    }
     if (takeLayer >= 0 || engine.getTakes().isActive())
     {
         pressRecTake();
@@ -1466,6 +1472,10 @@ void RigView::pressRec()
         case RecLands::song:   recFree = false; pressRecTake(); break;   // with a song, into it (Rec into)
         case RecLands::sample: toggleSampling(); break;
         case RecLands::set:    toggleRecordSet(); break;
+        case RecLands::pattern:
+            engine.getMpc().toggleRecord();
+            say ("Rec: the pads go into the MPC pattern as you play (it loops; each pass adds). Rec again stops.");
+            break;
     }
     updateDock();
 }
@@ -1536,6 +1546,7 @@ juce::String RigView::recTargetText() const
         }
         case RecLands::sample: return "SAMPLER OR PAD";
         case RecLands::set:    return "WHOLE SET" + dot + "STEMS";
+        case RecLands::pattern: return "PADS" + dot + "MPC PATTERN";
         case RecLands::layer:  break;
     }
     for (int l = 0; l < RigLooper::kLayers; ++l)
@@ -1648,7 +1659,7 @@ void RigView::showRecMenu()
     };
     recSetup->onLands = [this] (int i)
     {
-        setRecLands (i == 0 ? RecLands::layer : i == 1 ? RecLands::song : i == 2 ? RecLands::sample : RecLands::set);
+        setRecLands (i == 0 ? RecLands::layer : i == 1 ? RecLands::song : i == 2 ? RecLands::sample : i == 3 ? RecLands::set : RecLands::pattern);
         updateRecSetup();
     };
     recSetup->onExtra = [this] (int i, juce::Component&)
@@ -1680,7 +1691,7 @@ void RigView::updateRecSetup()
 {
     if (recSetup == nullptr)
         return;
-    const int lands = recLands == RecLands::layer ? 0 : recLands == RecLands::song ? 1 : recLands == RecLands::sample ? 2 : 3;
+    const int lands = recLands == RecLands::layer ? 0 : recLands == RecLands::song ? 1 : recLands == RecLands::sample ? 2 : recLands == RecLands::set ? 3 : 4;
     recSetup->setState (recCountIn, recLength, engine.getTransport().metronome.load(), lands, toolMode());
 }
 

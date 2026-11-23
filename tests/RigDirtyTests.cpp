@@ -121,6 +121,116 @@ std::unique_ptr<RigEngine> makeShow (const juce::File& file, int loopSeconds, bo
     e->saveShowFile (file);
     return e;
 }
+
+// The loop-copy tests' detector: each loop a sine at its own frequency, a whole number of cycles
+// a 256-sample block, checked every block (Goertzel). A block where a loop drops below half
+// its level is a dropout you'd hear.
+namespace tones
+{
+constexpr int kBlock = 256;
+constexpr int kBins[] = { 6, 11, 17, 23 };
+constexpr int kTones = 4;
+constexpr double kSamplesPerBeat = 32768.0;
+constexpr double kBpm = kRate * 60.0 / kSamplesPerBeat;
+
+float goertzel (const float* x, int n, int bin)
+{
+    const double w = juce::MathConstants<double>::twoPi * bin / n, c = 2.0 * std::cos (w);
+    double s1 = 0, s2 = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const double s0 = x[i] + c * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    return (float) std::sqrt (juce::jmax (0.0, s1 * s1 + s2 * s2 - c * s1 * s2)) / (float) n;
+}
+
+juce::AudioBuffer<float> tone (int t, double beats, float level = 0.1f)
+{
+    const int n = (int) std::round (beats * kSamplesPerBeat);
+    juce::AudioBuffer<float> b (2, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            b.setSample (ch, i, level * (float) std::sin (juce::MathConstants<double>::twoPi * kBins[t] * (i % kBlock) / kBlock));
+    return b;
+}
+
+struct Detector
+{
+    RigEngine& engine;
+    std::atomic<bool> running { false }, warm { false }, measuring { false };
+    std::atomic<int> blocks { 0 }, late { 0 }, missing { 0 };
+    std::array<float, kTones> reference {};
+    std::thread thread;
+
+    explicit Detector (RigEngine& e) : engine (e) {}
+    ~Detector() { stop(); }
+    void start()
+    {
+        running = true;
+        thread = std::thread ([this] { run(); });
+        while (! warm.load())
+            juce::Thread::sleep (5);
+    }
+    void stop()
+    {
+        running = false;
+        if (thread.joinable())
+            thread.join();
+    }
+    void during (const std::function<void()>& f)
+    {
+        missing = 0;
+        late = 0;
+        blocks = 0;
+        measuring = true;
+        f();
+        juce::Thread::sleep (60);
+        measuring = false;
+    }
+
+private:
+    void run()
+    {
+        juce::AudioBuffer<float> out (2, kBlock);
+        std::array<double, kTones> sum {};
+        int count = 0;
+        const double period = 1000.0 * kBlock / kRate;
+        auto next = nowMs();
+        while (running)
+        {
+            const auto t0 = nowMs();
+            engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, kBlock);
+            const auto took = nowMs() - t0;
+            if (measuring && took > period)
+                ++late;
+            bool gone = false;
+            for (int t = 0; t < kTones; ++t)
+            {
+                const float m = goertzel (out.getReadPointer (0), kBlock, kBins[t]);
+                if (count < 100)
+                    sum[(size_t) t] += m;
+                else if (count == 100)
+                    reference[(size_t) t] = (float) (sum[(size_t) t] / 100.0);
+                else if (measuring && m < 0.5f * reference[(size_t) t])
+                    gone = true;
+            }
+            if (gone)
+                ++missing;
+            if (count == 101)
+                warm = true;
+            if (measuring)
+                ++blocks;
+            ++count;
+            next += period;
+            const auto wait = next - nowMs();
+            if (wait > 1.0)
+                juce::Thread::sleep ((int) wait);
+        }
+    }
+};
+} // namespace tones
 } // namespace
 
 struct RigDirtyTests : juce::UnitTest
@@ -158,6 +268,7 @@ struct RigDirtyTests : juce::UnitTest
         debounce();
         audioThread();
         sceneRetries();
+        savesFirst();
         {
             beginTest ("Tools whose settings can't be put back");
             auto e = openSaved (show);
@@ -751,6 +862,182 @@ struct RigDirtyTests : juce::UnitTest
     }
 
     //==========================================================================
+    // Saves go first: the hashing thread starts no copy while one runs, and the save's own
+    // hashes answer what was waiting.
+    void savesFirst()
+    {
+        auto longLoops = [] (RigEngine& e, int seed, int seconds)
+        {
+            for (int i = 0; i < 4; ++i)
+                e.getLooper().setLayerAudio (i, noise ((int) kRate * seconds, seed + i), seconds * 2.0);
+        };
+        {
+            beginTest ("A save while a hash copy runs: no new copy starts until it ends, and its hashes answer the rest");
+            auto e = openSaved (show, 256);
+            LiveAudio audio (*e);
+            audio.start();
+            e->getTransport().play();
+            longLoops (*e, 500, 60);
+            e->getDirty().resetStats();
+            e->getDirty().checkNow();   // four copies asked for
+            for (int i = 0; i < 5000 && e->getDirty().getStats().jobsStarted < 1; ++i)
+                juce::Thread::sleep (1);
+            const auto started = e->getDirty().getStats().jobsStarted;
+            expectEquals (started, 1, "one copy running");
+            std::vector<int> seen;
+            auto* dirty = &e->getDirty();
+            rigshow::hooks().at = [&] (const juce::String& p, int)
+            {
+                if (p == "stage" || p == "beforeCommit" || p == "done")
+                    seen.push_back (dirty->getStats().jobsStarted);
+                return true;
+            };
+            const auto t0 = nowMs();
+            const bool ok = e->saveShowFile (folder.getChildFile ("Yield.crateshow"), rigshow::SaveKind::document).ok;
+            const auto ms = nowMs() - t0;
+            rigshow::hooks().at = nullptr;
+            expect (ok);
+            expectEquals ((int) seen.size(), 3);
+            bool none = true;
+            for (const int n : seen)
+                none = none && n == started;
+            expect (none, "no copy began while the save ran");
+            serviceFor (*e, 20000, [&] { return e->getDirty().getState() != State::pending; });
+            const auto st = e->getDirty().getStats();
+            logMessage ("  save " + juce::String (ms, 0) + " ms; jobs started " + juce::String (st.jobsStarted) + ", run " + juce::String (st.hashJobsCompleted)
+                        + ", answered by the save " + juce::String (st.jobsSatisfiedBySave) + ", stale " + juce::String (st.staleResults));
+            expectEquals (st.jobsSatisfiedBySave, 3, "the three waiting loops were answered by the save");
+            expectEquals (st.jobsStarted, 1, "and never copied again");
+            expectEquals (st.hashJobsCompleted, 1, "only the one that was running");
+            expect (e->getDirty().getState() == State::clean, "saved as a document: clean");
+            audio.stop();
+        }
+        {
+            beginTest ("Saves while hashing never stops: each waits at most the copy already running");
+            auto e = openSaved (show, 256);
+            LiveAudio audio (*e);
+            audio.start();
+            e->getTransport().play();
+            double idle = 0;
+            auto timeToStage = [&] (const juce::File& f, double& total)
+            {
+                double atStage = 0;
+                const auto t0 = nowMs();
+                rigshow::hooks().at = [&] (const juce::String& p, int)
+                {
+                    if (p == "stage")
+                        atStage = nowMs() - t0;
+                    return true;
+                };
+                expect (e->saveShowFile (f, rigshow::SaveKind::document).ok);
+                total = nowMs() - t0;
+                rigshow::hooks().at = nullptr;
+                return atStage;
+            };
+            longLoops (*e, 600, 30);
+            serviceFor (*e, 20000, [&] { return e->getDirty().getState() != State::pending; });
+            double total = 0;
+            idle = timeToStage (folder.getChildFile ("Idle.crateshow"), total);
+            e->getDirty().resetStats();
+            double worstExtra = 0;
+            int saves = 0;
+            for (int k = 0; k < 6; ++k)
+            {
+                e->getLooper().setLayerAudio (k % 4, noise ((int) kRate * 30, 700 + k), 60.0);
+                e->getLooper().setLayerAudio ((k + 1) % 4, noise ((int) kRate * 30, 800 + k), 60.0);
+                e->getDirty().checkNow();
+                for (int i = 0; i < 2000 && e->getDirty().getStats().jobsStarted <= k; ++i)
+                    juce::Thread::sleep (1);
+                const double wait = timeToStage (folder.getChildFile ("Busy " + juce::String (k) + ".crateshow"), total);
+                worstExtra = juce::jmax (worstExtra, wait - idle);
+                ++saves;
+                serviceFor (*e, 30);
+            }
+            serviceFor (*e, 30000, [&] { return e->getDirty().getState() != State::pending; });
+            const auto st = e->getDirty().getStats();
+            const double oneCopy = st.maxJobMs;
+            logMessage ("  copying for the save, hasher idle " + juce::String (idle, 0) + " ms; with hashing going on, worst extra wait " + juce::String (worstExtra, 0)
+                        + " ms; one hash job (copy + hash) at most " + juce::String (oneCopy, 0) + " ms; " + juce::String (st.jobsStarted) + " jobs started, "
+                        + juce::String (st.jobsSatisfiedBySave) + " answered by saves");
+            expectEquals (saves, 6, "every save finished");
+            expect (worstExtra <= oneCopy + juce::jmax (300.0, idle), "a save waits at most for the one copy running");
+            audio.stop();
+        }
+        {
+            beginTest ("A loop changed after the save copied it is hashed again");
+            auto e = openSaved (show, 256);
+            LiveAudio audio (*e);
+            audio.start();
+            e->getTransport().play();
+            e->getLooper().setLayerAudio (0, noise ((int) kRate * 4, 901), 8.0);
+            expect (e->saveShowFile (folder.getChildFile ("Stale.crateshow"), rigshow::SaveKind::document).ok);
+            serviceFor (*e, 10000, [&] { return e->getDirty().getState() != State::pending; });
+            expect (e->getDirty().getState() == State::clean, "saved: clean");
+            e->getDirty().resetStats();
+            e->getLooper().setLayerAudio (0, noise ((int) kRate * 4, 902), 8.0);
+            expect (e->getDirty().checkNow().state == State::pending, "a sound the save never saw: not known");
+            serviceFor (*e, 20000, [&] { return e->getDirty().getState() != State::pending; });
+            expect (e->getDirty().getState() == State::dirty, "and it differs");
+            expect (e->getDirty().getStats().hashJobsCompleted >= 1, "hashed again");
+            audio.stop();
+        }
+        {
+            beginTest ("Loops playing, hashing and saving all at once: no block missing");
+            auto e = std::make_unique<RigEngine>();
+            e->prepare (kRate, tones::kBlock);
+            e->getDirty().setEnabled (true);
+            e->getTransport().setBpm (tones::kBpm);
+            for (int t = 0; t < tones::kTones; ++t)
+                e->getLooper().setLayerAudio (t, tones::tone (t, 40.0), 40.0);
+            if (auto* p = e->getDrums().params.getParameter ("sequencer"))
+                p->setValueNotifyingHost (0.0f);
+            if (auto* p = e->getBass().params.getParameter ("sequencer"))
+                p->setValueNotifyingHost (0.0f);
+            e->getDirty().markOpened();
+            e->getTransport().play();
+            tones::Detector audio (*e);
+            audio.start();
+            auto workload = [&] (const juce::String& name)
+            {
+                int k = 0;
+                const auto end = nowMs() + 6000;
+                while (nowMs() < end)
+                {
+                    // A quiet loop 6 replaced again and again (each one a new sound to hash),
+                    // and a save every so often.
+                    juce::AudioBuffer<float> quiet (2, (int) (tones::kSamplesPerBeat * 40));
+                    juce::Random random (k);
+                    for (int c = 0; c < 2; ++c)
+                        for (int i = 0; i < quiet.getNumSamples(); ++i)
+                            quiet.setSample (c, i, (random.nextFloat() - 0.5f) * 1.0e-4f);
+                    e->getLooper().setLayerAudio (5, std::move (quiet), 40.0);
+                    e->getDirty().checkNow();
+                    if (k % 3 == 0)
+                        expect (e->saveShowFile (folder.getChildFile (name + ".crateshow"), rigshow::SaveKind::document).ok);
+                    serviceFor (*e, 200);
+                    e->getLooper().maintain();
+                    ++k;
+                }
+            };
+            audio.during ([&] { workload ("All at once"); });
+            const int missingOn = audio.missing.load(), lateOn = audio.late.load(), blocksOn = audio.blocks.load();
+            const auto st = e->getDirty().getStats();
+            e->getDirty().setEnabled (false);
+            audio.during ([&] { workload ("All at once, off"); });
+            const int missingOff = audio.missing.load(), lateOff = audio.late.load(), blocksOff = audio.blocks.load();
+            audio.stop();
+            logMessage ("  model on: " + juce::String (blocksOn) + " blocks, " + juce::String (missingOn) + " with a loop missing, " + juce::String (lateOn) + " late; "
+                        + juce::String (st.hashJobsCompleted) + " hash jobs, " + juce::String (st.jobsSatisfiedBySave) + " answered by saves | model off: "
+                        + juce::String (blocksOff) + " blocks, " + juce::String (missingOff) + " missing, " + juce::String (lateOff) + " late");
+            expectEquals (missingOn, 0, "no loop missing with the model on");
+            expectEquals (missingOff, 0, "nor off");
+            expect (st.hashJobsCompleted > 0, "it hashed meanwhile");
+            // (Late blocks are reported, not asserted: on a shared or loaded machine the count
+            // moves by a few either way with the model on or off. A missing loop is the failure.)
+        }
+    }
+
+    //==========================================================================
     void bench();
 };
 
@@ -1071,9 +1358,13 @@ void RigDirtyTests::bench()
         line ("  callback median / p99 / worst, model on, while it hashed: " + stats (onTimes) + " (" + juce::String ((int) onTimes.size()) + " blocks)");
 
         const auto idleFile = folder.getChildFile ("Bench save idle.crateshow");
-        auto s0 = nowMs();
-        expect (e->saveShowFile (idleFile).ok);
-        const double idleSave = nowMs() - s0;
+        double idleSave = 0, busySave = 0;
+        const auto idleTimes = audio.during ([&]
+        {
+            const auto s0 = nowMs();
+            expect (e->saveShowFile (idleFile).ok);
+            idleSave = nowMs() - s0;
+        });
 
         auto b = fresh();
         std::atomic<bool> copying { false };
@@ -1085,13 +1376,21 @@ void RigDirtyTests::bench()
             juce::Thread::sleep (1);
         const bool inFlight = copying.load() && e->getDirty().getStats().hashJobsCompleted == 0;
         const auto busyFile = folder.getChildFile ("Bench save busy.crateshow");
-        s0 = nowMs();
-        expect (e->saveShowFile (busyFile).ok);
-        const double busySave = nowMs() - s0;
+        const auto busyTimes = audio.during ([&]
+        {
+            const auto s0 = nowMs();
+            expect (e->saveShowFile (busyFile).ok);
+            busySave = nowMs() - s0;
+        });
         RigLooper::copyPauseForTests = nullptr;
         line ("saveShowFile, 4 new 10-min loops: hasher idle " + juce::String (idleSave, 0) + " ms; started with a hash copy in flight "
               + juce::String (busySave, 0) + " ms (" + (inFlight ? "a copy was in flight when it started" : "copy NOT confirmed in flight") + ")");
-        serviceFor (*e, 180000, [&] { return e->getDirty().getStats().hashJobsCompleted >= 4; });
+        line ("  callback median / p99 / worst during the idle save: " + stats (idleTimes) + "; during the save with hashing: " + stats (busyTimes));
+        const auto r0 = nowMs();
+        serviceFor (*e, 180000, [&] { return e->getDirty().getState() != State::pending; });
+        const auto after = e->getDirty().getStats();
+        line ("  after that save: resolved " + stateName (e->getDirty().getState()) + " " + juce::String (nowMs() - r0, 0) + " ms later; hash jobs posted "
+              + juce::String (after.hashJobsPosted) + ", run " + juce::String (after.hashJobsCompleted) + ", " + juce::String ((double) after.bytesHashed / 1048576.0, 0) + " MB hashed");
 
         e->getDirty().setEnabled (false);
         auto c = fresh();

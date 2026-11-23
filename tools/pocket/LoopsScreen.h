@@ -73,6 +73,10 @@ public:
     void flush() { save(); }                // before switching ideas
     void reloadIdea();
     void sendToMac (bool onlyPicked);
+    // A layer's loop as a sound at 44.1 kHz, with its effects and board when it has any (nullptr: no loop), its name
+    // ("Pocket loop 3 Synth") and length in beats. The whole layers mixed: layer -1.
+    crate::SharedAudio layerSound (int layer, juce::String* name = nullptr, double* beats = nullptr) const;
+    int layersWithLoops() const;
     // The tour's spotlights: 0 = the first six layers, 1 = TO MAC.
     juce::Rectangle<int> tourSpot (int which) const;
 

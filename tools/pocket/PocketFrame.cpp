@@ -470,6 +470,14 @@ RecSetupSheet::RecSetupSheet()
         lengthButtons[i].onClick = [this, choice] { if (setLength) setLength (choice); refresh(); };
         addAndMakeVisible (lengthButtons[i]);
     }
+    static const char* padsTo[2] = { "A loop layer", "The pad pattern" };
+    for (int i = 0; i < 2; ++i)
+    {
+        padsButtons[i].setText (padsTo[i]);
+        padsButtons[i].setFontHeight (16.0f);
+        padsButtons[i].onClick = [this, i] { if (setPadsTo) setPadsTo (i); refresh(); };
+        addAndMakeVisible (padsButtons[i]);
+    }
     done.setFontHeight (17.0f);
     done.onClick = [this] { if (onDone) onDone(); };
     addAndMakeVisible (done);
@@ -483,6 +491,9 @@ void RecSetupSheet::refresh()
         countButtons[i].setLook (i == c ? Look::amber : Look::cream);
     for (int i = 0; i < AppSettings::kLengthChoices; ++i)
         lengthButtons[i].setLook (AppSettings::kLengthOrder[i] == l ? Look::amber : Look::cream);
+    const int p = getPadsTo ? getPadsTo() : 0;
+    for (int i = 0; i < 2; ++i)
+        padsButtons[i].setLook (i == p ? Look::amber : Look::cream);
     repaint();
 }
 
@@ -496,6 +507,9 @@ void RecSetupSheet::resized()
     const int lw = (w - 48 - 3 * 6) / 4;
     for (int i = 0; i < AppSettings::kLengthChoices; ++i)
         lengthButtons[i].setBounds (24 + (i % 4) * (lw + 6), 196 + (i / 4) * 54, lw, 48);
+    const int pw = (w - 48 - 8) / 2;
+    for (int i = 0; i < 2; ++i)
+        padsButtons[i].setBounds (24 + i * (pw + 8), 342, pw, 48);
 }
 
 void RecSetupSheet::paint (juce::Graphics& g)
@@ -510,10 +524,11 @@ void RecSetupSheet::paint (juce::Graphics& g)
     g.setFont (spaced (condensedBold (13.0f), 0.12f));
     g.drawText (U8("COUNT-IN \xc2\xb7 WHEN REC STARTS THE SONG"), 24, 74, getWidth() - 48, 24, juce::Justification::centredLeft);
     g.drawText (U8("LENGTH \xc2\xb7 HOW LONG A TAKE IS"), 24, 166, getWidth() - 48, 24, juce::Justification::centredLeft);
+    g.drawText (U8("PADS RECORD INTO"), 24, 312, getWidth() - 48, 24, juce::Justification::centredLeft);
     g.setFont (small (14.0f));
     g.drawFittedText (U8("The same on every tool. The click plays through the count-in even with CLICK off. "
                          "When the song is already playing, a take starts on the next bar. FREE runs until you press STOP."),
-                      juce::Rectangle<int> (24, 312, getWidth() - 48, 64), juce::Justification::topLeft, 3);
+                      juce::Rectangle<int> (24, 404, getWidth() - 48, 64), juce::Justification::topLeft, 3);
 }
 
 //==============================================================================

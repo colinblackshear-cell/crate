@@ -1253,16 +1253,42 @@ HoldSpec BeatsScreen::padMenuSpec (int pad)
     {
         s.items.push_back ({ U8("PUT A SOUND ON IT\xe2\x80\xa6"), {}, false, true, swap });
         s.items.push_back ({ "RECORD A NEW SOUND", "sampler", false, true, [this, pad] { host.openSampler (pad); } });
+        addFactoryItem (s, pad);
         return s;
     }
-    s.items.push_back ({ "SOUND PAGE", U8("sampler \xc2\xb7 in / out \xc2\xb7 trim"), false, true, [this, pad] { host.openSamplePage (pad); } });
+    s.items.push_back ({ "EDIT THIS SLICE", U8("fades \xc2\xb7 effects \xc2\xb7 name"), false, true, [this, pad] { host.editPadSlice (pad); } });
+    s.items.push_back ({ "SOUND PAGE", U8("the whole sound \xc2\xb7 in / out"), false, true, [this, pad] { host.openSamplePage (pad); } });
     s.items.push_back ({ U8("SWAP SOUND\xe2\x80\xa6"), {}, false, true, swap });
     s.items.push_back ({ "RECORD A NEW SOUND", "sampler", false, true, [this, pad] { host.openSampler (pad); } });
     s.items.push_back ({ U8("VOLUME \xc2\xb7 PAN \xc2\xb7 TUNE"), {}, false, true, [this, pad] { host.openPadSheet (pad); } });
     s.items.push_back ({ "16 LEVELS", {}, false, true, [this, pad] { startLevels (pad); } });
     s.items.push_back ({ "COPY TO ANOTHER PAD", {}, false, true, [this, pad] { startCopy (pad); } });
     s.items.push_back ({ "REMOVE SOUND", "undo brings it back", true, true, [this, pad] { removePad (pad); } });
+    addFactoryItem (s, pad);   // (last, so the rows above stay where the thumb knows them)
     return s;
+}
+
+// FACTORY SOUND BACK: on a factory kit's bank, a pad that plays something else (or nothing) gets the kit's own sound back
+void BeatsScreen::addFactoryItem (HoldSpec& s, int pad)
+{
+    juce::String factoryName;
+    const auto id = factorySoundFor (library, padKit, pad, &factoryName);
+    if (id.isEmpty() || padKit.pads[(size_t) pad].soundId == id)
+        return;
+    s.items.push_back ({ "FACTORY SOUND BACK", factoryName.toLowerCase(), false, true, [this, pad, id, factoryName]
+    {
+        const auto old = padKit.pads[(size_t) pad];
+        if (! padKit.assign (pad, id, 0, -1, factoryName))
+            return host.toast ("That sound couldn't be opened");
+        beatsEngine.padOff (pad);
+        padsChanged();
+        selectPad (pad);
+        host.toastAction ("Pad " + Kit::padLabel (pad) + " plays the factory " + factoryName.toUpperCase() + " again", "UNDO", [this, pad, old]
+        {
+            padKit.pads[(size_t) pad] = old;
+            padsChanged();
+        });
+    } });
 }
 
 // SWAP SOUND: your sounds, newest first, in the same card (it scrolls)
