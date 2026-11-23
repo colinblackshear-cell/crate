@@ -123,6 +123,7 @@ target_compile_definitions(Kaleidobox PRIVATE
 target_link_libraries(Kaleidobox
     PRIVATE
         crate_core
+        crate_shine
         mpc_format
         rig_fonts
         rig_hosting
@@ -179,6 +180,7 @@ macro(kaleidobox_plugin_parts target)
     target_link_libraries(${target}
         PRIVATE
             crate_core
+            crate_shine
             mpc_format
             rig_fonts
             rig_hosting

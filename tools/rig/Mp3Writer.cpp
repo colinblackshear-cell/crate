@@ -52,11 +52,11 @@ bool mp3::write (const juce::File& file, const juce::AudioBuffer<float>& audio, 
     const auto pcm = prepared (audio, sampleRate, rate);
     shine_config_t config;
     shine_set_config_mpeg_defaults (&config.mpeg);
-    config.wave.channels = PCM_STEREO;
+    config.wave.channels = 2;
     config.wave.samplerate = (int) rate;
-    config.mpeg.mode = STEREO;
-    config.mpeg.bitr = kbps;
-    if (shine_check_config (config.wave.samplerate, config.mpeg.bitr) < 0)
+    config.mpeg.mode = SHINE_JOINT_STEREO;
+    config.mpeg.bitrate = kbps;
+    if (shine_check_config (config.wave.samplerate, config.mpeg.bitrate) < 0)
         return false;
     shine_t enc = shine_initialise (&config);
     if (enc == nullptr)

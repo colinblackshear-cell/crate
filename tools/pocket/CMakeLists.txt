@@ -158,6 +158,7 @@ endif()
 target_link_libraries(KaleidoboxPocket
     PRIVATE
         crate_core
+        crate_shine
         pocket_fonts
     PUBLIC
         juce::juce_recommended_config_flags

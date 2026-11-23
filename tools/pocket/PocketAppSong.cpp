@@ -292,6 +292,20 @@ juce::String PocketApp::runSongChecks (juce::String& report, const juce::File& f
         b.what = SongScreen::Bounce::loops;
         b.eachLayer = false;
         expect (bounceSong (b, said).size() == 1, "BOUNCE of the layers playing now didn't write one mix");
+        if (mp3::available())
+        {
+            b.wav = false;
+            b.mp3 = true;
+            const auto mp3s = bounceSong (b, said);
+            expect (mp3s.size() == 1 && mp3s[0].hasFileExtension ("mp3") && mp3s[0].getSize() > 10000, "BOUNCE as MP3 didn't write an MP3");
+            juce::AudioFormatManager formats;
+            formats.registerBasicFormats();
+            if (mp3s.size() == 1)
+                if (std::unique_ptr<juce::AudioFormatReader> r { formats.createReaderFor (mp3s[0]) })
+                    report << "MP3: " << juce::String ((double) r->lengthInSamples / r->sampleRate, 2) << " s, " << (int) (mp3s[0].getSize() / 1024) << " KB\n";
+                else
+                    expect (false, "the bounced MP3 doesn't read back");
+        }
     }
 
     loopsScreen.setDemoMode (wasDemo);

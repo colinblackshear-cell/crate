@@ -3,6 +3,7 @@
 #include "RigEngine.h"
 #include "RigBounce.h"
 #include "RigLiveSong.h"
+#include "Mp3Writer.h"
 #include "RigSong.h"
 #include "RigTimeline.h"
 #include "TimelineView.h"
@@ -398,6 +399,48 @@ struct RigLiveSongTests : juce::UnitTest
             engine.getLooper().getLayer (0).mute = true;
             expect (RigBounce::loopsFor (engine, o).isEmpty() && RigBounce::describe (engine, o).startsWith ("No loops"), "a muted loop isn't playing");
             temp.deleteRecursively();
+        }
+
+        beginTest ("MP3: writes a file that reads back at the right length and pitch");
+        {
+            if (! mp3::available())
+            {
+                logMessage ("MP3 encoder not built in; skipped");
+            }
+            else
+            {
+                auto file = juce::File::createTempFile (".mp3");
+                const double rate = 48000.0;
+                juce::AudioBuffer<float> tone (2, (int) rate * 2);
+                for (int i = 0; i < tone.getNumSamples(); ++i)
+                {
+                    const float v = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / rate);
+                    tone.setSample (0, i, v);
+                    tone.setSample (1, i, v);
+                }
+                expect (mp3::write (file, tone, rate, 320));
+                expect (file.getSize() > 60000 && file.getSize() < 100000, "about 80 KB for 2 s at 320");
+                juce::AudioFormatManager formats;
+                formats.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+                expect (reader != nullptr, "reads back as MP3");
+                if (reader != nullptr)
+                {
+                    expectEquals ((int) reader->sampleRate, 48000);
+                    const double secs = (double) reader->lengthInSamples / reader->sampleRate;
+                    expect (secs > 1.95 && secs < 2.2, "about 2 s long, got " + juce::String (secs));
+                    juce::AudioBuffer<float> back (2, (int) reader->lengthInSamples);
+                    reader->read (&back, 0, back.getNumSamples(), 0, true, true);
+                    const float peak = back.getMagnitude (0, 4800, 48000);
+                    expect (peak > 0.4f && peak < 0.6f, "level kept, got " + juce::String (peak));
+                    int crossings = 0;
+                    for (int i = 4801; i < 52800; ++i)
+                        crossings += (back.getSample (0, i - 1) < 0.0f) != (back.getSample (0, i) < 0.0f) ? 1 : 0;
+                    expect (crossings > 860 && crossings < 900, "still 440 Hz, got " + juce::String (crossings));
+                }
+                reader.reset();
+                file.deleteFile();
+            }
         }
 
         beginTest ("nothing to play: says so");

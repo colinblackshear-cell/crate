@@ -84,6 +84,7 @@ target_compile_definitions(CrateTests PRIVATE
     KALEIDOBOX_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 target_link_libraries(CrateTests PRIVATE
     crate_core
+    crate_shine
     mpc_format
     rig_fonts
     rig_hosting
