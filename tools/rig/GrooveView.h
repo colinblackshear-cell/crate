@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
+#include "StepTools.h"
 #include "Vintage.h"
 
 // The Groove screen (F1): the Rig as one groovebox.
@@ -84,7 +85,8 @@ public:
     juce::String soundName() const;
     int numSounds() const;
     void pressPlay();   // the Bass's (or the drum machine's, or Line in's) pattern: on (and the Rig plays) or off
-    // The drum machine: a step's hit becomes a roll of 2, 3, 4 hits, then a single hit again.
+    // The drum machine, right-click (Option-click): a step's hit becomes a roll of 2, 3, 4, 6, 8 hits, then a single hit again.
+    // (The ROLL chip does it with one click: pick it, then a step.)
     void pressRoll (int row, int step);
     bool hasKeys() const { return track == bass || track == synth; }
     juce::MidiKeyboardState& getScreenKeys() { return keysState; }
@@ -164,7 +166,26 @@ public:
     void turnRow (int row, int by);
     void setRowLength (int row, int steps);   // the drum machine (0: the pattern's)
     void showRowMenu (int row);
+
+    // The drum machine's step tools (in HITS): a chip picked, then a click on a step writes that tool
+    // (the ROLL chip a stutter roll of N, BUILDS a roll that builds, FLAM a grace hit, SOFT/LOUD steps
+    // the hit's level). No chip picked: a click lights or clears a step, as it always did.
+    using StepTool = crate::drums::steptools::Tool;
+    void setMachineTool (StepTool, bool on);
+    bool machineToolOn (StepTool t) const { return machineToolPicked && machineTool == t; }
+    void setMachineRoll (int n);
+    int getMachineRoll() const { return machineRoll; }
+    // Which bar the drum machine's steps show (0-3): Bar 1 to 4 of up to 64 steps. A bar past the
+    // end makes the pattern longer.
+    void setMachinePage (int bar);
+    int getMachinePage() const { return machinePage; }
 private:
+    bool machineToolPicked = false;
+    StepTool machineTool = StepTool::roll;
+    int machineRoll = 3;
+    std::array<juce::TextButton, 4> machineBars { juce::TextButton ("Bar 1"), juce::TextButton ("Bar 2"), juce::TextButton ("Bar 3"), juce::TextButton ("Bar 4") };
+    std::array<juce::TextButton, 4> toolChips { juce::TextButton ("Roll"), juce::TextButton ("Builds"), juce::TextButton ("Flam"), juce::TextButton ("Soft/Loud") };
+    juce::Rectangle<int> toolsArea;
     bool pressLife (int row, int i, bool back);
     void showMutateMenu();
     int lifeMode = lifeHits;
@@ -189,6 +210,7 @@ private:
     {
         juce::String label, sub;
         bool lit = false, strong = false, dim = false, playing = false;
+        int hits = 0, shape = 0;   // the drum machine's: a roll's size and how it plays
     };
     Cell cellAt (int row, int step) const;
     juce::String rowName (int row) const;

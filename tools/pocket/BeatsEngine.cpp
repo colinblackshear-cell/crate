@@ -92,6 +92,22 @@ juce::var DrumData::toVar() const
             }
             if (anyShape)
                 o->setProperty ("shapes", shapes);
+            // Soft hits (SOFT/LOUD): 0 full, 1 soft, 2 very soft; only when one is used.
+            juce::Array<juce::var> levels;
+            bool anyLevel = false;
+            for (auto& row : p.velocity)
+            {
+                juce::String t;
+                for (auto level : row)
+                {
+                    const int code = level > 80 ? 0 : level > 45 ? 1 : 2;
+                    t << code;
+                    anyLevel = anyLevel || code != 0;
+                }
+                levels.add (t);
+            }
+            if (anyLevel)
+                o->setProperty ("levels", levels);
             juce::String accent;
             for (bool a : p.accent)
                 accent << (a ? "1" : "0");
@@ -191,6 +207,13 @@ DrumData DrumData::fromVar (const juce::var& v)
                         auto text = (*shapes)[r].toString();
                         for (int s = 0; s < juce::jmin (drums::kMaxSteps, text.length()); ++s)
                             p.shape[(size_t) r][(size_t) s] = (std::uint8_t) juce::jlimit (0, (int) drums::numShapes - 1, text[s] - '0');
+                    }
+                if (auto* levels = o.getProperty ("levels", {}).getArray())
+                    for (int r = 0; r < juce::jmin (drums::kVoices, levels->size()); ++r)
+                    {
+                        auto text = (*levels)[r].toString();
+                        for (int s = 0; s < juce::jmin (drums::kMaxSteps, text.length()); ++s)
+                            p.velocity[(size_t) r][(size_t) s] = (std::uint8_t) (text[s] == '1' ? 60 : text[s] == '2' ? 30 : 100);
                     }
                 auto accent = o.getProperty ("accent", "").toString();
                 for (int s = 0; s < juce::jmin (drums::kMaxSteps, accent.length()); ++s)

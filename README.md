@@ -155,10 +155,23 @@ don't have to come from the MPC).
   clave to a woodblock, the cowbell to an agogo, the closed hat to Tight or Shaker, the open hat
   to Trashy and the cymbal to a ride. **Kits...** sets the whole machine up for a style: Classic,
   Deep sub, Punchy electro, Latin (congas and maracas), Dirty, Tight and dry, Big room.
-- **Steps:** up to 32 steps for all twelve sounds, with the classic red, orange, yellow and cream
-  step keys. Click to add a hit, drag to paint; right-click (or Option-click) a hit to make it a
-  roll of 2, 3 or 4. The top row is the **accent**: the whole step hits harder (**Accent** sets
-  how much).
+- **Steps:** up to 64 steps (four bars of 16) for all twelve sounds, with the classic red, orange,
+  yellow and cream step keys. To write a beat: pick a sound with its **SELECT** key (it plays),
+  then press the 16 big **step keys** (a lamp over a key means a hit there). The **STEP TOOL**
+  strip says what a key does: **Hit** (on or off), **Roll x N** (pick N, 2 to 8, then press a step
+  for a stutter roll of N quick hits; press it again to go back to one hit), **Builds** (a roll that
+  gets louder), **Flam** (a hit with a grace hit before it), **Accent** (the whole step hits
+  harder), **Soft/Loud** (steps a hit's level: full, soft, very soft) and **Erase**. The same tools
+  work on the grid of every sound below the keys: click a step, drag to paint hits; right-click (or
+  Option-click) a step still cycles a roll (2, 3, 4, 6, 8 hits, then one). **Bar 1-4** pick which
+  16 steps the keys and the grid show (a bar past the end makes the pattern longer), **Follow**
+  turns the page to the bar that's playing, and **Copy bar** and **Double** repeat what you have.
+  Each grid row has shift left and right, reverse and a **...** menu: copy, paste, clear, spread
+  hits evenly (Euclid) and its own length (polymeter). **Rec live** writes the notes you play
+  (keys, pads, a controller) into the pattern, at the nearest step, while it plays. **Undo** and
+  **Redo** go back 50 changes. The top row of the grid is the **accent**: the whole step hits
+  harder (**Accent** sets how much). In a short window the keys and the grid take turns (KEYS,
+  GRID); a tall one shows both.
 - **16 patterns, each with an A and a B:** **A**, **B** or **A+B** (A then B, back and forth: a
   two-bar beat) picks what plays and which one you edit (click A+B again to switch). **A to B**
   copies A into B to start a variation. The first eleven are ready-made beats (electro, boom bap,
@@ -177,8 +190,10 @@ don't have to come from the MPC).
   A# open hat...), in any octave, so a keyboard's drum pads work as they are. In its own app it
   has **Start** and a **Tempo**; in Logic and the Rig it follows their clock.
 
-In the Rig it's the **Machine** track on the Groove screen: five rows of its sounds (click a
-name to change one), Pattern 1-8 and **Fill**, **Play**/**Stop**, and eight knobs (kick tune,
+In the Rig it's the **Machine** track on the Groove screen: rows of its sounds (click a
+name to change one), **Bar 1-4** for the 64 steps, the **ROLL x N**, **BUILDS**, **FLAM** and
+**SOFT/LOUD** chips (pick one, then click a step; with none picked a click lights or clears a step),
+Pattern 1-8 and **Fill**, **Play**/**Stop**, and eight knobs (kick tune,
 boom, snap, hat decay, accent, swing, drive, level). Picking it sends the keys and your
 keyboard's drum pads to it (picking **Drums** sends the pads back to the MPC). The whole panel is
 **More > Drum machine**. It has its own mixer strip with effects, its own lane on the song

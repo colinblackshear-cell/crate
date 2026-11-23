@@ -462,6 +462,8 @@ void DrumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     plan.chainLength = playChainLength;
     plan.chain = playChain;
     engine.setBank (bankA.data(), bankB.data(), plan);
+    if (recLive.load())
+        noteRecordedHits (midi, clock);
     if (fillRequested.exchange (false))
         engine.requestFill();
 
@@ -475,6 +477,60 @@ void DrumProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     playingCode = engine.getCurrentCode();
     chainPosition = plan.chainOn && playingCode >= 0 ? engine.getChainPosition() : -1;
     midi.clear();
+}
+
+// Audio thread: the drum notes in this block, each with the step of the playing pattern nearest to it.
+void DrumProcessor::noteRecordedHits (const juce::MidiBuffer& midi, const drums::Clock& clock)
+{
+    if (! clock.playing || get (params, "sequencer") < 0.5f)
+        return;
+    const double sb = drums::stepBeats ((int) get (params, "stepRate"));
+    const double beatsPerSample = clock.bpm / (60.0 * juce::jmax (1.0, getSampleRate()));
+    const int cur = currentStep.load();
+    int code = playingCode.load();
+    const bool known = code >= 0 && cur >= 0;
+    if (! known)
+        code = playingPattern.load() * 2 + (getVariation() == 1 ? 1 : 0);
+    const auto& pattern = (code & 1) != 0 ? bankB[(size_t) juce::jlimit (0, drums::kPatterns - 1, code >> 1)]
+                                          : bankA[(size_t) juce::jlimit (0, drums::kPatterns - 1, code >> 1)];
+    const int length = juce::jmax (1, pattern.length);
+    const long long rawStart = (long long) std::floor (clock.ppq / sb + 1.0e-9);
+    for (const auto meta : midi)
+    {
+        const auto m = meta.getMessage();
+        if (! m.isNoteOn())
+            continue;
+        const int voice = drums::voiceForNote (m.getNoteNumber());
+        if (voice < 0)
+            continue;
+        const double at = (clock.ppq + meta.samplePosition * beatsPerSample) / sb;
+        const long long nearest = (long long) std::floor (at + 0.5);
+        const long long step = known ? cur + (nearest - rawStart) : nearest;
+        int start1, size1, start2, size2;
+        recFifo.prepareToWrite (1, start1, size1, start2, size2);
+        if (size1 > 0)
+        {
+            recHits[(size_t) start1] = { voice, (int) (((step % length) + length) % length), code };
+            recFifo.finishedWrite (1);
+        }
+    }
+}
+
+bool DrumProcessor::popRecordedHit (RecordedHit& out)
+{
+    int start1, size1, start2, size2;
+    recFifo.prepareToRead (1, start1, size1, start2, size2);
+    if (size1 == 0)
+        return false;
+    out = recHits[(size_t) start1];
+    recFifo.finishedRead (1);
+    return true;
+}
+
+void DrumProcessor::clearRecordedHits()
+{
+    RecordedHit ignored;
+    while (popRecordedHit (ignored)) {}
 }
 
 juce::AudioProcessorEditor* DrumProcessor::createEditor() { return new DrumView (*this); }

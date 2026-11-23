@@ -69,7 +69,7 @@ struct Pattern
     // grace hit just before the main one).
     std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> shape {};
     std::array<bool, kMaxSteps> accent {};
-    int length = 16;   // 1..32 steps
+    int length = 16;   // 1..64 steps (four bars of 16)
 
     // Pattern life (crate::life), for each hit: its chance (percent; 100 always plays), its
     // condition (life::Cond) and its nudge (percent of a step, -50..50: early or late). And each

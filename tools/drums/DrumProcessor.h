@@ -70,6 +70,15 @@ public:
     void playVoice (int voice, float velocity = 0.8f);
     // The window's pads and keys play through this.
     juce::MidiKeyboardState keyboardState;
+
+    // Rec live: while it's on and the pattern plays, every note that plays a drum sound (the keys,
+    // the pads, a controller) is also noted down for the window, with the step of the playing
+    // pattern nearest to it (at the current step rate). The audio thread pushes, the window pops
+    // and writes them into the pattern, so nothing on the audio thread touches the patterns.
+    std::atomic<bool> recLive { false };
+    struct RecordedHit { int voice = 0, step = 0, code = 0; };   // code: pattern * 2 + 1 for its B
+    bool popRecordedHit (RecordedHit&);
+    void clearRecordedHits();
     // How many times each sound has played (the window flashes it).
     int getHitCount (int voice) const { return engine.hitCounts[(size_t) voice].load(); }
 
@@ -124,6 +133,9 @@ private:
     int playChainLength = 0, bankVersion = -1;
     std::atomic<int> playingPattern { 0 }, currentStep { -1 }, playingCode { -1 }, chainPosition { -1 };
     std::atomic<bool> playingFill { false }, fillRequested { false }, playingIntro { false };
+    juce::AbstractFifo recFifo { 64 };
+    std::array<RecordedHit, 64> recHits {};
+    void noteRecordedHits (const juce::MidiBuffer&, const crate::drums::Clock&);
     double lastPpq = -1, ownPpq = 0;
     bool ownWasRunning = false;
 

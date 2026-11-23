@@ -6,6 +6,7 @@
 #include "PocketLibrary.h"
 #include "PocketTheme.h"
 #include "RepeatHold.h"
+#include "StepTools.h"
 
 // Two tools in one: DRUMS (the Mac's 808 engine, mode 0) and PADS (the MPC pads, mode 1). The tool row
 // picks the mode. The thumb bar's REC records either onto the next loop layer (PocketApp drives it).
@@ -99,6 +100,16 @@ public:
     // lock-free queue and the pattern is published like any other edit.
     int hitLive (int voice);
     void undoLiveHit();
+    // The step tools on the STEPS grid (HIT, ROLL xN, BUILDS, FLAM, ACCENT, SOFT/LOUD, ERASE), the bar it shows (0-3 of up to 64 steps)
+    // and the length. Every change to the grid is remembered, so UNDO puts it back.
+    void setDrumTool (crate::drums::steptools::Tool);
+    crate::drums::steptools::Tool getDrumTool() const { return drumTool; }
+    void setDrumRoll (int hits);   // 2 to 8
+    int getDrumRoll() const { return drumRoll; }
+    void setDrumPage (int bar);
+    int getDrumPage() const { return drumPage; }
+    void cycleDrumLength();        // 8, 12, 16, 24, 32, 48, 64 steps, then round again
+    void rememberDrums();
     void clearDrumPattern();
     bool canUndoLiveHit() const { return ! liveUndo.empty(); }
     std::function<bool()> inCountIn;   // the app's count-in is running: hits sound but aren't written
@@ -149,6 +160,8 @@ private:
     bool recPads = false, recDrumsOn = false;
     double recDrumsFrom = 0.0;
     int drumModeValue = 0, lessonReserve = 0, guideVoice = -1;
+    int drumPage = 0, drumRoll = 3;
+    crate::drums::steptools::Tool drumTool = crate::drums::steptools::Tool::hit;
     bool lessonLayout = false;
     juce::uint32 guideMask = 0;
     struct LiveUndo { int slot = 0; bool b = false; crate::drums::Pattern pattern; };
