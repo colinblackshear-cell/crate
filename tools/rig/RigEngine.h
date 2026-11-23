@@ -27,6 +27,7 @@
 #include "RigShowFiles.h"
 #include "RigSounds.h"
 #include "RigDirty.h"
+#include "RigLoopLab.h"
 #include "core/SafetyLimiter.h"
 #include "core/control/Controllers.h"
 
@@ -87,6 +88,8 @@ public:
     static juce::String toolName (int id);
     RigTransport& getTransport() { return transport; }
     RigLooper& getLooper() { return looper; }
+    // Loop Lab: a layer opened to warp its timing, tempo and pitch (RigLoopLab.h).
+    RigLoopLab& getLoopLab() { return loopLab; }
     // Quantize, for every tool and loop (its settings are saved with the show and kept by New song).
     RigQuantizer& getQuantizer() { return quantizer; }
     RigScenes& getScenes() { return scenes; }
@@ -517,6 +520,7 @@ private:
     RigRouting routing;
     crate::controllers::Setup controllers { crate::controllers::Setup::defaultFile() };
     RigLooper looper;
+    RigLoopLab loopLab { looper, transport };
     // Gives the looper's recording layers more room as they go, and finishes loop bank switches
     // (message thread).
     struct LoopRoom : juce::Timer
@@ -525,6 +529,7 @@ private:
         void timerCallback() override
         {
             engine.looper.maintain();
+            engine.loopLab.tick();
             engine.serviceLoopBanks();
             engine.quantizer.service();
             if (engine.automation.service())

@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "LoopEditor.h"
+#include "LoopLab.h"
 #include "StripFxPanel.h"
 #include "SongGrid.h"
 #include "TimelineView.h"
@@ -43,8 +44,13 @@ public:
     void refresh();
 
     // Opens the start/end editor over the layers for one loop (if it has one).
+    // Opens Loop Lab on a layer: editLoop on its In / Out page, openLab on the page used last
+    // (Warp at first).
     void editLoop (int layer);
-    LoopEditor* getEditor() const { return editor.get(); }
+    void openLab (int layer);
+    // The In / Out page of the lab, when it shows (null otherwise), and the lab itself.
+    LoopEditor* getEditor() const { return editor != nullptr ? editor->getInOut() : nullptr; }
+    LoopLab* getLab() const { return editor.get(); }
     // Opens (or closes, if it's open) a loop's effects along the bottom.
     void showFx (int layer);
     StripFxPanel* getFxPanel() const { return fxPanel.get(); }
@@ -109,7 +115,8 @@ private:
     juce::Rectangle<int> controlsArea, lengthLabel, sourceLabel, syncArea, statusArea, headings;
     juce::String shownStatus;
     void updateTop();
-    std::unique_ptr<LoopEditor> editor;
+    std::unique_ptr<LoopLab> editor;
+    void openLabOn (int layer, LoopLab::Page);
     void closeEditor();
     std::unique_ptr<StripFxPanel> fxPanel;
     int fxLayer = -1;
