@@ -158,6 +158,7 @@ struct RigDirty::Hasher : juce::Thread
                 // A live loop: copied the looper's way (the audio thread copies it a slice at a
                 // time), here, never on the message thread.
                 const auto audio = owner.engine.getLooper().copyLayerAudio (job.layer, &d.versionOfCopy);
+                d.copyMs = nowMs() - t0;
                 d.empty = audio.getNumSamples() == 0;
                 if (! d.empty)
                 {
@@ -473,13 +474,16 @@ void RigDirty::say (const juce::String& text)
 RigDirty::Stats RigDirty::getStats() const
 {
     const std::lock_guard<std::mutex> l (statsLock);
-    return stats;
+    auto s = stats;
+    s.notes = changeGeneration.load() - notesAtReset;
+    return s;
 }
 
 void RigDirty::resetStats()
 {
     const std::lock_guard<std::mutex> l (statsLock);
     stats = {};
+    notesAtReset = changeGeneration.load();
 }
 
 //==============================================================================
@@ -513,6 +517,8 @@ bool RigDirty::drain()
             ++stats.hashJobsCompleted;
             stats.bytesHashed += d.bytes;
             stats.hashMs += d.ms;
+            stats.maxJobMs = juce::jmax (stats.maxJobMs, d.ms);
+            stats.copyMs += d.copyMs;
         }
         if (d.job.buffer == nullptr)
         {
@@ -1086,6 +1092,19 @@ void RigDirty::service()
         resultsArrived = true;
     if (const auto w = readWatched(); ! (w == watched))
     {
+        {
+            const std::lock_guard<std::mutex> l (statsLock);
+            auto& by = stats.watchedBy;
+            by[Stats::byVersion] += w.versions != watched.versions ? 1 : 0;
+            by[Stats::byState] += w.states != watched.states ? 1 : 0;
+            by[Stats::bySwap] += w.swaps != watched.swaps ? 1 : 0;
+            by[Stats::byTakes] += w.takes != watched.takes ? 1 : 0;
+            by[Stats::byQueuedBank] += w.queuedBank != watched.queuedBank ? 1 : 0;
+            by[Stats::byAutomation] += w.automation != watched.automation ? 1 : 0;
+            by[Stats::byMacros] += w.macros != watched.macros ? 1 : 0;
+            by[Stats::byTimeline] += w.timeline != watched.timeline ? 1 : 0;
+            by[Stats::byBanks] += w.banks != watched.banks ? 1 : 0;
+        }
         watched = w;
         noteChange();
     }

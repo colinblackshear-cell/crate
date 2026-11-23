@@ -136,6 +136,12 @@ public:
         int hashJobsPosted = 0, hashJobsCompleted = 0, staleResults = 0, seedsUsed = 0, layerCopies = 0;
         int takeFallbacks = 0;
         int pinnedBuffers = 0;   // bank sounds the cache holds, after the last check
+        double maxJobMs = 0;     // the longest single copy-and-hash
+        double copyMs = 0;       // of hashMs, the part spent copying live loops
+        // What asked for checks: changes noted (any source), and which watched counter moved.
+        juce::uint64 notes = 0;
+        enum { byVersion, byState, bySwap, byTakes, byQueuedBank, byAutomation, byMacros, byTimeline, byBanks, numWatched };
+        std::array<int, numWatched> watchedBy {};
         double takeFallbackMs = 0;
         juce::int64 bytesHashed = 0;
         double hashMs = 0;
@@ -199,7 +205,7 @@ private:
         juce::uint64 hash = 0;
         bool empty = false;
         juce::int64 bytes = 0;
-        double ms = 0;
+        double ms = 0, copyMs = 0;
     };
 
     RigEngine& engine;
@@ -284,6 +290,7 @@ private:
 
     mutable std::mutex statsLock;
     Stats stats;
+    juce::uint64 notesAtReset = 0;
 
     Canon build (const juce::ValueTree& show, bool withAudio);
     void flatten (const juce::ValueTree& show, Flat&);

@@ -157,6 +157,7 @@ struct RigDirtyTests : juce::UnitTest
         saves();
         debounce();
         audioThread();
+        sceneRetries();
         {
             beginTest ("Tools whose settings can't be put back");
             auto e = openSaved (show);
@@ -663,6 +664,92 @@ struct RigDirtyTests : juce::UnitTest
         expectState (*e, State::clean, "stopped, everything put back");
     }
 
+    void sceneRetries()
+    {
+        beginTest ("Song parts changing mutes on the audio thread while the message thread checks: torn checks retried");
+        const auto file = folder.getChildFile ("Parts.crateshow");
+        {
+            auto e = std::make_unique<RigEngine>();
+            e->prepare (kRate, 256);
+            e->getTransport().setBpm (240.0);
+            e->getLooper().setLayerAudio (0, noise ((int) kRate, 1), 4.0);
+            e->getLooper().setLayerAudio (1, noise ((int) kRate, 2), 4.0);
+            RigAutomation::Lane lane;
+            lane.tool = RigEngine::bassTool;
+            lane.parameter = indexOf (e->getBass(), "cutoff");
+            lane.paramId = "cutoff";
+            lane.lengthBeats = 4;
+            lane.points = { { 0.0, 0.0f }, { 4.0, 1.0f } };
+            e->getAutomation().addLane (lane);
+            // Eight one-bar parts, each flipping the mutes, the vocoder and the input.
+            for (int k = 0; k < 8; ++k)
+            {
+                RigScene part;
+                part.name = "Part " + juce::String (k + 1);
+                part.bars = 1;
+                const int on = k % 2;
+                part.state.stripMutes[(size_t) RigEngine::bassStrip] = on;
+                part.state.stripMutes[(size_t) RigEngine::synthStrip] = 1 - on;
+                part.state.loopMutes[0] = on;
+                part.state.loopMutes[1] = 1 - on;
+                part.state.vocoderOn = on;
+                part.state.inputOn = 1 - on;
+                e->getScenes().getScenes().push_back (part);
+            }
+            e->getScenes().songMode = true;
+            expect (e->saveShowFile (file).ok);
+        }
+        auto e = openSaved (file, 256);
+        expectState (*e, State::clean, "opened");
+        expectEquals ((int) e->getScenes().getScenes().size(), 8);
+        auto* resonance = paramOf (e->getBass(), "resonance");
+        const float saved = resonance->getValue();
+        e->getDirty().resetStats();
+        LiveAudio audio (*e);
+        audio.start();
+        e->getTransport().play();
+        e->getScenes().launch (0);
+        // A bar is a second: about 12 parts in 12 s, each landing while a check is (almost
+        // always) between reading the show and reading the slots.
+        int wrong = 0, checks = 0, torn = 0, edits = 0, clean = 0;
+        const auto end = nowMs() + 12000;
+        int phase = 0;
+        double phaseStart = nowMs();
+        while (nowMs() < end)
+        {
+            e->tickScenes();
+            if (e->getScenes().getQueued() < 0 && e->getScenes().getCurrent() == 7)
+                e->getScenes().launch (0);
+            if (nowMs() - phaseStart > 700)
+            {
+                phaseStart = nowMs();
+                phase = 1 - phase;
+                resonance->setValueNotifyingHost (phase == 1 ? juce::jlimit (0.0f, 1.0f, saved + 0.25f) : saved);
+                edits += phase;
+            }
+            const auto st = e->getDirty().checkNow();
+            ++checks;
+            torn += st.state == State::pending ? 1 : 0;
+            if (phase == 1 && st.state == State::clean)
+                ++wrong;
+            if (phase == 0 && st.state == State::clean)
+                ++clean;
+        }
+        const auto applied = e->getScenes().getCurrent();
+        e->getTransport().stop();
+        audio.waitBlocks (4);
+        audio.stop();
+        resonance->setValueNotifyingHost (saved);
+        const auto stats = e->getDirty().getStats();
+        logMessage ("  " + juce::String (checks) + " checks, " + juce::String (stats.retries) + " torn by a part changing (retried), "
+                    + juce::String (torn) + " pending results, " + juce::String (edits) + " hand edits; clean while unedited " + juce::String (clean)
+                    + "; last part " + juce::String (applied + 1));
+        expect (stats.retries > 0, "a part landed mid-check at least once");
+        expectEquals (wrong, 0, "never clean while the hand edit stood");
+        expect (clean > 0, "clean while nothing was edited, between parts");
+        expectState (*e, State::clean, "stopped, nothing edited");
+    }
+
     //==========================================================================
     void bench();
 };
@@ -677,6 +764,7 @@ void RigDirtyTests::bench()
     auto line = [&table] (const juce::String& s) { table << s << "\n"; std::cout << s << std::endl; };
     line ("dirty model benchmarks: 48 kHz, 256-sample blocks, a real-time audio thread; times in ms");
     line ("case | model | blocks | callback median | p99 | worst | checks | check median | check max");
+    line ("(rows marked \"on, forced\": checkNow called every 100 ms plus a hand edit every second, to load the model; not the natural check rate, see \"natural checks\" below)");
 
     struct Case { const char* name; std::function<std::unique_ptr<RigEngine>()> make; std::function<void (RigEngine&)> start; };
     const auto heavyFile = folder.getChildFile ("Bench heavy.crateshow");
@@ -770,7 +858,7 @@ void RigDirtyTests::bench()
             if (c.name[0] == 'b')
                 e->getLooper().pressRecord (1);
             audio.stop();
-            line (juce::String (c.name) + " | " + (on ? "on " : "off") + " | " + juce::String ((int) times.size()) + " | " + juce::String (percentile (times, 0.5), 3) + " | "
+            line (juce::String (c.name) + " | " + (on ? "on, forced" : "off") + " | " + juce::String ((int) times.size()) + " | " + juce::String (percentile (times, 0.5), 3) + " | "
                   + juce::String (percentile (times, 0.99), 3) + " | " + juce::String (times.empty() ? 0.0 : *std::max_element (times.begin(), times.end()), 3) + " | "
                   + juce::String ((int) checks.size()) + " | " + juce::String (percentile (checks, 0.5), 2) + " | "
                   + juce::String (checks.empty() ? 0.0 : *std::max_element (checks.begin(), checks.end()), 2));
@@ -872,6 +960,152 @@ void RigDirtyTests::bench()
               + " ms each (a " + juce::String (e->getTakes().setFor (6) != nullptr && ! e->getTakes().setFor (6)->takes.empty()
                                                 ? e->getTakes().setFor (6)->takes.back().audio.getNumSamples() / kRate : 0.0, 1) + " s take)");
     }
+    // Natural checks: the song with automation, the model on, and only the app's timers.
+    {
+        auto e = openSaved (show, 256);
+        LiveAudio audio (*e);
+        audio.start();
+        e->launchSection (0);
+        serviceFor (*e, 300);
+        e->getDirty().waitUntilResolved (5000);
+        e->getDirty().resetStats();
+        double serviceMs = 0, longest = 0;
+        int calls = 0;
+        const auto t0 = nowMs();
+        double room = t0, window = t0;
+        while (nowMs() < t0 + 6000)
+        {
+            if (nowMs() >= window)
+            {
+                window += 33.0;   // the window's timer
+                e->tickScenes();
+                if (! e->getTransport().isPlaying())
+                    e->launchSection (0);
+            }
+            if (nowMs() >= room)
+            {
+                room += 100.0;    // the engine's LoopRoom timer, 10 Hz, as it is
+                e->getLooper().maintain();
+                e->serviceLoopBanks();
+                e->getQuantizer().service();
+                if (e->getAutomation().service())
+                    e->getDirty().noteChange();
+                e->serviceTakes();
+                const auto s0 = nowMs();
+                e->getDirty().service();
+                const auto took = nowMs() - s0;
+                serviceMs += took;
+                longest = juce::jmax (longest, took);
+                ++calls;
+            }
+            juce::Thread::sleep (2);
+        }
+        audio.stop();
+        const auto st = e->getDirty().getStats();
+        static const char* names[] = { "loop versions", "loop states", "swaps pending", "takes", "queued bank", "automation", "macros", "song", "banks" };
+        juce::String by;
+        for (int i = 0; i < RigDirty::Stats::numWatched; ++i)
+            if (st.watchedBy[(size_t) i] > 0)
+                by << names[i] << " " << st.watchedBy[(size_t) i] << ", ";
+        line ("natural checks, 6 s of song + automation, timers only (" + juce::String (calls) + " service calls): " + juce::String (st.checks) + " checks, "
+              + juce::String (st.notes) + " changes noted, watched counters that moved: " + (by.isEmpty() ? juce::String ("none") : by.dropLastCharacters (2))
+              + " | message thread in service(): " + juce::String (serviceMs, 1) + " ms total, longest " + juce::String (longest, 2) + " ms, check max " + juce::String (st.maxCheckMs, 2) + " ms");
+    }
+
+    // Real hashing with copies while the heavy show plays: four new 10-minute sounds that match
+    // nothing known, then saves with the hasher idle and with a copy in flight.
+    {
+        auto e = heavy();
+        LiveAudio audio (*e);
+        audio.start();
+        e->getTransport().play();
+        audio.waitBlocks (200);
+        int set = 0;
+        auto fresh = [&set]
+        {
+            ++set;
+            std::vector<juce::AudioBuffer<float>> v;
+            for (int i = 0; i < 4; ++i)
+            {
+                juce::AudioBuffer<float> b (2, (int) (kRate * 600));
+                for (int c = 0; c < 2; ++c)
+                {
+                    auto* d = b.getWritePointer (c);
+                    const int period = 3 + i + 5 * set;
+                    for (int n = 0; n < b.getNumSamples(); ++n)
+                        d[n] = ((n / period) % 2 ? 1.0f : -1.0f) * 0.015f * (float) (i + 1);
+                }
+                v.push_back (std::move (b));
+            }
+            return v;
+        };
+        auto replace = [&e] (std::vector<juce::AudioBuffer<float>>& v)
+        {
+            for (int i = 0; i < 4; ++i)
+                e->getLooper().setLayerAudio (i, std::move (v[(size_t) i]), 1200.0);
+        };
+        auto stats = [] (const std::vector<double>& t)
+        {
+            return juce::String (percentile (t, 0.5), 3) + " / " + juce::String (percentile (t, 0.99), 3) + " / "
+                   + juce::String (t.empty() ? 0.0 : *std::max_element (t.begin(), t.end()), 3);
+        };
+
+        auto a = fresh();
+        e->getDirty().resetStats();
+        double resolvedMs = 0;
+        State resolvedAs = State::pending;
+        const auto onTimes = audio.during ([&]
+        {
+            const auto t0 = nowMs();
+            replace (a);
+            serviceFor (*e, 180000, [&] { return e->getDirty().getStats().hashJobsCompleted >= 4 && e->getDirty().getState() != State::pending; });
+            resolvedMs = nowMs() - t0;
+            resolvedAs = e->getDirty().getState();
+        });
+        const auto st = e->getDirty().getStats();
+        const double mb = (double) st.bytesHashed / 1048576.0;
+        line ("cold hashing while playing (4 new 10-min loops): resolved " + stateName (resolvedAs) + " in " + juce::String (resolvedMs, 0) + " ms; "
+              + juce::String (st.hashJobsCompleted) + " jobs, " + juce::String (mb, 0) + " MB; per loop copy+hash " + juce::String (st.hashMs / juce::jmax (1, st.hashJobsCompleted), 0)
+              + " ms (copy " + juce::String (st.copyMs / juce::jmax (1, st.hashJobsCompleted), 0) + ", longest job " + juce::String (st.maxJobMs, 0) + "); "
+              + juce::String (st.hashMs > 0 ? mb / (st.hashMs / 1000.0) : 0.0, 0) + " MB/s with copies");
+        line ("  callback median / p99 / worst, model on, while it hashed: " + stats (onTimes) + " (" + juce::String ((int) onTimes.size()) + " blocks)");
+
+        const auto idleFile = folder.getChildFile ("Bench save idle.crateshow");
+        auto s0 = nowMs();
+        expect (e->saveShowFile (idleFile).ok);
+        const double idleSave = nowMs() - s0;
+
+        auto b = fresh();
+        std::atomic<bool> copying { false };
+        RigLooper::copyPauseForTests = [&copying] (int, bool) { copying = true; };
+        replace (b);
+        e->getDirty().resetStats();
+        e->getDirty().checkNow();   // (the four copies asked for)
+        for (int i = 0; i < 2000 && ! copying.load(); ++i)
+            juce::Thread::sleep (1);
+        const bool inFlight = copying.load() && e->getDirty().getStats().hashJobsCompleted == 0;
+        const auto busyFile = folder.getChildFile ("Bench save busy.crateshow");
+        s0 = nowMs();
+        expect (e->saveShowFile (busyFile).ok);
+        const double busySave = nowMs() - s0;
+        RigLooper::copyPauseForTests = nullptr;
+        line ("saveShowFile, 4 new 10-min loops: hasher idle " + juce::String (idleSave, 0) + " ms; started with a hash copy in flight "
+              + juce::String (busySave, 0) + " ms (" + (inFlight ? "a copy was in flight when it started" : "copy NOT confirmed in flight") + ")");
+        serviceFor (*e, 180000, [&] { return e->getDirty().getStats().hashJobsCompleted >= 4; });
+
+        e->getDirty().setEnabled (false);
+        auto c = fresh();
+        const auto offTimes = audio.during ([&]
+        {
+            const auto t0 = nowMs();
+            replace (c);
+            while (nowMs() - t0 < resolvedMs)
+                juce::Thread::sleep (10);
+        });
+        line ("  callback median / p99 / worst, model off, same window: " + stats (offTimes) + " (" + juce::String ((int) offTimes.size()) + " blocks)");
+        audio.stop();
+    }
+
     expect (true);
     if (const auto out = juce::SystemStats::getEnvironmentVariable ("KB_DIRTY_BENCH_OUT", {}); out.isNotEmpty())
         juce::File (out).replaceWithText (table);
