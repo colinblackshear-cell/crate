@@ -50,6 +50,9 @@ public:
         // machine's pattern, the synth's arp (0 keys only, 1 arp). -1 leaves the tool as it is.
         int clip = -1;
         float level = 1.0f;                // 0..1, on top of the mixer's fader
+        // A loop's slip: how far into the loop (bars) it is on the block's first beat, so a loop
+        // brought in on bar 7 can carry on in its groove instead of starting from its top.
+        double offset = 0;
         double end() const { return start + length; }
     };
     // A marker names a section of the song (Verse, Chorus...). On the Song screen the sections
@@ -85,6 +88,15 @@ public:
     float gainAt (int lane, double bar) const { return gainAt (blocks.data(), (int) blocks.size(), lane, bar, laneUsed (lane)); }
     // The start of the block that plays `lane` at `bar` (-1 for none).
     static double blockStartAt (const Block* list, int count, int lane, double bar);
+    // Where that block's loop has its top (bars): its start less its slip (-1e9 for none).
+    static double blockOriginAt (const Block* list, int count, int lane, double bar);
+
+    // Rec live: the lanes the song is being played into. While a lane is gated it's quiet
+    // outside its blocks even when it has none yet (so a loop you bring in waits for its bar),
+    // and the song doesn't stop at its end. A bit per lane; 0 when not recording.
+    std::atomic<juce::uint32> gated { 0 };
+    static juce::uint32 gateBit (int lane) { return (juce::uint32) 1 << lane; }
+    bool isGated (int lane) const { return (gated.load() & gateBit (lane)) != 0; }
 
     // The timeline runs the mix while the clock plays.
     std::atomic<bool> on { false };
@@ -105,10 +117,11 @@ public:
     // Audio thread.
     // Picks up the newest copy of the blocks. Call at the start of each block.
     void update();
-    float liveGain (int lane, double bar) const { return gainAt (live.blocks.data(), live.count, lane, bar, live.used[(size_t) lane]); }
+    float liveGain (int lane, double bar) const { return gainAt (live.blocks.data(), live.count, lane, bar, live.used[(size_t) lane] || isGated (lane)); }
     double liveBlockStart (int lane, double bar) const { return blockStartAt (live.blocks.data(), live.count, lane, bar); }
+    double liveBlockOrigin (int lane, double bar) const { return blockOriginAt (live.blocks.data(), live.count, lane, bar); }
     double liveEnd() const { return live.end; }
-    bool liveEmpty() const { return live.count == 0; }
+    bool liveEmpty() const { return live.count == 0 && gated.load() == 0; }
 
     // Where the clock should go now, if anywhere (a jump whose bar has come, or the end of the
     // cycle): returns the beat to go to, or -1. `beat` is where the block starts.

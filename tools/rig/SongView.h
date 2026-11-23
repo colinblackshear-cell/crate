@@ -101,6 +101,14 @@ public:
     // or the first). Says so when the track isn't in the song yet.
     void showLane (int lane);
 
+    // Rec live (the song, played): starts a new take, or with one going, stops and keeps it.
+    // Punch: plays it again over one section only. The pads bring tracks in and out.
+    void pressRecLive();
+    bool recLiveFrom (int section);   // punch over that section
+    void pressLivePad (int lane);
+    void showTakesMenu();
+    bool isLivePanelShown() const;
+
     // The lanes the board shows, top to bottom.
     std::vector<int> shownLanes() const;
     bool showingAllLanes = false;
@@ -111,6 +119,7 @@ private:
     class Board;
     class Names;
     class Inspector;
+    class LivePads;
     void timerCallback() override;
     void mouseUp (const juce::MouseEvent&) override;
     void say (const juce::String& s) { if (onSay) onSay (s); }
@@ -127,10 +136,13 @@ private:
     rigpanels::PanelButton addButton { "+ Section" }, jamButton { "Jam" }, songButton { "Song" }, playButton { "From start" },
         loopButton { "Loop section" }, barsButton { "Bars view" }, recButton { "Rec song" }, exportButton { "Export" },
         moreButton { juce::String::fromUTF8 ("\xe2\x8b\xaf") }, deleteButton { "Delete" }, undoButton { "Undo" }, bigAdd { "+ First section: what's playing now" },
-        bigEmpty { "+ Empty section" };
+        bigEmpty { "+ Empty section" }, liveButton { "Rec live" }, takesButton { "Takes" };
     std::unique_ptr<Board> board;
     std::unique_ptr<Names> names;
     std::unique_ptr<Inspector> inspector;
+    std::unique_ptr<LivePads> livePads;
+    bool wasLive = false;
+    int lastTakes = -1, lastTake = -2, keptTake = -2;
     std::unique_ptr<TimelineView> bars;
     juce::Viewport viewport;
     juce::Rectangle<int> titleArea, stepsArea, boardArea, moreLanesArea, emptyArea, addLayerArea;

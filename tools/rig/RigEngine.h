@@ -18,6 +18,7 @@
 #include "RigLooper.h"
 #include "RigScenes.h"
 #include "RigTimeline.h"
+#include "RigLiveSong.h"
 #include "RigRecorder.h"
 #include "RigCapture.h"
 #include "core/SoundSet.h"
@@ -137,6 +138,10 @@ public:
     // the song waits, and whatever you switch on plays (message thread).
     bool songInCharge() const { return timeline.on.load() && ! timeline.isEmpty(); }
     void jam() { timeline.on = false; timeline.cycle = false; controlsMoved = true; }
+    // Rec live (the Song screen): the song played into, loops and tools brought in and out.
+    RigLiveSong& getLiveSong() { return liveSong; }
+    // The click counts in until this beat while Rec live waits for its first bar (-1: none).
+    std::atomic<double> songCountInUntil { -1.0 };
 
     // Recording into the song (Rec into): `source` (a RigLooper::Source) onto loop `layer`, over
     // section `section`, from its top; with `cycle` the section plays over and over and every
@@ -571,6 +576,7 @@ private:
     void putLoopBankOnLayers (int bank, double beat, const RigScene::State* scene);
     RigScenes scenes;
     RigTimeline timeline;
+    RigLiveSong liveSong { *this };
     // Message thread: what each box asks a tool to play, just before it starts.
     void tickSong();
     std::array<double, RigTimeline::kLanes> songClipAt = [] { std::array<double, RigTimeline::kLanes> a; a.fill (-2.0); return a; }();

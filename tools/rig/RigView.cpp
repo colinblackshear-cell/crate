@@ -768,6 +768,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     songView->onSay = [this] (const juce::String& text) { say (text); };
     songView->onExport = [this] { exportForLogic(); };
     songView->onImportFromLogic = [this] { askImportFromLogic(); };
+    if (auto* barsView = songView->getBarsView())
+        barsView->onOpenAutomation = [this] { showAutomation(); };
     songView->onGoTo = [this] (const juce::String& page) { showTab (page); };
     songView->onOpenBox = [this] (int lane, int clip, bool edit) { openSongBox (lane, clip, edit); };
     songView->onAddLayer = [this] (int track) { addLayerWith (track); };

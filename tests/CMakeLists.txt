@@ -46,6 +46,7 @@ target_sources(CrateTests PRIVATE
     RigLogicImportTests.cpp
     RigSongCaptureTests.cpp
     RigTakesTests.cpp
+    RigLiveSongTests.cpp
     RigNotesTests.cpp
     PatternLifeTests.cpp
     RigAutomationTests.cpp

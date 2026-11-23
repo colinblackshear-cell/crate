@@ -10,10 +10,14 @@
 //   Click a lane        adds a block there (a loop's own length, or 4 bars); drag to draw it longer
 //   Drag a block        moves it; its right edge makes it longer (a loop repeats), its left edge
 //                       starts it later; the small squares at its top corners fade it in and out
-//   Right-click a block fades, copy, delete
+//   Alt-drag a block    copies it; Cmd-drag slides the loop inside it (slip); Shift-drag up or down
+//                       sets its level
+//   Right-click a block fades, split, level, copy, delete (S splits at the playhead)
 //   Click the ruler     where Play starts (while it plays: jumps there at the next bar)
 //   Drag on the ruler   cycles those bars
 //   The marker row      section names (Verse, Chorus...); click one to go there
+//   Effect moves        under the tracks, a row for each knob move recorded (Rec moves): drag on
+//                       one to draw its line; right-click for Loop/Once, on/off, clear
 //
 // Delete removes the picked block, Cmd+D copies it after itself, Cmd+Z undoes.
 // Rec onto song: a loop you record while the song plays goes on its lane where you played it.
@@ -21,6 +25,7 @@
 class TimelineView : public juce::Component
 {
 public:
+    void select (int block);   // picks a block (-1: none)
     explicit TimelineView (RigEngine&);
     ~TimelineView() override;
 
@@ -33,6 +38,8 @@ public:
 
     std::function<void()> onClose;
     std::function<void (const juce::String&)> onSay;
+    // Opens the Automation panel (the effect moves' full editor).
+    std::function<void()> onOpenAutomation;
 
     // What the buttons and clicks do (the tests use them too).
     int addBlock (int lane, double bar);   // returns the new block's index
@@ -45,6 +52,13 @@ public:
     void duplicateSelected();
     void undo();
     void setFade (int block, bool in, double bars);
+    // Splits the picked block at `bar` (the second half carries on where the loop was).
+    bool splitSelected (double bar);
+    void setLevel (int block, float level);
+    // A loop block's slip: how far into the loop (bars) it starts.
+    void slip (int block, double offset);
+    double loopBars (int lane) const;
+    static double wrapBars (double x, double length);
     void addMarker (double bar, const juce::String& name);
     int getSelected() const { return selected; }
     double getStartBar() const { return startBar; }
@@ -62,7 +76,6 @@ private:
     void watchRecording();
     double defaultLength (int lane) const;
     int addBlockNoUndo (int lane, double bar);
-    void select (int block);
 
     RigEngine& engine;
     RigTimeline& timeline;

@@ -490,6 +490,162 @@ private:
 };
 
 //==============================================================================
+// Rec live's pads: a pad for every track being played into. Click one to bring it in (or take
+// it out) on the next bar. Mark starts a new section, Stop + Keep ends the take, Cancel throws it
+// away. Shown while Rec live is on.
+class SongView::LivePads : public juce::Component
+{
+public:
+    explicit LivePads (SongView& o) : owner (o)
+    {
+        markButton.sub = "new section";
+        markButton.setTooltip ("A new section of the song from the next bar (Intro, Verse, Chorus...).");
+        markButton.onClick = [this] { owner.engine.getLiveSong().mark(); owner.say ("New section from the next bar."); };
+        allOutButton.sub = "drop to silence";
+        allOutButton.setTooltip ("Takes every track out on the next bar (a break). Bring them back one by one.");
+        allOutButton.onClick = [this]
+        {
+            auto& live = owner.engine.getLiveSong();
+            for (const int lane : live.getLanes())
+                if (live.isIn (lane))
+                    live.toggle (lane);
+        };
+        stopButton.sub = "keep the take";
+        stopButton.lit = Lit::arm;
+        stopButton.setTooltip ("Ends Rec live: what you played is a new take of the song, ready to edit.");
+        stopButton.onClick = [this] { owner.pressRecLive(); };
+        cancelButton.sub = "throw it away";
+        cancelButton.setTooltip ("Ends Rec live and puts the song back as it was.");
+        cancelButton.onClick = [this]
+        {
+            owner.engine.getLiveSong().cancel();
+            owner.say (owner.engine.getLiveSong().takeMessage());
+        };
+        for (auto* b : { &markButton, &allOutButton, &stopButton, &cancelButton })
+        {
+            b->fontSize = 16.0f;
+            b->subSize = 10.0f;
+            addAndMakeVisible (b);
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto& p = pal();
+        drawWell (g, getLocalBounds().toFloat(), 12.0f);
+        auto& live = owner.engine.getLiveSong();
+        auto r = getLocalBounds().reduced (14, 12);
+        g.setColour (juce::Colour (0xffff6b57));
+        g.setFont (cond (19.0f, Weight::extra, 0.08f));
+        const double now = live.nowBar();
+        const bool counting = live.getState() == RigLiveSong::State::waiting;
+        const double bar = juce::jmax (0.0, now - (live.isPunch() ? 0.0 : live.getStartBar()));
+        juce::String head = counting ? (live.isPunch() ? "RUN-UP" : "COUNTING IN")
+                                     : juce::String::fromUTF8 ("\xe2\x97\x8f REC LIVE ") + (live.isPunch() ? "BAR " + juce::String (now + 1.0, 1)
+                                                                                                              : "BAR " + juce::String (bar + 1.0, 1));
+        g.drawText (head, r.removeFromTop (24), juce::Justification::centredLeft);
+        g.setColour (p.wellInk2);
+        g.setFont (barlow (12.5f));
+        g.drawFittedText (live.isPunch() && live.getEndBar() >= 0
+                              ? "Punch: bars " + juce::String ((int) live.getStartBar() + 1) + "-" + juce::String ((int) live.getEndBar())
+                                    + " are played again. Click a track to bring it in or out on the next bar."
+                              : juce::String ("Click a track to bring it in or out. It lands on the next bar, and the song writes it down. "
+                                              "Its M, the mixer or your keyboard's pads do the same."),
+                          r.removeFromTop (48), juce::Justification::topLeft, 3, 0.9f);
+        for (const auto& pad : pads)
+        {
+            const auto f = pad.area.toFloat();
+            const bool in = live.isIn (pad.lane);
+            const double at = live.changeAt (pad.lane);
+            const auto c = SongView::laneColour (pad.lane);
+            if (in)
+            {
+                glow (g, f, 8.0f, c, 8.0f, 0.4f);
+                g.setColour (c);
+                g.fillRoundedRectangle (f, 8.0f);
+            }
+            else
+            {
+                g.setColour (juce::Colour (0xff2b2520));
+                g.fillRoundedRectangle (f, 8.0f);
+            }
+            if (at >= 0)
+            {
+                g.setColour (in ? juce::Colours::white : c);
+                g.drawRoundedRectangle (f.reduced (1.5f), 8.0f, 3.0f);
+            }
+            auto t = pad.area.reduced (10, 6);
+            g.setColour (in ? juce::Colour (0xff1f1b17) : juce::Colour (0xffd8ccb4));
+            g.setFont (cond (16.0f, Weight::extra, 0.04f));
+            g.drawFittedText (rigsong::laneName (pad.lane), t.removeFromTop (20), juce::Justification::centredLeft, 1, 0.7f);
+            g.setFont (cond (11.5f, Weight::bold, 0.08f));
+            juce::String word = in ? "IN" : "OUT";
+            const double shown = live.isPunch() ? at : at - live.getStartBar();
+            if (at >= 0)
+                word << " AT BAR " << juce::String ((int) shown + 1);
+            g.drawText (word, t, juce::Justification::bottomLeft);
+        }
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (14, 12);
+        r.removeFromTop (24 + 48 + 6);
+        auto buttons = r.removeFromBottom (48 * 2 + 8);
+        {
+            auto row = buttons.removeFromTop (48);
+            markButton.setBounds (row.removeFromLeft (row.getWidth() / 2 - 4));
+            row.removeFromLeft (8);
+            allOutButton.setBounds (row);
+            buttons.removeFromTop (8);
+            stopButton.setBounds (buttons.removeFromLeft (buttons.getWidth() * 3 / 5 - 4));
+            buttons.removeFromLeft (8);
+            cancelButton.setBounds (buttons);
+        }
+        r.removeFromBottom (10);
+        pads.clear();
+        const auto& list = owner.engine.getLiveSong().getLanes();
+        const int n = (int) list.size(), cols = 2;
+        const int rows = juce::jmax (1, (n + cols - 1) / cols);
+        const int h = juce::jlimit (34, 64, (r.getHeight() - (rows - 1) * 8) / rows);
+        for (int i = 0; i < n; ++i)
+        {
+            const int col = i % cols, row = i / cols;
+            const int w = (r.getWidth() - 8) / cols;
+            pads.push_back ({ list[(size_t) i], juce::Rectangle<int> (r.getX() + col * (w + 8), r.getY() + row * (h + 8), w, h) });
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        // On the press (not the release), so it's in time.
+        for (const auto& pad : pads)
+            if (pad.area.contains (e.getPosition()))
+            {
+                owner.pressLivePad (pad.lane);
+                repaint();
+            }
+    }
+
+    void tick()
+    {
+        if ((int) pads.size() != (int) owner.engine.getLiveSong().getLanes().size())
+            resized();
+        repaint();
+    }
+
+private:
+    struct Pad
+    {
+        int lane;
+        juce::Rectangle<int> area;
+    };
+    SongView& owner;
+    std::vector<Pad> pads;
+    rigpanels::PanelButton markButton { "Mark" }, allOutButton { "All out" }, stopButton { "Stop + Keep" }, cancelButton { "Cancel" };
+};
+
+//==============================================================================
 // The panel on the right: what the picked box plays and how, or the picked section.
 class SongView::Inspector : public juce::Component
 {
@@ -812,6 +968,15 @@ SongView::SongView (RigEngine& e) : engine (e)
             say (result.files > 0 ? "Exported " + juce::String (result.files) + " files to " + result.folder.getFullPathName() : result.error);
         }
     };
+    liveButton.sub = "tap loops in, out";
+    liveButton.icon = rigpanels::PanelButton::Icon::rec;
+    liveButton.setTooltip ("Records the song as you play it: after a count-in, bring loops and tools in and out (the pads, their M, "
+                           "your keyboard) and each change lands on the next bar. Stop + Keep makes it a new take to edit. "
+                           "Over one section only: click the section's name > Rec live over it.");
+    liveButton.onClick = [this] { pressRecLive(); };
+    takesButton.sub = "no takes yet";
+    takesButton.setTooltip ("Every Rec live is kept as a take of the song. Pick one to hear and edit it.");
+    takesButton.onClick = [this] { showTakesMenu(); };
     moreButton.setTooltip ("More: keyboard buttons for Next and Back, clear the song.");
     moreButton.onClick = [this] { showMoreMenu(); };
     deleteButton.sub = "picked section";
@@ -821,7 +986,10 @@ SongView::SongView (RigEngine& e) : engine (e)
     undoButton.sub = "Cmd+Z";
     undoButton.setTooltip ("Takes back the last change to the song: a deleted section, a box, a length, To Song...");
     undoButton.onClick = [this] { undo(); };
-    for (auto* b : { &addButton, &deleteButton, &undoButton, &jamButton, &songButton, &playButton, &loopButton, &barsButton, &recButton, &exportButton, &moreButton })
+    livePads = std::make_unique<LivePads> (*this);
+    addChildComponent (*livePads);
+    for (auto* b : { &addButton, &deleteButton, &undoButton, &jamButton, &songButton, &playButton, &loopButton, &barsButton, &recButton, &exportButton, &moreButton,
+                     &liveButton, &takesButton })
     {
         b->fontSize = 16.0f;
         b->subSize = 10.5f;
@@ -1185,6 +1353,8 @@ void SongView::showSectionMenu (int section)
                         });
     menu.addItem (juce::String::fromUTF8 ("\xe2\x96\xb6 Play from here"), [this, section] { engine.launchSection (section); });
     menu.addItem ("Loop it", [this, section] { loopSection (section); });
+    menu.addItem (juce::String::fromUTF8 ("\xe2\x97\x8f Rec live over it (punch)"), ! engine.getLiveSong().isActive(), false,
+                  [this, section] { recLiveFrom (section); });
     menu.addSeparator();
     menu.addItem ("Rename...", [this, section] { renameSection (section); });
     menu.addSubMenu ("Length", length);
@@ -1404,6 +1574,31 @@ void SongView::timerCallback()
     const bool recording = engine.getRecorder().getState() != RigRecorder::State::idle;
     setLit (recButton, recording ? Lit::arm : Lit::none);
 
+    // Rec live: its pads come and go with it, and its takes on the Takes button.
+    auto& live = engine.getLiveSong();
+    const bool liveNow = live.isActive();
+    setLit (liveButton, liveNow ? Lit::arm : Lit::none);
+    if (liveNow != wasLive)
+    {
+        liveButton.text = liveNow ? "Stop + Keep" : "Rec live";
+        liveButton.sub = liveNow ? "end the take" : "tap loops in, out";
+        liveButton.repaint();
+        if (! liveNow && live.takeMessage().isNotEmpty())
+            say (live.takeMessage());
+        resized();
+    }
+    if (liveNow)
+        livePads->tick();
+    if ((int) live.getTakes().size() != lastTakes || live.getCurrentTake() != lastTake)
+    {
+        lastTakes = (int) live.getTakes().size();
+        lastTake = live.getCurrentTake();
+        takesButton.text = juce::isPositiveAndBelow (lastTake, lastTakes) ? live.getTakes()[(size_t) lastTake].name.upToFirstOccurrenceOf (" (", false, false)
+                                                                         : juce::String ("Takes");
+        takesButton.sub = lastTakes == 0 ? juce::String ("no takes yet") : juce::String (lastTakes) + (lastTakes == 1 ? " take" : " takes");
+        takesButton.repaint();
+    }
+
     // Redraw when the song changes (here, in Bars view, or by a section key) or while it plays.
     int hash = (int) timeline().getBlocks().size() * 7919 + (int) timeline().getMarkers().size() * 31;
     for (const auto& b : timeline().getBlocks())
@@ -1411,6 +1606,17 @@ void SongView::timerCallback()
     for (const auto& m : timeline().getMarkers())
         hash = hash * 31 + juce::roundToInt (m.bar * 16 + m.bars) + m.name.hashCode();
     hash = hash * 31 + (int) shownLanes().size();
+    if (hash != lastHash && (liveNow || liveNow != wasLive || lastTake != keptTake))
+    {
+        // Rec live writing (or a take put on): not an edit to take back. Cancel and the takes
+        // are how a run comes undone.
+        lastHash = hash;
+        kept = { timeline().getBlocks(), timeline().getMarkers() };
+        keptTake = lastTake;
+        wasLive = liveNow;
+        edited();
+    }
+    wasLive = liveNow;
     if (hash != lastHash)
     {
         lastHash = hash;
@@ -1524,8 +1730,8 @@ void SongView::resized()
     const int gap = 7;
     moreButton.setBounds (top.removeFromRight (44));
     top.removeFromRight (gap);
-    const int w = juce::jlimit (84, 128, (top.getWidth() - 200) / 10 - gap);
-    for (auto* b : { &exportButton, &recButton, &barsButton, &loopButton, &playButton })
+    const int w = juce::jlimit (78, 128, (top.getWidth() - 160) / 12 - gap);
+    for (auto* b : { &exportButton, &recButton, &takesButton, &liveButton, &barsButton, &loopButton, &playButton })
     {
         b->setBounds (top.removeFromRight (w));
         top.removeFromRight (gap);
@@ -1547,6 +1753,12 @@ void SongView::resized()
     stepsArea = area.removeFromTop (28);
     area.removeFromTop (8);
 
+    livePads->setVisible (isLivePanelShown());
+    if (livePads->isVisible())
+    {
+        livePads->setBounds (area.removeFromLeft (juce::jlimit (260, 340, area.getWidth() / 4)));
+        area.removeFromLeft (10);
+    }
     if (bars != nullptr)
         bars->setBounds (area);
     const bool board_ = ! empty && ! barsShown;
@@ -1601,4 +1813,91 @@ void SongView::resized()
     names->laneH = laneH;
     board->updateSize (area.getWidth(), area.getHeight() - (viewport.getHorizontalScrollBar().isVisible() ? 10 : 0));
     inspector->resized();
+}
+
+//==============================================================================
+bool SongView::isLivePanelShown() const
+{
+    return engine.getLiveSong().isActive();
+}
+
+void SongView::pressRecLive()
+{
+    auto& live = engine.getLiveSong();
+    if (live.isActive())
+    {
+        live.stopAndKeep();
+        say (live.takeMessage());
+        return;
+    }
+    juce::String why;
+    if (! live.start (&why))
+    {
+        say (why);
+        return;
+    }
+    const bool playing = engine.getTransport().isPlaying();
+    say (playing ? "Rec live starts on the next bar where your loops come round. Bring tracks in and out with the pads (or their M)."
+                 : juce::String (live.countInBars > 0 ? "Counting in... " : "") + "Bring tracks in and out with the pads (or their M): each change lands on the next bar.");
+}
+
+bool SongView::recLiveFrom (int section)
+{
+    const auto list = rigsong::sections (timeline());
+    if (! juce::isPositiveAndBelow (section, (int) list.size()))
+        return false;
+    juce::String why;
+    if (! engine.getLiveSong().startPunch (list[(size_t) section].start, list[(size_t) section].end(), &why))
+    {
+        say (why);
+        return false;
+    }
+    say ("Punch: the song plays from 2 bars before " + list[(size_t) section].name + ". Bring tracks in and out; only "
+         + list[(size_t) section].name + " is played again, as a new take.");
+    return true;
+}
+
+void SongView::pressLivePad (int lane)
+{
+    engine.getLiveSong().toggle (lane);
+}
+
+void SongView::showTakesMenu()
+{
+    auto& live = engine.getLiveSong();
+    juce::PopupMenu menu;
+    const auto& takes = live.getTakes();
+    if (takes.empty())
+        menu.addItem ("No takes yet: Rec live makes one each time", false, false, [] {});
+    for (int i = 0; i < (int) takes.size(); ++i)
+        menu.addItem (takes[(size_t) i].name, ! live.isActive(), i == live.getCurrentTake(), [this, i]
+                      {
+                          if (engine.getLiveSong().useTake (i))
+                          {
+                              select (-1, -1);
+                              say (engine.getLiveSong().getTakes()[(size_t) i].name + " is the song now. Your edits to the others are kept.");
+                          }
+                      });
+    menu.addSeparator();
+    juce::PopupMenu countIn;
+    for (int bars = 0; bars <= 2; ++bars)
+        countIn.addItem (bars == 0 ? juce::String ("None") : rigsong::barsText (bars), true, live.countInBars == bars,
+                         [this, bars] { engine.getLiveSong().countInBars = bars; });
+    menu.addSubMenu ("Rec live count-in", countIn);
+    menu.addItem ("Rec live on from the end of the song", ! live.isActive() && ! timeline().isEmpty(), false, [this]
+                  {
+                      juce::String why;
+                      if (engine.getLiveSong().startFromEnd (&why))
+                          say ("Rec live carries the song on from its end (after a 2-bar run-up). Stop + Keep when you're done.");
+                      else
+                          say (why);
+                  });
+    const int cur = live.getCurrentTake();
+    menu.addItem ("Delete this take", ! live.isActive() && cur >= 0, false, [this, cur]
+                  {
+                      const auto name = engine.getLiveSong().getTakes()[(size_t) cur].name;
+                      if (engine.getLiveSong().deleteTake (cur))
+                          say (name + " deleted from the list (the song on screen stays until you pick another).");
+                  });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&takesButton));
 }
