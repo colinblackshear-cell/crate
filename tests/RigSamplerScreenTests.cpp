@@ -266,6 +266,97 @@ struct RigSamplerScreenTests : juce::UnitTest
             screen.paintEntireComponent (g, false);
         }
 
+        beginTest ("Sample a tool: the synth, one bar, lands in the Sampler (whatever Settings > Sample is set to)");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            engine.vocoderOn = false;
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            engine.captureDest = RigCapture::toMpcPad;   // Settings > Sample goes elsewhere
+            engine.getTransport().setBpm (120.0);
+            engine.getRouting().keysTo = (int) RigRouting::Dest::synth;
+            engine.getTransport().play();
+            runBlocks (engine, 10);
+            screen.pressSampleTool (RigCapture::synth, 1);
+            expect (screen.isSamplingTool(), "it waits for the bar");
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 64, 0.9f));
+            runBlocks (engine, (int) (5.0 * kRate / kBlock));   // past the next bar and one bar on, at 120
+            expect (! screen.isSamplingTool());
+            const auto said = engine.serviceCapture();
+            expect (said.contains ("Sampler"), said);
+            auto& doc = engine.getSampler().getDocument();
+            expect (doc.hasAudio() && doc.getName().startsWith ("Synth"), "the synth is in the Sampler");
+            if (doc.hasAudio())
+                expectWithinAbsoluteError ((double) doc.getAudio()->getNumSamples() / crate::kSampleRate, 2.0, 0.02, "one bar at 120 BPM");
+            expect (engine.getMpc().getProject().currentBank().pads[0].isEmpty(), "nothing went onto a pad");
+            expectEquals (engine.captureDest, (int) RigCapture::toMpcPad, "Settings > Sample keeps its own choice");
+
+            // free: pressed again, it stops
+            screen.pressSampleTool (RigCapture::mix, 0);
+            runBlocks (engine, (int) (2.5 * kRate / kBlock));
+            expect (screen.isSamplingTool());
+            screen.pressSampleTool (RigCapture::mix, 0);
+            runBlocks (engine, 2);
+            expect (! screen.isSamplingTool());
+            engine.serviceCapture();
+            screen.pressSampleTool (RigCapture::sampler, 1);
+            expect (! screen.isSamplingTool(), "the Sampler can't sample itself");
+        }
+
+        beginTest ("Sets: save bank A, load it onto bank B (Undo), and a whole kit onto a new kit");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            juce::TemporaryFile temp;
+            screen.setsFolder = temp.getFile();
+            auto& doc = engine.getSampler().getDocument();
+            doc.load (hits(), "Dusty break", "Load");
+            screen.pressChop (SamplerScreen::even16);
+            screen.pressToPads();
+            auto& project = engine.getMpc().getProject();
+            project.currentBank().pads[2].volume = 61;
+            project.currentBank().pads[2].tune = -30;
+            project.currentBank().pads[2].mode = PadMode::noteOff;
+            const auto slice3 = project.currentBank().pads[2].audio;
+
+            const auto folder = screen.saveSet (0, "Dusty chops");
+            expect (folder.isDirectory() && folder.getChildFile ("set.json").existsAsFile(), "the set is a folder with set.json");
+            expectEquals (folder.findChildFiles (juce::File::findFiles, false, "*.wav").size(), 16, "one WAV a pad");
+            const auto peeked = SoundSet::peek (folder);
+            expect (peeked && peeked->padCount() == 16 && ! peeked->wholeKit && peeked->name == "Dusty chops");
+            expect (screen.saveSet (0, "Dusty chops").getFileName() == "Dusty chops 2", "the same name again doesn't overwrite it");
+            expectEquals (SoundSet::list (screen.setsFolder).size(), 2);
+
+            screen.pressBank (1);
+            expect (screen.loadSetFile (folder));
+            const auto& b3 = project.currentBank().pads[16 + 2];
+            expect (! b3.isEmpty() && b3.audio->getNumSamples() == slice3->getNumSamples(), "B03 has A03's slice");
+            expectEquals (b3.volume, 61);
+            expectEquals (b3.tune, -30);
+            expect (b3.mode == PadMode::noteOff);
+            expect (b3.name == project.currentBank().pads[2].name);
+            expect (screen.canUndoLoadSet());
+            screen.pressUndoLoadSet();
+            expect (project.currentBank().pads[16 + 2].isEmpty(), "Undo puts bank B back as it was (empty)");
+            expect (! screen.canUndoLoadSet());
+
+            const int kits = (int) project.getBanks().size(), mine = project.getCurrentIndex();
+            const auto whole = screen.saveSet (-1, "All of it");
+            expect (SoundSet::peek (whole)->wholeKit);
+            expect (screen.loadSetFile (whole));
+            expectEquals ((int) project.getBanks().size(), kits + 1, "a whole-kit set goes on a new kit");
+            expectEquals (project.currentBank().usedPads(), 16);
+            expect (project.getBanks()[(size_t) mine].usedPads() == 16 && project.getCurrentIndex() != mine, "your kit stays");
+            temp.getFile().deleteRecursively();
+        }
+
         beginTest ("the full editor is on the Sampler screen: Edit shows it, Chop shows the pads");
         {
             RigEngine engine;

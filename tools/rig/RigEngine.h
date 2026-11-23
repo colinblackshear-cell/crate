@@ -20,6 +20,7 @@
 #include "RigTimeline.h"
 #include "RigRecorder.h"
 #include "RigCapture.h"
+#include "core/SoundSet.h"
 #include "RigQuantize.h"
 #include "RigChords.h"
 #include "RigTakes.h"
@@ -67,6 +68,11 @@ public:
     juce::String restoreFactoryPad (int pad);
     // Puts all 16 of the current factory kit's sounds back, on the same kit. Returns what to say.
     juce::String resetFactoryKit();
+    // Sets (core/SoundSet.h): bank 0..3 of the current kit (-1: the whole kit) as a set named `name`.
+    SoundSet padsAsSet (int bank, const juce::String& name);
+    // A whole-kit set goes on a new kit (yours stay); a one-bank set onto bank `bank` of the current kit
+    // (its 16 pads are replaced). Returns what to say.
+    juce::String loadSet (const SoundSet&, int bank);
     // Set by the app and the Logic plugin before they make their Rig: a new Rig (and New song) has
     // the Street kit on the pads. Off for the tests, whose Rigs start with empty pads.
     static inline std::atomic<bool> startWithFactoryKit { false };
@@ -193,6 +199,8 @@ public:
     void preview (std::shared_ptr<const juce::AudioBuffer<float>>);
     bool isPreviewing() const { return previewPlaying.load(); }
     int captureDest = RigCapture::toSampler;
+    // Where the next recording goes instead of captureDest (the Sampler screen's Sample a tool); -1: captureDest.
+    int captureDestOnce = -1;
     // The last recording made "for Logic" (a WAV to drag onto a Logic track), and where they go:
     // ~/Music/Crate/Rig/To Logic. Message thread.
     juce::File lastLogicFile;

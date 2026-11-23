@@ -23,13 +23,15 @@ SamplerScreen::SamplerScreen (PocketHost& h, PocketAudio& a, Library& lib, Kit& 
 {
     setOpaque (false);
     for (auto* c : std::initializer_list<juce::Component*> { &wave, &soundsButton, &allButton, &undoButton, &moreButton, &hearButton, &trimButton,
-                                                             &sendButton, &pickButton, &clearButton, &chopButton })
+                                                             &sendButton, &pickButton, &clearButton, &chopButton, &toolButton })
         addAndMakeVisible (c);
     wave.setEmptyText ("Press REC to sample a sound from the mic, or SOUNDS to open one");
     wave.onSelectionChange = [this] { updateLabels(); };
 
     soundsButton.setFontHeight (16.0f);
     soundsButton.onClick = [this] { showSounds(); };
+    toolButton.setFontHeight (16.0f);
+    toolButton.onClick = [this] { if (onSampleTool) onSampleTool(); };
     allButton.setFontHeight (16.0f);
     allButton.onClick = [this] { selectAll(); };
     undoButton.setFontHeight (16.0f);
@@ -258,14 +260,14 @@ void SamplerScreen::stopRecording()
                 + (targetPad >= 0 ? "SEND TO PAD " + Kit::padLabel (targetPad) : juce::String ("SEND TO A PAD")) + ".");
 }
 
-void SamplerScreen::useTake (crate::SharedAudio loaded)
+void SamplerScreen::useTake (crate::SharedAudio loaded, const juce::String& takeName)
 {
     if (loaded == nullptr)
         return;
     if (hasSound())
         undoStack.push_back ({ wave.getAudio(), wave.getSelection(), currentId, 0, false });
     currentId = {};
-    name = "Sample " + juce::Time::getCurrentTime().formatted ("%H:%M:%S");
+    name = takeName.isNotEmpty() ? takeName : "Sample " + juce::Time::getCurrentTime().formatted ("%H:%M:%S");
     wave.setAudio (loaded);
     wave.setMarkers ({});
     wave.selectAll();
@@ -619,7 +621,8 @@ void SamplerScreen::resized()
 {
     const int w = getWidth(), h = getHeight(), x0 = 16, iw = w - 32;
     soundsButton.setBounds (x0 + iw - 104, 6, 104, 44);
-    titleArea = { (float) x0, 6.0f, (float) (iw - 112), 44.0f };
+    toolButton.setBounds (x0 + iw - 104 - 8 - 88, 6, 88, 44);
+    titleArea = { (float) x0, 6.0f, (float) (iw - 104 - 8 - 88 - 8), 44.0f };
     auto sendRow = juce::Rectangle<int> (x0, h - 8 - 56, iw, 56);
     auto hearRow = sendRow.withY (sendRow.getY() - 8 - 52).withHeight (52);
     auto row1 = juce::Rectangle<int> (x0, hearRow.getY() - 8 - 44, iw, 44);

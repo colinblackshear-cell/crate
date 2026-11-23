@@ -27,6 +27,7 @@ public:
     std::function<void()> onPickPad;                        // PICK PAD: the 4 x 4 grid
     std::function<void (const juce::String& soundId, int pad)> onMoreEdits;   // the sound recorder, on this sound
     std::function<int()> currentBank;
+    std::function<void()> onSampleTool;                     // A TOOL: a loop layer (any tool's take) or the loops mixed, onto the page
 
     void editForPad (int pad);                 // the pad's sound (its part as IN / OUT), aimed at the pad
     void loadSound (const juce::String& id);   // another sound (the target stays)
@@ -45,7 +46,7 @@ public:
     void startRecording();
     void stopRecording();
     double recordedSeconds() const;
-    void useTake (crate::SharedAudio);   // a finished take onto the page (REC's stop, and the self-checks)
+    void useTake (crate::SharedAudio, const juce::String& takeName = {});   // a finished take onto the page (REC's stop, A TOOL, the self-checks)
 
     // The buttons (also for the self-checks)
     void hear();
@@ -87,7 +88,7 @@ private:
     PocketWave wave;
     pocket::PButton soundsButton { "Sounds" }, allButton { "All" }, undoButton { "Undo" }, moreButton { U8("More edits \xe2\x80\xba") },
         hearButton { "Hear", pocket::Look::green }, trimButton { "Trim" }, sendButton { "Send to pad", pocket::Look::amber },
-        pickButton, clearButton { "Clear" }, chopButton { U8("Chop to pads\xe2\x80\xa6") };
+        pickButton, clearButton { "Clear" }, chopButton { U8("Chop to pads\xe2\x80\xa6") }, toolButton { "A tool" };
     std::vector<State> undoStack;
     juce::String currentId, name;
     int targetPad = -1;

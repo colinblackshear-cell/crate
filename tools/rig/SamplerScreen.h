@@ -81,6 +81,20 @@ public:
     void pressPadAsNewSound();
     // The MPC's own small pad editor (trim, fades, effects), as Edit opened before.
     void pressQuickEditPad();
+    // Sample a tool: records `source` (a RigCapture::Source) into the Sampler, from the next bar
+    // (now when stopped), for `bars` (0: until pressed again). Pressed again while it waits or
+    // records, it stops. The menu picks the tool and the length.
+    void pressSampleTool (int source, int bars);
+    void showSampleToolMenu();
+    // Sets (Kits menu): bank 0..3 (-1: the whole kit) saved as a set in setsFolder; a set loaded onto
+    // the bank on screen (a whole-kit set goes on a new kit), with Undo for a bank.
+    juce::File setsFolder = SoundSet::macFolder();
+    juce::File saveSet (int bank, const juce::String& name);
+    bool loadSetFile (const juce::File& set);
+    bool canUndoLoadSet() const;
+    void pressUndoLoadSet();
+    void askSaveSet (int bank);
+    bool isSamplingTool() const;
     // Remove: takes the sound off the picked pad (its name, settings and effects with it). Until
     // something goes on that pad again, the button says Undo and puts it all back.
     void pressRemovePad();
@@ -172,7 +186,8 @@ private:
         mpcModeButton { juce::String::fromUTF8 ("Sequencer \xc2\xb7 Kits") },
         editModeButton { juce::String::fromUTF8 ("Edit \xc2\xb7 Effects \xc2\xb7 Keys") },
         recordButton { "Rec sample" }, beatButton { "Beat on" }, loopPadsButton { "Loop pads" }, loopBarsButton { "Free" },
-        editPadButton { "Edit" }, removePadButton { "Remove A01" };
+        editPadButton { "Edit" }, removePadButton { "Remove A01" }, sampleToolButton { juce::String::fromUTF8 ("Sample a tool \xe2\x96\xbe") };
+    void updateSampleToolButton();
     Pad removedPad;
     int removedPadIndex = -1, removedPadKit = -1;
     void updateRemoveButton();
@@ -187,6 +202,9 @@ private:
     juce::TextButton levelsButton { "16 Levels" }, repeatButton { "Repeat" }, rateButton { "1/16" }, soundsButton { "Sounds" },
         fxButton { "FX" }, kitsButton { "Kits" };
     void updateClearButton();
+    std::array<Pad, kPadsPerBank> setUndoPads;
+    int setUndoKit = -1, setUndoBank = -1;
+    juce::String setUndoName;
     // The pad open in the Sampler (-1: none), its kit, and what the Sampler held when it opened.
     int editPad = -1, editKit = -1;
     const void* editOpenedAudio = nullptr;

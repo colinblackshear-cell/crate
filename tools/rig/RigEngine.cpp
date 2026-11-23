@@ -1178,6 +1178,8 @@ juce::String RigEngine::serviceCapture()
         return {};
     double rate = 0, beats = 0;
     const int source = capture.getSource(), bars = capture.getBars();
+    const int dest = captureDestOnce >= 0 ? captureDestOnce : captureDest;
+    captureDestOnce = -1;
     auto taken = capture.take (rate, beats);   // sets the rate, so first
     auto audio = crate::Edits::collapseFakeStereo (crate::AudioFiles::resample (taken, rate));
     if (audio.getNumSamples() < crate::samples (0.02) || audio.getMagnitude (0, audio.getNumSamples()) < 1.0e-4f)
@@ -1185,7 +1187,7 @@ juce::String RigEngine::serviceCapture()
 
     const auto name = RigCapture::sourceName (source).upToFirstOccurrenceOf (" /", false, false)
                       + (bars > 0 ? " " + juce::String (bars) + (bars == 1 ? " bar" : " bars") : juce::String());
-    if (captureDest == RigCapture::toLogic)
+    if (dest == RigCapture::toLogic)
     {
         // A WAV, exactly the bars recorded from the bar it started on, to drag onto a Logic track
         // at that bar.
@@ -1207,7 +1209,7 @@ juce::String RigEngine::serviceCapture()
         lastLogicFile = file;
         return "Recorded " + RigCapture::sourceName (source) + " for Logic: drag it from Drag to Logic (Effects screen) onto a track, at the bar you started it.";
     }
-    if (captureDest == RigCapture::toMpcPad)
+    if (dest == RigCapture::toMpcPad)
     {
         const auto padName = putOnMpcPad (std::move (audio), name, bars > 0 ? beats : 0);
         if (padName.isEmpty())
@@ -1534,6 +1536,87 @@ juce::String RigEngine::restoreFactoryPad (int pad)
     putFactorySound (mpc.getProject().currentBank().pads[(size_t) pad], sounds[(size_t) pad]);
     mpc.getProject().changed();
     return "Pad " + padLabel (pad) + " plays the factory " + sounds[(size_t) pad].first + " again.";
+}
+
+SoundSet RigEngine::padsAsSet (int bank, const juce::String& name)
+{
+    auto& kit = mpc.getProject().currentBank();
+    SoundSet set;
+    set.name = name;
+    set.wholeKit = bank < 0;
+    set.bpm = kit.bpm;
+    set.madeOn = "Mac";
+    set.saved = juce::Time::getCurrentTime();
+    const int first = bank < 0 ? 0 : juce::jlimit (0, 3, bank) * kPadsPerBank;
+    const int count = bank < 0 ? mpc::kPadCount : kPadsPerBank;
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& p = kit.pads[(size_t) (first + i)];
+        if (p.isEmpty())
+            continue;
+        SoundSet::Pad s;
+        s.index = i;
+        s.name = p.name;
+        s.audio = p.audio;
+        s.volume = p.volume;
+        s.pan = p.pan;
+        s.tune = p.tune;
+        s.mode = p.mode == PadMode::noteOff ? 2 : p.mode == PadMode::mono ? 1 : 0;
+        s.mono = p.mono;
+        s.muteGroup = p.muteGroup;
+        s.cutoff = p.cutoff;
+        s.resonance = p.resonance;
+        s.attack = p.attack;
+        s.decay = p.decay;
+        s.beats = p.beats;
+        set.pads.push_back (s);
+    }
+    return set;
+}
+
+juce::String RigEngine::loadSet (const SoundSet& set, int bank)
+{
+    auto& project = mpc.getProject();
+    int first = 0;
+    if (set.wholeKit)
+        project.setCurrent (project.addBank (set.name.substring (0, 16)));
+    else
+    {
+        first = juce::jlimit (0, 3, bank) * kPadsPerBank;
+        for (int i = 0; i < kPadsPerBank; ++i)
+        {
+            mpc.releasePad (first + i);
+            project.currentBank().pads[(size_t) (first + i)] = {};
+        }
+    }
+    auto& kit = project.currentBank();
+    if (set.wholeKit && set.bpm > 0)
+        kit.bpm = set.bpm;
+    for (const auto& s : set.pads)
+    {
+        const int pad = first + s.index;
+        if (! juce::isPositiveAndBelow (pad, mpc::kPadCount) || s.audio == nullptr)
+            continue;
+        auto& p = kit.pads[(size_t) pad];
+        p = {};
+        p.audio = s.audio;
+        p.name = s.name.substring (0, 16);
+        p.volume = s.volume;
+        p.pan = s.pan;
+        p.tune = s.tune;
+        p.mode = s.mode == 2 ? PadMode::noteOff : s.mode == 1 ? PadMode::mono : PadMode::oneShot;
+        p.mono = s.mono;
+        p.muteGroup = s.muteGroup;
+        p.cutoff = s.cutoff;
+        p.resonance = s.resonance;
+        p.attack = s.attack;
+        p.decay = s.decay;
+        p.beats = s.beats;
+    }
+    project.changed();
+    const juce::String what = juce::String (set.padCount()) + (set.padCount() == 1 ? " pad" : " pads");
+    return set.wholeKit ? "The set " + set.name + " is on a new kit (" + what + "); your kits stay in Kits."
+                        : "The set " + set.name + " is on bank " + juce::String::charToString ((juce::juce_wchar) ('A' + first / kPadsPerBank)) + " (" + what + ").";
 }
 
 juce::String RigEngine::resetFactoryKit()

@@ -301,6 +301,7 @@ PocketApp::PocketApp (Options o)
 
     soundBank.onLoad = [this] (int k) { loadKit (k); };
     soundBank.onDone = [this] { closeSoundBank(); };
+    soundBank.onSets = [this] { showSetsMenu(); };
     soundBank.onOpenSounds = [this] { closeSoundBank(); showPage (Page::more, 1); };
     soundBank.loadedKitName = [this] { return beats.kit().name; };
     soundBank.onImport = [this]
