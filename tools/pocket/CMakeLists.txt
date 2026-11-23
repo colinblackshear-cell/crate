@@ -56,6 +56,7 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketIntro.cpp
     PocketLesson.cpp
     SoundBankSheet.cpp
+    DrumKitSheet.cpp
     TempoSheet.cpp
     IdeasScreen.cpp
     PocketTheme.cpp

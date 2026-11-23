@@ -125,6 +125,17 @@ public:
     juce::String selfCheckLive();               // PLAY LIVE writes to the nearest step, the lesson hints write nothing, no double hits
     juce::String liveReport;                    // what selfCheckLive measured for the early hit
 
+    // Your own kit on the drum machine: a sound from your library on any of the twelve drum sounds (it plays instead of
+    // the analog sound, and the idea saves which sound it is). The KIT button opens the sheet for the picked drum sound.
+    int drumVoice() const { return voice; }
+    bool setDrumSound (int drumVoice, const juce::String& soundId, bool hear = true);   // false: the sound couldn't be opened
+    void clearDrumSound (int drumVoice);
+    int useBankAsKit();                                    // the pads' names (kick, snare, hat...) onto the drum sounds; how many
+    juce::String drumSoundId (int drumVoice) const { return drumData.sampleIds[(size_t) drumVoice]; }
+    juce::String drumSoundName (int drumVoice) const;     // "" = analog
+    bool drumHasSound (int drumVoice) const { return beatsEngine.getDrumSample (drumVoice) != nullptr; }
+    std::function<void()> onDrumKitChanged;                // the sheet shows what is on the picked sound
+
     // Screenshot mode
     void setDemoStep (int step) { demoStep = step; repaint(); }
     void fillDemoKit();
@@ -147,6 +158,7 @@ private:
     void timerCallback() override;
     void saveSoon() { saveCountdown = 30; }
     void pushPads();
+    void applyDrumSounds();   // every drum sound's own sound from the idea's saved ids
 
     PocketHost& host;
     pocket::Library& library;

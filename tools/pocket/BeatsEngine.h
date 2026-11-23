@@ -51,6 +51,9 @@ struct DrumData
     double bpm = 97.0;
     int repeatRate = 3;    // NOTE REPEAT's rate: an index into noterepeat::kRates (3 = 1/16)
     PadPattern padPattern;
+    // Your own kit: the id (in the phone's sound library) of the sound on each of the twelve drum sounds;
+    // empty = its analog sound. The sounds themselves stay in the library, so an idea reopens with its kit.
+    std::array<juce::String, crate::drums::kVoices> sampleIds {};
 
     DrumData();
     crate::drums::Pattern& edited() { return patterns[(size_t) slot][editB ? 1 : 0]; }
@@ -77,6 +80,10 @@ public:
 
     // Message thread
     void setDrums (const DrumData&);
+    // A sound of your own on one of the twelve drum sounds (nullptr: its analog sound again). The engine keeps
+    // every sound it was given until it goes (a hit may still be playing one).
+    void setDrumSample (int voice, crate::drums::SharedSample);
+    crate::drums::SharedSample getDrumSample (int voice) const;
     void setPlaying (bool);
     bool isPlaying() const { return wantPlay.load(); }
     void setBpm (double);
@@ -173,6 +180,8 @@ private:
         crate::drums::Settings settings;
     };
     crate::drums::Engine drums;
+    std::array<crate::drums::SharedSample, crate::drums::kVoices> drumSamples;
+    std::vector<crate::drums::SharedSample> keptDrumSamples;
     DrumState pending, live;
     int slotWanted = 0, variationWanted = 0;
     juce::SpinLock drumLock;

@@ -155,6 +155,16 @@ don't have to come from the MPC).
   clave to a woodblock, the cowbell to an agogo, the closed hat to Tight or Shaker, the open hat
   to Trashy and the cymbal to a ride. **Kits...** sets the whole machine up for a style: Classic,
   Deep sub, Punchy electro, Latin (congas and maracas), Dirty, Tight and dry, Big room.
+- **Your own kits:** every sound can be a sample of your own instead of its analog sound. Drag a
+  folder of drum hits onto the drum machine, or **Load kit...** > a folder (Splice, Cymatics, your
+  MPC folders, an external drive): the file names (kick, snare, hat, tom...) pick which sound each
+  hit goes on. Drag one file onto a sound's column to change just that sound; right-click a
+  sound's SELECT key for **Load sample...**, **Hear**, **Back to analog** and **Show file in
+  Finder**. Each column shows where its sound comes from (Analog, or the file's name in blue).
+  **Save kit as...** keeps the kit under your name (in Music/Crate/Drum Kits), and **All analog
+  again** puts the machine's own sounds back. A kit saves with the project and the Rig show. On
+  the phone, DRUMS has a **KIT** button: pick a sound from your sounds for the picked drum sound,
+  or use a pad's sounds as a kit.
 - **Steps:** up to 64 steps (four bars of 16) for all twelve sounds, with the classic red, orange,
   yellow and cream step keys. To write a beat: pick a sound with its **SELECT** key (it plays),
   then press the 16 big **step keys** (a lamp over a key means a hit there). The **STEP TOOL**

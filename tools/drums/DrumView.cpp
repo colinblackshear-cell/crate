@@ -1,6 +1,8 @@
 #include "DrumView.h"
 #include "StepMarks.h"
 
+#include "core/AudioFiles.h"
+
 using namespace crate;
 namespace st = crate::drums::steptools;
 
@@ -17,7 +19,7 @@ namespace col
 constexpr int kCheek = 22;        // the walnut on each side
 constexpr int kSide = kCheek + 8; // where the panel's parts start
 constexpr int kHeaderH = 58, kToolH = 36, kBarH = 34, kRowH = 30, kChainH = 32;
-constexpr int kVoiceFull = 218, kVoiceCompact = 104, kKeysMin = 104, kKeysMax = 150, kGridMin = 219;
+constexpr int kVoiceFull = 232, kVoiceCompact = 118, kKeysMin = 104, kKeysMax = 150, kGridMin = 219;
 constexpr int kGlobalW = 110;
 
 // The step keys' colours in groups of four, as on the classic boxes.
@@ -377,10 +379,17 @@ DrumView::DrumView (DrumProcessor& owner)
         };
         addAndMakeVisible (*c.name);
 
+        c.pad->addMouseListener (this, false);   // right-click: the sound's menu
+
+        // Where its sound comes from: analog, or a sample (your own kit).
+        c.source = std::make_unique<SourceChip> (*this, v);
+        addAndMakeVisible (*c.source);
+
         // Its choice of sounds.
         c.sound = std::make_unique<juce::ComboBox>();
         c.sound->addItemList (drums::soundNames (v), 1);
-        c.sound->setTooltip ("Which " + juce::String (drums::voiceName (v)).toLowerCase() + " sound: " + drums::soundNames (v).joinIntoString (", ") + ".");
+        c.sound->setTooltip ("Which " + juce::String (drums::voiceName (v)).toLowerCase() + " sound: " + drums::soundNames (v).joinIntoString (", ")
+                             + ". (It doesn't apply while a sample of your own is on this sound.)");
         c.soundAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
             processor.params, DrumProcessor::voiceParam (v, "Sound"), *c.sound);
         addAndMakeVisible (*c.sound);
@@ -524,6 +533,15 @@ DrumView::DrumView (DrumProcessor& owner)
     kitButton.setTooltip ("Set the whole machine up for a style: Classic, Deep sub (the long boom kick), Punchy electro, Latin (congas and "
                           "maracas), Dirty, Tight and dry, Big room. Your patterns stay as they are.");
     kitButton.onClick = [this] { showKitMenu(); };
+
+    // Your own kits: the KIT chip and Load kit... in the nameplate.
+    for (auto* b : { &kitChip, &loadKitButton })
+        addAndMakeVisible (b);
+    kitChip.setTooltip ("The kit on the machine: the sounds you loaded (or Analog). Click for your kits, the analog kits, Save kit as and All analog again.");
+    kitChip.onClick = [this] { showKitMenu2 (kitChip); };
+    loadKitButton.setTooltip ("Load a kit: one of your saved kits, or a folder of drum hits (Splice, Cymatics, your MPC folders, an external drive). "
+                              "You can also drag a folder onto the machine, or one file onto a sound.");
+    loadKitButton.onClick = [this] { showKitMenu2 (loadKitButton); };
 
     // A and B: which one plays (A, B, or A then B for a two-bar beat), and which one you edit.
     const char* variationTips[] = { "Play (and edit) the A variation.", "Play (and edit) the B variation.",
@@ -673,6 +691,7 @@ DrumView::DrumView (DrumProcessor& owner)
     setResizable (true, true);
     setResizeLimits (1000, 560, 2400, 1600);
     setSize (1180, 840);
+    refreshSources();
     startTimerHz (30);
 }
 
@@ -1040,6 +1059,371 @@ void DrumView::showKitMenu()
                         });
 }
 
+//==============================================================================
+// Your own kits
+juce::String DrumView::getSourceLabel (int voice) const
+{
+    if (auto s = processor.getVoiceSample (voice))
+        return s->name.isNotEmpty() ? s->name : juce::String ("Sample");
+    return "Analog";
+}
+
+bool DrumView::isSoundChoiceDimmed (int voice) const
+{
+    return juce::isPositiveAndBelow (voice, drums::kVoices) && columns[(size_t) voice].sound->getAlpha() < 1.0f;
+}
+
+juce::String DrumView::getKitLabel() const
+{
+    const auto name = processor.getKitName();
+    return "Kit: " + (name.isNotEmpty() ? name : processor.hasSamples() ? juce::String ("Custom") : juce::String ("Analog"));
+}
+
+juce::Rectangle<int> DrumView::columnBounds (int voice) const
+{
+    const int colW = columnsArea.getWidth() / drums::kVoices;
+    return { columnsArea.getX() + voice * colW, voiceArea.getY(), colW, voiceArea.getHeight() };
+}
+
+int DrumView::voiceAtPoint (juce::Point<int> p) const
+{
+    for (int v = 0; v < drums::kVoices; ++v)
+        if (columnBounds (v).contains (p))
+            return v;
+    return -1;
+}
+
+void DrumView::say (const juce::String& text)
+{
+    status = text;
+    statusUntil = juce::Time::getMillisecondCounter() + 7000;
+    repaint (header);
+}
+
+void DrumView::refreshSources()
+{
+    for (int v = 0; v < drums::kVoices; ++v)
+    {
+        auto& c = columns[(size_t) v];
+        auto s = processor.getVoiceSample (v);
+        if (s == c.shownSample && c.source->text.isNotEmpty() && (s != nullptr) == c.source->sample)
+            continue;
+        c.shownSample = s;
+        c.source->sample = s != nullptr;
+        c.source->text = getSourceLabel (v);
+        c.source->setTooltip (s != nullptr
+                                  ? "Your own sound on the " + juce::String (drums::voiceName (v)).toLowerCase() + ": " + s->name
+                                        + (s->file != juce::File() ? " (" + s->file.getFullPathName() + ")" : juce::String())
+                                        + ". Click for Load sample, Hear and Back to analog. Drop another file here to change it."
+                                  : "The analog " + juce::String (drums::voiceName (v)).toLowerCase() + ". Click to load a sample of your own, or drop a sound file on this column.");
+        c.sound->setAlpha (s != nullptr ? 0.4f : 1.0f);   // the choice doesn't apply while a sample is on it
+        c.source->repaint();
+    }
+    const auto label = getKitLabel();
+    if (label != shownKit)
+    {
+        shownKit = label;
+        kitChip.setButtonText (label + " " + juce::String::fromUTF8 ("\xe2\x96\xbe"));
+    }
+}
+
+bool DrumView::putSampleOnVoice (int voice, const juce::File& file)
+{
+    if (! juce::isPositiveAndBelow (voice, drums::kVoices))
+        return false;
+    juce::String error;
+    if (! processor.setVoiceSample (voice, file, error))
+    {
+        say ("Couldn't read " + file.getFileName());
+        return false;
+    }
+    refreshSources();
+    selectVoice (voice);   // picks it and plays it
+    say (file.getFileName() + " is on the " + juce::String (drums::voiceName (voice)).toLowerCase());
+    return true;
+}
+
+void DrumView::backToAnalog (int voice)
+{
+    if (! juce::isPositiveAndBelow (voice, drums::kVoices))
+        return;
+    processor.setVoiceSample (voice, drums::SharedSample());
+    refreshSources();
+    say ("The " + juce::String (drums::voiceName (voice)).toLowerCase() + " is analog again");
+}
+
+int DrumView::loadKitFiles (const juce::Array<juce::File>& files, const juce::String& name)
+{
+    const int n = processor.loadKitFiles (files, name);
+    refreshSources();
+    say (n > 0 ? "Loaded " + juce::String (n) + (n == 1 ? " sound from " : " sounds from ") + name : "No drum sounds found in " + name);
+    return n;
+}
+
+int DrumView::loadKitFolder (const juce::File& folder)
+{
+    const int n = processor.loadKitFolder (folder);
+    refreshSources();
+    say (n > 0 ? "Loaded " + juce::String (n) + (n == 1 ? " sound from " : " sounds from ") + folder.getFileName()
+               : "No drum sounds found in " + folder.getFileName());
+    return n;
+}
+
+namespace
+{
+juce::File spliceFolder() { return juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("Splice"); }
+}
+
+void DrumView::loadSampleFor (int voice)
+{
+    auto start = juce::File();
+    if (auto s = processor.getVoiceSample (voice); s != nullptr && s->file.getParentDirectory().isDirectory())
+        start = s->file.getParentDirectory();
+    else if (spliceFolder().isDirectory())
+        start = spliceFolder();
+    else
+        start = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    chooser = std::make_unique<juce::FileChooser> ("Pick a sound for the " + juce::String (drums::voiceName (voice)).toLowerCase(), start,
+                                                   AudioFiles::wildcard (processor.formats));
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [safe = juce::Component::SafePointer<DrumView> (this), voice] (const juce::FileChooser& fc)
+                          {
+                              const auto f = fc.getResult();
+                              if (safe != nullptr && f != juce::File())
+                                  safe->putSampleOnVoice (voice, f);
+                          });
+}
+
+void DrumView::loadKitFolderChooser (const juce::File& startIn)
+{
+    auto start = startIn;
+    if (! start.isDirectory())
+        start = spliceFolder().isDirectory() ? spliceFolder() : juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    chooser = std::make_unique<juce::FileChooser> ("Pick a folder of drum hits", start, "");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                          [safe = juce::Component::SafePointer<DrumView> (this)] (const juce::FileChooser& fc)
+                          {
+                              const auto f = fc.getResult();
+                              if (safe != nullptr && f.isDirectory())
+                                  safe->loadKitFolder (f);
+                          });
+}
+
+void DrumView::askKitName()
+{
+    auto* w = new juce::AlertWindow ("Save kit as", "Name this kit. It is kept in Music/Crate/Drum Kits.", juce::MessageBoxIconType::NoIcon, this);
+    const auto current = processor.getKitName();
+    w->addTextEditor ("name", current.isNotEmpty() ? current : juce::String ("My kit"));
+    w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true,
+                        juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<DrumView> (this), w] (int result)
+                                                             {
+                                                                 if (result != 1 || safe == nullptr)
+                                                                     return;
+                                                                 const auto name = w->getTextEditorContents ("name").trim();
+                                                                 if (name.isEmpty())
+                                                                     return;
+                                                                 juce::File saved;
+                                                                 if (safe->processor.saveUserKit (name, &saved))
+                                                                     safe->say ("Saved kit " + name);
+                                                                 else
+                                                                     safe->say ("Couldn't save the kit " + name);
+                                                                 safe->refreshSources();
+                                                             }),
+                        true);
+}
+
+void DrumView::showKitMenu2 (juce::Component& target)
+{
+    juce::Component::SafePointer<DrumView> safe (this);
+    juce::PopupMenu menu, yours, analog;
+    const auto saved = drums::kits::userKits();
+    if (saved.isEmpty())
+        yours.addItem ("(none saved yet: use Save kit as...)", false, false, [] {});
+    for (auto& f : saved)
+        yours.addItem (f.getFileNameWithoutExtension(), [safe, f]
+                       {
+                           if (safe == nullptr)
+                               return;
+                           if (safe->processor.loadUserKit (f))
+                               safe->say ("Loaded kit " + f.getFileNameWithoutExtension());
+                           else
+                               safe->say ("Couldn't load the kit " + f.getFileNameWithoutExtension());
+                           safe->refreshSources();
+                       });
+    menu.addSubMenu ("Your kits", yours);
+    menu.addItem ("Load a folder as a kit...", [safe]
+                  {
+                      if (safe != nullptr)
+                          safe->loadKitFolderChooser ({});
+                  });
+    if (spliceFolder().isDirectory())
+        menu.addItem ("Splice", [safe]
+                      {
+                          if (safe != nullptr)
+                              safe->loadKitFolderChooser (spliceFolder());
+                      });
+    menu.addSeparator();
+    menu.addItem ("Save kit as...", [safe]
+                  {
+                      if (safe != nullptr)
+                          safe->askKitName();
+                  });
+    menu.addItem ("All analog again", processor.hasSamples(), false, [safe]
+                  {
+                      if (safe == nullptr)
+                          return;
+                      safe->processor.clearSamples();
+                      safe->refreshSources();
+                      safe->say ("All analog again");
+                  });
+    menu.addSeparator();
+    const auto names = DrumProcessor::kitNames();
+    for (int i = 0; i < names.size(); ++i)
+        analog.addItem (names[i], [safe, i, name = names[i]]
+                        {
+                            if (safe == nullptr)
+                                return;
+                            safe->processor.loadKit (i);
+                            safe->say ("Analog kit " + name);
+                        });
+    menu.addSubMenu ("Analog kits", analog);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target));
+}
+
+void DrumView::showVoiceMenu (int voice, juce::Component& target)
+{
+    juce::Component::SafePointer<DrumView> safe (this);
+    const auto s = processor.getVoiceSample (voice);
+    juce::PopupMenu menu;
+    menu.addSectionHeader (juce::String (drums::voiceName (voice)).toUpperCase());
+    menu.addItem ("Load sample...", [safe, voice]
+                  {
+                      if (safe != nullptr)
+                          safe->loadSampleFor (voice);
+                  });
+    menu.addItem ("Hear", [safe, voice]
+                  {
+                      if (safe != nullptr)
+                          safe->processor.playVoice (voice);
+                  });
+    menu.addItem ("Back to analog", s != nullptr, false, [safe, voice]
+                  {
+                      if (safe != nullptr)
+                          safe->backToAnalog (voice);
+                  });
+    if (s != nullptr && s->file != juce::File() && s->file.exists())
+        menu.addItem ("Show file in Finder", [file = s->file] { file.revealToUser(); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target));
+}
+
+void DrumView::SourceChip::mouseDown (const juce::MouseEvent&)
+{
+    owner.showVoiceMenu (index, *this);
+}
+
+void DrumView::SourceChip::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.0f, 0.5f);
+    if (sample)
+    {
+        g.setColour (juce::Colour (0xff2f5d94));
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (juce::Colour (0xffe3eefb));
+        g.setFont (panelFont (9.5f));
+    }
+    else
+    {
+        g.setColour (col::line);
+        g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+        g.setColour (col::ink2);
+        g.setFont (panelFont (9.5f, false));
+    }
+    g.drawText (text, r.reduced (4.0f, 0.0f), juce::Justification::centred, true);
+    if (owner.dropVoice == index)
+    {
+        g.setColour (col::orange);
+        g.drawRoundedRectangle (r, 3.0f, 1.5f);
+    }
+}
+
+bool DrumView::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+    {
+        const juce::File file (f);
+        if (file.isDirectory() || file.hasFileExtension ("drumkit") || AudioFiles::isAudioFile (file, processor.formats))
+            return true;
+    }
+    return false;
+}
+
+void DrumView::fileDragEnter (const juce::StringArray& files, int x, int y)
+{
+    fileDragMove (files, x, y);
+}
+
+void DrumView::fileDragMove (const juce::StringArray& files, int x, int y)
+{
+    int now = -2;
+    if (files.size() == 1 && juce::File (files[0]).existsAsFile() && AudioFiles::isAudioFile (juce::File (files[0]), processor.formats))
+        if (const int v = voiceAtPoint ({ x, y }); v >= 0)
+            now = v;
+    if (now != dropVoice)
+    {
+        dropVoice = now;
+        repaint();
+    }
+}
+
+void DrumView::fileDragExit (const juce::StringArray&)
+{
+    dropVoice = -1;
+    repaint();
+}
+
+void DrumView::filesDropped (const juce::StringArray& paths, int x, int y)
+{
+    dropVoice = -1;
+    repaint();
+    if (paths.isEmpty())
+        return;
+    if (paths.size() == 1)
+    {
+        const juce::File f (paths[0]);
+        if (f.isDirectory())
+        {
+            loadKitFolder (f);
+            return;
+        }
+        if (f.hasFileExtension ("drumkit"))
+        {
+            if (processor.loadUserKit (f))
+                say ("Loaded kit " + f.getFileNameWithoutExtension());
+            else
+                say ("Couldn't load the kit " + f.getFileNameWithoutExtension());
+            refreshSources();
+            return;
+        }
+        // One sound: onto the column it was dropped on, else the selected sound.
+        const int v = voiceAtPoint ({ x, y });
+        putSampleOnVoice (v >= 0 ? v : selected, f);
+        return;
+    }
+    // Several files (or folders): a kit.
+    const auto files = AudioFiles::expandDropped (paths, processor.formats);
+    juce::String name = "your files";
+    if (files.size() > 0)
+    {
+        name = files[0].getParentDirectory().getFileName();
+        for (auto& f : files)
+            if (f.getParentDirectory() != files[0].getParentDirectory())
+                name = "dropped files";
+    }
+    loadKitFiles (files, name);
+}
+
 void DrumView::showRowMenu (int voice, juce::Rectangle<int> screenArea)
 {
     const auto p = processor.getEditedPattern();
@@ -1113,6 +1497,13 @@ void DrumView::showChainSlotMenu (int slot)
 
 void DrumView::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())
+        for (int v = 0; v < drums::kVoices; ++v)
+            if (e.eventComponent == columns[(size_t) v].pad.get())
+            {
+                showVoiceMenu (v, *columns[(size_t) v].pad);
+                return;
+            }
     const int count = (int) processor.getChain().size();
     for (int i = 0; i < count; ++i)
         if (chainSlot (i).contains (e.getPosition()))
@@ -1166,6 +1557,12 @@ void DrumView::showGrooveMenu()
 void DrumView::timerCallback()
 {
     flushRecorded();
+    refreshSources();
+    if (status.isNotEmpty() && juce::Time::getMillisecondCounter() > statusUntil)
+    {
+        status = {};
+        repaint (header);
+    }
     for (int v = 0; v < drums::kVoices; ++v)
     {
         auto& c = columns[(size_t) v];
@@ -1317,16 +1714,25 @@ void DrumView::paint (juce::Graphics& g)
         g.setColour (col::bandInk);
         g.setFont (juce::Font (juce::FontOptions (28.0f, juce::Font::bold | juce::Font::italic)));
         g.drawText ("Kaleidobox", r.removeFromLeft (160), juce::Justification::centredLeft);
-        auto text = r.removeFromLeft (330);
+        auto text = r.removeFromLeft (260);
         g.setFont (panelFont (14.0f));
         g.drawText ("DM-12  ANALOG RHYTHM COMPOSER", text.removeFromTop (24), juce::Justification::bottomLeft);
         g.setColour (col::bandInk.withAlpha (0.7f));
         g.setFont (panelFont (11.0f, false));
-        g.drawText (processor.hasOwnClock() ? "Press Start to play the pattern" : "Plays in time with the Rig or Logic: press Play there", text,
-                    juce::Justification::centredLeft);
+        if (status.isNotEmpty())
+        {
+            g.setColour (juce::Colour (0xff1f4f86));
+            g.setFont (panelFont (11.0f));
+            g.drawText (status, text, juce::Justification::centredLeft);
+        }
+        else
+        {
+            g.drawText (processor.hasOwnClock() ? "Press Start to play the pattern" : "Plays in time with the Rig or Logic: press Play there", text,
+                        juce::Justification::centredLeft);
+        }
 
         // Coloured stripes, like a model's livery.
-        if (r.getWidth() > displayArea.getWidth() + 110)
+        if (r.getWidth() > displayArea.getWidth() + kitArea.getWidth() + 120)
         {
             auto stripes = r.removeFromLeft (110).withSizeKeepingCentre (100, 10).toFloat();
             for (auto c : { col::red, col::orange, col::yellow, col::cream })
@@ -1524,6 +1930,16 @@ void DrumView::paint (juce::Graphics& g)
                         juce::Justification::centredLeft);
         }
     }
+
+    // A file being dragged over: the column it would land on, or the whole row of sounds for a kit.
+    if (dropVoice != -1)
+    {
+        auto area = dropVoice >= 0 ? columnBounds (dropVoice) : voiceArea;
+        g.setColour (col::orange.withAlpha (0.16f));
+        g.fillRect (area);
+        g.setColour (col::orange);
+        g.drawRect (area, 2);
+    }
 }
 
 void DrumView::resized()
@@ -1568,6 +1984,14 @@ void DrumView::resized()
             h.removeFromRight (96);
             tempo->setBounds (h.removeFromRight (38).withSizeKeepingCentre (38, 38));
         }
+        // The KIT chip and Load kit..., just left of the display (or the standalone's own controls).
+        const int kitW = juce::jlimit (150, 262, h.getWidth() - 430);
+        h.removeFromRight (8);
+        kitArea = h.removeFromRight (kitW);
+        auto k = kitArea.withSizeKeepingCentre (kitW, 30);
+        loadKitButton.setBounds (k.removeFromRight (juce::jmin (96, kitW * 2 / 5)));
+        k.removeFromRight (4);
+        kitChip.setBounds (k);
     }
 
     int y = kHeaderH + 6;
@@ -1582,6 +2006,7 @@ void DrumView::resized()
         auto c = juce::Rectangle<int> (columnsArea.getX() + v * colW, voiceArea.getY(), colW, voiceH);
         auto& column = columns[(size_t) v];
         column.name->setBounds (c.removeFromTop (26).reduced (3, 1));
+        column.source->setBounds (c.removeFromTop (16).reduced (4, 1));
         column.sound->setBounds (c.removeFromTop (24).reduced (3, 1));
         column.pad->setBounds (c.removeFromBottom (36).reduced (6, 2));
         c.removeFromBottom (12);   // the lamp

@@ -245,16 +245,41 @@ void DrumProcessor::clearSamples()
 
 int DrumProcessor::loadKitFolder (const juce::File& folder)
 {
-    const auto files = drums::kits::mapFiles (drums::kits::audioFilesIn (folder, formats));
+    return loadKitFiles (drums::kits::audioFilesIn (folder, formats), folder.getFileName());
+}
+
+int DrumProcessor::loadKitFiles (const juce::Array<juce::File>& list, const juce::String& name)
+{
+    const auto files = drums::kits::mapFiles (list);
+    bool any = false;
+    for (auto& f : files)
+        any = any || f != juce::File();
+    if (! any)
+        return 0;
+    std::array<drums::SharedSample, drums::kVoices> loadedSamples;
     int loaded = 0;
     for (int v = 0; v < drums::kVoices; ++v)
     {
+        if (files[(size_t) v] == juce::File())
+            continue;
         juce::String error;
-        if (files[(size_t) v] != juce::File() && setVoiceSample (v, files[(size_t) v], error))
+        if (auto audio = AudioFiles::load (files[(size_t) v], formats, error))
+        {
+            auto s = std::make_shared<drums::Sample>();
+            s->audio = audio;
+            s->name = files[(size_t) v].getFileName();
+            s->file = files[(size_t) v];
+            loadedSamples[(size_t) v] = s;
             ++loaded;
+        }
     }
-    if (loaded > 0)
-        kitName = folder.getFileName();
+    if (loaded == 0)
+        return 0;
+    clearSamples();   // a new kit replaces the old one
+    for (int v = 0; v < drums::kVoices; ++v)
+        if (loadedSamples[(size_t) v] != nullptr)
+            setVoiceSample (v, loadedSamples[(size_t) v]);
+    kitName = name;
     return loaded;
 }
 

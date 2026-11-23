@@ -1,6 +1,9 @@
 #include <algorithm>
 #include "BeatsScreen.h"
 #include "StepMarks.h"
+#include "PocketFactory.h"
+#include "SampleKits.h"
+#include <tuple>
 
 using namespace pocket;
 
@@ -343,6 +346,11 @@ public:
             addAndMakeVisible (patterns[i]);
         }
 
+        // KIT: your own sounds on the drum sounds (the sheet opens for the sound picked below).
+        kitBtn.setFontHeight (16.0f);
+        kitBtn.onClick = [this] { owner.host.openDrumKit(); };
+        addAndMakeVisible (kitBtn);
+
         variation.glyph = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour ink)
         {
             static const char* text[] = { "VAR A", "VAR B", "A THEN B" };
@@ -508,6 +516,7 @@ public:
             k->setVisible (! live && ! compact);
         for (auto& p : patterns)
             p.setVisible (! compact);
+        kitBtn.setVisible (! compact);
         pads.setVisible (live);
         undoHit.setVisible (live);
         clearPattern.setVisible (live);
@@ -523,6 +532,8 @@ public:
         liveChip.setLook (live ? Look::amber : Look::cream);
         for (int i = 0; i < kPatternSlots; ++i)
             patterns[i].setLook (d.slot == i ? Look::amber : Look::cream);
+        kitBtn.setText (juce::String ("KIT ") + U8("\xe2\x96\xbe"));
+        kitBtn.setLook (owner.drumHasSound (owner.voice) ? Look::blue : Look::cream);
         for (int t = 0; t < kTools; ++t)
             toolChips[t].setLook ((int) owner.drumTool == t ? Look::amber : Look::cream);
         toolChips[(int) Tool::roll].setText (U8("ROLL \xc3\x97") + juce::String (owner.drumRoll));
@@ -591,6 +602,13 @@ public:
             g.setColour (i == v ? col::ink : hasHits ? col::lcdAmber : juce::Colour (0xfff1e7d1));
             g.setFont (condensed (15.0f));
             g.drawText (voiceLabels[i], r.withTrimmedBottom (3), juce::Justification::centred);
+            if (owner.drumHasSound (i))   // a sound of your own is on it: a blue dot
+            {
+                g.setColour (col::blue);
+                g.fillEllipse (r.getRight() - 14.0f, r.getY() + 6.0f, 8.0f, 8.0f);
+                g.setColour (juce::Colours::black.withAlpha (0.35f));
+                g.drawEllipse (r.getRight() - 14.0f, r.getY() + 6.0f, 8.0f, 8.0f, 1.0f);
+            }
         }
 
         const float ly = (float) grid.getY() - 26.0f, rx = (float) getWidth() - 16.0f;
@@ -623,9 +641,12 @@ public:
         liveChip.setBounds (90, 8, 94, 44);
         play.setBounds (getWidth() - 16 - 82, 8, 82, 44);
         variation.setBounds (190, 8, juce::jmax (70, play.getX() - 6 - 190), 44);
-        const float slotW = ((float) W - 5.0f * 6.0f) / 6.0f;
+        // The six pattern slots, then KIT (your own sounds on the drum sounds).
+        const int kitW = 70, slotGap = 5;
+        const float slotW = ((float) (W - kitW - 6) - 5.0f * (float) slotGap) / 6.0f;
         for (int i = 0; i < kPatternSlots; ++i)
-            patterns[i].setBounds (juce::roundToInt (16.0f + (float) i * (slotW + 6.0f)), 58, juce::roundToInt (slotW), 44);
+            patterns[i].setBounds (juce::roundToInt (16.0f + (float) i * (slotW + (float) slotGap)), 58, juce::roundToInt (slotW), 44);
+        kitBtn.setBounds (16 + W - kitW, 58, kitW, 44);
 
         if (live)
         {
@@ -693,7 +714,7 @@ public:
     DrumData& d;
     using Tool = crate::drums::steptools::Tool;
     static constexpr int kTools = (int) Tool::numTools;
-    PButton play, stepsChip, liveChip, patterns[kPatternSlots], variation, undoHit, clearPattern;
+    PButton play, stepsChip, liveChip, patterns[kPatternSlots], variation, undoHit, clearPattern, kitBtn;
     PButton toolChips[kTools], barBtns[4], lengthBtn, undoBtn;
     juce::Viewport chipView;
     juce::Component chipRow;
@@ -1169,6 +1190,7 @@ BeatsScreen::BeatsScreen (PocketHost& h, Library& lib) : host (h), library (lib)
     if (drumFile.existsAsFile())
         drumData = DrumData::fromVar (juce::JSON::parse (drumFile));
     beatsEngine.setDrums (drumData);
+    applyDrumSounds();
     beatsEngine.setPadPattern (drumData.padPattern);
     applyRepeatRate();
 
@@ -1403,6 +1425,123 @@ void BeatsScreen::drumsChanged()
         drumView->refresh();
 }
 
+//==============================================================================
+// Your own kit on the drum machine
+void BeatsScreen::applyDrumSounds()
+{
+    for (int v = 0; v < crate::drums::kVoices; ++v)
+    {
+        crate::drums::SharedSample sample;
+        const auto& id = drumData.sampleIds[(size_t) v];
+        if (id.isNotEmpty())
+            if (auto* item = library.find (id))
+                if (auto audio = library.load (id))
+                {
+                    auto s = std::make_shared<crate::drums::Sample>();
+                    s->audio = audio;
+                    s->name = item->name;
+                    sample = s;
+                }
+        beatsEngine.setDrumSample (v, sample);
+    }
+}
+
+juce::String BeatsScreen::drumSoundName (int v) const
+{
+    if (auto s = beatsEngine.getDrumSample (v))
+        return s->name;
+    return {};
+}
+
+bool BeatsScreen::setDrumSound (int v, const juce::String& soundId, bool hear)
+{
+    if (! juce::isPositiveAndBelow (v, crate::drums::kVoices))
+        return false;
+    auto* item = library.find (soundId);
+    auto audio = item != nullptr ? library.load (soundId) : nullptr;
+    if (audio == nullptr)
+        return false;
+    auto s = std::make_shared<crate::drums::Sample>();
+    s->audio = audio;
+    s->name = item->name;
+    beatsEngine.setDrumSample (v, s);
+    drumData.sampleIds[(size_t) v] = soundId;
+    drumsChanged();
+    if (hear)
+        beatsEngine.hitVoice (v);
+    if (onDrumKitChanged)
+        onDrumKitChanged();
+    return true;
+}
+
+void BeatsScreen::clearDrumSound (int v)
+{
+    if (! juce::isPositiveAndBelow (v, crate::drums::kVoices))
+        return;
+    beatsEngine.setDrumSample (v, nullptr);
+    drumData.sampleIds[(size_t) v] = {};
+    drumsChanged();
+    beatsEngine.hitVoice (v);
+    if (onDrumKitChanged)
+        onDrumKitChanged();
+}
+
+int BeatsScreen::useBankAsKit()
+{
+    struct Candidate { juce::String id, name; };
+    std::vector<Candidate> found;
+    for (int i = 0; i < 16; ++i)
+    {
+        const auto& pad = padKit.pads[(size_t) (bank * 16 + i)];
+        if (! pad.empty() && pad.soundId.isNotEmpty() && pad.from == 0 && pad.to < 0)   // (a slice of a sound can't be saved by its id)
+            found.push_back ({ pad.soundId, pad.name });
+    }
+    auto map = [] (const std::vector<Candidate>& list)
+    {
+        std::array<juce::String, crate::drums::kVoices> ids;
+        std::array<bool, crate::drums::kVoices> taken {};
+        int n = 0;
+        for (auto& c : list)
+            if (const int v = crate::drums::kits::voiceForName (c.name, taken); v >= 0)
+            {
+                taken[(size_t) v] = true;
+                ids[(size_t) v] = c.id;
+                ++n;
+            }
+        return std::pair (ids, n);
+    };
+    auto [ids, n] = map (found);
+    if (n == 0)
+    {
+        // The bank has none of them named: the factory sounds in your library (oldest kit first).
+        std::vector<Candidate> factory;
+        auto items = library.items();
+        std::stable_sort (items.begin(), items.end(), [] (const SoundItem& a, const SoundItem& b) { return a.date < b.date; });
+        for (auto& item : items)
+            if (item.tag == kTagFactory)
+                factory.push_back ({ item.id, item.name });
+        std::tie (ids, n) = map (factory);
+    }
+    if (n == 0)
+        return 0;
+    for (int v = 0; v < crate::drums::kVoices; ++v)
+    {
+        if (ids[(size_t) v].isEmpty())
+        {
+            beatsEngine.setDrumSample (v, nullptr);
+            drumData.sampleIds[(size_t) v] = {};
+        }
+        else
+        {
+            setDrumSound (v, ids[(size_t) v], false);
+        }
+    }
+    drumsChanged();
+    if (onDrumKitChanged)
+        onDrumKitChanged();
+    return n;
+}
+
 void BeatsScreen::padChanged (int pad)
 {
     beatsEngine.setPad (pad, padKit.pads[(size_t) pad].setup());
@@ -1445,6 +1584,7 @@ void BeatsScreen::reloadIdea (const juce::String& ideaName)
     patternUndo.clear();
     liveUndo.clear();
     beatsEngine.setDrums (drumData);
+    applyDrumSounds();
     beatsEngine.setPadPattern (drumData.padPattern);
     applyRepeatRate();
     setBpm (drumData.bpm);

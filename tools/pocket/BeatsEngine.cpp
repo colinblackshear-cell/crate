@@ -127,6 +127,15 @@ juce::var DrumData::toVar() const
         voices.add (juce::var (o));
     }
     root->setProperty ("voices", voices);
+    bool anySample = false;
+    juce::Array<juce::var> ids;
+    for (auto& id : sampleIds)
+    {
+        ids.add (id);
+        anySample = anySample || id.isNotEmpty();
+    }
+    if (anySample)
+        root->setProperty ("sampleIds", ids);
     root->setProperty ("padPattern", padPattern.toVar());
     return juce::var (root);
 }
@@ -221,6 +230,9 @@ DrumData DrumData::fromVar (const juce::var& v)
             }
         }
     }
+    if (auto* ids = v.getProperty ("sampleIds", {}).getArray())
+        for (int i = 0; i < juce::jmin (drums::kVoices, ids->size()); ++i)
+            d.sampleIds[(size_t) i] = (*ids)[i].toString();
     if (auto* voices = v.getProperty ("voices", {}).getArray())
         for (int i = 0; i < juce::jmin (drums::kVoices, voices->size()); ++i)
         {
@@ -267,6 +279,21 @@ void BeatsEngine::setDrums (const DrumData& d)
     wantedSlot = d.slot;
     wantedVariation = d.variation;
     bpm = d.bpm;
+}
+
+void BeatsEngine::setDrumSample (int voice, crate::drums::SharedSample sample)
+{
+    if (! juce::isPositiveAndBelow (voice, drums::kVoices))
+        return;
+    if (sample != nullptr)
+        keptDrumSamples.push_back (sample);
+    drumSamples[(size_t) voice] = sample;
+    drums.setSample (voice, sample.get());
+}
+
+crate::drums::SharedSample BeatsEngine::getDrumSample (int voice) const
+{
+    return juce::isPositiveAndBelow (voice, drums::kVoices) ? drumSamples[(size_t) voice] : nullptr;
 }
 
 void BeatsEngine::setPlaying (bool on) { wantPlay = on; }

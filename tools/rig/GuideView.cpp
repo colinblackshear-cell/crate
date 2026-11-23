@@ -143,7 +143,8 @@ const std::vector<GuideView::Entry>& GuideView::entries()
           RigColours::sampler, Art::sampler, false, {} },
         { "Drum machine", "The Drums", "Sixty-four steps of pure analog swagger.",
           "Classic hand-built drum sounds, kick to cowbell, each with its own tune and decay. Pick a sound, press the big step keys to write it, "
-          "and pick ROLL x3 first for a stutter roll. Sixty-four steps over four bars, for when the beat needs to boom.",
+          "and pick ROLL x3 first for a stutter roll. Sixty-four steps over four bars, for when the beat needs to boom. "
+          "Drag a folder of your own drum hits onto it for a kit of your own.",
           RigColours::mpc, Art::drumMachine, false, {} },
         { "MPC", "The MPC", "Sixty-four pads and a long memory.",
           "Programs, sequences and songs, laid out the way your MPC2000XL thinks, and ready to save to its card.",

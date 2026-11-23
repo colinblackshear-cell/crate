@@ -234,6 +234,8 @@ const std::vector<HelpPanel::Stop>& HelpPanel::tour()
           "To write a beat: pick a sound with its SELECT key (it plays), then press the step keys. A lamp over a key means a hit. Pick ROLL x3 in the "
           "STEP TOOL strip and press a step for a stutter roll (Builds makes it get louder, Flam adds a grace hit, Soft/Loud and Accent change how hard). "
           "Bar 1-4 give you 64 steps; Copy bar and Double repeat what you have; Rec live writes what you play while it runs; Undo steps back.\n\n"
+          "Your own kits: drag a folder of drum hits onto the drum machine, or Load kit... > a folder (Splice, Cymatics, your MPC folders). "
+          "Drag one file onto a sound to change just that sound. Save kit as... keeps it under your name.\n\n"
           "For pads, sampled kits and sequences, the MPC track is a full MPC (pick it, then Edit).",
           "Edit:Drums" },
         { "Find sounds (Sounds, F5)",

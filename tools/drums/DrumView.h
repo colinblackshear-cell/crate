@@ -23,7 +23,14 @@
 // stutter roll of three hits. (Right-click or Option-click a step in the grid still cycles the
 // roll: 2, 3, 4, 6, 8 hits, then back to one.) The top row of the grid is the accent. When the
 // window is short, KEYS and GRID take turns in the same space; tall windows show both.
+//
+// Your own kits: each sound's column has a small source label (Analog, or the sample's file name in
+// a blue chip). Drop a sound file on a column to change just that sound, or drop a folder (or
+// several files) anywhere to load them as a kit. Right-click a SELECT key or a label for Load
+// sample, Hear, Back to analog and Show file. The KIT chip and Load kit... in the nameplate open
+// the kit menu: your kits, a folder, Splice, Save kit as, the analog kits, All analog again.
 class DrumView : public juce::AudioProcessorEditor,
+                 public juce::FileDragAndDropTarget,
                  private juce::Timer
 {
 public:
@@ -117,7 +124,49 @@ public:
     bool gridShown() const { return grid.isVisible(); }
     void setShowKeys (bool keysNotGrid);
 
+    // Your own kits (what the drops, the menus and the label do; the tests call these too).
+    juce::String getSourceLabel (int voice) const;                 // "Analog", or the sample's file name
+    bool isSoundChoiceDimmed (int voice) const;                    // a sample is on it: the choice doesn't apply
+    bool putSampleOnVoice (int voice, const juce::File&);          // false (and a message) if it can't be read
+    void backToAnalog (int voice);
+    int loadKitFiles (const juce::Array<juce::File>&, const juce::String& name);
+    int loadKitFolder (const juce::File&);
+    void loadSampleFor (int voice);                                // opens the file chooser
+    void loadKitFolderChooser (const juce::File& startIn);
+    void askKitName();                                             // Save kit as...
+    void showKitMenu2 (juce::Component& target);                   // the KIT chip and Load kit...
+    void showVoiceMenu (int voice, juce::Component& target);       // right-click a SELECT key or a label
+    juce::String getStatus() const { return status; }
+    void timerCallbackForTest() { refreshSources(); }   // what the timer does for the labels, for the tests
+    juce::Rectangle<int> columnBounds (int voice) const;
+    juce::String getKitLabel() const;                              // "Kit: <name>"
+    // juce::FileDragAndDropTarget
+    bool isInterestedInFileDrag (const juce::StringArray&) override;
+    void filesDropped (const juce::StringArray&, int x, int y) override;
+    void fileDragEnter (const juce::StringArray&, int x, int y) override;
+    void fileDragMove (const juce::StringArray&, int x, int y) override;
+    void fileDragExit (const juce::StringArray&) override;
+
+    // The small label over a sound's choice: where its sound comes from.
+    class SourceChip : public juce::Component,
+                       public juce::SettableTooltipClient
+    {
+    public:
+        SourceChip (DrumView& v, int voice) : owner (v), index (voice) {}
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        juce::String text { "Analog" };
+        bool sample = false;
+    private:
+        DrumView& owner;
+        int index;
+    };
+
 private:
+    void say (const juce::String&);
+    void refreshSources();
+    int voiceAtPoint (juce::Point<int>) const;   // the column under a point, or -1
+
     void timerCallback() override;
     // Every change to the pattern goes through here, so Undo covers it. `remember` false for the
     // steps of one drag after the first.
@@ -144,6 +193,8 @@ private:
         std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 6> attachments;
         std::unique_ptr<juce::TextButton> pad, name;   // the pad is the SELECT key; the name mutes it
         std::unique_ptr<juce::ComboBox> sound;
+        std::unique_ptr<SourceChip> source;
+        crate::drums::SharedSample shownSample;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> soundAttachment;
         int shownHits = 0;
         float flash = 0;
@@ -193,6 +244,14 @@ private:
         std::array<std::int8_t, crate::drums::kMaxSteps> nudge {}, pitch {}, decayLock {};
         std::uint8_t rowLength = 0;
     } rowClip;
+
+    juce::TextButton kitChip { "Kit: Analog" }, loadKitButton { "Load kit..." };
+    std::unique_ptr<juce::FileChooser> chooser;
+    juce::String status;
+    juce::uint32 statusUntil = 0;
+    int dropVoice = -1;      // the column a file is being dragged over (-2: the whole panel, for a kit)
+    juce::String shownKit;
+    juce::Rectangle<int> kitArea;
 
     juce::Image faceImage;
     juce::Rectangle<int> header, displayArea, voiceArea, columnsArea, toolArea, keysArea, barRow, gridArea, patternRow, optionsRow, chainArea, chainSlots,

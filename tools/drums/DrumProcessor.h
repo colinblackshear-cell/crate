@@ -37,6 +37,8 @@ public:
     void clearSamples();
     // A folder of drum hits as a kit (file names matched to the sounds); returns how many got one.
     int loadKitFolder (const juce::File& folder);
+    // The same for a list of files (several dropped at once); the new kit replaces the old one.
+    int loadKitFiles (const juce::Array<juce::File>& files, const juce::String& name);
     // Your kits, in Music/Crate/Drum Kits: the samples and each sound's knobs.
     bool saveUserKit (const juce::String& name, juce::File* savedTo = nullptr);
     bool loadUserKit (const juce::File&);
