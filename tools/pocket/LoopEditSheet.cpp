@@ -21,6 +21,12 @@ juce::String clock (double seconds, bool hundredths = false)
     return juce::String (s / 60) + ":" + juce::String (s % 60).paddedLeft ('0', 2);
 }
 
+juce::String signedSemis (float v)
+{
+    const int st = juce::roundToInt (v);
+    return (st < 0 ? juce::String (U8("\xe2\x88\x92")) : st > 0 ? "+" : "") + juce::String (std::abs (st)) + " st";
+}
+
 juce::String titleCase (const juce::String& s) { return s.substring (0, 1) + s.substring (1).toLowerCase(); }
 
 void boxTitle (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& bold, const juce::String& rest)
@@ -42,16 +48,55 @@ LoopEditSheet::LoopEditSheet (LoopsEngine& l) : loops (l)
     for (auto* b : { &done, &tabShape, &tabFx, &setIn, &setOut, &hear, &trimButton, &swingButton, &half50, &full100, &halfButton, &doubleButton,
                      &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &fullBoard })
         addAndMakeVisible (*b);
+    for (auto* b : { &tabWarp, &warpSnap, &warpUndo, &hitsMinus, &hitsPlus, &pitchMinus, &pitchPlus, &fineMinus, &finePlus, &formantMinus, &formantPlus,
+                     &originalButton, &printButton, &resetButton })
+        addAndMakeVisible (*b);
+    for (auto& b : gridChips) addAndMakeVisible (b);
+    for (auto& b : strengthChips) addAndMakeVisible (b);
+    for (auto& b : fitBars) addAndMakeVisible (b);
+    for (auto& b : styles) addAndMakeVisible (b);
     for (auto& b : snaps) addAndMakeVisible (b);
     for (auto& b : fitButtons) addAndMakeVisible (b);
     for (auto& b : grids) addAndMakeVisible (b);
-    for (auto* b : { &done, &tabShape, &tabFx, &halfButton, &doubleButton, &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &trimButton, &fullBoard })
+    for (auto* b : { &tabShape, &tabWarp, &tabFx })
+        b->setFontHeight (14.5f);
+    done.setFontHeight (14.5f);
+    for (auto* b : { &warpSnap, &warpUndo, &hitsMinus, &hitsPlus, &pitchMinus, &pitchPlus, &fineMinus, &finePlus, &formantMinus, &formantPlus,
+                     &originalButton, &printButton, &resetButton })
+        b->setFontHeight (13.5f);
+    for (auto& b : gridChips) b.setFontHeight (13.0f);
+    for (auto& b : strengthChips) b.setFontHeight (13.0f);
+    for (auto& b : fitBars) b.setFontHeight (14.0f);
+    for (auto& b : styles) b.setFontHeight (13.5f);
+    for (auto* b : { &halfButton, &doubleButton, &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &trimButton, &fullBoard })
         b->setFontHeight (16.0f);
     fullBoard.onClick = [this] { if (onFullBoard) onFullBoard(); };
 
     done.onClick = [this] { if (onDone) onDone(); };
     tabShape.onClick = [this] { showPage (shapePage); };
     tabFx.onClick = [this] { showPage (effectsPage); };
+    tabWarp.onClick = [this] { showPage (warpPage); };
+    warpSnap.onClick = [this] { pressWarpSnap(); };
+    warpUndo.onClick = [this] { if (! busy() && onUndo) onUndo(); };
+    hitsMinus.onClick = [this] { stepHits (-1); };
+    hitsPlus.onClick = [this] { stepHits (1); };
+    for (int i = 0; i < 4; ++i)
+    {
+        gridChips[i].onClick = [this, i] { setGrid (i); };
+        fitBars[i].onClick = [this, i] { pressFitBars (1 << i); };
+        styles[i].onClick = [this, i] { pressStyle ((crate::Warp::Style) i); };
+    }
+    for (int i = 0; i < 3; ++i)
+        strengthChips[i].onClick = [this, i] { setStrength (i); };
+    pitchMinus.onClick = [this] { stepPitch (-1); };
+    pitchPlus.onClick = [this] { stepPitch (1); };
+    fineMinus.onClick = [this] { stepFine (-10); };
+    finePlus.onClick = [this] { stepFine (10); };
+    formantMinus.onClick = [this] { stepFormant (-1); };
+    formantPlus.onClick = [this] { stepFormant (1); };
+    originalButton.onClick = [this] { pressOriginal(); };
+    printButton.onClick = [this] { pressPrint(); };
+    resetButton.onClick = [this] { resetWarp(); };
     for (int i = 0; i < 4; ++i)
         snaps[i].onClick = [this, i] { setSnap (i); };
     setIn.onClick = [this] { setAtPlayhead (true); };
@@ -138,6 +183,7 @@ void LoopEditSheet::layerChanged()
     hearing = false;
     if (current >= 0)
         loops.setRegion (current, 0, 0);
+    readWarp();
     layout();
     repaint();
 }
@@ -335,6 +381,8 @@ juce::Rectangle<float> LoopEditSheet::waveArea() const
     auto b = waveBox();
     if (pageShown == effectsPage)
         return { b.getX() + 10, b.getY() + 28, b.getWidth() - 20, 46 };
+    if (pageShown == warpPage)
+        return { b.getX() + 10, b.getY() + 28, b.getWidth() - 20, b.getHeight() - 52 };
     return { b.getX() + 10, b.getY() + 30, b.getWidth() - 20, b.getHeight() - 52 };
 }
 
@@ -372,12 +420,14 @@ void LoopEditSheet::resized() { layout(); }
 void LoopEditSheet::layout()
 {
     const float w = (float) getWidth(), inner = w - 32.0f;
-    const bool shape = pageShown == shapePage;
-    done.setBounds (juce::Rectangle<float> (w - 88, 10, 72, 38).toNearestInt());
-    tabFx.setBounds (juce::Rectangle<float> (done.getX() - 8 - 78, 10, 78, 38).toNearestInt());
-    tabShape.setBounds (juce::Rectangle<float> (tabFx.getX() - 4 - 70, 10, 70, 38).toNearestInt());
+    const bool shape = pageShown == shapePage, warp = pageShown == warpPage, fx = pageShown == effectsPage;
+    done.setBounds (juce::Rectangle<float> (w - 82, 10, 66, 38).toNearestInt());
+    tabFx.setBounds (juce::Rectangle<float> ((float) done.getX() - 6 - 66, 10, 66, 38).toNearestInt());
+    tabWarp.setBounds (juce::Rectangle<float> ((float) tabFx.getX() - 4 - 54, 10, 54, 38).toNearestInt());
+    tabShape.setBounds (juce::Rectangle<float> ((float) tabWarp.getX() - 4 - 54, 10, 54, 38).toNearestInt());
     tabShape.setLook (shape ? Look::dark : Look::cream);
-    tabFx.setLook (shape ? Look::cream : Look::dark);
+    tabWarp.setLook (warp ? Look::dark : Look::cream);
+    tabFx.setLook (fx ? Look::dark : Look::cream);
     if (preferredHeight() != shownHeight)
     {
         shownHeight = preferredHeight();
@@ -393,7 +443,14 @@ void LoopEditSheet::layout()
     for (auto* b : { &swingButton, &half50, &full100 })
         b->setVisible (shape && hasPart());
     for (auto* b : { &recMoves, &clearMoves, &undoFx, &fullBoard })
-        b->setVisible (! shape);
+        b->setVisible (fx);
+    for (auto* b : { &warpSnap, &warpUndo, &hitsMinus, &hitsPlus, &pitchMinus, &pitchPlus, &fineMinus, &finePlus, &formantMinus, &formantPlus,
+                     &originalButton, &printButton, &resetButton })
+        b->setVisible (warp);
+    for (auto& b : gridChips) b.setVisible (warp);
+    for (auto& b : strengthChips) b.setVisible (warp);
+    for (auto& b : fitBars) b.setVisible (warp);
+    for (auto& b : styles) b.setVisible (warp);
 
     if (shape)
     {
@@ -454,6 +511,63 @@ void LoopEditSheet::layout()
         for (auto* b : { &halfButton, &doubleButton, &reverseButton, &undo })
             b->setBounds (juce::Rectangle<float> (16 + (float) i++ * (bw4 + 6), y, bw4, 42).toNearestInt());
     }
+    else if (warp)
+    {
+        auto at = [] (float x, float y, float bw, float bh = 38.0f) { return juce::Rectangle<float> (x, y, bw, bh).toNearestInt(); };
+        infoRect = { 16, 172, inner, 22 };
+        const float h = 38;
+        float y = 198, x = 16;
+        // SNAP  Beat 1/8 1/16 1/32  50% 75% 100%
+        warpSnap.setBounds (at (x, y, 52));
+        x += 52 + 6;
+        const float cw = (inner - 52 - 6 - 8 - 5 * 3) / 7.0f;
+        for (auto& b : gridChips) { b.setBounds (at (x, y, cw, h)); x += cw + 3; }
+        x += 5;
+        for (auto& b : strengthChips) { b.setBounds (at (x, y, cw, h)); x += cw + 3; }
+
+        // HITS - 12 +   FIT BARS 1 2 4 8
+        y += h + 6;
+        hitsMinus.setBounds (at (16, y, 38));
+        hitsRect = { 16 + 38, y, 62, h };
+        hitsPlus.setBounds (at (16 + 38 + 62, y, 38));
+        x = 16 + 138 + 10;
+        fitLabel = { x, y, 50, h };
+        x += 52;
+        const float fw = (w - 16 - x - 3 * 3) / 4.0f;
+        for (auto& b : fitBars) { b.setBounds (at (x, y, fw, h)); x += fw + 3; }
+
+        // STRETCH  Voice Beats Texture Tape
+        y += h + 6;
+        stretchLabel = { 16, y, 54, h };
+        x = 16 + 56;
+        const float sw = (w - 16 - x - 3 * 3) / 4.0f;
+        for (auto& b : styles) { b.setBounds (at (x, y, sw, h)); x += sw + 3; }
+
+        // - st  + st   Pitch -1 st +10 ct   - ct  + ct
+        y += h + 6;
+        pitchMinus.setBounds (at (16, y, 46));
+        pitchPlus.setBounds (at (16 + 49, y, 46));
+        finePlus.setBounds (at (w - 16 - 46, y, 46));
+        fineMinus.setBounds (at (w - 16 - 46 - 49, y, 46));
+        pitchRect = { 16 + 98 + 4, y, w - 32 - 196 - 8, h };
+
+        // - st  Formant +2 st  + st
+        y += h + 6;
+        formantMinus.setBounds (at (16, y, 46));
+        formantPlus.setBounds (at (w - 16 - 46, y, 46));
+        formantRect = { 16 + 50, y, w - 32 - 100, h };
+
+        // ORIGINAL  PRINT  RESET  UNDO
+        y += h + 8;
+        const float qw = (inner - 9) / 4.0f;
+        x = 16;
+        for (auto* b : { &originalButton, &printButton, &resetButton, &warpUndo })
+        {
+            b->setBounds (at (x, y, qw, 42));
+            x += qw + 3;
+        }
+        hintRect = { 16, y + 46, inner, 34 };
+    }
     else
     {
         recMoves.setBounds (juce::Rectangle<float> (16, 300, inner * 0.55f, 46).toNearestInt());
@@ -466,6 +580,21 @@ void LoopEditSheet::layout()
 
 void LoopEditSheet::refreshButtons()
 {
+    if (pageShown == warpPage)
+    {
+        warpSnap.setToggled (snapOn);
+        const double grids[] = { 1.0, 0.5, 0.25, 0.125 }, strengths[] = { 0.5, 0.75, 1.0 };
+        for (int i = 0; i < 4; ++i)
+        {
+            gridChips[i].setToggled (std::abs (gridBeats - grids[i]) < 1.0e-6);
+            fitBars[i].setToggled (std::abs (plan.targetBeats - 4.0 * (double) (1 << i)) < 1.0e-6);
+            styles[i].setToggled ((int) plan.settings.style == i);
+        }
+        for (int i = 0; i < 3; ++i)
+            strengthChips[i].setToggled (std::abs ((double) strength - strengths[i]) < 1.0e-3);
+        originalButton.setToggled (isOriginal && isOriginal());
+        return;
+    }
     for (int i = 0; i < 4; ++i)
         snaps[i].setToggled (snap == i);
     hear.setToggled (hearing);
@@ -505,11 +634,16 @@ void LoopEditSheet::paint (juce::Graphics& g)
 
     auto take = loops.takeOf (current);
     const double total = totalBeats();
-    const bool shape = pageShown == shapePage;
+    const bool shape = pageShown == shapePage, warp = pageShown == warpPage;
     g.setColour (col::ink);
     g.setFont (condensedBold (24.0f));
-    g.drawFittedText ("Layer " + juce::String (current + 1) + U8(" \xc2\xb7 ") + (take != nullptr ? titleCase (layerToolName (take->tool)) : juce::String()),
-                      juce::Rectangle<int> (16, 10, tabShape.getX() - 22, 38), juce::Justification::centredLeft, 1, 0.7f);
+    {
+        auto title = "Layer " + juce::String (current + 1) + U8(" \xc2\xb7 ") + (take != nullptr ? titleCase (layerToolName (take->tool)) : juce::String());
+        const int room = tabShape.getX() - 22;
+        if (juce::GlyphArrangement::getStringWidth (condensedBold (24.0f), title) > (float) room)
+            title = "Layer " + juce::String (current + 1);
+        g.drawFittedText (title, juce::Rectangle<int> (16, 10, room, 38), juce::Justification::centredLeft, 1, 0.7f);
+    }
 
     // the wave, always: bar numbers, IN and OUT (or the moves lane), where it's playing
     auto box = waveBox();
@@ -517,7 +651,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
     auto wave = waveArea();
     const auto colour = take != nullptr ? layerToolColour (take->tool) : kKnobColours[fxFilter];
     const double sound = contentBeats();
-    if (shape)
+    if (shape || warp)
     {
         g.setFont (lcdFont (15.0f));
         for (int bar = 0; bar * 4.0 < total - 1.0e-6; ++bar)
@@ -576,6 +710,8 @@ void LoopEditSheet::paint (juce::Graphics& g)
             g.drawText (text, flag, juce::Justification::centred);
         }
     }
+    else if (warp)
+        paintWarp (g, wave);
     else
     {
         // the moves of one knob (tap to see another)
@@ -614,6 +750,31 @@ void LoopEditSheet::paint (juce::Graphics& g)
         g.fillRect (play - 1.0f, wave.getY() - 4, 2.0f, wave.getHeight() + 8);
     }
 
+    if (warp)
+    {
+        g.setColour (col::ink);
+        g.setFont (spaced (condensedBold (13.0f), 0.12f));
+        g.drawText ("FIT BARS", fitLabel, juce::Justification::centredLeft);
+        g.drawText ("STRETCH", stretchLabel, juce::Justification::centredLeft);
+        g.setFont (lcdFont (15.0f));
+        g.drawText (juce::String ((int) hits.size()) + (hits.size() == 1 ? " hit" : " hits"), hitsRect, juce::Justification::centred);
+        g.setFont (condensedBold (16.0f));
+        g.drawText (pitchText(), pitchRect, juce::Justification::centred);
+        g.drawText ("Formant " + signedSemis (plan.settings.formant), formantRect, juce::Justification::centred);
+        g.setColour (col::inkDim);
+        g.setFont (small (13.0f));
+        g.drawFittedText (infoText(), infoRect.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        if (busy())
+        {
+            g.setColour (col::amber.darker (0.3f));
+            g.setFont (spaced (condensedBold (13.0f), 0.08f));
+            g.drawText (U8("Warping\xe2\x80\xa6"), infoRect, juce::Justification::centredRight);
+        }
+        g.setColour (col::inkDim);
+        g.setFont (small (12.5f));
+        g.drawFittedText (U8("Drag a marker onto a beat \xc2\xb7 tap a hit to pin it \xc2\xb7 double-tap to add or remove"), hintRect.toNearestInt(), juce::Justification::centredLeft, 2, 0.85f);
+        return;
+    }
     if (shape)
     {
         g.setColour (col::ink);
@@ -715,6 +876,20 @@ void LoopEditSheet::mouseDown (const juce::MouseEvent& e)
     if (current < 0)
         return;
     const auto p = e.position;
+    if (pageShown == warpPage)
+    {
+        warpDrag = tapHit = -1;
+        if (! waveBox().contains (p) || ! plan.isValid())
+            return;
+        if (const int m = markerNear (p.x, plan); m >= 0)
+        {
+            warpDrag = m;
+            dragPlan = plan;
+        }
+        else if (p.y > waveArea().getBottom() - 8)
+            tapHit = hitNear (p.x);
+        return;
+    }
     if (pageShown == shapePage)
     {
         if (waveBox().contains (p) && ! busy())
@@ -753,6 +928,16 @@ void LoopEditSheet::mouseDown (const juce::MouseEvent& e)
 
 void LoopEditSheet::mouseDrag (const juce::MouseEvent& e)
 {
+    if (pageShown == warpPage)
+    {
+        if (warpDrag >= 0 && warpDrag < (int) plan.markers.size())
+        {
+            dragPlan = plan;
+            crate::Warp::moveMarker (dragPlan, warpDrag, gridSnapped (xBeat (e.position.x)));
+            repaint();
+        }
+        return;
+    }
     if (dragging == 1 || dragging == 2)
     {
         const double sound = contentBeats();
@@ -777,8 +962,25 @@ void LoopEditSheet::mouseDrag (const juce::MouseEvent& e)
     }
 }
 
-void LoopEditSheet::mouseUp (const juce::MouseEvent&)
+void LoopEditSheet::mouseUp (const juce::MouseEvent& e)
 {
+    if (pageShown == warpPage)
+    {
+        if (warpDrag >= 0 && e.mouseWasDraggedSinceMouseDown())
+        {
+            plan = dragPlan;
+            commitWarp();
+        }
+        else if (tapHit >= 0 && tapHit < (int) hits.size() && ! e.mouseWasDraggedSinceMouseDown() && e.getNumberOfClicks() == 1)
+        {
+            // pin the hit where it plays now
+            crate::Warp::addMarker (plan, plan.targetAt (hits[(size_t) tapHit]));
+            commitWarp();
+        }
+        warpDrag = tapHit = -1;
+        repaint();
+        return;
+    }
     if (dragging >= 10)
     {
         loops.recordMoves();   // the last bit up to the finger lifting
@@ -791,6 +993,23 @@ void LoopEditSheet::mouseUp (const juce::MouseEvent&)
 
 void LoopEditSheet::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    if (pageShown == warpPage)
+    {
+        if (current < 0 || ! plan.isValid() || ! waveBox().contains (e.position))
+            return;
+        warpDrag = tapHit = -1;
+        if (const int m = markerNear (e.position.x, plan); m >= 0)
+            crate::Warp::removeMarker (plan, m);
+        else
+        {
+            const double t = xBeat (e.position.x);
+            if (t <= 0.02 || t >= plan.targetBeats - 0.02)
+                return;
+            crate::Warp::addMarker (plan, t);
+        }
+        commitWarp();
+        return;
+    }
     if (pageShown != effectsPage)
         return;
     const int k = knobAt (e.position);
@@ -799,4 +1018,278 @@ void LoopEditSheet::mouseDoubleClick (const juce::MouseEvent& e)
     loops.setKnob (current, k, fxDefault (k));
     if (onFxChanged) onFxChanged();
     repaint();
+}
+
+//==============================================================================
+// WARP
+void LoopEditSheet::readWarp()
+{
+    plan = {};
+    hits.clear();
+    soundsLike = 0.0;
+    warpSrc = {};
+    auto take = current >= 0 ? loops.takeOf (current) : nullptr;
+    if (take == nullptr)
+        return;
+    warpSrc = warpSourceOf (*take);
+    plan = warpSrc.plan;
+    if (! plan.isValid())
+        return;
+    hits = warpHits (warpSrc, take->sampleRate, sensitivity);
+    soundsLike = warpSoundsLike (warpSrc, hits, take->sampleRate, loops.bpm());
+    snapOn = false;
+    for (auto& m : plan.markers)
+        snapOn = snapOn || ! m.manual;
+}
+
+void LoopEditSheet::commitWarp()
+{
+    if (onWarp && plan.isValid())
+        onWarp (plan);
+    refreshButtons();
+    repaint();
+}
+
+void LoopEditSheet::resnap()
+{
+    crate::Warp::snap (plan, hits, gridBeats, snapOn ? strength : 0.0f);
+}
+
+void LoopEditSheet::pressWarpSnap()
+{
+    if (current < 0 || ! plan.isValid())
+        return;
+    snapOn = ! snapOn;
+    resnap();
+    commitWarp();
+}
+
+void LoopEditSheet::setGrid (int i)
+{
+    const double grids[] = { 1.0, 0.5, 0.25, 0.125 };
+    gridBeats = grids[juce::jlimit (0, 3, i)];
+    if (snapOn)
+    {
+        resnap();
+        commitWarp();
+    }
+    else
+        refreshButtons();
+}
+
+void LoopEditSheet::setStrength (int i)
+{
+    const float strengths[] = { 0.5f, 0.75f, 1.0f };
+    strength = strengths[juce::jlimit (0, 2, i)];
+    if (snapOn)
+    {
+        resnap();
+        commitWarp();
+    }
+    else
+        refreshButtons();
+}
+
+void LoopEditSheet::stepHits (int dir)
+{
+    if (current < 0 || ! plan.isValid())
+        return;
+    sensitivity = juce::jlimit (0.0f, 1.0f, sensitivity + (float) dir * 0.15f);
+    auto take = loops.takeOf (current);
+    if (take == nullptr)
+        return;
+    hits = warpHits (warpSrc, take->sampleRate, sensitivity);
+    soundsLike = warpSoundsLike (warpSrc, hits, take->sampleRate, loops.bpm());
+    if (snapOn)
+    {
+        resnap();
+        commitWarp();
+    }
+    repaint();
+}
+
+void LoopEditSheet::pressFitBars (int bars)
+{
+    if (current < 0 || ! plan.isValid() || bars < 1)
+        return;
+    crate::Warp::setLength (plan, bars * 4.0);
+    if (snapOn)
+        resnap();
+    commitWarp();
+}
+
+void LoopEditSheet::pressStyle (crate::Warp::Style s)
+{
+    if (current < 0 || ! plan.isValid())
+        return;
+    plan.settings.style = s;
+    commitWarp();
+}
+
+void LoopEditSheet::stepPitch (int semis)
+{
+    if (current < 0 || ! plan.isValid())
+        return;
+    plan.settings.transpose = juce::jlimit (-12.0f, 12.0f, plan.settings.transpose + (float) semis);
+    commitWarp();
+}
+
+void LoopEditSheet::stepFine (int cents)
+{
+    if (current < 0 || ! plan.isValid())
+        return;
+    plan.settings.transpose = juce::jlimit (-12.0f, 12.0f, plan.settings.transpose + (float) cents / 100.0f);
+    commitWarp();
+}
+
+void LoopEditSheet::stepFormant (int semis)
+{
+    if (current < 0 || ! plan.isValid())
+        return;
+    plan.settings.formant = juce::jlimit (-12.0f, 12.0f, plan.settings.formant + (float) semis);
+    commitWarp();
+}
+
+void LoopEditSheet::dragWarpMarker (int index, double targetBeat)
+{
+    if (index < 0 || index >= (int) plan.markers.size())
+        return;
+    crate::Warp::moveMarker (plan, index, targetBeat);
+    commitWarp();
+}
+
+void LoopEditSheet::resetWarp()
+{
+    if (current < 0 || ! plan.isValid())
+        return;
+    const double len = plan.sourceBeats;
+    plan = {};
+    plan.sourceBeats = plan.targetBeats = len;
+    snapOn = false;
+    commitWarp();
+}
+
+void LoopEditSheet::pressOriginal()
+{
+    if (current < 0 || ! onOriginal || ! isOriginal)
+        return;
+    onOriginal (! isOriginal());
+    refreshButtons();
+    repaint();
+}
+
+int LoopEditSheet::pressPrint()
+{
+    if (current < 0 || ! onPrint)
+        return -1;
+    const int to = onPrint();
+    if (onToast)
+        onToast (to >= 0 ? "Printed onto layer " + juce::String (to + 1) + "." : "No empty layer to print onto.");
+    return to;
+}
+
+double LoopEditSheet::gridSnapped (double beat) const
+{
+    beat = juce::jlimit (0.0, plan.targetBeats, beat);
+    const double g = std::round (beat / gridBeats) * gridBeats;
+    return std::abs (beatX (g) - beatX (beat)) <= 12.0f ? g : beat;
+}
+
+int LoopEditSheet::markerNear (float x, const crate::Warp::Plan& p) const
+{
+    int best = -1;
+    float bestD = 18.0f;
+    for (size_t i = 0; i < p.markers.size(); ++i)
+    {
+        const float d = std::abs (beatX (p.markers[i].target) - x);
+        if (d < bestD)
+        {
+            bestD = d;
+            best = (int) i;
+        }
+    }
+    return best;
+}
+
+int LoopEditSheet::hitNear (float x) const
+{
+    int best = -1;
+    float bestD = 14.0f;
+    for (size_t i = 0; i < hits.size(); ++i)
+    {
+        const float d = std::abs (beatX (plan.targetAt (hits[i])) - x);
+        if (d < bestD)
+        {
+            bestD = d;
+            best = (int) i;
+        }
+    }
+    return best;
+}
+
+juce::String LoopEditSheet::pitchText() const
+{
+    const float t = plan.settings.transpose;
+    const int st = juce::roundToInt (t), ct = juce::roundToInt ((t - (float) st) * 100.0f);
+    auto sign = [] (int v) { return v < 0 ? juce::String (U8("\xe2\x88\x92")) : v > 0 ? "+" : ""; };
+    return "Pitch " + sign (st) + juce::String (std::abs (st)) + " st " + sign (ct) + juce::String (std::abs (ct)) + " ct";
+}
+
+juce::String LoopEditSheet::infoText() const
+{
+    const double bars = plan.targetBeats / 4.0;
+    const juce::String dot = U8(" \xc2\xb7 ");
+    juce::String s = soundsLike > 0.0 ? "Sounds like " + juce::String (soundsLike, 1) + " BPM" + dot + "song " + juce::String (loops.bpm(), 0)
+                                       : juce::String ("Tempo: can't tell from its hits");
+    s << dot << (int) hits.size() << (hits.size() == 1 ? " hit" : " hits") << dot << (int) plan.markers.size() << (plan.markers.size() == 1 ? " marker" : " markers")
+      << dot << juce::String (bars, bars == std::floor (bars) ? 0 : 2) << (bars == 1.0 ? " bar" : " bars");
+    return s;
+}
+
+// The warp page's wave: beat lines, the hits, the markers (and where each would play unwarped).
+void LoopEditSheet::paintWarp (juce::Graphics& g, juce::Rectangle<float> wave)
+{
+    const auto& shown = warpDrag >= 0 ? dragPlan : plan;
+    const double total = totalBeats();
+    auto box = waveBox();
+    g.setColour (juce::Colour (0x22ffffff));
+    for (int b = 1; (double) b < total - 1.0e-6; ++b)
+        if (b % 4 != 0)
+            g.fillRect (beatX (b) - 0.5f, wave.getY(), 1.0f, wave.getHeight());
+    if (! plan.isValid())
+        return;
+    // the hits: small ticks along the bottom (amber once pinned)
+    for (double h : hits)
+    {
+        bool pinned = false;
+        for (auto& m : shown.markers)
+            pinned = pinned || std::abs (m.source - h) < 0.03;
+        const float x = beatX (shown.targetAt (h));
+        g.setColour (pinned ? col::amber : juce::Colours::white.withAlpha (0.6f));
+        g.fillRoundedRectangle (x - 1.5f, wave.getBottom() + 4, 3.0f, 12.0f, 1.2f);
+    }
+    // the markers: amber line, a handle on top, a dashed ghost where its sound would sit unwarped
+    const double scale = shown.sourceBeats > 0 ? shown.targetBeats / shown.sourceBeats : 1.0;
+    for (size_t i = 0; i < shown.markers.size(); ++i)
+    {
+        const auto& m = shown.markers[i];
+        const float gx = beatX (m.source * scale), x = beatX (m.target);
+        if (std::abs (gx - x) > 2.0f)
+        {
+            const float dashes[] = { 3.0f, 3.0f };
+            g.setColour (col::amber.withAlpha (0.55f));
+            g.drawDashedLine (juce::Line<float> (gx, wave.getY() - 2, gx, wave.getBottom() + 2), dashes, 2, 1.2f);
+        }
+        g.setColour (col::amber);
+        g.fillRect (x - 1.25f, wave.getY() - 4, 2.5f, wave.getHeight() + 8);
+        auto handle = juce::Rectangle<float> (x - 11, box.getY() + 4, 22, 20);
+        g.fillRoundedRectangle (handle, 5.0f);
+        g.setColour (col::ink.withAlpha (0.7f));
+        for (int k = -1; k <= 1; ++k)
+            g.fillRect (x + (float) k * 4.0f - 0.75f, handle.getY() + 5, 1.5f, 10.0f);
+        if (! m.manual)
+            continue;
+        g.setColour (col::ink);
+        g.fillEllipse (x - 2, wave.getBottom() + 1, 4, 4);
+    }
 }

@@ -61,6 +61,10 @@ LoopsScreen::LoopsScreen (PocketHost& h, Library& l, BeatsEngine& b, AppSettings
     editor.onFit = [this] (int bars, double a, double b) { fitLayer (editor.layer(), bars, a, b); };
     editor.onQuantize = [this] (const LoopQuantize& q) { quantizeLayer (editor.layer(), q); };
     editor.onFxChanged = [this] { repaint(); };
+    editor.onWarp = [this] (const crate::Warp::Plan& p) { warpLayer (editor.layer(), p); };
+    editor.onOriginal = [this] (bool on) { setOriginal (editor.layer(), on); };
+    editor.isOriginal = [this] { return editor.layer() >= 0 && playingOriginal (editor.layer()); };
+    editor.onPrint = [this] { return printLayer (editor.layer()); };
     editor.onFullBoard = [this] { if (onFullBoard && editor.layer() >= 0) onFullBoard (editor.layer()); };
     editor.isBusy = [this] { return jobLayer >= 0 && jobUndo; };
     editor.onHeightChanged = [this] { if (editor.isVisible()) editor.setBounds (0, editorTop(), getWidth(), getHeight() - editorTop()); };
@@ -608,6 +612,8 @@ HoldSpec LoopsScreen::layerMenuSpec (int l)
     s.items.push_back ({ notes ? "QUANTIZE" : "FIT", notes ? juce::String (grids[juce::jlimit (0, 3, take->quant.grid)]) : barsText (take->lengthBeats.load()),
                          false, true, run (pQuant) });
     s.items.push_back ({ "EFFECTS", boardOn ? "board on" : "board off", false, true, run (pFx) });
+    s.items.push_back ({ "WARP", "tempo, pitch, timing", false, true,
+                         [this, l] { selected = lastLayer = l; layoutPanel(); openEditor (l, LoopEditSheet::warpPage); repaint(); } });
     s.items.push_back ({ dubbing ? "STOP DUB" : "DUB OVER IT", {}, false, true, run (pDub) });
     s.items.push_back ({ hasTool ? juce::String ("OPEN ") + toolName (openTool) : juce::String ("DOUBLE"), {}, false, true, run (pTool) });
     s.items.push_back ({ "SEND TO MAC", {}, false, true, run (pToMac) });
@@ -843,12 +849,100 @@ void LoopsScreen::jobDone (int id, Edited e)
     jobWas = nullptr;
     auto take = loops.takeOf (layer);
     if (take == nullptr || take.get() != was || loops.state (layer) != LoopState::playing)
-        return;   // it changed meanwhile: the tempo follower looks again, an edit is simply dropped
+    {
+        pendingWarp.reset();
+        return;   // it changed meanwhile: the tempo follower looks again, an edit (and a warp waiting) is simply dropped
+    }
     if (withUndo)
         applyEdited (layer, was, std::move (e));
     else if (e.take != nullptr)
+    {
         loops.setLayer (layer, e.take, loops.isMuted (layer), loops.startBeat (layer));   // the tempo: no undo step, effects as they are
+        if (abOriginal[(size_t) layer].get() == was)
+            abOriginal[(size_t) layer] = e.take;   // ORIGINAL stays ORIGINAL at the new tempo
+    }
+    if (editor.isVisible() && editor.layer() == layer)
+        editor.layerChanged();
+    if (pendingWarp.has_value())
+    {
+        const auto next = *pendingWarp;
+        pendingWarp.reset();
+        warpLayer (next.first, next.second);
+    }
     repaint();
+}
+
+void LoopsScreen::warpLayer (int layer, const crate::Warp::Plan& plan)
+{
+    auto take = loops.takeOf (layer);
+    if (take == nullptr || loops.state (layer) != LoopState::playing)
+        return host.toast ("Let the layer finish recording first.");
+    if (jobLayer >= 0)
+    {
+        pendingWarp = std::make_pair (layer, plan);
+        return;
+    }
+    abWarped[(size_t) layer] = abOriginal[(size_t) layer] = nullptr;
+    auto copy = loops.copyOf (layer);
+    auto fx = loops.fxOf (layer);
+    const double bpm = loops.bpm();
+    runJob (layer, [copy, fx, plan, bpm] { return warpTake (*copy, fx, plan, bpm); }, true);
+}
+
+bool LoopsScreen::playingOriginal (int layer) const
+{
+    const auto& o = abOriginal[(size_t) layer];
+    return o != nullptr && loops.takeOf (layer) == o;
+}
+
+void LoopsScreen::setOriginal (int layer, bool original)
+{
+    auto take = loops.takeOf (layer);
+    if (take == nullptr || loops.state (layer) != LoopState::playing || original == playingOriginal (layer))
+        return;
+    if (original)
+    {
+        if (jobLayer == layer)
+            return host.toast (U8("Still working on the last change\xe2\x80\xa6"));
+        auto o = originalTake (*take, loops.bpm());
+        if (o == nullptr)
+            return;
+        abWarped[(size_t) layer] = take;
+        abOriginal[(size_t) layer] = o;
+        loops.setLayer (layer, o, loops.isMuted (layer), loops.startBeat (layer));
+    }
+    else
+    {
+        auto w = abWarped[(size_t) layer];
+        abWarped[(size_t) layer] = abOriginal[(size_t) layer] = nullptr;
+        if (w != nullptr)
+            loops.setLayer (layer, w, loops.isMuted (layer), loops.startBeat (layer));   // the follower re-tempos it if it must
+    }
+    if (editor.isVisible() && editor.layer() == layer)
+        editor.layerChanged();
+    repaint();
+}
+
+int LoopsScreen::printLayer (int layer)
+{
+    auto take = loops.takeOf (layer);
+    if (take == nullptr || loops.state (layer) != LoopState::playing)
+        return -1;
+    int to = -1;
+    for (int l = 0; l < kLoopLayers && to < 0; ++l)
+        if (l != layer && loops.state (l) == LoopState::empty && ! loops.settling (l))
+            to = l;
+    if (to < 0)
+        return -1;
+    Undo u;
+    u.items.push_back ({ to, nullptr, false });
+    pushUndo (std::move (u));
+    auto copy = loops.copyOf (layer);
+    loops.setLayer (to, copy, false, loops.startBeat (layer));
+    lastLayer = to;
+    layoutPanel();
+    repaint();
+    return to;
 }
 
 juce::uint32 LoopsScreen::fxHash (const LayerFxState& fx)
@@ -1508,6 +1602,12 @@ void LoopsScreen::showEditorDemo (int which)
         selected = 2;
         openEditor (2, LoopEditSheet::shapePage);
         editor.setSnap (1);
+    }
+    else if (which == 3)
+    {
+        selected = 2;
+        openEditor (2, LoopEditSheet::warpPage);
+        editor.pressWarpSnap();
     }
     else if (which == 1)
     {

@@ -174,6 +174,7 @@ SharedTake LoopsEngine::copyOf (int layer) const
     t->part = src->part;
     t->quant = src->quant;
     t->origin = src->origin;
+    t->warp = src->warp;
     return t;
 }
 
