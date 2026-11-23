@@ -86,10 +86,15 @@ public:
     void setSectionLength (double bars);
     void setSectionBank (int bank);
 
-    // Deleting: a section (its boxes go, what comes after moves up), or with the Delete button
-    // (and the Delete key) the picked section, or the picked box's. With nothing picked the
-    // button offers a menu of the sections.
+    // Deleting, in one click, each with Undo (Cmd+Z):
+    //   the x on a section's name     deletes the section (its boxes go, what comes after moves up)
+    //   the x on a box                empties it: that track is quiet in that section
+    //   the x on a track's name       takes the track out of the whole song (every box on its row)
+    // The Delete button (and the Delete key) does the picked one: a picked box is emptied, a
+    // picked section deleted. With nothing picked the button offers a menu of the sections.
     bool deleteSection (int section);
+    bool emptyBox (int section, int lane);
+    bool removeLaneFromSong (int lane);
     void pressDelete();
     // Undo (the button and Cmd+Z): takes back the last change to the song, made here, in Bars
     // view, or by To Song from any screen. False when there's nothing to take back.
@@ -114,6 +119,8 @@ private:
     void timerCallback() override;
     void mouseUp (const juce::MouseEvent&) override;
     void say (const juce::String& s) { if (onSay) onSay (s); }
+    void deleted (const juce::String& what);   // says so, and lights Undo for a few seconds
+    void updateDeleteButton();
     void edited();   // the song changed: redraw everything
     void showAddMenu();
     void showMoreMenu();
@@ -137,6 +144,7 @@ private:
     int selSection = -1, selLane = -1;
     bool barsShown = false, recordingSong = false, seenPlaying = false;
     int lastHash = 0;
+    int undoGlow = 0;   // timer ticks left with Undo lit, after a delete
     // The song as it was before each change (blocks and sections), newest last.
     using Snapshot = std::pair<std::vector<RigTimeline::Block>, std::vector<RigTimeline::Marker>>;
     std::vector<Snapshot> undoStack;

@@ -28,6 +28,20 @@ juce::String fadeText (double bars, int bpb)
     }
     return rigsong::barsText (bars);
 }
+
+// The small x that deletes what it sits on (a box, a section, a track), in one click.
+void drawCross (juce::Graphics& g, juce::Rectangle<float> c, bool hot)
+{
+    if (c.isEmpty())
+        return;
+    g.setColour (juce::Colour (0xff1a1410).withAlpha (hot ? 0.95f : 0.72f));
+    g.fillEllipse (c);
+    g.setColour (hot ? juce::Colour (0xffff6b5a) : juce::Colours::white.withAlpha (0.88f));
+    g.drawEllipse (c.reduced (0.5f), hot ? 1.2f : 0.8f);
+    const auto x = c.reduced (c.getWidth() * 0.31f);
+    g.drawLine ({ x.getTopLeft(), x.getBottomRight() }, 1.7f);
+    g.drawLine ({ x.getBottomLeft(), x.getTopRight() }, 1.7f);
+}
 }
 
 const std::array<int, 7>& SongView::layerTracks()
@@ -124,6 +138,52 @@ public:
     explicit Names (SongView& o) : owner (o) {}
 
     int laneH = 40;
+    int hoverRow = -1;
+    juce::Point<int> hover { -1000, -1000 };
+
+    int rowAt (int y) const { return y < kHead + kRuler ? -1 : (y - kHead - kRuler) / juce::jmax (1, laneH); }
+
+    // The x that takes the row's track out of the song (only when it's in the song).
+    juce::Rectangle<float> crossFor (int row) const
+    {
+        const int size = laneH >= 30 ? 18 : 16;
+        return juce::Rectangle<int> (getWidth() - size - 8, kHead + kRuler + row * laneH + (laneH - size) / 2, size, size).toFloat();
+    }
+    bool crossShown (int row, int lane) const
+    {
+        return (row == hoverRow || lane == owner.selLane) && owner.timeline().laneUsed (lane);
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        hover = e.getPosition();
+        const auto lanes = owner.shownLanes();
+        const int row = rowAt (e.y);
+        hoverRow = juce::isPositiveAndBelow (row, (int) lanes.size()) ? row : -1;
+        setMouseCursor (hoverRow >= 0 && crossShown (hoverRow, lanes[(size_t) hoverRow]) && crossFor (hoverRow).expanded (3).contains (e.position)
+                            ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+    void mouseExit (const juce::MouseEvent&) override
+    {
+        hoverRow = -1;
+        hover = { -1000, -1000 };
+        repaint();
+    }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        const auto lanes = owner.shownLanes();
+        const int row = rowAt (e.y);
+        if (! juce::isPositiveAndBelow (row, (int) lanes.size()))
+            return;
+        const int lane = lanes[(size_t) row];
+        if (crossShown (row, lane) && crossFor (row).expanded (3).contains (e.position))
+        {
+            owner.removeLaneFromSong (lane);
+            return;
+        }
+        owner.showLane (lane);
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -148,6 +208,12 @@ public:
             g.setColour (laneColour (lane));
             g.fillRoundedRectangle (r.removeFromLeft (10).reduced (3, 6).toFloat(), 2.0f);
             r.removeFromLeft (6);
+            const bool cross = crossShown ((int) i, lane);
+            if (cross)
+            {
+                drawCross (g, crossFor ((int) i), crossFor ((int) i).expanded (3).contains (hover.toFloat()));
+                r.removeFromRight (30);
+            }
             g.setColour (p.wellInk);
             g.setFont (cond (laneH >= 36 ? 17.0f : 15.0f, Weight::bold));
             if (laneH >= 34)
@@ -199,6 +265,24 @@ public:
     {
         return juce::Rectangle<int> ((int) xFor (s.start), laneY (row), (int) (s.bars * px), laneH).reduced (2, 4);
     }
+    // The x on a section's name (deletes it) and on a box (empties it); empty when too small.
+    juce::Rectangle<float> sectionCross (const rigsong::Section& s) const
+    {
+        const auto r = sectionHead (s);
+        if (r.getWidth() < 64)
+            return {};
+        return juce::Rectangle<int> (r.getRight() - 28, 5, 18, 18).toFloat();
+    }
+    juce::Rectangle<float> boxCross (const rigsong::Section& s, int row) const
+    {
+        const auto r = boxRect (s, row);
+        const int size = laneH >= 34 ? 16 : 14;
+        if (r.getWidth() < 44 || r.getHeight() < size + 2)
+            return {};
+        return juce::Rectangle<int> (r.getRight() - size - 3, r.getY() + juce::jmin (3, (r.getHeight() - size) / 2), size, size).toFloat();
+    }
+
+    juce::Point<int> hover { -1000, -1000 };
 
     void paint (juce::Graphics& g) override
     {
@@ -258,6 +342,9 @@ public:
             g.setColour (juce::Colours::white.withAlpha (0.18f));
             const auto edge = sectionHead (s).getRight();
             g.fillRect (edge - 4, 12, 2, kHead - 24);
+            // Its x (on the picked one, or under the mouse): one click deletes it.
+            if (picked || sectionHead (s).contains (hover))
+                drawCross (g, sectionCross (s), sectionCross (s).expanded (3).contains (hover.toFloat()));
         }
 
         // The ruler.
@@ -387,6 +474,27 @@ public:
             }
         }
 
+        // The x on a box that plays something (the picked one, and the one under the mouse): empties it.
+        {
+            const auto crossOn = [&] (int section, int row)
+            {
+                if (! juce::isPositiveAndBelow (section, (int) list.size()) || ! juce::isPositiveAndBelow (row, (int) lanes.size())
+                    || rigsong::boxBlock (tl(), section, lanes[(size_t) row]) < 0)
+                    return;
+                const auto c = boxCross (list[(size_t) section], row);
+                drawCross (g, c, c.expanded (3).contains (hover.toFloat()));
+            };
+            const int hs = hover.y >= kHead + kRuler ? sectionAtX (hover.x) : -1, hr = rowAtY (hover.y);
+            crossOn (hs, hr);
+            if (owner.selLane >= 0)
+            {
+                const auto it = std::find (lanes.begin(), lanes.end(), owner.selLane);
+                const int pr = it != lanes.end() ? (int) (it - lanes.begin()) : -1;
+                if (owner.selSection != hs || pr != hr)
+                    crossOn (owner.selSection, pr);
+            }
+        }
+
         // Where it's playing.
         if (transport.isPlaying())
         {
@@ -402,7 +510,41 @@ public:
 
     void mouseMove (const juce::MouseEvent& e) override
     {
-        setMouseCursor (edgeAt (e.getPosition()) >= 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+        hover = e.getPosition();
+        setMouseCursor (edgeAt (e.getPosition()) >= 0 ? juce::MouseCursor::LeftRightResizeCursor
+                        : crossAt (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+    void mouseExit (const juce::MouseEvent&) override
+    {
+        hover = { -1000, -1000 };
+        repaint();
+    }
+
+    // An x under p: deletes its section, or empties its box. True when it did.
+    bool crossAt (juce::Point<int> p, bool press = false)
+    {
+        const auto list = rigsong::sections (tl());
+        const int section = sectionAtX (p.x);
+        if (! juce::isPositiveAndBelow (section, (int) list.size()))
+            return false;
+        const auto& s = list[(size_t) section];
+        if (p.y < kHead)
+        {
+            if (! sectionCross (s).expanded (3).contains (p.toFloat()))
+                return false;
+            if (press)
+                owner.deleteSection (section);
+            return true;
+        }
+        const auto lanes = owner.shownLanes();
+        const int row = rowAtY (p.y);
+        if (! juce::isPositiveAndBelow (row, (int) lanes.size()) || rigsong::boxBlock (tl(), section, lanes[(size_t) row]) < 0
+            || ! boxCross (s, row).expanded (3).contains (p.toFloat()))
+            return false;
+        if (press)
+            owner.emptyBox (section, lanes[(size_t) row]);
+        return true;
     }
 
     // The section whose right edge is under the mouse, on the section row.
@@ -423,6 +565,8 @@ public:
         if (dragging >= 0)
             return;
         const auto pos = e.getPosition();
+        if (! e.mods.isPopupMenu() && crossAt (pos, true))
+            return;
         if (pos.y >= kHead && pos.y < kHead + kRuler)
         {
             // The ruler: where Play starts (while the song plays, it goes there at the next bar).
@@ -502,7 +646,7 @@ public:
         level.setTextValueSuffix ("%");
         level.onValueChange = [this] { owner.setLevel ((float) level.getValue() / 100.0f); };
         addChildComponent (level);
-        for (auto* b : { &edit, &openPlay, &sameAs, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
+        for (auto* b : { &edit, &openPlay, &sameAs, &emptyIt, &dropLane, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
         {
             b->fontSize = 15.0f;
             addChildComponent (b);
@@ -528,6 +672,11 @@ public:
             owner.deleteSection (owner.selSection);
         };
         rename.onClick = [this] { owner.renameSection (owner.selSection); };
+        emptyIt.onClick = [this] { owner.emptyBox (owner.selSection, owner.selLane); };
+        emptyIt.setTooltip ("Empties this box: the track is quiet in this section. The x on the box does it too. Undo (Cmd+Z) brings it back.");
+        dropLane.onClick = [this] { owner.removeLaneFromSong (owner.selLane); };
+        dropLane.setTooltip ("Takes this track out of the whole song: every box on its row goes. The x beside its name does it too. "
+                             "Undo (Cmd+Z) brings it back.");
     }
 
     void move (int by)
@@ -546,7 +695,7 @@ public:
         const int s = owner.selSection, lane = owner.selLane;
         const bool haveSection = juce::isPositiveAndBelow (s, (int) list.size());
         const int bpb = juce::jmax (1, owner.engine.getTransport().getBeatsPerBar());
-        for (auto* b : { &edit, &openPlay, &sameAs, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
+        for (auto* b : { &edit, &openPlay, &sameAs, &emptyIt, &dropLane, &playHere, &loopIt, &copy, &moveLeft, &moveRight, &remove, &rename })
             b->setVisible (false);
         level.setVisible (false);
         title.clear();
@@ -608,6 +757,11 @@ public:
         edit.setVisible (true);
         openPlay.setVisible (true);
         sameAs.setVisible (true);
+        emptyIt.setVisible (true);
+        emptyIt.setEnabled (b != nullptr);
+        dropLane.setVisible (true);
+        dropLane.setEnabled (tl.laneUsed (lane));
+        dropLane.text = "Take " + rigsong::laneName (lane) + " out";
         if (b != nullptr)
         {
             const double len = b->length;
@@ -653,8 +807,10 @@ public:
             g.drawFittedText ("Click a box to choose what that track plays in that section, and how it comes in and goes out.\n\n"
                               "Click a section's name for its length, name and loop bank. Drag its right edge for more bars.\n\n"
                               "Double-click a box to change what it plays: its track opens in Edit on that pattern. "
-                              "Double-click an empty box: it plays what that track has on now.",
-                              r.removeFromTop (220), juce::Justification::topLeft, 12, 1.0f);
+                              "Double-click an empty box: it plays what that track has on now.\n\n"
+                              "The x on a box empties it, on a section deletes it, beside a track's name takes it out of the song. "
+                              "Undo (Cmd+Z) brings it back.",
+                              r.removeFromTop (300), juce::Justification::topLeft, 16, 1.0f);
             return;
         }
         g.setColour (p.wellInk);
@@ -714,6 +870,7 @@ public:
         };
         row ({ &edit, &openPlay });
         row ({ &sameAs });
+        row ({ &emptyIt, &dropLane });
         row ({ &playHere, &loopIt });
         row ({ &rename, &copy });
         row ({ &moveLeft, &moveRight });
@@ -749,7 +906,7 @@ private:
         sameAs { "Same as..." },
         playHere { juce::String::fromUTF8 ("\xe2\x96\xb6 Play here") }, loopIt { "Loop it" }, copy { "Copy" },
         moveLeft { juce::String::fromUTF8 ("\xe2\x97\x80 Move") }, moveRight { juce::String::fromUTF8 ("Move \xe2\x96\xb6") },
-        remove { "Delete section" }, rename { "Rename" };
+        remove { "Delete section" }, rename { "Rename" }, emptyIt { "Empty box" }, dropLane { "Take out of song" };
 };
 
 //==============================================================================
@@ -814,9 +971,10 @@ SongView::SongView (RigEngine& e) : engine (e)
     };
     moreButton.setTooltip ("More: keyboard buttons for Next and Back, clear the song.");
     moreButton.onClick = [this] { showMoreMenu(); };
-    deleteButton.sub = "picked section";
-    deleteButton.setTooltip ("Deletes the picked section (click its name, or any of its boxes) with its boxes; what comes after moves up. "
-                             "With nothing picked, it asks which. The Delete key does it too, and Undo (Cmd+Z) brings it back.");
+    deleteButton.sub = "which section?";
+    deleteButton.setTooltip ("Deletes what's picked: a picked box is emptied (that track goes quiet there), a picked section (click its name) "
+                             "goes with its boxes and what comes after moves up. With nothing picked, it asks which section. "
+                             "The Delete key does it too, and so does the x on each box, section and track. Undo (Cmd+Z) brings it back.");
     deleteButton.onClick = [this] { pressDelete(); };
     undoButton.sub = "Cmd+Z";
     undoButton.setTooltip ("Takes back the last change to the song: a deleted section, a box, a length, To Song...");
@@ -909,6 +1067,7 @@ void SongView::edited()
     if (selSection >= (int) list.size())
         select (-1, -1);
     resized();
+    updateDeleteButton();
     inspector->update();
     board->repaint();
     names->repaint();
@@ -919,6 +1078,7 @@ void SongView::select (int section, int lane)
 {
     selSection = section;
     selLane = section < 0 ? -1 : lane;
+    updateDeleteButton();
     inspector->update();
     board->repaint();
     names->repaint();
@@ -1231,11 +1391,9 @@ void SongView::showBoxMenu (int section, int lane)
     menu.addItem ("Edit " + rigsong::laneName (lane) + juce::String::fromUTF8 (" \xe2\x80\xba"), [this, section, lane] { openBox (section, lane, true); });
     menu.addItem ("Open in Play" + juce::String::fromUTF8 (" \xe2\x80\xba"), [this, section, lane] { openBox (section, lane, false); });
     menu.addSeparator();
-    menu.addItem ("Empty this box", rigsong::boxBlock (timeline(), section, lane) >= 0, false, [this, section, lane]
-                  {
-                      rigsong::clearBox (timeline(), section, lane);
-                      edited();
-                  });
+    menu.addItem ("Empty this box", rigsong::boxBlock (timeline(), section, lane) >= 0, false, [this, section, lane] { emptyBox (section, lane); });
+    menu.addItem ("Take " + rigsong::laneName (lane) + " out of the song (every section)", timeline().laneUsed (lane), false,
+                  [this, lane] { removeLaneFromSong (lane); });
     menu.addItem ("Delete section " + rigsong::letterFor (section) + dot() + list[(size_t) section].name, [this, section] { deleteSection (section); });
     menu.showMenuAsync (juce::PopupMenu::Options());
 }
@@ -1270,8 +1428,54 @@ bool SongView::deleteSection (int section)
     rigsong::removeSection (timeline(), section);
     select (-1, -1);
     edited();
-    say ("Deleted " + rigsong::letterFor (section) + " (" + name + "); what came after moved up. Undo (Cmd+Z) brings it back.");
+    deleted ("Deleted " + rigsong::letterFor (section) + " (" + name + "); what came after moved up.");
     return true;
+}
+
+bool SongView::emptyBox (int section, int lane)
+{
+    const auto list = rigsong::sections (timeline());
+    if (! juce::isPositiveAndBelow (section, (int) list.size()) || ! juce::isPositiveAndBelow (lane, RigTimeline::kLanes)
+        || rigsong::boxBlock (timeline(), section, lane) < 0)
+        return false;
+    rigsong::clearBox (timeline(), section, lane);
+    edited();
+    deleted (rigsong::laneName (lane) + " is quiet in " + rigsong::letterFor (section) + dot() + list[(size_t) section].name + " now.");
+    return true;
+}
+
+bool SongView::removeLaneFromSong (int lane)
+{
+    if (! juce::isPositiveAndBelow (lane, RigTimeline::kLanes) || rigsong::clearLane (timeline(), lane) == 0)
+        return false;
+    if (selLane == lane)
+        select (selSection, -1);
+    edited();
+    const auto lanes = shownLanes();
+    const bool rowStays = std::find (lanes.begin(), lanes.end(), lane) != lanes.end();
+    deleted (rigsong::laneName (lane) + " is out of the song" + (rowStays ? juce::String (" (its row stays, empty, to fill again).") : juce::String (".")));
+    return true;
+}
+
+void SongView::deleted (const juce::String& what)
+{
+    say (what + " Undo (Cmd+Z) brings it back.");
+    undoGlow = 30 * 5;
+    undoButton.lit = Lit::next;
+    undoButton.repaint();
+}
+
+void SongView::updateDeleteButton()
+{
+    const auto list = rigsong::sections (timeline());
+    const bool section = juce::isPositiveAndBelow (selSection, (int) list.size());
+    const bool box = section && selLane >= 0 && rigsong::boxBlock (timeline(), selSection, selLane) >= 0;
+    const juce::String sub = box ? "picked box" : section && selLane < 0 ? "picked section" : section ? "pick a full box" : "which section?";
+    if (deleteButton.sub != sub)
+    {
+        deleteButton.sub = sub;
+        deleteButton.repaint();
+    }
 }
 
 void SongView::pressDelete()
@@ -1284,6 +1488,14 @@ void SongView::pressDelete()
     }
     if (juce::isPositiveAndBelow (selSection, (int) list.size()))
     {
+        // A picked box: empty it (its section stays). A picked section: delete it.
+        if (selLane >= 0)
+        {
+            if (! emptyBox (selSection, selLane))
+                say (rigsong::laneName (selLane) + " is already quiet in " + rigsong::letterFor (selSection)
+                     + ". To delete the whole section, click its name (or its x).");
+            return;
+        }
         deleteSection (selSection);
         return;
     }
@@ -1403,6 +1615,8 @@ void SongView::timerCallback()
     setLit (loopButton, timeline().cycle.load() ? Lit::current : Lit::none);
     const bool recording = engine.getRecorder().getState() != RigRecorder::State::idle;
     setLit (recButton, recording ? Lit::arm : Lit::none);
+    if (undoGlow > 0 && --undoGlow == 0)
+        setLit (undoButton, Lit::none);
 
     // Redraw when the song changes (here, in Bars view, or by a section key) or while it plays.
     int hash = (int) timeline().getBlocks().size() * 7919 + (int) timeline().getMarkers().size() * 31;
