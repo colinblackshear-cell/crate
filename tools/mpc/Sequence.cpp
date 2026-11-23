@@ -189,6 +189,8 @@ int gridTicks (Grid g)
         case Grid::sixteenthTriplet:    return kTicksPerBeat / 6;
         case Grid::thirtySecond:        return kTicksPerBeat / 8;
         case Grid::thirtySecondTriplet: return kTicksPerBeat / 12;
+        case Grid::quarter:             return kTicksPerBeat;
+        case Grid::sixtyFourth:         return kTicksPerBeat / 16;
         case Grid::off:                 break;
     }
     return 0;
@@ -204,9 +206,28 @@ juce::String gridName (Grid g)
         case Grid::sixteenthTriplet:    return "1/16 triplets";
         case Grid::thirtySecond:        return "1/32";
         case Grid::thirtySecondTriplet: return "1/32 triplets";
+        case Grid::quarter:             return "1/4";
+        case Grid::sixtyFourth:         return "1/64";
         case Grid::off:                 break;
     }
     return "Off";
+}
+
+juce::String gridShortName (Grid g)
+{
+    switch (g)
+    {
+        case Grid::eighthTriplet:       return "1/8T";
+        case Grid::sixteenthTriplet:    return "1/16T";
+        case Grid::thirtySecondTriplet: return "1/32T";
+        default:                        break;
+    }
+    return gridName (g);
+}
+
+bool isTimingGrid (Grid g)
+{
+    return g <= Grid::thirtySecondTriplet;
 }
 
 bool gridSwings (Grid g)

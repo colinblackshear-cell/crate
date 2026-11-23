@@ -88,11 +88,17 @@ namespace seq
     // Timing correct (the MPC's name for quantize): the grid notes snap to, with swing.
     enum class Grid
     {
-        off, eighth, eighthTriplet, sixteenth, sixteenthTriplet, thirtySecond, thirtySecondTriplet
+        off, eighth, eighthTriplet, sixteenth, sixteenthTriplet, thirtySecond, thirtySecondTriplet,
+        // Note repeat's extra rates only (stored ints stay put, so these go last). Timing correct stops at
+        // thirtySecondTriplet and never offers these two: see isTimingGrid.
+        quarter, sixtyFourth
     };
 
     int gridTicks (Grid);                           // 0 for off
     juce::String gridName (Grid);
+    juce::String gridShortName (Grid);              // "1/8T" for the buttons ("1/8 triplets" in gridName)
+    // The grids timing correct (and the MPC2000XL's TC menu) offers: off to 1/32 triplets, not the repeat-only rates.
+    bool isTimingGrid (Grid);
     bool gridSwings (Grid);                         // swing applies to 1/8 and 1/16, as on the MPC
 
     // Where grid step `n` lands, with swing (50 = straight, up to 75) pushing the off-beats late.

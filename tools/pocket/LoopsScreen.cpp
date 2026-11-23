@@ -770,6 +770,8 @@ void LoopsScreen::quantizeLayer (int layer, const LoopQuantize& q)
     {
         auto filled = std::make_shared<NotePart> (*take->part);
         filled->kit = kitSounds();
+        if (drumSampleSounds)
+            filled->drumSamples = drumSampleSounds();
         take->part = filled;
     }
     auto copy = loops.copyOf (layer);
@@ -795,6 +797,8 @@ void LoopsScreen::followTempo()
         {
             auto filled = std::make_shared<NotePart> (*take->part);
             filled->kit = kitSounds();
+            if (drumSampleSounds)
+                filled->drumSamples = drumSampleSounds();
             take->part = filled;
         }
         auto copy = loops.copyOf (l);

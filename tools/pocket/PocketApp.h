@@ -27,6 +27,7 @@
 #include "ChordsScreen.h"
 #include "DroneScreen.h"
 #include "ChordEditSheet.h"
+#include "DrumKitSheet.h"
 #include "PocketKey.h"
 #include "PocketIntro.h"
 #include "PocketLesson.h"
@@ -341,6 +342,11 @@ private:
     SamplerScreen sampler;
     SamplerPadPicker padPicker;
     ChordEditSheet chordEdit { chordsTool };   // CHORDS > hold a pad > EDIT CHORD
+    DrumKitSheet drumKit { lib };   // DRUMS > KIT
+    void openDrumKit() override;
+    void closeDrumKit();
+    void refreshDrumKit();
+    juce::Rectangle<int> drumKitBounds() const;
     void openChordEdit (int pad);
     void closeChordEdit();
     juce::Rectangle<int> chordEditBounds() const;
@@ -415,7 +421,7 @@ private:
     Tool tool = Tool::pads;
     int morePageShown = -1;
     bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false, bankOpen = false, recSetupOpen = false, phonesOpen = false,
-         padPickOpen = false, chordEditOpen = false;
+         padPickOpen = false, chordEditOpen = false, drumKitOpen = false;
     juce::String shownHeader;
     bool shownBusy = false, shownPlaying = false;
     void headerTickNow();

@@ -48,6 +48,7 @@ public:
     void attachPart (int layer, std::shared_ptr<const pocket::NotePart>);
     // The pads' sounds, for rendering a PADS layer's notes again after the song is opened.
     std::function<std::vector<pocket::PadSetup>()> kitSounds;
+    std::function<std::array<crate::drums::SharedSample, crate::drums::kVoices>()> drumSampleSounds;
     // OPEN <TOOL> on the panel.
     std::function<void (pocket::Tool)> onOpenTool;
     // The layer the next take lands on: the picked empty layer, else the first empty one. -1 = all used.

@@ -43,6 +43,8 @@ juce::String RigRouting::controlName (int c)
             if (c == liveOctaveDown) return "Live key octave down";
             if (c == liveOctaveUp)   return "Live key octave up";
             if (c == liveKeyHome)    return "Live key back home";
+            if (c == noteRepeatHold) return "Note repeat (hold)";
+            if (c == noteRepeatRate) return "Note repeat rate";
             return {};
     }
 }
@@ -213,6 +215,14 @@ void RigRouting::handleController (int channel, int cc, int value, Result& resul
         used = true;
         if (isFader (c))
             result.values[(size_t) c] = (float) value / 127.0f;
+        else if (isHold (c))
+        {
+            const bool down = value >= 64, was = lastValue[(size_t) c] >= 64;
+            if (down != was)
+                result.holds[(size_t) c] = down ? 1 : 0;
+            if (down && ! was)
+                ++result.presses[(size_t) c];
+        }
         else if (value > 0 && lastValue[(size_t) c] == 0)
             ++result.presses[(size_t) c];
         lastValue[(size_t) c] = value;
@@ -257,6 +267,7 @@ void RigRouting::route (const juce::MidiBuffer& in, std::array<juce::MidiBuffer*
 {
     result.values.fill (-1.0f);
     result.presses.fill (0);
+    result.holds.fill (-1);
     result.numParamMoves = 0;
 
     const int pads = padChannel.load();

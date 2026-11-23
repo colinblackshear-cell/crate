@@ -58,7 +58,13 @@ target_sources(CrateTests PRIVATE
     RigLayers16Tests.cpp
     RigShowFilesTests.cpp
     DroneRigTests.cpp
+    NoteRepeatTests.cpp
+    DrumStepToolsTests.cpp
+    DrumSampleKitTests.cpp
+    DrumStepToolsUiTests.cpp
+    DrumKitUiTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/pocket/PocketLinkClient.cpp
+    ${PROJECT_SOURCE_DIR}/tools/pocket/BeatsEngine.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
     SoundBankTests.cpp
     SynthTests.cpp
@@ -75,7 +81,7 @@ target_sources(CrateTests PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorProcessor.cpp
     ${PROJECT_SOURCE_DIR}/tools/editor/EditorView.cpp)
 target_include_directories(CrateTests PRIVATE ${PROJECT_SOURCE_DIR}/tools/editor ${PROJECT_SOURCE_DIR}/tools/mpc ${PROJECT_SOURCE_DIR}/tools/rig ${VOCODER_INCLUDE}
-    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums ${PROJECT_SOURCE_DIR}/tools/drone)
+    ${PROJECT_SOURCE_DIR}/tools/bass ${PROJECT_SOURCE_DIR}/tools/synth ${PROJECT_SOURCE_DIR}/tools/drums ${PROJECT_SOURCE_DIR}/tools/drone ${PROJECT_SOURCE_DIR}/tools)
 target_compile_definitions(CrateTests PRIVATE
     JucePlugin_Name="Sample Editor"
     JUCE_APPLICATION_NAME_STRING="CrateTests"
