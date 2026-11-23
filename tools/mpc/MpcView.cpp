@@ -160,30 +160,22 @@ MpcView::MpcView (MpcProcessor& p)
     levelsChoice.setTooltip ("16 Levels: the picked pad's sound on all 16 pads, a step apart. Tune plays it as a scale "
                              "(a semitone a pad), Filter opens up pad by pad, Velocity goes soft to loud, Decay short to long.");
     levelsChoice.onChange = [this] { setSixteenLevels (levelsChoice.getSelectedId() - 1); };
-    noteRepeatButton.setClickingTogglesState (true);
-    noteRepeatButton.setTooltip ("Hold a pad and it plays again on every step (1/16 and so on), in time with the sequence "
-                                 "and its metronome, while it plays, records, or is stopped.");
-    noteRepeatButton.onClick = [this] { setNoteRepeat (noteRepeatButton.getToggleState(), repeatRate.getSelectedId() - 2); };
-    repeatRate.addItem ("Timing", 1);
-    for (auto g : { seq::Grid::eighth, seq::Grid::eighthTriplet, seq::Grid::sixteenth, seq::Grid::sixteenthTriplet,
-                    seq::Grid::thirtySecond, seq::Grid::thirtySecondTriplet })
-        repeatRate.addItem (seq::gridName (g), (int) g + 2);
-    repeatRate.setTooltip ("How fast held pads repeat (Timing: the sequencer's timing correct)");
-    repeatRate.onChange = [this] { setNoteRepeat (noteRepeatButton.getToggleState(), repeatRate.getSelectedId() - 2); };
+    noteRepeatButton.onContextMenu = [this] (juce::Point<int> at) { if (onNoteRepeatMenu) onNoteRepeatMenu (at); };
+    sequencer.repeatButton().onContextMenu = noteRepeatButton.onContextMenu;
+    repeatRates.onSay = [this] (const juce::String& text) { setStatus (text + " Press Rec with the metronome on to record the repeats."); };
     fullLevelButton.setClickingTogglesState (true);
     fullLevelButton.setTooltip ("Full level: every hit plays at full velocity, however hard you hit the pad");
     fullLevelButton.onClick = [this] { processor.fullLevel = fullLevelButton.getToggleState(); };
-    for (auto* b : { &noteRepeatButton, &fullLevelButton })
+    for (auto* b : { &fullLevelButton })
     {
         b->setWantsKeyboardFocus (false);
         b->setColour (juce::TextButton::buttonOnColourId, Theme::accent);
         b->setColour (juce::TextButton::textColourOnId, Theme::background);
     }
-    for (auto* c : std::initializer_list<juce::Component*> { &levelsLabel, &levelsChoice, &noteRepeatButton, &repeatLabel, &repeatRate,
+    for (auto* c : std::initializer_list<juce::Component*> { &levelsLabel, &levelsChoice, &noteRepeatButton, &repeatRates,
                                                              &fullLevelButton, &browser })
         addAndMakeVisible (c);
     levelsLabel.setJustificationType (juce::Justification::centredRight);
-    repeatLabel.setJustificationType (juce::Justification::centred);
     browser.targetPad = [this] { return grid.getSelectedPad(); };
     browser.onStatus = [this] (const juce::String& text, bool warning) { setStatus (text, warning); };
     browser.onPlaced = [this] (int pad) { showPadBank (pad / kPadsPerBank); selectPad (pad); grid.repaint(); };
@@ -266,8 +258,7 @@ void MpcView::timerCallback()
     // The pad bank on screen can be changed from elsewhere (the Rig's Sampler screen).
     if (const int bank = juce::jlimit (0, 3, processor.padBankOnScreen.load()); bank != grid.getPadBank())
         showPadBank (bank);
-    if (noteRepeatButton.getToggleState() != processor.getSequencer().noteRepeat.load()
-        || fullLevelButton.getToggleState() != processor.fullLevel.load()
+    if (fullLevelButton.getToggleState() != processor.fullLevel.load()
         || levelsChoice.getSelectedId() != processor.levelsType.load() + 1)
     {
         updatePadTools();
@@ -316,8 +307,10 @@ void MpcView::setSixteenLevels (int type)
 void MpcView::setNoteRepeat (bool on, int gridChoice)
 {
     auto& engine = processor.getSequencer();
-    engine.repeatGrid = gridChoice;
-    engine.noteRepeat = on;
+    if (gridChoice > 0)
+        engine.repeatGrid = gridChoice;
+    engine.setRepeatLatched (on);
+    repeatRates.refresh();
     updatePadTools();
     if (on)
         setStatus ("Note repeat: hold a pad and it repeats every " + seq::gridName (engine.getRepeatGrid())
@@ -326,12 +319,8 @@ void MpcView::setNoteRepeat (bool on, int gridChoice)
 
 void MpcView::updatePadTools()
 {
-    const auto& engine = processor.getSequencer();
     const int type = processor.levelsType.load();
     levelsChoice.setSelectedId (type + 1, juce::dontSendNotification);
-    noteRepeatButton.setToggleState (engine.noteRepeat.load(), juce::dontSendNotification);
-    const int rate = engine.repeatGrid.load();
-    repeatRate.setSelectedId (rate > 0 ? rate + 2 : 1, juce::dontSendNotification);
     fullLevelButton.setToggleState (processor.fullLevel.load(), juce::dontSendNotification);
     levelsLabel.setText (type == levels::off ? juce::String ("16 Levels")
                                              : "16 Levels of " + padLabel (juce::jlimit (0, mpc::kPadCount - 1, processor.levelsPad.load())),
@@ -350,7 +339,7 @@ void MpcView::setHosted (juce::LookAndFeel* look, std::function<void (juce::Grap
     setLookAndFeel (look);
     // The host's screen has these.
     for (auto* c : std::initializer_list<juce::Component*> { &grid, &browser, &levelsLabel, &levelsChoice, &noteRepeatButton,
-                                                             &repeatLabel, &repeatRate, &fullLevelButton })
+                                                             &repeatRates, &fullLevelButton })
         c->setVisible (false);
     for (auto& tab : bankTabs)
         tab.setVisible (false);
@@ -552,7 +541,7 @@ void MpcView::resized()
     r.removeFromTop (8);
     sequencer.setBounds (r);
     {
-        auto tools = r.removeFromTop (28);
+        auto tools = r.removeFromTop (34);
         // Narrow windows squeeze the row rather than lose any of it.
         const float scale = juce::jmin (1.0f, (float) tools.getWidth() / 620.0f);
         auto take = [&tools, scale] (int width) { return tools.removeFromLeft (juce::roundToInt (width * scale)); };
@@ -560,10 +549,11 @@ void MpcView::resized()
         take (6);
         levelsChoice.setBounds (take (130));
         take (16);
-        noteRepeatButton.setBounds (take (104));
-        repeatLabel.setBounds (take (24));
-        repeatRate.setBounds (take (110));
+        noteRepeatButton.setBounds (take (150));
         fullLevelButton.setBounds (tools.removeFromRight (juce::roundToInt (92 * scale)));
+        // The rates take a row of their own under it.
+        r.removeFromTop (4);
+        repeatRates.setBounds (r.removeFromTop (26));
     }
     r.removeFromTop (8);
     if (browser.isVisible())

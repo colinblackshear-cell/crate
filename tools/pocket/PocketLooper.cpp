@@ -88,6 +88,7 @@ bool LoopsEngine::arm (int layer, LoopSource source, int bars, int tool, int tap
     take->source = (int) source;
     take->tool = tool >= 0 ? tool : toolForSource ((int) source);
     setRegion (layer, 0, 0);
+    layers[(size_t) layer].keepTop = false;
     resetFx (layer);   // a new recording starts with its effects off
     resetBoard (layer);   // and its board neutral: what the take went through is in its sound already
     if (takes[(size_t) layer] != nullptr)
@@ -363,6 +364,23 @@ void LoopsEngine::maintain()
             retired.push_back ({ takes[(size_t) i], now });
             takes[(size_t) i] = nullptr;
         }
+    // New loops onto the shared bars: a turned copy, from the same place (it sounds the same).
+    for (int i = 0; i < kLoopLayers; ++i)
+    {
+        auto& l = layers[(size_t) i];
+        const double shift = l.uiShift.load();
+        if (shift == 0.0 || state (i) != LoopState::playing || l.pending.load() > 0 || takes[(size_t) i] == nullptr)
+            continue;
+        auto t = copyOf (i);
+        const int len = t->length.load();
+        const double beats = t->lengthBeats.load();
+        if (len < 2 || beats <= 0.0)
+            continue;
+        const int by = (int) (std::llround (shift / beats * len) % len);
+        if (by > 0)
+            std::rotate (t->data.begin(), t->data.begin() + (len - by), t->data.begin() + len);
+        setLayer (i, t, isMuted (i), l.uiStart.load() - shift);
+    }
     retired.erase (std::remove_if (retired.begin(), retired.end(), [now] (auto& r) { return now - r.second > 4000; }), retired.end());
 }
 
@@ -460,6 +478,7 @@ void LoopsEngine::handle (const Cmd& c)
             {
                 l.lenBeats = c.take->lengthBeats.load();
                 l.startBeat = c.beat;
+                setShift (l, 0.0);
                 setState (l, LoopState::playing);
                 ++l.version;
             }
@@ -473,6 +492,7 @@ void LoopsEngine::release (Layer& l)
     l.take = nullptr;
     l.armBeat = -1;
     l.uiCounting = false;
+    setShift (l, 0.0);
     setState (l, LoopState::empty);
     ++l.version;
 }
@@ -491,6 +511,36 @@ void LoopsEngine::finishRecording (Layer& l, double end)
     l.lenBeats = end - l.startBeat;
     l.take->lengthBeats = l.lenBeats;
     l.uiRecorded = l.writeIdx;
+    // Onto the shared bars: its bar 1 where the other loops' is (the longest one playing), so the playheads
+    // move together. It sounds the same: maintain() turns the sound round as much as it moves the start.
+    // (With none playing, a take still recording that began earlier is the one to line up with.)
+    double shift = 0.0, refBeats = 0.0, refAnchor = 0.0, earliestTake = l.startBeat;
+    if (! l.keepTop.load())
+        for (auto& o : layers)
+        {
+            if (&o != &l && o.st == LoopState::recording && o.startBeat < earliestTake)
+                earliestTake = o.startBeat;
+            if (&o == &l || o.take == nullptr || o.lenBeats <= refBeats)
+                continue;
+            if (o.st != LoopState::playing && o.st != LoopState::overdubWait && o.st != LoopState::overdubbing)
+                continue;
+            refBeats = o.lenBeats;
+            refAnchor = o.startBeat - o.shift;
+        }
+    if (refBeats <= 0.0 && earliestTake < l.startBeat)
+    {
+        refBeats = 1.0;
+        refAnchor = earliestTake;
+    }
+    if (refBeats > 0.0 && l.lenBeats > 0.0)
+    {
+        shift = std::fmod (l.startBeat - refAnchor, l.lenBeats);
+        if (shift < 0.0)
+            shift += l.lenBeats;
+        if (shift < 1.0e-6 || l.lenBeats - shift < 1.0e-6)
+            shift = 0.0;
+    }
+    setShift (l, shift);
     setState (l, LoopState::playing);
     ++l.version;
 }
@@ -575,7 +625,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
             if (running)
             {
                 if (l.st == LoopState::playing || l.st == LoopState::overdubWait || l.st == LoopState::overdubbing)
-                    l.startBeat = 0;   // loops start again from their top with the clock
+                    l.startBeat = l.shift;   // loops start again from their top (bar 1) with the clock, together
                 if (l.st == LoopState::waiting)
                 {
                     l.armBeat = -1;
@@ -945,7 +995,10 @@ void LoopsEngine::playLayer (Layer& l, int index, double blockBeat, double bps, 
             pos -= loopEnd - loopStart;
     }
     l.gain = g;
-    l.uiPos = (float) (pos / (double) len);
+    // Where it is on the shared bars (the same for every loop).
+    double shown = pos / (double) len - l.shift / lenBeats;
+    shown -= std::floor (shown);
+    l.uiPos = (float) shown;
 
     // the layer's effects, at the knobs (or their moves) for this part of the loop
     float values[kFxKnobs];

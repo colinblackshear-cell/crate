@@ -200,7 +200,7 @@ struct RigMpcUnitTests : juce::UnitTest
             engine.getMpc().getProject().changed();
             view.goTo ("Sampler");
             screen->setSide (SamplerScreen::chopSide);
-            screen->pressEditPad();
+            screen->pressQuickEditPad();
             expect (screen->getSide() == SamplerScreen::mpcSide);
             expect (mpc->isEditingSound());
 
