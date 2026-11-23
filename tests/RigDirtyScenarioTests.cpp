@@ -198,15 +198,24 @@ struct RigDirtyScenarioTests : juce::UnitTest
             e->playOrStop();
             r.seconds (0.1);
             expectState (*e, RigDirty::State::clean, "played again, stopped");
-            cutoff->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, savedCutoff + 0.2f));
+            // (A save makes what it wrote yours: "as saved" is the file's value, which here is
+            // what playback had left when it was saved.)
+            float fileCutoff = 0;
+            bool fileDrumsMute = false;
+            {
+                auto reopened = openSaved (again);
+                fileCutoff = dynamic_cast<juce::RangedAudioParameter*> (paramOf (reopened->getBass(), "cutoff"))->convertFrom0to1 (paramOf (reopened->getBass(), "cutoff")->getValue());
+                fileDrumsMute = reopened->getStrip (RigEngine::drumsStrip).mute.load();
+            }
+            juce::ignoreUnused (savedCutoff);
+            hand (e->getBass(), "cutoff", fileCutoff < 4000.0f ? fileCutoff + 1000.0f : fileCutoff - 1000.0f);
             expectState (*e, RigDirty::State::dirty, "the automated cutoff by hand");
-            cutoff->setValueNotifyingHost (savedCutoff);
-            expectState (*e, RigDirty::State::clean, "and back");
-            expect (! e->getStrip (RigEngine::drumsStrip).mute.load(), "the song left the drums on");
-            handStripMute (*e, RigEngine::drumsStrip, false);
-            expectState (*e, RigDirty::State::dirty, "the drums unmuted by hand (what the song left)");
-            handStripMute (*e, RigEngine::drumsStrip, true);
-            expectState (*e, RigDirty::State::clean, "and muted again (as saved)");
+            hand (e->getBass(), "cutoff", fileCutoff);
+            expectState (*e, RigDirty::State::clean, "and back to the file's value");
+            handStripMute (*e, RigEngine::drumsStrip, ! fileDrumsMute);
+            expectState (*e, RigDirty::State::dirty, "the drums' mute by hand");
+            handStripMute (*e, RigEngine::drumsStrip, fileDrumsMute);
+            expectState (*e, RigDirty::State::clean, "and back as the file has it");
         }
         {
             beginTest ("A hand edit that the lane then overwrites stays an edit");
@@ -302,7 +311,271 @@ struct RigDirtyScenarioTests : juce::UnitTest
             handLoopMute (*e, 0, true);
             expectState (*e, RigDirty::State::clean, "muted by hand, as saved");
         }
+        stabilised (folder);
         folder.deleteRecursively();
+    }
+
+    //==========================================================================
+    // A document save makes what it wrote yours: the file, the baseline and "yours" agree.
+    struct SlotsSeen
+    {
+        float cutoff = 0, drums = 0, bank = 0, loop1 = 0;
+        bool cutoffOn = false, drumsOn = false, bankOn = false, loop1On = false;
+        bool operator== (const SlotsSeen& o) const
+        {
+            return juce::exactlyEqual (cutoff, o.cutoff) && juce::exactlyEqual (drums, o.drums) && juce::exactlyEqual (bank, o.bank) && juce::exactlyEqual (loop1, o.loop1)
+                   && cutoffOn == o.cutoffOn && drumsOn == o.drumsOn && bankOn == o.bankOn && loop1On == o.loop1On;
+        }
+    };
+    static SlotsSeen slotsOf (RigEngine& e)
+    {
+        SlotsSeen s;
+        auto& d = e.getDirty();
+        d.paramSlotForTests (paramOf (e.getBass(), "cutoff"), s.cutoff, s.cutoffOn);
+        d.fieldSlotForTests (RigDirty::stripMute, RigEngine::drumsStrip, s.drums, s.drumsOn);
+        d.fieldSlotForTests (RigDirty::bankCurrent, 0, s.bank, s.bankOn);
+        d.fieldSlotForTests (RigDirty::loopMute, 0, s.loop1, s.loop1On);
+        return s;
+    }
+    static float plainCutoff (RigEngine& e)
+    {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*> (paramOf (e.getBass(), "cutoff"));
+        return p->convertFrom0to1 (p->getValue());
+    }
+
+    void stabilised (const juce::File& folder)
+    {
+        // The CP1 show plus: loop 1 muted in bank A and played by both sections, whose banks
+        // are A then B (so the song unmutes it, and moves banks, while it plays).
+        const auto file = folder.getChildFile ("Stab.crateshow");
+        {
+            auto e = std::make_unique<RigEngine>();
+            e->prepare (kRate, kBlock);
+            buildRich (*e, 2);
+            e->getLooper().getLayer (0).mute = true;
+            auto& t = e->getTimeline();
+            rigsong::setBox (t, 0, RigTimeline::laneForLoop (0), 0);
+            rigsong::setBox (t, 1, RigTimeline::laneForLoop (0), 0);
+            t.getMarkers()[0].loopBank = 0;
+            t.getMarkers()[1].loopBank = 1;
+            t.changed();
+            Runner r { *e };
+            r.seconds (0.1);
+            expect (e->saveShowFile (file).ok);
+        }
+        const auto saved = folder.getChildFile ("Stab saved playing.crateshow");
+        RigDirty::Flat savedBaseline;
+        {
+            beginTest ("Saved while the song plays: the file is the baseline, through a bank change, stop and restart");
+            auto e = openSaved (file);
+            Runner r { *e };
+            expectState (*e, RigDirty::State::clean, "opened");
+            e->launchSection (0);
+            r.beats (3);
+            expect (e->getTransport().isPlaying());
+            expect (! e->getLooper().getLayer (0).mute.load(), "the song unmuted loop 1");
+            expect (e->saveShowFile (saved, rigshow::SaveKind::document).ok);
+            expectState (*e, RigDirty::State::clean, "right after the save");
+            savedBaseline = e->getDirty().baselineForTests();
+            expect (! savedBaseline.empty());
+            r.beats (8);
+            expectEquals (e->getCurrentLoopBank(), 1, "the second section brought bank B");
+            expectState (*e, RigDirty::State::clean, "played on into the next section and bank");
+            e->getTransport().stop();
+            r.seconds (0.1);
+            expectState (*e, RigDirty::State::clean, "stopped");
+            e->launchSection (0);
+            r.beats (6);
+            expectState (*e, RigDirty::State::clean, "playing again");
+            e->getTransport().stop();
+            r.seconds (0.1);
+            expectState (*e, RigDirty::State::clean, "stopped again");
+            expect (e->getDirty().getStats().slotsAdopted > 0, "the save made its values yours");
+        }
+        {
+            beginTest ("Saved while the song plays: reopened, the show is what the session called saved");
+            auto e = openSaved (saved);
+            expectState (*e, RigDirty::State::clean, "reopened");
+            const auto reopened = e->getDirty().baselineForTests();
+            int differ = 0;
+            for (const auto& [k, v] : savedBaseline)
+                if (const auto it = reopened.find (k); it == reopened.end() || it->second != v)
+                    if (differ++ < 6)
+                        logMessage ("    " + juce::String (k) + ": " + juce::String (v) + " -> " + (it == reopened.end() ? juce::String ("(gone)") : juce::String (it->second)));
+            for (const auto& [k, v] : reopened)
+                if (savedBaseline.count (k) == 0 && differ++ < 6)
+                    logMessage ("    " + juce::String (k) + ": (new) " + juce::String (v));
+            expectEquals (differ, 0, "the reopened show's settings equal the saving session's baseline");
+        }
+        float fileCutoff = 0;
+        bool fileDrums = false, fileLoop1 = false;
+        int fileBank = 0;
+        {
+            auto e = openSaved (saved);
+            fileCutoff = plainCutoff (*e);
+            fileDrums = e->getStrip (RigEngine::drumsStrip).mute.load();
+            fileLoop1 = e->getLooper().getLayer (0).mute.load();
+            fileBank = e->getCurrentLoopBank();
+        }
+        {
+            beginTest ("Saved while the song plays: edits after it count, and putting back the file's values is clean");
+            auto e = openSaved (file);
+            Runner r { *e };
+            e->launchSection (0);
+            r.beats (3);
+            expect (e->saveShowFile (folder.getChildFile ("Stab saved 2.crateshow"), rigshow::SaveKind::document).ok);
+            r.beats (8);
+            e->getTransport().stop();
+            r.seconds (0.1);
+            expectState (*e, RigDirty::State::clean, "after the song");
+            hand (e->getBass(), "cutoff", fileCutoff < 4000.0f ? fileCutoff + 1000.0f : fileCutoff - 1000.0f);
+            expectState (*e, RigDirty::State::dirty, "the automated cutoff by hand");
+            hand (e->getBass(), "cutoff", fileCutoff);
+            expectState (*e, RigDirty::State::clean, "back to the file's cutoff");
+            expect (e->getStrip (RigEngine::drumsStrip).mute.load() == fileDrums, "the drums as the song left them, which is as saved");
+            handStripMute (*e, RigEngine::drumsStrip, fileDrums);
+            expectState (*e, RigDirty::State::clean, "the drums' mute pressed to what the file has");
+            handStripMute (*e, RigEngine::drumsStrip, ! fileDrums);
+            expectState (*e, RigDirty::State::dirty, "the drums' mute changed by hand");
+            handStripMute (*e, RigEngine::drumsStrip, fileDrums);
+            expectState (*e, RigDirty::State::clean, "and back");
+            expect (e->getCurrentLoopBank() != fileBank, "the song left the other bank on");
+            e->switchLoopBank (e->getCurrentLoopBank());   // picked by hand: the one that's on
+            e->serviceLoopBanks();
+            expectState (*e, RigDirty::State::dirty, "the bank the song left, picked by hand");
+            e->switchLoopBank (fileBank);
+            e->serviceLoopBanks();
+            r.seconds (0.05);
+            expectState (*e, RigDirty::State::clean, "the file's bank by hand");
+            expect (e->getLooper().getLayer (0).mute.load() == fileLoop1, "its loop 1 as saved");
+        }
+        {
+            beginTest ("An edit made while the save is written stays an edit, and its slot is left alone");
+            auto e = openSaved (file);
+            Runner r { *e };
+            e->launchSection (0);
+            r.beats (3);
+            auto* bass = &e->getBass();
+            auto* engine = e.get();
+            float handCutoff = 0;
+            rigshow::hooks().at = [&] (const juce::String& p, int)
+            {
+                if (p == "beforeCommit")
+                {
+                    handCutoff = plainCutoff (*engine) < 4000.0f ? plainCutoff (*engine) + 1500.0f : plainCutoff (*engine) - 1500.0f;
+                    hand (*bass, "cutoff", handCutoff);
+                    handStripMute (*engine, RigEngine::bassStrip, ! engine->getStrip (RigEngine::bassStrip).mute.load());
+                }
+                return true;
+            };
+            const auto before = e->getDirty().getStats().slotsKeptForEdits;
+            const auto saveFile = folder.getChildFile ("Stab edited during.crateshow");
+            const auto ok = e->saveShowFile (saveFile, rigshow::SaveKind::document).ok;
+            rigshow::hooks().at = nullptr;
+            expect (ok);
+            expect (e->getDirty().getStats().slotsKeptForEdits >= before + 2, "both edited slots kept out of the save");
+            float a = 0;
+            bool on = true;
+            e->getDirty().paramSlotForTests (paramOf (e->getBass(), "cutoff"), a, on);
+            expect (! on, "the cutoff is yours (the save didn't make it playback's again)");
+            expectState (*e, RigDirty::State::dirty, "after the save");
+            auto reopened = openSaved (saveFile);
+            hand (e->getBass(), "cutoff", plainCutoff (*reopened));
+            handStripMute (*e, RigEngine::bassStrip, reopened->getStrip (RigEngine::bassStrip).mute.load());
+            e->getTransport().stop();
+            r.seconds (0.05);
+            expectState (*e, RigDirty::State::clean, "both put back as the file has them");
+        }
+        {
+            beginTest ("Saves that don't count change neither the baseline nor what's yours");
+            auto e = openSaved (file);
+            Runner r { *e };
+            e->launchSection (0);
+            r.beats (11);
+            e->getTransport().stop();
+            r.seconds (0.05);
+            expectState (*e, RigDirty::State::clean, "after the song");
+            const auto base = e->getDirty().baselineForTests();
+            const auto slots = slotsOf (*e);
+            expect (slots.cutoffOn && slots.drumsOn, "playback's slots are in use");
+            auto same = [&] (const juce::String& what)
+            {
+                expect (e->getDirty().baselineForTests() == base, what + ": the baseline as it was");
+                expect (slotsOf (*e) == slots, what + ": what's yours as it was");
+                expectState (*e, RigDirty::State::clean, what);
+            };
+            rigshow::hooks().at = [] (const juce::String& p, int) { return p != "commit"; };
+            expect (! e->saveShowFile (folder.getChildFile ("Stab failed.crateshow"), rigshow::SaveKind::document).ok);
+            rigshow::hooks().at = nullptr;
+            same ("a failed save");
+            expect (e->saveShowFile (folder.getChildFile ("Stab copy.crateshow")).ok);
+            same ("a copy's save");
+            auto& d = e->getDirty();
+            auto a = d.beginSave();
+            auto b = d.beginSave();
+            d.beforeTree (a);
+            d.captureSave (a, e->saveShow(), {}, {});
+            d.finishSave (a, true, rigshow::SaveKind::document);
+            same ("an older save finishing after a newer one began");
+            d.finishSave (b, false, rigshow::SaveKind::document);
+            same ("and the newer one failing");
+        }
+        {
+            beginTest ("A song part coming in while the save reads the show: the file is still the baseline");
+            const auto parts = folder.getChildFile ("Stab parts.crateshow");
+            {
+                auto e = std::make_unique<RigEngine>();
+                e->prepare (kRate, kBlock);
+                e->getTransport().setBpm (240.0);
+                e->getLooper().setLayerAudio (0, noise ((int) kRate, 1), 4.0);
+                e->getLooper().setLayerAudio (1, noise ((int) kRate, 2), 4.0);
+                for (int k = 0; k < 4; ++k)
+                {
+                    RigScene part;
+                    part.name = "Part " + juce::String (k + 1);
+                    part.bars = 1;
+                    const int on = k % 2;
+                    part.state.stripMutes[(size_t) RigEngine::bassStrip] = on;
+                    part.state.loopMutes[0] = on;
+                    part.state.loopMutes[1] = 1 - on;
+                    part.state.vocoderOn = on;
+                    part.state.inputOn = 1 - on;
+                    e->getScenes().getScenes().push_back (part);
+                }
+                e->getScenes().songMode = true;
+                expect (e->saveShowFile (parts).ok);
+            }
+            auto e = openSaved (parts);
+            Runner r { *e };
+            expectState (*e, RigDirty::State::clean, "opened");
+            e->getTransport().play();
+            e->getScenes().launch (0);
+            r.beats (1.5);
+            const int before = e->getScenes().getCurrent();
+            int during = before;
+            RigDirty::afterBeforeTreeForTests = [&]
+            {
+                // The next part lands now, between the edit counts and the tree.
+                for (int i = 0; i < 400 && e->getScenes().getCurrent() == before; ++i)
+                    r.block();
+                during = e->getScenes().getCurrent();
+            };
+            const auto partsSaved = folder.getChildFile ("Stab parts saved.crateshow");
+            const bool ok = e->saveShowFile (partsSaved, rigshow::SaveKind::document).ok;
+            RigDirty::afterBeforeTreeForTests = nullptr;
+            expect (ok);
+            expect (during != before, "a part came in mid-save");
+            expectState (*e, RigDirty::State::clean, "after the save");
+            const auto base = e->getDirty().baselineForTests();
+            r.beats (10);
+            expectState (*e, RigDirty::State::clean, "parts playing on");
+            e->getTransport().stop();
+            r.seconds (0.05);
+            expectState (*e, RigDirty::State::clean, "stopped");
+            auto reopened = openSaved (partsSaved);
+            expectState (*reopened, RigDirty::State::clean, "reopened");
+            expect (reopened->getDirty().baselineForTests() == base, "the reopened show is what the session called saved");
+        }
     }
 };
 
