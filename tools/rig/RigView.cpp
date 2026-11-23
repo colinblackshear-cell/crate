@@ -410,11 +410,12 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     };
     dock.length.onClick = [this]
     {
-        static const int lengths[] = { 1, 2, 4, 8, 16, 0 };
+        static const int lengths[] = { 1, 2, 4, 8, 16, 32, 64, 0 };
+        constexpr int count = (int) std::size (lengths);
         int i = 0;
-        while (i < 6 && lengths[i] != recLength)
+        while (i < count && lengths[i] != recLength)
             ++i;
-        recLength = lengths[(i + 1) % 6];
+        recLength = lengths[(i + 1) % count];
         saveRecSetup();
         updateDock();
     };
@@ -1362,7 +1363,7 @@ void RigView::pressRec()
 void RigView::setRecSetup (int countInBars, int lengthBars)
 {
     recCountIn = juce::jlimit (0, 2, countInBars);
-    recLength = juce::jlimit (0, 16, lengthBars);
+    recLength = juce::jlimit (0, RigLooper::kMaxBars, lengthBars);
     saveRecSetup();
     updateDock();
 }
@@ -1591,7 +1592,7 @@ void RigView::loadRecSetup()
     if (xml == nullptr)
         return;
     recCountIn = juce::jlimit (0, 2, xml->getIntAttribute ("recCountIn", recCountIn));
-    recLength = juce::jlimit (0, 16, xml->getIntAttribute ("recLength", recLength));
+    recLength = juce::jlimit (0, RigLooper::kMaxBars, xml->getIntAttribute ("recLength", recLength));
 }
 
 void RigView::saveRecSetup()

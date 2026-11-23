@@ -1566,7 +1566,7 @@ void PocketApp::closeTempo()
 
 juce::Rectangle<int> PocketApp::recSetupBounds() const
 {
-    const int h = 336 + insets.getBottom();
+    const int h = 390 + insets.getBottom();
     return { 0, getHeight() - h, getWidth(), h };
 }
 
@@ -1920,10 +1920,13 @@ void PocketApp::recPads()
         return toast ("All 8 layers are used. Clear one in LOOPS to record.");
     auto& p = beats.drums().padPattern;
     const bool empty = p.hits.empty();
-    if (const int bars = appSettings.recBars(); empty && bars > 0 && bars != p.bars)
+    // The pattern grows to the take's length up to 8 bars; a longer take (16, 32, 64 bars) plays the pattern
+    // round on the layer for all of it, like PLAY LIVE on the drum machine.
+    const int want = appSettings.recBars();
+    if (const int bars = juce::jmin (8, want); empty && bars > 0 && bars != p.bars)
         beats.setPatternBars (bars);
     lockLen = p.lengthBeats();
-    lockBars = p.bars;
+    lockBars = empty && want > p.bars ? want : p.bars;
     const bool running = b.clockRunning();
     const double now = running ? b.clockBeat() : 0.0;
     padsFrom = running ? now : appSettings.countInBars * 4.0;   // the clock starts at 0: the count-in comes first

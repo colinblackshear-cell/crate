@@ -85,7 +85,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "The Sequencer + Kits side (beside the same pads) is the rest of the MPC: Play, Rec and steps, songs, your kits, and the picked pad's settings. Tapping a pad only plays it; Edit (or a triple-click on the pad) opens its sound editor.",
             "Remove A01 (over the pads), or right-click a pad, takes its sound off. Undo remove puts it back.",
             "Beat on/off: the MPC's sequence plays whenever the Rig plays, or stays quiet (the pads still play). Its Play, Stop and Rec are the Rig's.",
-            "Loop pads records the MPC into the next empty looper layer from the next bar (Free, or 1 to 16 bars). Switch Beat off to loop just what you play." },
+            "Loop pads records the MPC into the next empty looper layer from the next bar (Free, or 1 to 64 bars). Switch Beat off to loop just what you play." },
           "Hits you record with 16 Levels keep their level when the sequence plays them back." },
 
         { "Build a song (Song, F3)",

@@ -95,7 +95,9 @@ public:
             snapshot (view, "-rec-setup");
             setup->countIns[2]->onClick();
             expectEquals (view.getRecCountIn(), 2);
-            setup->lengths[5]->onClick();
+            setup->lengths[6]->onClick();
+            expectEquals (view.getRecLength(), 64, "64 bars, past 16");
+            setup->lengths.getLast()->onClick();
             expectEquals (view.getRecLength(), 0, "Free");
             setup->lands[2]->onClick();
             expect (view.getRecLands() == RigView::RecLands::sample);

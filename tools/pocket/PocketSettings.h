@@ -17,7 +17,7 @@ public:
             // Older versions kept a count-in switch (1 bar or off) and Sing's own length: they become the
             // one Rec setup that every tool uses.
             countInBars = juce::jlimit (0, 2, p.contains ("countInBars") ? (int) p["countInBars"] : ((bool) p.getWithDefault ("countIn", true) ? 1 : 0));
-            recLength = juce::jlimit (0, 4, p.contains ("recLength") ? (int) p["recLength"] : (int) p.getWithDefault ("singLength", 2));
+            recLength = juce::jlimit (0, kLengthChoices - 1, p.contains ("recLength") ? (int) p["recLength"] : (int) p.getWithDefault ("singLength", 2));
             click = (bool) p.getWithDefault ("click", false);
             singMode = juce::jlimit (0, 2, (int) p.getWithDefault ("singMode", 1));
             singHold = (bool) p.getWithDefault ("singHold", true);
@@ -26,7 +26,9 @@ public:
     }
 
     // Rec setup, the same for every tool: a count-in of 0, 1 or 2 bars when REC starts the song (the click
-    // plays through it even with CLICK off), and how long a take is: 0..4 = 1, 2, 4, 8 bars, FREE.
+    // plays through it even with CLICK off), and how long a take is: 0..4 = 1, 2, 4, 8 bars, FREE, then
+    // 5..7 = 16, 32, 64 bars (added later, after FREE, so saved settings keep their meaning). The Rec setup
+    // sheet shows them in bar order: kLengthOrder.
     int countInBars = 1;
     int recLength = 2;
     bool click = false;    // a click on every beat while the song plays (the thumb bar's CLICK)
@@ -36,11 +38,14 @@ public:
     bool singHold = true, singPadSound = false;
 
     // The take's length in bars, 0 = FREE (until stopped, or the first layer's length).
-    int recBars() const { static const int bars[5] = { 1, 2, 4, 8, 0 }; return bars[juce::jlimit (0, 4, recLength)]; }
+    static constexpr int kLengthChoices = 8;
+    static constexpr int kLengthOrder[kLengthChoices] = { 0, 1, 2, 3, 5, 6, 7, 4 };   // 1 .. 64 bars, then FREE
+    static int barsOf (int choice) { static const int bars[kLengthChoices] = { 1, 2, 4, 8, 0, 16, 32, 64 }; return bars[juce::jlimit (0, kLengthChoices - 1, choice)]; }
+    int recBars() const { return barsOf (recLength); }
     static juce::String lengthText (int choice)
     {
-        static const char* names[5] = { "1 BAR", "2 BARS", "4 BARS", "8 BARS", "FREE" };
-        return names[juce::jlimit (0, 4, choice)];
+        const int bars = barsOf (choice);
+        return bars == 0 ? juce::String ("FREE") : juce::String (bars) + (bars == 1 ? " BAR" : " BARS");
     }
     static juce::String countInText (int bars) { return bars == 0 ? juce::String ("OFF") : bars == 1 ? juce::String ("1 BAR") : juce::String ("2 BARS"); }
 

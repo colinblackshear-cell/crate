@@ -13,7 +13,7 @@
 // Press record on a layer and it starts at the next bar (or right away if the clock was
 // stopped: the clock starts with it). Press again and it stops at the end of that bar, so a
 // loop is always a whole number of bars and stays locked to the beat. Pick a length first
-// (1, 2, 4, 8 or 16 bars) and it stops by itself. Press record on a playing layer to overdub
+// (1, 2, 4, 8, 16, 32 or 64 bars) and it stops by itself. Press record on a playing layer to overdub
 // over it; Undo takes back the last overdub. Each layer records from one source: your audio
 // input, one of the tools, or the whole Rig mix (never the loops themselves).
 //
@@ -28,6 +28,7 @@ class RigLooper
 {
 public:
     static constexpr int kLayers = 16;
+    static constexpr int kMaxBars = 64;   // the longest set length (Free goes on to kMaxRecordSeconds)
     // Each layer starts with room for kStartSeconds; while it records, maintain() gives it more
     // in the background, up to kMaxRecordSeconds (so a long loop only takes memory when you make one):
     // a take as long as a whole long set. All the layers together stop growing at
@@ -51,7 +52,7 @@ public:
     // sources go at the end, so saved shows keep theirs.
     enum Source { input, vocoder, bass, synth, mpc, sampler, mix, line, drums, drone, numSources };
     static juce::String sourceName (int);
-    static const std::array<int, 6>& barChoices();   // 0 (until you press again), 1, 2, 4, 8, 16
+    static const std::array<int, 8>& barChoices();   // 0 (until you press again), 1, 2, 4, 8, 16, 32, 64
 
     struct Layer
     {

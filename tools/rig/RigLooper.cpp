@@ -26,9 +26,9 @@ juce::String RigLooper::sourceName (int s)
     }
 }
 
-const std::array<int, 6>& RigLooper::barChoices()
+const std::array<int, 8>& RigLooper::barChoices()
 {
-    static const std::array<int, 6> choices { 0, 1, 2, 4, 8, 16 };
+    static const std::array<int, 8> choices { 0, 1, 2, 4, 8, 16, 32, 64 };
     return choices;
 }
 
