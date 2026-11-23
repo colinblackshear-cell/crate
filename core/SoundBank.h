@@ -6,6 +6,8 @@
 #include <atomic>
 #include <vector>
 
+#include "TempoFilter.h"
+
 // The sound bank: every sample you have, from your own folders and Splice, in one place you
 // can search. It scans the folders in the background, sorts each sound into a kind (kick,
 // snare, hat, bass, vocal...) from its name and the folders it's in, and picks up the tempo
@@ -28,6 +30,7 @@ public:
         int kind = other;
         bool loop = false;
         double bpm = 0;         // 0 = not known
+        bool bpmGuessed = false; // a loop with no tempo written on it: worked out from its length
         juce::String key;       // e.g. "F min", empty if not known
         float seconds = 0;
         juce::int64 size = 0, modified = 0;
@@ -59,6 +62,9 @@ public:
         int kind = -1;          // -1 = any
         Length length = Length::any;
         double nearBpm = 0;     // > 0: loops within 8% of this tempo (or half / double it)
+        // Sounds at this tempo (exact, a range or near), closest first. A tempo written in the
+        // text ("92bpm", "90-100 bpm") is taken out of it and used here too.
+        crate::Tempo::Filter tempo;
         int limit = 2000;
     };
     std::vector<Sound> search (const Query&) const;
@@ -67,6 +73,8 @@ public:
     //==========================================================================
     // Working out what a sound is from its name (public for tests).
     static void describe (Sound&, const juce::String& relativePath);
+    // A loop with no tempo known: the tempo its length makes it (marked as a guess).
+    static void guessTempo (Sound&);
 
 private:
     void run() override;

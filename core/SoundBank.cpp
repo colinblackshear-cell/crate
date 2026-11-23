@@ -256,13 +256,24 @@ void SoundBank::describe (Sound& s, const juce::String& relativePath)
                     s.key = key;
 
     s.loop = saysLoop || (! saysShot && s.bpm > 0 && s.seconds > 1.5f);
-    if (s.loop && s.bpm <= 0)
-        s.bpm = 0;
+    guessTempo (s);
+}
+
+void SoundBank::guessTempo (Sound& s)
+{
+    if (! s.loop || s.bpm > 0)
+        return;
+    s.bpm = crate::Tempo::guessFromLength (s.seconds);
+    s.bpmGuessed = s.bpm > 0;
 }
 
 std::vector<SoundBank::Sound> SoundBank::search (const Query& q) const
 {
-    const auto terms = words (q.text);
+    auto text = q.text;
+    auto tempo = crate::Tempo::takeFromSearch (text, q.tempo.halfDouble);
+    if (q.tempo.isActive())
+        tempo = q.tempo;
+    const auto terms = words (text);
     std::vector<Sound> out;
     const juce::ScopedLock sl (lock);
     for (const auto& s : sounds)
@@ -283,6 +294,8 @@ std::vector<SoundBank::Sound> SoundBank::search (const Query& q) const
             if (! near)
                 continue;
         }
+        if (tempo.isActive() && ! tempo.matches (s.bpm))
+            continue;
         if (! terms.isEmpty())
         {
             const auto hay = (s.name + " " + s.where + " " + kindName (s.kind) + " " + s.key).toLowerCase();
@@ -293,8 +306,20 @@ std::vector<SoundBank::Sound> SoundBank::search (const Query& q) const
                 continue;
         }
         out.push_back (s);
-        if ((int) out.size() >= q.limit)
+        if ((int) out.size() >= q.limit && ! tempo.isActive())
             break;
+    }
+    if (tempo.isActive())
+    {
+        // Sounds are already in name order, which stable_sort keeps.
+        // Closest tempo first; at the same distance, a tempo written on the sound before a guess.
+        std::stable_sort (out.begin(), out.end(), [&] (const Sound& a, const Sound& b)
+                          {
+                              const auto da = std::round (tempo.distance (a.bpm) * 2.0), db = std::round (tempo.distance (b.bpm) * 2.0);
+                              return da != db ? da < db : (! a.bpmGuessed && b.bpmGuessed);
+                          });
+        if ((int) out.size() > q.limit)
+            out.resize ((size_t) q.limit);
     }
     return out;
 }
@@ -382,6 +407,8 @@ void SoundBank::loadIndex()
         s.seconds = f[7].getFloatValue();
         s.size = f[8].getLargeIntValue();
         s.modified = f.size() > 9 ? f[9].getLargeIntValue() : 0;
+        s.bpmGuessed = f.size() > 10 && f[10] == "1";
+        guessTempo (s);   // indexes from before tempo guesses
         loaded.push_back (std::move (s));
     }
     const juce::ScopedLock sl (lock);
@@ -396,7 +423,7 @@ void SoundBank::saveIndex() const
         for (const auto& s : sounds)
             out << s.file.getFullPathName() << "\t" << s.name << "\t" << s.where << "\t" << s.kind << "\t" << (s.loop ? "1" : "0")
                 << "\t" << juce::String (s.bpm, 2) << "\t" << s.key << "\t" << juce::String (s.seconds, 3) << "\t" << juce::String (s.size)
-                << "\t" << juce::String (s.modified) << "\n";
+                << "\t" << juce::String (s.modified) << "\t" << (s.bpmGuessed ? "1" : "0") << "\n";
     }
     home.createDirectory();
     home.getChildFile (indexName).replaceWithData (out.getData(), out.getDataSize());

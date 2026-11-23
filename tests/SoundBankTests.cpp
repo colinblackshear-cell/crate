@@ -56,6 +56,63 @@ struct SoundBankTests : juce::UnitTest
             expectEquals (named ("pack/Pad A minor.wav", 6.0f).key, juce::String ("A min"));
         }
 
+        beginTest ("reads a tempo typed in a BPM box or a search");
+        {
+            using namespace crate::Tempo;
+            auto f = parse ("92");
+            expect (f.isActive() && f.matches (92.0) && f.matches (92.4) && ! f.matches (93.0) && ! f.matches (46.0));
+            expect (parse ("92 BPM").matches (92.0));
+            auto r = parse ("90-100");
+            expect (r.matches (90.0) && r.matches (100.0) && r.matches (95.5) && ! r.matches (101.0));
+            expect (parse ("100 to 90").matches (95.0), "a range either way round");
+            expect (parse (juce::String (juce::CharPointer_UTF8 ("90\xe2\x80\x93" "100"))).matches (95.0), "an en dash");
+            auto n = parse ("~120");
+            expect (n.matches (115.0) && n.matches (126.0) && ! n.matches (110.0));
+            expect (! parse ("kick").isActive() && ! parse ("").isActive() && ! parse ("5000").isActive());
+
+            auto hd = parse ("92", true);
+            expect (hd.matches (46.0) && hd.matches (184.0) && hd.matches (92.0) && ! hd.matches (138.0));
+            expectEquals (hd.distance (184.0), 0.0);
+            expect (parse ("92").distance (95.0) > parse ("92").distance (93.0));
+            expectEquals (parse ("92").describe(), juce::String ("92 BPM"));
+            expectEquals (parse ("92").shortText(), juce::String ("92"));
+            expectEquals (parse ("90-100").shortText(), juce::String ("90-100"));
+            expectEquals (n.shortText(), juce::String ("~120"));
+            expectEquals (parse ("90-100", true).describe(), juce::String ("90-100 BPM (or half/double)"));
+            expectEquals (Filter::near (120.0, false).describe(), juce::String ("near 120 BPM"));
+
+            juce::String text = "dusty drums 92bpm";
+            expect (takeFromSearch (text).matches (92.0));
+            expectEquals (text, juce::String ("dusty drums"));
+            text = "keys 90-100 bpm Fmin";
+            expect (takeFromSearch (text).matches (95.0));
+            expectEquals (text, juce::String ("keys Fmin"));
+            text = "keys 90 to 100 bpm";
+            expect (takeFromSearch (text).matches (95.0));
+            expectEquals (text, juce::String ("keys"));
+            text = "808 kick 02";
+            expect (! takeFromSearch (text).isActive(), "a bare number is a word, not a tempo");
+            expectEquals (text, juce::String ("808 kick 02"));
+        }
+
+        beginTest ("guesses a loop's tempo from its length");
+        {
+            using crate::Tempo::guessFromLength;
+            expectEquals (guessFromLength (2.0), 120.0);              // a bar at 120
+            expectEquals (guessFromLength (480.0 / 92.0), 92.0);      // two bars at 92
+            expectEquals (guessFromLength (16.0 * 60.0 / 140.0), 140.0);
+            expectEquals (guessFromLength (3.7), 0.0, "a length that isn't whole bars at a whole tempo");
+            expectEquals (guessFromLength (0.3), 0.0);
+
+            const auto a = named ("pack/loops/Dark_Groove.wav", 4.0f);   // a loop, no tempo in the name
+            expect (a.loop && a.bpmGuessed);
+            expectEquals (a.bpm, 120.0);
+            const auto b = named ("pack/loops/Dark_Groove_100.wav", 4.0f);
+            expect (! b.bpmGuessed, "a tempo in the name wins");
+            expectEquals (b.bpm, 100.0);
+            expect (! named ("pack/one_shots/Kick 01.wav", 2.0f).bpmGuessed, "one-shots aren't guessed");
+        }
+
         beginTest ("scans folders, searches, and remembers what it found");
         {
             const auto home = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("crate-bank-" + juce::String (juce::Random::getSystemRandom().nextInt()));
@@ -98,6 +155,17 @@ struct SoundBankTests : juce::UnitTest
                 loops.nearBpm = 180.0;   // double time counts
                 const auto found = bank.search (loops);
                 expect (found.size() == 1 && found[0].bpm == 90.0 && std::abs (found[0].seconds - 4.0f) < 0.01f);
+
+                SoundBank::Query exact;
+                exact.tempo = crate::Tempo::parse ("90");
+                expectEquals ((int) bank.search (exact).size(), 1, "only the 90 BPM loop");
+                exact.tempo = crate::Tempo::parse ("100-120");
+                expectEquals ((int) bank.search (exact).size(), 0);
+                SoundBank::Query typed;
+                typed.text = "soul 90bpm";
+                expectEquals ((int) bank.search (typed).size(), 1, "a tempo typed in the search");
+                typed.text = "trap 90bpm";
+                expectEquals ((int) bank.search (typed).size(), 0);
             }
 
             SoundBank again (home);
@@ -136,6 +204,13 @@ struct SoundsTabTests : juce::UnitTest
         for (int i = 0; i < 200 && (view.getBank().isScanning() || view.getBank().size() < 2); ++i)
             juce::Thread::sleep (20);
         view.filter();
+        expectEquals (view.getNumShown(), 2);
+
+        view.setBpmText ("120");
+        expect (view.getNumShown() == 1 && view.shownAt (0)->name == "Boom_Drum_Loop_120", "the BPM box");
+        view.setBpmText ("90-110");
+        expectEquals (view.getNumShown(), 0);
+        view.setBpmText ({});
         expectEquals (view.getNumShown(), 2);
 
         juce::String said;

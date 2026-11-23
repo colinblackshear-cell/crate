@@ -51,4 +51,5 @@ struct PocketHost
     virtual void setHearMyself (bool) = 0;
     virtual void micOff() = 0;
     virtual void micUseChanged() = 0;   // a screen changed what it wants to hear (MY VOICE, VOCODER, BOTH)
+    virtual double songBpm() = 0;       // the song's tempo (the TEMPO sheet's)
 };

@@ -3037,6 +3037,8 @@ void PocketApp::fillDemoLibrary (Library& lib)
         { "Dusty kick", kTagImported, day (10, 14), 0.9, 1 },
         { "Kids choir \"ooh\"", kTagRecorded, now - juce::RelativeTime::days (1), 8.3, 2 },
         { "Kitchen pots hit", kTagRecorded, now, 3.2, 1 },
+        { "Hand drums loop 92 Dmin", kTagImported, now - juce::RelativeTime::days (1), 480.0 / 92.0, 0 },
+        { "Shaker groove 92 BPM", kTagFromMac, now, 240.0 / 92.0, 1 },
         { "Porch rain", kTagRecorded, now, 12.4, 0 },
     };
     for (auto& d : demos)
@@ -3487,6 +3489,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("10-settings.png"));
     showPage (Page::more, 1);
     savePng (folder.getChildFile ("09-sounds.png"));
+    sounds.setTempo (crate::Tempo::Filter::exactly (92.0));
+    savePng (folder.getChildFile ("09b-sounds-at-92-bpm.png"));
+    sounds.setTempo ({});
     sendSoundToMac (lib.items().front().id, "sounds");
     resized();
     savePng (folder.getChildFile ("13-send-to-mac.png"));

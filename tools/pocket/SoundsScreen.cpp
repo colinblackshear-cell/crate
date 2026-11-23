@@ -75,6 +75,9 @@ struct SoundsScreen::Row : juce::Component
         g.setColour (col::inkDim);
         g.setFont (small (14.0f));
         g.drawText (dateText (item.date), juce::Rectangle<float> (pill.getRight() + 8, 31, 110, 18), juce::Justification::centredLeft);
+        if (item.bpm > 0)
+            g.drawText (juce::String (item.bpmGuessed ? "~" : "") + juce::String (juce::roundToInt (item.bpm)) + " BPM",
+                        juce::Rectangle<float> (pill.getRight() + 8 + 74, 31, 90, 18), juce::Justification::centredLeft);
 
         g.setColour (col::ink);
         g.setFont (lcdFont (25.0f));
@@ -127,6 +130,10 @@ SoundsScreen::SoundsScreen (PocketHost& h, PocketAudio& a, Library& lib) : host 
     importButton.setFontHeight (17.0f);
     importButton.onClick = [this] { import(); };
     addAndMakeVisible (importButton);
+
+    bpmButton.setFontHeight (17.0f);
+    bpmButton.onClick = [this] { showTempoMenu(); };
+    addAndMakeVisible (bpmButton);
 
     for (int i = 0; i < 4; ++i)
     {
@@ -207,14 +214,33 @@ void SoundsScreen::rebuild()
 {
     int counts[4] = { 0, 0, 0, 0 };
     shown.clear();
-    const auto query = search.getText().trim();
+    // A tempo written in the search ("92bpm") counts when none is picked from the menu.
+    auto text = search.getText();
+    auto typed = crate::Tempo::takeFromSearch (text, halfDouble);
+    const auto active = tempo.isActive() ? tempo : typed;
+    const auto query = text.trim();
     for (auto& s : library.items())
     {
         ++counts[0];
         const int k = s.tag == kTagRecorded ? 1 : s.tag == kTagImported ? 2 : 3;
         ++counts[k];
-        if ((filter == Filter::all || (int) filter == k) && (query.isEmpty() || s.name.containsIgnoreCase (query)))
+        if ((filter == Filter::all || (int) filter == k) && (query.isEmpty() || s.name.containsIgnoreCase (query))
+            && (! active.isActive() || active.matches (s.bpm)))
             shown.push_back (s);
+    }
+    if (active.isActive())
+        std::stable_sort (shown.begin(), shown.end(), [&active] (const SoundItem& a, const SoundItem& b)
+                          {
+                              const auto da = std::round (active.distance (a.bpm) * 2.0), db = std::round (active.distance (b.bpm) * 2.0);
+                              return da != db ? da < db : (! a.bpmGuessed && b.bpmGuessed);
+                          });
+
+    if (! tempo.isActive())
+        bpmButton.setText ("BPM"), bpmButton.setLook (Look::cream);
+    else
+    {
+        bpmButton.setText (nearSong ? U8("≈") + juce::String (juce::roundToInt (tempo.target)) : tempo.shortText());
+        bpmButton.setLook (Look::amber);
     }
     pills[0].setText ("All " + juce::String (counts[0]));
     pills[1].setText ("Recorded");
@@ -223,7 +249,9 @@ void SoundsScreen::rebuild()
     for (int i = 0; i < 4; ++i)
         pills[i].setLook ((int) filter == i ? Look::amber : Look::ghost);
 
-    if (library.find (selectedId) == nullptr)
+    // The picked sound stays picked only while it's in the list (a search or tempo can hide it).
+    const bool stillShown = std::any_of (shown.begin(), shown.end(), [this] (const SoundItem& i) { return i.id == selectedId; });
+    if (library.find (selectedId) == nullptr || ! stillShown)
         selectedId = shown.empty() ? juce::String() : shown.front().id;
     list.updateContent();
     list.repaint();
@@ -340,6 +368,75 @@ void SoundsScreen::share (const juce::String& id)
    #endif
 }
 
+void SoundsScreen::tempoChanged()
+{
+    rebuild();
+}
+
+void SoundsScreen::showTempoMenu()
+{
+    const auto* sel = selected();
+    const int songBpm = juce::roundToInt (host.songBpm());
+    juce::PopupMenu m;
+    m.addItem (1, "Any tempo", true, ! tempo.isActive());
+    m.addItem (2, "Near song tempo (" + juce::String (songBpm) + ")", true, nearSong);
+    m.addItem (3, "Type a tempo...");
+    if (sel != nullptr && sel->bpm > 0)
+        m.addItem (4, "Same as " + sel->name + " (" + juce::String (juce::roundToInt (sel->bpm)) + ")");
+    m.addSeparator();
+    m.addItem (5, "Half or double time too", true, halfDouble);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&bpmButton).withMinimumWidth (220),
+                     [this, selBpm = sel != nullptr ? sel->bpm : 0.0] (int r)
+    {
+        if (r == 1)
+        {
+            tempo = {};
+            nearSong = false;
+        }
+        else if (r == 2)
+        {
+            tempo = crate::Tempo::Filter::near (host.songBpm(), true);
+            nearSong = true;
+        }
+        else if (r == 3)
+            return askTempo();
+        else if (r == 4)
+        {
+            tempo = crate::Tempo::Filter::exactly ((double) juce::roundToInt (selBpm), halfDouble);
+            nearSong = false;
+        }
+        else if (r == 5)
+        {
+            halfDouble = ! halfDouble;
+            if (tempo.isActive() && ! nearSong)
+                tempo = tempo.isExact() ? crate::Tempo::Filter::exactly (tempo.target, halfDouble)
+                                             : crate::Tempo::Filter::between (tempo.lo, tempo.hi, halfDouble);
+        }
+        else
+            return;
+        tempoChanged();
+    });
+}
+
+void SoundsScreen::askTempo()
+{
+    auto* w = new juce::AlertWindow ("Tempo", "A tempo like 92, or a range like 90-100", juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("bpm", tempo.isActive() && ! nearSong ? tempo.shortText() : juce::String());
+    w->addButton ("Find", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
+    {
+        if (result != 1)
+            return;
+        const auto f = crate::Tempo::parse (w->getTextEditorContents ("bpm"), halfDouble);
+        if (! f.isActive())
+            return host.toast ("Type a tempo like 92 or 90-100");
+        tempo = f;
+        nearSong = false;
+        tempoChanged();
+    }), true);
+}
+
 void SoundsScreen::import()
 {
     chooser = std::make_unique<juce::FileChooser> ("Choose sounds to import", juce::File(), "*.wav;*.aif;*.aiff;*.mp3");
@@ -382,7 +479,14 @@ void SoundsScreen::paint (juce::Graphics& g)
     {
         g.setColour (col::inkDim);
         g.setFont (small (16.0f));
-        g.drawFittedText (library.items().empty() ? "No sounds yet. Record one, or tap IMPORT." : "Nothing matches.",
+        auto active = tempo;
+        if (! active.isActive())
+        {
+            auto text = search.getText();
+            active = crate::Tempo::takeFromSearch (text, halfDouble);
+        }
+        g.drawFittedText (library.items().empty() ? "No sounds yet. Record one, or tap IMPORT."
+                                                  : active.isActive() ? "Nothing at " + active.describe() + "." : "Nothing matches.",
                           list.getBounds().reduced (30), juce::Justification::centred, 3);
     }
 
@@ -391,7 +495,8 @@ void SoundsScreen::paint (juce::Graphics& g)
         drawWell (g, barArea, 16.0f);
         g.setColour (col::inkFaint);
         g.setFont (spaced (condensedBold (12.0f), 0.1f));
-        g.drawText (s->name.toUpperCase() + U8(" · ") + lengthText (s->seconds), barArea.withTrimmedLeft (14).withHeight (22).translated (0, 4),
+        g.drawText (s->name.toUpperCase() + U8(" · ") + lengthText (s->seconds)
+                        + (s->bpm > 0 ? U8(" · ") + juce::String (juce::roundToInt (s->bpm)) + " BPM" : juce::String()), barArea.withTrimmedLeft (14).withHeight (22).translated (0, 4),
                     juce::Justification::centredLeft);
     }
 }
@@ -400,7 +505,8 @@ void SoundsScreen::resized()
 {
     const int w = getWidth(), h = getHeight(), pad = 16;
     importButton.setBounds (w - pad - 80, 8, 80, 48);
-    searchBox = juce::Rectangle<float> ((float) pad, 8.0f, (float) (w - 2 * pad - 88), 48.0f);
+    bpmButton.setBounds (w - pad - 80 - 8 - 70, 8, 70, 48);
+    searchBox = juce::Rectangle<float> ((float) pad, 8.0f, (float) (w - 2 * pad - 88 - 78), 48.0f);
     search.setBounds (searchBox.toNearestInt().withTrimmedLeft (46).withTrimmedRight (12).reduced (0, 8));
 
     int x = pad;

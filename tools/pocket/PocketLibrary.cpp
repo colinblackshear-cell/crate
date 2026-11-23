@@ -1,6 +1,7 @@
 #include "PocketLibrary.h"
 
 #include "core/AudioFiles.h"
+#include "core/SoundBank.h"
 
 namespace pocket
 {
@@ -59,6 +60,17 @@ FxKnobs FxKnobs::fromVar (const juce::var& in)
 }
 
 //==============================================================================
+// The tempo from a sound's name ("Dusty Loop 92 BPM"), else a guess from its length if it's a loop.
+static void fillTempoFromName (SoundItem& item)
+{
+    SoundBank::Sound t;
+    t.file = juce::File::getCurrentWorkingDirectory().getChildFile (item.name + ".wav");
+    t.seconds = (float) item.seconds;
+    SoundBank::describe (t, item.name + ".wav");
+    item.bpm = t.bpm;
+    item.bpmGuessed = t.bpmGuessed;
+}
+
 juce::File Library::defaultRoot()
 {
    #if JUCE_IOS
@@ -108,6 +120,13 @@ void Library::loadIndex()
             s.date = juce::Time (juce::Time::fromISO8601 (e["date"].toString()));
             s.seconds = (double) e["seconds"];
             s.fx = FxKnobs::fromVar (e["fx"]);
+            if (e.hasProperty ("bpm"))
+            {
+                s.bpm = (double) e["bpm"];
+                s.bpmGuessed = (bool) e["bpmGuessed"];
+            }
+            else
+                fillTempoFromName (s);
             if (auto* m = e["markers"].getArray())
                 for (auto& x : *m)
                     s.markers.push_back ((int) x);
@@ -129,6 +148,8 @@ void Library::saveIndex()
         o->setProperty ("file", s.file);
         o->setProperty ("date", s.date.toISO8601 (true));
         o->setProperty ("seconds", s.seconds);
+        o->setProperty ("bpm", s.bpm);
+        o->setProperty ("bpmGuessed", s.bpmGuessed);
         o->setProperty ("fx", s.fx.toVar());
         juce::Array<juce::var> m;
         for (int x : s.markers)
@@ -191,6 +212,7 @@ juce::String Library::add (const juce::String& name, const juce::String& tag, co
     s.seconds = crate::seconds (audio.getNumSamples());
     s.fx = fx;
     s.markers = markers;
+    fillTempoFromName (s);
     sounds.insert (sounds.begin(), s);
     saveIndex();
     return s.id;
@@ -223,6 +245,8 @@ bool Library::rename (const juce::String& id, const juce::String& newName)
         if (s.id != id || newName.trim().isEmpty())
             continue;
         s.name = newName.trim();
+        if (s.bpm <= 0 || s.bpmGuessed)
+            fillTempoFromName (s);
         saveIndex();
         return true;
     }
@@ -255,6 +279,22 @@ juce::String Library::importFile (const juce::File& f, juce::String& error)
     auto id = add (f.getFileNameWithoutExtension(), kTagImported, *audio, {}, {});
     if (id.isEmpty())
         error = "The sound couldn't be saved.";
+    else
+    {
+        // A tempo written into the file (ACID) beats one guessed from its name.
+        double acid = 0;
+        if (std::unique_ptr<juce::AudioFormatReader> reader { formatManager.createReaderFor (f) })
+            acid = reader->metadataValues[juce::WavAudioFormat::acidTempo].getDoubleValue();
+        if (acid >= 40.0 && acid <= 300.0)
+            for (auto& s : sounds)
+                if (s.id == id)
+                {
+                    s.bpm = acid;
+                    s.bpmGuessed = false;
+                    saveIndex();
+                    break;
+                }
+    }
     return id;
 }
 }
