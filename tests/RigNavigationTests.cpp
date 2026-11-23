@@ -68,7 +68,7 @@ public:
             engine.prepare (48000.0, 480);
             RigView view (engine, nullptr);
             view.setSize (1440, 960);
-            expectEquals (view.getPage(), juce::String ("Guide"));
+            expectEquals (view.getPage(), juce::String ("Ideas"));
             expect (! view.getNavigation().canGoBack());
 
             view.goTo ("Groove");
@@ -85,10 +85,10 @@ public:
             view.goBack();
             expectEquals (view.getPage(), juce::String ("Groove"));
             view.goBack();
-            expectEquals (view.getPage(), juce::String ("Guide"));
+            expectEquals (view.getPage(), juce::String ("Ideas"));
             expect (! view.getNavigation().canGoBack());
             view.goBack();   // nowhere further: stays put
-            expectEquals (view.getPage(), juce::String ("Guide"));
+            expectEquals (view.getPage(), juce::String ("Ideas"));
 
             view.goForward();
             view.goForward();

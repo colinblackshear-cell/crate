@@ -21,6 +21,10 @@
 #include "VocoderScreen.h"
 #include "SynthScreens.h"
 #include "GuideView.h"
+#include "RigIdeas.h"
+#include "RigTitle.h"
+#include "core/Spark.h"
+#include "core/ui/LanePeaks.h"
 #include "EffectsView.h"
 #include "DroneView.h"
 #include "RigSongStart.h"
@@ -836,7 +840,104 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     };
     guide = guideView;
     addPage ("Guide", RigColours::master, guideView);
-    header.onWordmark = [this] { showTab ("Guide"); };
+
+    // My ideas: the front page, as the phone's.
+    auto* ideasView = new RigIdeas (showsFolder());
+    ideasView->getHero = [this]
+    {
+        RigIdeas::Hero h;
+        auto& t = engine.getTransport();
+        const auto lcd = [] (double bpm, int sections) { return juce::String (bpm, 0) + " BPM" + juce::String (juce::CharPointer_UTF8 (" \xc2\xb7 ")) + juce::String (sections) + (sections == 1 ? " SECTION" : " SECTIONS"); };
+        const int sections = (int) rigsong::sections (engine.getTimeline()).size();
+        if (currentShow.existsAsFile())
+        {
+            // The song that's open: its saved layers, with their sound.
+            const auto saved = RigIdeas::read (currentShow);
+            h.name = saved.name;
+            h.file = currentShow;
+            h.open = true;
+            h.sources = saved.sources;
+            for (int l = 0; l < saved.layers(); ++l)
+                h.peaks.push_back (crate::lanes::peaksOf (RigIdeas::loopFile (saved, l), 120));
+            h.meta = "Open now" + juce::String (juce::CharPointer_UTF8 (" \xc2\xb7 ")) + "saved " + RigIdeas::whenText (currentShow.getLastModificationTime()).toLowerCase();
+            h.lcd = lcd (t.getBpm(), sections);
+            return h;
+        }
+        if (! engine.isBlank())
+        {
+            // What's in the Rig now (the Last show, or a song not saved yet).
+            h.name = "Your last session";
+            h.open = true;
+            for (int l = 0; l < RigLooper::kLayers; ++l)
+                if (engine.getLooper().getLayer (l).lengthBeats.load() > 0)
+                    h.sources.push_back (engine.getLooper().getLayer (l).source.load());
+            h.meta = "Not saved as a song yet: Cmd+S keeps it in My ideas.";
+            h.lcd = lcd (t.getBpm(), sections);
+            return h;
+        }
+        // Nothing open: your newest song.
+        for (auto& s : ideas->songs())
+            if (! s.lastShow)
+            {
+                h.name = s.name;
+                h.file = s.file;
+                h.sources = s.sources;
+                for (int l = 0; l < s.layers(); ++l)
+                    h.peaks.push_back (crate::lanes::peaksOf (RigIdeas::loopFile (s, l), 120));
+                h.meta = "Your newest song" + juce::String (juce::CharPointer_UTF8 (" \xc2\xb7 ")) + RigIdeas::whenText (s.modified).toLowerCase();
+                h.lcd = lcd (s.bpm, s.sections);
+                break;
+            }
+        return h;
+    };
+    ideasView->isPlaying = [this] (const juce::File& f) { return f == currentShow && engine.getTransport().isPlaying(); };
+    ideasView->onOpen = [this] (const juce::File& f) { askOpenSong (f); };
+    ideasView->onPlay = [this] (const juce::File& f)
+    {
+        if (f == currentShow)
+        {
+            engine.playOrStop();
+            ideas->repaint();
+            return;
+        }
+        askOpenSong (f, [this] { engine.getTransport().play(); showView ("Play"); });
+    };
+    ideasView->onPlayHero = [this]
+    {
+        const auto h = ideas->getHero ? ideas->getHero() : RigIdeas::Hero();
+        if (h.open)
+        {
+            engine.playOrStop();
+            ideas->repaint();
+        }
+        else if (h.file != juce::File())
+            ideas->onPlay (h.file);
+    };
+    ideasView->onOpenHero = [this]
+    {
+        const auto h = ideas->getHero ? ideas->getHero() : RigIdeas::Hero();
+        if (h.open)
+            showView ("Play");
+        else if (h.file != juce::File())
+            askOpenSong (h.file);
+        else
+            catchIdea();
+    };
+    ideasView->onRename = [this] (const juce::File& f) { renameSong (f); };
+    ideasView->onTrash = [this] (const juce::File& f) { trashSong (f); };
+    ideasView->onCatch = [this] { catchIdea(); };
+    ideasView->onNew = [this] { askNewSong(); };
+    ideasView->onSpark = [this] (const crate::spark::Spark& spark) { startSpark (spark); };
+    ideasView->onStartWith = [this] (int tile) { startWithTile (tile); };
+    ideasView->onLesson = [this] { startLesson(); };
+    ideasView->onTour = [this] { tourStop = 0; showHelp (true); };
+    ideasView->onGuide = [this] { showTab ("Guide"); };
+    ideasView->onOpenFile = [this] { openShow(); };
+    ideasView->onImportLogic = [this] { askImportFromLogic(); };
+    ideasView->onSettings = [this] { showTab ("Setup"); };
+    ideas = ideasView;
+    addPage ("Ideas", RigColours::master, ideasView);
+    header.onWordmark = [this] { showTab ("Ideas"); };
     header.onRecording = [this]
     {
         if (const auto place = whatsRecording().second; place == "Automation")
@@ -845,8 +946,10 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
             goTo (place);
     };
 
-    // The Rig opens on the Guide (unless it was switched off there), else on the Groove.
-    showTab (engine.screens.getProperty ("skipGuide", false) ? "Groove" : "Guide");
+    // The Rig opens on My ideas (unless the front page was switched off in the Guide), else on the Groove.
+    showTab (engine.screens.getProperty ("skipGuide", false) ? "Groove" : "Ideas");
+    if (titleAtLaunch && devices != nullptr)
+        showTitle (true);
     screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
 
     for (int t = 0; t < RigEngine::numTools; ++t)
@@ -1011,7 +1114,7 @@ void RigView::showTab (const juce::String& name)
     // The sound library opens as a drawer over whichever view is showing.
     if (name == "Sounds" && pageIndex ("Sounds") >= 0 && pages[(size_t) pageIndex ("Sounds")].window == nullptr)
     {
-        if (currentPage() == "Guide")
+        if (currentPage() == "Guide" || currentPage() == "Ideas")
             showTab ("Groove");
         return showSounds (true);
     }
@@ -1071,7 +1174,9 @@ void RigView::pageChanged()
     screenBar.setCurrent (getView(), soundsOpen, currentPage() == "Setup" || currentPage() == "More", chordsOpen);
     navigation.visit (currentPlace());
     updateNavButtons();
-    const bool onStage = currentPage() == "Guide";
+    const bool onStage = currentPage() == "Guide" || currentPage() == "Ideas";
+    if (currentPage() == "Ideas" && ideas != nullptr)
+        ideas->refresh();
     if (rail.isVisible() != railShown())
     {
         rail.setVisible (railShown());
@@ -1098,7 +1203,7 @@ void RigView::pageChanged()
 //==============================================================================
 bool RigView::railShown() const
 {
-    return currentPage() != "Guide";
+    return currentPage() != "Guide" && currentPage() != "Ideas";
 }
 
 juce::String RigView::editPageFor (int track)
@@ -1147,7 +1252,7 @@ juce::String RigView::viewOfPlace (const juce::String& place) const
         return "Mix";
     if (place == "Effects")
         return trackOfPlace (place) == GrooveView::lineIn ? "Edit" : "Mix";
-    if (place == "Guide" || place == "Setup" || place == "More" || place == "Sounds" || place.isEmpty())
+    if (place == "Guide" || place == "Ideas" || place == "Setup" || place == "More" || place == "Sounds" || place.isEmpty())
         return {};
     return "Edit";
 }
@@ -1311,8 +1416,13 @@ int RigView::pressRecTake()
         say ("All 16 loops are full. Clear one (Loops on the left, then Edit), or keep them as a bank and start a new batch there.");
         return -1;
     }
-    if (const int source = takeSourceFor (t); source >= 0)
+    if (int source = takeSourceFor (t); source >= 0)
+    {
+        // Line in with the Input strip off: your mic as it comes in (the strip would be silent).
+        if (source == RigLooper::line && ! engine.inputOn.load())
+            source = RigLooper::input;
         looper.getLayer (layer).source = source;
+    }
     // The bottom bar's length (0: until you press again) and count-in.
     looper.getLayer (layer).bars = juce::jmax (0, recLength);
     looper.getLayer (layer).countIn = juce::jlimit (0, 2, recCountIn);
@@ -3779,21 +3889,291 @@ void RigView::openShow()
                           [this, chooser] (const juce::FileChooser& fc)
                           {
                               const auto file = fc.getResult();
-                              if (file == juce::File())
-                                  return;
-                              if (auto xml = juce::parseXML (file))
-                              {
-                                  engine.loadShow (juce::ValueTree::fromXml (*xml));
-                                  engine.readLoopAudio (file);
-                                  currentShow = file;
-                                  refresh();
-                                  if (engine.getLoopAudioProblem().isNotEmpty())
-                                      say (engine.getLoopAudioProblem());
-                                  if (song != nullptr)
-                                      song->forgetUndo();
-                                  restoreWindows();
-                              }
+                              if (file != juce::File())
+                                  openShowFile (file);
                           });
+}
+
+void RigView::openShowFile (const juce::File& file)
+{
+    if (auto xml = juce::parseXML (file))
+    {
+        engine.loadShow (juce::ValueTree::fromXml (*xml));
+        engine.readLoopAudio (file);
+        currentShow = file;
+        refresh();
+        if (engine.getLoopAudioProblem().isNotEmpty())
+            say (engine.getLoopAudioProblem());
+        if (song != nullptr)
+            song->forgetUndo();
+        restoreWindows();
+    }
+    else
+        say ("Couldn't open " + file.getFileNameWithoutExtension() + ": the file isn't a Kaleidobox song.");
+}
+
+void RigView::askOpenSong (const juce::File& file, std::function<void()> then)
+{
+    if (! then)
+        then = [this] { showView ("Play"); };
+    if (file == currentShow)
+        return then();
+    auto open = [this, file, then]
+    {
+        openShowFile (file);
+        if (currentShow == file)
+        {
+            say ("Opened " + file.getFileNameWithoutExtension() + ".");
+            then();
+        }
+    };
+    if (engine.isBlank())
+        return open();
+    const auto name = currentShow != juce::File() ? currentShow.getFileNameWithoutExtension() : juce::String ("this song");
+    auto options = juce::MessageBoxOptions()
+                       .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                       .withTitle ("Open " + file.getFileNameWithoutExtension() + "?")
+                       .withMessage ("Save " + name + " first?")
+                       .withButton ("Save, then open")
+                       .withButton ("Open, don't save")
+                       .withButton ("Cancel")
+                       .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this), open] (int result)
+                                  {
+                                      if (safe == nullptr || (result != 1 && result != 2))
+                                          return;
+                                      if (result == 1)
+                                      {
+                                          safe->newSong (true, false);   // saves, then clears
+                                          if (! safe->engine.isBlank())
+                                              return;   // the save failed (it said why): stay
+                                      }
+                                      open();
+                                  });
+}
+
+void RigView::startFresh (const juce::String& what, std::function<void()> then)
+{
+    if (engine.isBlank())
+    {
+        currentShow = juce::File();
+        return then();
+    }
+    const auto name = currentShow != juce::File() ? currentShow.getFileNameWithoutExtension() : juce::String ("this song");
+    auto options = juce::MessageBoxOptions()
+                       .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                       .withTitle (what)
+                       .withMessage ("This starts a new song. Save " + name + " first?")
+                       .withButton ("Save, then start")
+                       .withButton ("Start, don't save")
+                       .withButton ("Cancel")
+                       .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this), then] (int result)
+                                  {
+                                      if (safe == nullptr || (result != 1 && result != 2))
+                                          return;
+                                      safe->newSong (result == 1, false);
+                                      if (result == 1 && ! safe->engine.isBlank())
+                                          return;   // the save failed (it said why)
+                                      then();
+                                  });
+}
+
+void RigView::catchIdea()
+{
+    startFresh ("Catch an idea", [this]
+    {
+        auto& looper = engine.getLooper();
+        int layer = -1;
+        for (int l = 0; l < RigLooper::kLayers && layer < 0; ++l)
+            if (looper.getState (l) == RigLooper::State::empty)
+                layer = l;
+        if (layer < 0)
+            return;
+        pickTrack (GrooveView::lineIn);
+        showView ("Play");
+        // Your mic as it comes in (heard or not), free length, no count-in: it starts now.
+        looper.getLayer (layer).source = RigLooper::input;
+        looper.getLayer (layer).bars = 0;
+        looper.getLayer (layer).countIn = 0;
+        looper.pressRecord (layer);
+        takeLayer = lastTakeLayer = layer;
+        takeTrack = GrooveView::lineIn;
+        takeStarted = false;
+        takeKeptSaid = false;
+        updateCaptureButtons();
+        say ("Catching your idea on loop " + juce::String (layer + 1) + ": sing, hum or play. Press Rec when you're done and it loops."
+             + (engine.micOn.load() ? juce::String() : juce::String (" (Your mic records without being heard; Mic, top right, lets you hear it.)")));
+    });
+}
+
+void RigView::startSpark (const crate::spark::Spark& spark)
+{
+    startFresh ("Start this spark", [this, spark]
+    {
+        engine.getTransport().setBpm ((double) spark.bpm);
+        if (chordsDrawer != nullptr)
+            chordsDrawer->setKey (spark.root, spark.minor ? 1 : 0, engine.getChords().fillType);
+        else
+            engine.getChords().setKey (spark.root, spark.minor ? 1 : 0, engine.getChords().fillType);
+        engine.loadFactoryKit (spark.kit, 0);
+        refresh();
+        using namespace crate::spark;
+        switch (spark.steps[0].tool)
+        {
+            case drums:   pickTrack (GrooveView::machine); showView ("Play"); break;
+            case pads:    pickTrack (GrooveView::drums); showView ("Play"); break;
+            case sampler: pickTrack (GrooveView::sampler); showView ("Play"); break;
+            case synth:   pickTrack (GrooveView::synth); showView ("Play"); break;
+            case vocoder: pickTrack (GrooveView::vocoder); showView ("Play"); break;
+            case voice:   pickTrack (GrooveView::lineIn); showView ("Play"); break;
+            case drone:   pickTrack (GrooveView::drone); showView ("Play"); break;
+            case chords:  pickTrack (GrooveView::synth); showView ("Play"); showChords (true); break;
+            default:      showView ("Play"); break;
+        }
+        const auto& kits = crate::factory::kits();
+        say (spark.title + ": " + juce::String (spark.bpm) + " BPM, " + spark.keyName()
+             + (juce::isPositiveAndBelow (spark.kit, (int) kits.size()) ? ", the " + juce::String (kits[(size_t) spark.kit].name) + " kit" : juce::String())
+             + ". 1. " + spark.steps[0].text + ". 2. " + spark.steps[1].text + ". 3. " + spark.steps[2].text + ".");
+    });
+}
+
+void RigView::startWithTile (int tile)
+{
+    static const char* const names[RigIdeas::kTiles] = { "A beat", "Pads", "A melody", "Chords", "My voice", "A sample", "A bass line", "Line in" };
+    if (! juce::isPositiveAndBelow (tile, RigIdeas::kTiles))
+        return;
+    startFresh (juce::String ("Start with ") + names[tile], [this, tile]
+    {
+        switch (tile)
+        {
+            case 0: pickTrack (GrooveView::machine); showView ("Play");
+                    say ("A beat: click steps on the drum machine (or play the pads) and press Play. Rec puts it on a loop."); break;
+            case 1: pickTrack (GrooveView::drums); showView ("Play");
+                    say ("Pads: play the MPC's pads (the keys A to K, or your pad controller). Rec puts what you play on a loop."); break;
+            case 2: pickTrack (GrooveView::synth); showView ("Play");
+                    say ("A melody: play the Synth on your keys. Rec puts it on a loop, with its notes to edit."); break;
+            case 3: pickTrack (GrooveView::synth); showView ("Play"); showChords (true);
+                    say ("Chords: pick a key and play a chord on each pad or key, on the Synth."); break;
+            case 4: pickTrack (GrooveView::lineIn); showView ("Play");
+                    say ("Your voice: press Rec and sing. It records your mic onto the next loop; Mic, top right, lets you hear yourself."); break;
+            case 5: openTool ("Sampler");
+                    say ("A sample: record or drop in a sound, trim it, and play it on the pads."); break;
+            case 6: pickTrack (GrooveView::bass); showView ("Play");
+                    say ("A bass line: play the Bass on your keys, or click its steps. Rec puts it on a loop."); break;
+            case 7: pickTrack (GrooveView::lineIn); showView ("Play");
+                    say ("Line in: a guitar, a synth or a second mic from your interface. Switch Input on to hear it, then Rec."); break;
+            default: break;
+        }
+    });
+}
+
+void RigView::renameSong (const juce::File& file)
+{
+    auto* w = new juce::AlertWindow ("Rename " + file.getFileNameWithoutExtension(), "A new name for this song:", juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", file.getFileNameWithoutExtension());
+    w->addButton ("Rename", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<RigView> (this), w, file] (int result)
+    {
+        if (safe == nullptr || result != 1)
+            return;
+        const auto starred = [&]
+        {
+            for (auto& s : safe->ideas->songs())
+                if (s.file == file)
+                    return s.starred;
+            return false;
+        }();
+        juce::File renamed;
+        const auto why = RigIdeas::renameSong (file, w->getTextEditorContents ("name"), renamed);
+        if (why.isNotEmpty())
+            return safe->say (why);
+        if (renamed == juce::File())
+            return;
+        if (starred)
+        {
+            safe->ideas->setStarred (file, false);
+            safe->ideas->setStarred (renamed, true);
+        }
+        if (safe->currentShow == file)
+        {
+            safe->currentShow = renamed;
+            safe->refresh();
+        }
+        safe->ideas->refresh();
+        safe->say ("Renamed it " + renamed.getFileNameWithoutExtension() + ".");
+    }), true);
+}
+
+void RigView::trashSong (const juce::File& file)
+{
+    if (file == currentShow)
+        return say (file.getFileNameWithoutExtension() + " is open: start a new song or open another one first, then move it to the Trash.");
+    auto options = juce::MessageBoxOptions()
+                       .withIconType (juce::MessageBoxIconType::WarningIcon)
+                       .withTitle ("Move " + file.getFileNameWithoutExtension() + " to the Trash?")
+                       .withMessage ("The song and its loops go to the Trash. You can take them back out of the Trash in Finder.")
+                       .withButton ("Move to Trash")
+                       .withButton ("Keep it")
+                       .withAssociatedComponent (this);
+    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this), file] (int result)
+                                  {
+                                      if (safe == nullptr || result != 1)
+                                          return;
+                                      const bool ok = RigIdeas::trashSong (file);
+                                      safe->ideas->setStarred (file, false);
+                                      safe->ideas->refresh();
+                                      safe->say (ok ? file.getFileNameWithoutExtension() + " is in the Trash."
+                                                    : "Some of " + file.getFileNameWithoutExtension() + " couldn't go to the Trash.");
+                                  });
+}
+
+void RigView::showTitle (bool show)
+{
+    if (! show)
+    {
+        if (title != nullptr)
+        {
+            title->setVisible (false);
+            title.reset();
+        }
+        grabKeyboardFocus();
+        return;
+    }
+    title = std::make_unique<RigTitle>();
+    if (ideas != nullptr)
+        ideas->refresh();
+    if (! engine.isBlank())
+    {
+        int layers = 0;
+        std::vector<juce::Colour> colours;
+        for (int l = 0; l < RigLooper::kLayers; ++l)
+            if (engine.getLooper().getLayer (l).lengthBeats.load() > 0)
+            {
+                ++layers;
+                colours.push_back (RigIdeas::colourForSource (engine.getLooper().getLayer (l).source.load()));
+            }
+        const auto dot = juce::String (juce::CharPointer_UTF8 (" \xc2\xb7 "));
+        title->setContinue (currentShow != juce::File() ? currentShow.getFileNameWithoutExtension() : juce::String ("Your last session"),
+                            juce::String (engine.getTransport().getBpm(), 0) + " BPM" + dot + juce::String (layers) + (layers == 1 ? " layer" : " layers"),
+                            colours);
+    }
+    std::vector<std::pair<juce::String, juce::File>> recent;
+    if (ideas != nullptr)
+        for (auto& s : ideas->songs())
+            if (! s.lastShow && s.file != currentShow && recent.size() < 3)
+                recent.push_back ({ s.name, s.file });
+    title->setRecent (std::move (recent));
+    title->micLevel = [this] { return juce::jlimit (0.0f, 1.0f, engine.micPeak.load() * 2.0f); };
+    auto safe = juce::Component::SafePointer<RigView> (this);
+    title->onStart = [safe] { if (safe != nullptr) { safe->showTitle (false); safe->showTab ("Ideas"); } };
+    title->onContinue = [safe] { if (safe != nullptr) { safe->showTitle (false); safe->showView ("Play"); } };
+    title->onTour = [safe] { if (safe != nullptr) { safe->showTitle (false); safe->showTab ("Ideas"); safe->tourStop = 0; safe->showHelp (true); } };
+    title->onRecent = [safe] (const juce::File& f) { if (safe != nullptr) { safe->showTitle (false); safe->askOpenSong (f); } };
+    addAndMakeVisible (*title);
+    title->setBounds (getLocalBounds());
+    title->toFront (true);
 }
 
 bool RigView::keyPressed (const juce::KeyPress& key)
@@ -4322,6 +4702,7 @@ void RigView::showPopOutMenu()
 void RigView::showMoreMenu()
 {
     juce::PopupMenu menu;
+    menu.addItem (20, "My ideas: your songs, and ways to start one", true, currentPage() == "Ideas");
     menu.addItem (1, "The Guide: every tool, and what it's for", true, currentPage() == "Guide");
     menu.addSectionHeader ("Tools in full");
     const char* tools[][2] = { { "MPC", "MPC: pads, programs, sequences" }, { "Drum machine", "Drum machine: analog sounds and patterns" },
@@ -4349,7 +4730,9 @@ void RigView::showMoreMenu()
                         {
                             if (safe == nullptr || result == 0)
                                 return;
-                            if (result >= 10)
+                            if (result == 20)
+                                safe->showTab ("Ideas");
+                            else if (result >= 10)
                                 safe->showTab (names[(size_t) (result - 10)]);
                             else if (result == 1)
                                 safe->showTab ("Guide");
@@ -4428,6 +4811,11 @@ void RigView::resized()
         auto drawerArea = tabs.getBounds();
         chordsDrawer->setBounds (drawerArea.removeFromBottom (juce::jmin (drawerArea.getHeight() - 120, ChordsView::kPreferredHeight)));
         chordsDrawer->toFront (false);
+    }
+    if (title != nullptr)
+    {
+        title->setBounds (getLocalBounds());
+        title->toFront (false);
     }
     if (lesson != nullptr)
     {

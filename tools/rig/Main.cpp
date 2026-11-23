@@ -24,6 +24,7 @@ public:
         settings = std::make_unique<juce::PropertiesFile> (options);
 
         RigEngine::startWithFactoryKit = true;
+        RigView::titleAtLaunch = true;   // the opening title (not in Logic)
         engine = std::make_unique<RigEngine>();
         // The show's changed-since-saved model, for measuring it on a real Mac (nothing shows it
         // yet): KALEIDOBOX_DIRTY=1 switches it on and logs to ~/Library/Logs/Kaleidobox/dirty.log.

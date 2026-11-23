@@ -2,24 +2,48 @@
 
 #include "PocketIdeas.h"
 
+#include "core/ui/Kaleidoscope.h"
+
 using namespace pocket;
 
 //==============================================================================
+namespace
+{
+const juce::Colour kStage { 0xff15110e }, kStageGlow { 0xff2a211a };
+const juce::Colour kPaper { 0xfff6efe1 }, kSoft { 0xffd9ccb4 }, kDim { 0xffa89a86 };
+
+float rise (float opened, float at) { return crate::kaleidoscope::rise (opened, at); }
+}
+
+const std::vector<juce::Colour>& TitleScreen::petalColours() { return crate::kaleidoscope::petalColours(); }
+
 TitleScreen::TitleScreen()
 {
     for (auto* b : { &tour, &start })
-    {
         addAndMakeVisible (*b);
-        b->setFontHeight (18.0f);
-    }
+    start.setFontHeight (21.0f);
+    tour.setFontHeight (17.0f);
     tour.onClick = [this] { if (onTour) onTour(); };
     start.onClick = [this] { if (onStart) onStart(); };
+}
+
+void TitleScreen::setContinue (const juce::String& name, const juce::String& meta, std::vector<juce::Colour> layers)
+{
+    continueName = name;
+    continueMeta = meta;
+    continueLayers = std::move (layers);
+    resized();
+    repaint();
 }
 
 void TitleScreen::visibilityChanged()
 {
     if (isVisible())
+    {
+        if (opened < 9.0f)
+            opened = 0.0f;   // (the screenshots keep it open)
         startTimerHz (30);
+    }
     else
         stopTimer();
 }
@@ -28,76 +52,114 @@ void TitleScreen::timerCallback()
 {
     const float level = micLevel ? micLevel() : 0.0f;
     bloom = juce::jmax (bloom * 0.9f, juce::jlimit (0.0f, 1.0f, std::sqrt (level) * 1.4f));
-    angle += 0.006f + bloom * 0.05f;   // turns slowly, faster when you make a noise
-    repaint (mandalaRect().expanded (30).toNearestInt());
+    angle += 0.004f + bloom * 0.05f;   // turns slowly, faster when you make a noise
+    const bool opening = opened < 3.6f;
+    opened += 1.0f / 30.0f;
+    if (opening)
+        repaint();
+    else
+        repaint (mandalaRect().expanded (30).toNearestInt());
 }
 
 juce::Rectangle<float> TitleScreen::mandalaRect() const
 {
-    const float d = juce::jmin ((float) getWidth() - 140.0f, 250.0f);
-    return { (float) getWidth() * 0.5f - d * 0.5f, (float) getHeight() * 0.31f - d * 0.5f, d, d };
+    const float below = (float) (continueName.isNotEmpty() ? getHeight() - 320 : getHeight() - 236);   // the card, or START MAKING
+    const float d = juce::jmax (120.0f, juce::jmin ((float) getWidth() - 100.0f, 270.0f, below - 88.0f - 190.0f));
+    return { (float) getWidth() * 0.5f - d * 0.5f, 54.0f + 34.0f, d, d };
+}
+
+juce::Rectangle<int> TitleScreen::continueCard() const
+{
+    if (continueName.isEmpty())
+        return {};
+    return { 20, getHeight() - 236 - 84, getWidth() - 40, 76 };
 }
 
 void TitleScreen::resized()
 {
     const int w = getWidth(), h = getHeight();
-    tour.setBounds (22, h - 210, w - 44, 58);
-    start.setBounds (22, h - 142, w - 44, 50);
+    start.setBounds (20, h - 226, w - 40, 60);
+    tour.setBounds (20, h - 156, w - 40, 52);
 }
 
-void TitleScreen::mouseUp (const juce::MouseEvent&)
+void TitleScreen::mouseUp (const juce::MouseEvent& e)
 {
+    if (continueCard().contains (e.getPosition()) && onContinue)
+        return onContinue();
     if (onStart)
         onStart();   // a tap anywhere else: straight in
 }
 
 void TitleScreen::paint (juce::Graphics& g)
 {
-    g.fillAll (col::cream);
+    const float w = (float) getWidth(), h = (float) getHeight();
+    g.setGradientFill (juce::ColourGradient (kStageGlow, w * 0.5f, h * 0.3f, kStage, w * 0.5f, h * 0.3f + h * 0.62f, true));
+    g.fillAll();
 
-    // the kaleidoscope: twelve petals round a cream centre, on a dark disc
+    g.setColour (kDim);
+    g.setFont (spaced (lcdFont (17.0f), 0.12f));
+    g.drawText (U8("KB-1 \xc2\xb7 POCKET"), juce::Rectangle<float> (0, 54, w, 22), juce::Justification::centred);
+
+    // the kaleidoscope: a petal for each tool, blooming in one by one (core/ui/Kaleidoscope.h: the Mac draws the same)
     auto m = mandalaRect();
-    const auto c = m.getCentre();
-    const float R = m.getWidth() * 0.5f;
-    g.setColour (juce::Colour (0x26000000));
-    g.fillEllipse (m.expanded (6).translated (0, 8));
-    g.setColour (juce::Colour (0xff2a241f));
-    g.fillEllipse (m);
-    g.setColour (col::well);
-    g.fillEllipse (m.reduced (9));
+    crate::kaleidoscope::draw (g, m, angle, bloom, opened, std::fmod (opened, 1.1f) < 0.55f);
 
-    static const juce::uint32 colours[6] = { 0xffd9a6a0, 0xffe8c27a, 0xffb7c98a, 0xff9fc0c0, 0xffd7a3c0, 0xffc9b3e0 };
-    for (int layer = 0; layer < 2; ++layer)
-    {
-        const float len = R * (layer == 0 ? 0.78f : 0.6f) * (1.0f + bloom * 0.12f);
-        const float wid = R * (layer == 0 ? 0.22f : 0.17f);
-        const float turn = layer == 0 ? angle : -angle * 1.6f + juce::MathConstants<float>::pi / 12.0f;
-        for (int k = 0; k < 12; ++k)
-        {
-            juce::Path petal;
-            petal.addRoundedRectangle (-wid * 0.5f, -len, wid, len, wid * 0.5f);
-            petal.applyTransform (juce::AffineTransform::rotation (turn + juce::MathConstants<float>::twoPi * (float) k / 12.0f).translated (c));
-            g.setColour (juce::Colour (colours[(k + layer * 3) % 6]).withAlpha (layer == 0 ? 0.72f : 0.6f + bloom * 0.3f));
-            g.fillPath (petal);
-        }
-    }
-    const float core = R * (0.2f + bloom * 0.05f);
-    g.setColour (col::cream);
-    g.fillEllipse (c.x - core, c.y - core, core * 2, core * 2);
-
-    // the name and what it does
-    g.setColour (col::ink);
-    g.setFont (fraunces (52.0f).italicised());
-    g.drawText ("Kaleidobox", juce::Rectangle<float> (0, m.getBottom() + 18, (float) getWidth(), 64), juce::Justification::centred);
-    g.setColour (col::inkDim);
+    // the name, rising in under it, and what it does
+    auto text = juce::Rectangle<float> (0, m.getBottom() + 22, w, 60);
+    const float a = rise (opened, 1.5f), b = rise (opened, 1.8f), d = rise (opened, 2.1f);
+    g.setColour (kPaper.withAlpha (a));
+    g.setFont (fraunces (54.0f).italicised());
+    g.drawText ("Kaleidobox", text.translated (0, 18.0f * (1.0f - a)), juce::Justification::centred);
+    g.setColour (kSoft.withAlpha (b));
     g.setFont (small (17.0f));
-    g.drawFittedText ("Turn any sound into a little song.\nRecord it, chop it, beat it, sing over it.",
-                      juce::Rectangle<int> (20, (int) m.getBottom() + 84, getWidth() - 40, 50), juce::Justification::centred, 2);
-    g.setColour (col::inkFaint);
-    g.setFont (lcdFont (17.0f));
-    g.drawText ("The mandala turns with the mic: make a noise.", juce::Rectangle<float> (0, m.getBottom() + 140, (float) getWidth(), 22), juce::Justification::centred);
+    g.drawFittedText ("Every sound is the start of a song.\nHum it, loop it, build it out.",
+                      juce::Rectangle<int> (20, (int) (m.getBottom() + 88 + 18.0f * (1.0f - b)), getWidth() - 40, 48), juce::Justification::centred, 2);
+    g.setColour (col::lcdAmber.withAlpha (d));
+    g.setFont (spaced (lcdFont (18.0f), 0.05f));
+    g.drawText ("MAKE A NOISE. THE PETALS LISTEN.", juce::Rectangle<float> (0, m.getBottom() + 146 + 18.0f * (1.0f - d), w, 22), juce::Justification::centred);
+
+    // PICK UP WHERE YOU LEFT OFF
+    if (auto card = continueCard().toFloat(); ! card.isEmpty())
+    {
+        const float e = rise (opened, 2.4f);
+        juce::Graphics::ScopedSaveState save (g);
+        g.setOpacity (e);
+        card = card.translated (0, 14.0f * (1.0f - e));
+        g.setColour (juce::Colour (0xff241e19));
+        g.fillRoundedRectangle (card, 14.0f);
+        g.setColour (juce::Colour (0xff3a322b));
+        g.drawRoundedRectangle (card.reduced (0.75f), 14.0f, 1.5f);
+        auto play = card.removeFromRight (70).withSizeKeepingCentre (46, 46);
+        g.setColour (col::amber);
+        g.fillEllipse (play);
+        juce::Path tri;
+        const auto pc = play.getCentre();
+        tri.addTriangle (pc.x - 5, pc.y - 8, pc.x - 5, pc.y + 8, pc.x + 9, pc.y);
+        g.setColour (col::ink);
+        g.fillPath (tri);
+        auto in = card.reduced (16, 10);
+        g.setColour (juce::Colour (0xffb8aa92));
+        g.setFont (spaced (condensedBold (12.0f), 0.14f));
+        g.drawText ("PICK UP WHERE YOU LEFT OFF", in.removeFromTop (16), juce::Justification::centredLeft);
+        g.setColour (juce::Colour (0xfff1e7d1));
+        g.setFont (small (18.0f).boldened());
+        g.drawFittedText (continueName, in.removeFromTop (24).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        auto row = in.removeFromTop (18);
+        float x = row.getX();
+        for (size_t l = 0; l < juce::jmin<size_t> (continueLayers.size(), 8); ++l)
+        {
+            g.setColour (continueLayers[l]);
+            g.fillRoundedRectangle (x, row.getCentreY() - 3.0f, 18.0f, 6.0f, 3.0f);
+            x += 22.0f;
+        }
+        g.setColour (juce::Colour (0xffb8aa92));
+        g.setFont (small (13.0f));
+        g.drawFittedText (continueMeta, row.withLeft (x + (continueLayers.empty() ? 0.0f : 4.0f)).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+    }
+
+    g.setColour (kDim);
     g.setFont (small (13.0f));
-    g.drawText ("Shown when the app opens. Take the tour again any time from the menu.", juce::Rectangle<int> (0, getHeight() - 84, getWidth(), 20), juce::Justification::centred);
+    g.drawText ("Tap anywhere to skip the opening", juce::Rectangle<int> (0, getHeight() - 92, getWidth(), 20), juce::Justification::centred);
 }
 
 //==============================================================================

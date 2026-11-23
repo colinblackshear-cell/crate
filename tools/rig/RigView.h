@@ -10,6 +10,8 @@
 #include "RigNavigation.h"
 #include "ChordsView.h"
 
+namespace crate::spark { struct Spark; }
+
 // The Rig's window, built like a piece of 70s/80s studio gear: the top bar (your show, transport,
 // tempo, where the song is, VU meters), the view buttons (Play, Edit, Song, Mix; F1-F4) with
 // Sounds (a drawer over any view), Settings and the guide, the track rail down the left (every
@@ -166,6 +168,23 @@ public:
     void showShowMenu();
     juce::Component* getCurrentContent() const { return tabs.getCurrentContentComponent(); }
     class GuideView* getGuide() const { return guide; }
+    // My ideas: the front page (as the phone's), your songs and the ways to start one.
+    class RigIdeas* getIdeas() const { return ideas; }
+    // The opening title (the app sets titleAtLaunch: not in Logic, not in the tests).
+    static inline bool titleAtLaunch = false;
+    class RigTitle* getTitle() const { return title.get(); }
+    void showTitle (bool show);
+    // Opens a saved song (as Open show does, without the chooser).
+    void openShowFile (const juce::File&);
+    // Opens a song from My ideas: asks to save the one you're on first (unless nothing's made
+    // yet, or it's that song), then runs `then`.
+    void askOpenSong (const juce::File&, std::function<void()> then = {});
+    // My ideas' ways in, each on a new song (asking to save the one you're on first):
+    // CATCH AN IDEA records your mic onto loop 1 straight away, free length; a spark sets its
+    // tempo, key and kit and opens its first tool; a tile (RigIdeas::onStartWith) opens a tool.
+    void catchIdea();
+    void startSpark (const crate::spark::Spark&);
+    void startWithTile (int tile);
 
     // Back and forward through the screens you've been on (the arrows by the screen buttons,
     // Cmd+[ and Cmd+]). A place is a page, or the Sampler's editor, or the Looper's timeline
@@ -408,7 +427,12 @@ private:
     class SamplerScreen* samplerScreen = nullptr;
     class VocoderScreen* vocoderScreen = nullptr;   // owned by the tabs
     class GrooveView* groove = nullptr;
-    class GuideView* guide = nullptr;   // the front page
+    class GuideView* guide = nullptr;   // every tool
+    class RigIdeas* ideas = nullptr;    // the front page, owned by the tabs
+    std::unique_ptr<class RigTitle> title;
+    void startFresh (const juce::String& what, std::function<void()> then);
+    void renameSong (const juce::File&);
+    void trashSong (const juce::File&);
     void showTab (const juce::String& name);
     void openTool (const juce::String& name);
 

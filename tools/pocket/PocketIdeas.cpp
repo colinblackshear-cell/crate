@@ -75,6 +75,7 @@ void Ideas::load()
         i.modified = juce::Time ((juce::int64) v.getProperty ("modified", 0));
         i.reached = juce::jlimit (-1, kSteps - 1, (int) v.getProperty ("reached", -1));
         i.sent = (bool) v.getProperty ("sent", false);
+        i.starred = (bool) v.getProperty ("starred", false);
         i.summary = v.getProperty ("summary", {}).toString();
         ideas.push_back (i);
     }
@@ -96,6 +97,7 @@ void Ideas::save (const IdeaInfo& i) const
     o->setProperty ("modified", i.modified.toMilliseconds());
     o->setProperty ("reached", i.reached);
     o->setProperty ("sent", i.sent);
+    o->setProperty ("starred", i.starred);
     o->setProperty ("summary", i.summary);
     dir.getChildFile ("idea.json").replaceWithText (juce::JSON::toString (juce::var (o)));
 }
@@ -205,6 +207,30 @@ void Ideas::setSummary (const juce::String& s)
         i->summary = s;
         save (*i);
     }
+}
+
+void Ideas::setStarred (const juce::String& id, bool on)
+{
+    if (auto* i = findMutable (id); i != nullptr && i->starred != on)
+    {
+        i->starred = on;
+        save (*i);   // (starring isn't a change to the song: its place in RECENT stays)
+    }
+}
+
+bool Ideas::homeFlag (const juce::String& name, bool fallback) const
+{
+    return (bool) juce::JSON::parse (folder.getChildFile ("home.json")).getProperty (name, fallback);
+}
+
+void Ideas::setHomeFlag (const juce::String& name, bool on)
+{
+    auto file = folder.getChildFile ("home.json");
+    auto v = juce::JSON::parse (file);
+    if (! v.isObject())
+        v = juce::var (new juce::DynamicObject());
+    v.getDynamicObject()->setProperty (name, on);
+    file.replaceWithText (juce::JSON::toString (v));
 }
 
 void Ideas::setDemo (const juce::String& id, int reached, bool sent, const juce::String& summary, juce::Time modified)
