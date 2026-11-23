@@ -447,5 +447,19 @@ private:
     juce::StringArray listenedInputs;
     int ticks = 0;
 
+    // Your hand anywhere in the window (a click, a wheel, a key, focus moving), told to the
+    // engine's dirty model so it looks again soon. Only while that's on.
+    struct Activity : juce::MouseListener, juce::FocusChangeListener, juce::KeyListener
+    {
+        explicit Activity (RigEngine& e) : engine (e) {}
+        void mouseUp (const juce::MouseEvent&) override { engine.getDirty().noteActivity(); }
+        void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override { engine.getDirty().noteActivity(); }
+        void globalFocusChanged (juce::Component*) override { engine.getDirty().noteActivity(); }
+        bool keyPressed (const juce::KeyPress&, juce::Component*) override { return false; }
+        bool keyStateChanged (bool, juce::Component*) override { engine.getDirty().noteActivity(); return false; }
+        RigEngine& engine;
+    };
+    std::unique_ptr<Activity> activity;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RigView)
 };

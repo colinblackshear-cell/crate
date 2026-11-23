@@ -53,7 +53,18 @@ public:
         bool partial = false;             // cut short (the rest is silence)
         int number = 1;                   // Take 1, Take 2... (kept when older ones are deleted)
         std::vector<rignotes::Note> notes;   // what was played (a notes layer's takes)
+        // Names this take's sound for the dirty model's hash cache: a fresh one whenever the sound
+        // is made or filled in (newId()), never reused in this program.
+        juce::uint64 id = newId();
     };
+    static juce::uint64 newId()
+    {
+        static std::atomic<juce::uint64> next { 1 };
+        return next.fetch_add (1);
+    }
+    // Moves whenever a set or its takes change (any thread may read it).
+    int getGeneration() const { return generation.load(); }
+    void changed() { ++generation; }
     // The takes of one loop layer, over one stretch of the song.
     struct Set
     {
@@ -151,6 +162,7 @@ private:
 
     std::vector<Set> sets;
     int takesMade = 0;
+    std::atomic<int> generation { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RigTakes)
 };

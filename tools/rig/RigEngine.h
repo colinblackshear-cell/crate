@@ -26,6 +26,7 @@
 #include "RigAutomation.h"
 #include "RigShowFiles.h"
 #include "RigSounds.h"
+#include "RigDirty.h"
 #include "core/SafetyLimiter.h"
 #include "core/control/Controllers.h"
 
@@ -432,6 +433,10 @@ public:
     static constexpr int kMaxLoopBanks = 64;
     // The banks, with the current one's layers as they are now on the looper.
     const std::vector<LoopBank>& getLoopBanks();
+    // The banks as they're kept, without keeping the layers first (nothing is copied or changed):
+    // the current bank's entry is as it was last kept, so its sound is the looper's layers, not
+    // this. For watching (the dirty model); message thread.
+    const std::vector<LoopBank>& peekLoopBanks() const { return loopBanks; }
     int getNumLoopBanks() const { return juce::jmax (1, (int) loopBanks.size()); }
     // Always one: before you make a second, the layers are "Bank 1".
     int getCurrentLoopBank() const { return juce::jmax (0, currentLoopBank); }
@@ -466,8 +471,9 @@ public:
     // Saves the show and its loops' sound to `showFile` as one revision: the WAVs are written and
     // checked first, then the show file (which names them) replaces the old one. If anything
     // fails, the last saved show and its sound are left as they were and the result says why.
-    // Message thread.
-    rigshow::Result saveShowFile (const juce::File& showFile);
+    // Message thread. A document save (Save, Save As) is what the show is compared with to tell
+    // whether it has changed since; a copy (the last show for the next launch) isn't.
+    rigshow::Result saveShowFile (const juce::File& showFile, rigshow::SaveKind kind = rigshow::SaveKind::copy);
     // The plugin's state (the host keeps it): the show, naming the loops' revision saved for it
     // under `loopsShowFile`. An invalid tree (with why in `result`) when the loops couldn't be
     // saved; the caller then gives the host its last saved state instead.
@@ -484,6 +490,10 @@ public:
     juce::String getLoopName (int layer) const;
     // After loadShow: brings in the loops' sound saved with that show (its revision).
     void readLoopAudio (const juce::File& showFile);
+
+    // Whether the show has changed since it was opened, made new or saved (RigDirty.h). Off
+    // unless the app switches it on.
+    RigDirty& getDirty() { return dirty; }
 
 private:
     juce::ValueTree blankShow;   // a new Rig's show, for newShow
@@ -512,7 +522,16 @@ private:
     struct LoopRoom : juce::Timer
     {
         explicit LoopRoom (RigEngine& e) : engine (e) {}
-        void timerCallback() override { engine.looper.maintain(); engine.serviceLoopBanks(); engine.quantizer.service(); engine.automation.service(); engine.serviceTakes(); }
+        void timerCallback() override
+        {
+            engine.looper.maintain();
+            engine.serviceLoopBanks();
+            engine.quantizer.service();
+            if (engine.automation.service())
+                engine.dirty.noteChange();
+            engine.serviceTakes();
+            engine.dirty.service();
+        }
         RigEngine& engine;
     } loopRoom { *this };
     RigQuantizer quantizer { *this };
@@ -620,6 +639,9 @@ private:
     double sampleRate = 0;
     int maxBlock = 0;
     bool prepared = false;
+
+    // Last, so it's made after the tools (it listens to their settings) and goes first.
+    RigDirty dirty { *this };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RigEngine)
 };

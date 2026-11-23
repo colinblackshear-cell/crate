@@ -25,6 +25,23 @@ public:
 
         RigEngine::startWithFactoryKit = true;
         engine = std::make_unique<RigEngine>();
+        // The show's changed-since-saved model, for measuring it on a real Mac (nothing shows it
+        // yet): KALEIDOBOX_DIRTY=1 switches it on and logs to ~/Library/Logs/Kaleidobox/dirty.log.
+        if (juce::SystemStats::getEnvironmentVariable ("KALEIDOBOX_DIRTY", {}) == "1")
+        {
+           #if JUCE_MAC
+            const auto logs = juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("Library/Logs/Kaleidobox");
+           #else
+            const auto logs = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Kaleidobox");
+           #endif
+            logs.createDirectory();
+            const auto file = logs.getChildFile ("dirty.log");
+            engine->getDirty().log = [file] (const juce::String& line)
+            {
+                file.appendText (juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M:%S ") + line + "\n");
+            };
+            engine->getDirty().setEnabled (true);
+        }
 
         // Pick up where the last show left off.
         if (auto xml = juce::parseXML (lastShowFile()))

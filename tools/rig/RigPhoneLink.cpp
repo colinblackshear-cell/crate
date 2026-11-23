@@ -319,13 +319,17 @@ void RigPhoneLink::handle (const Message& m, std::function<void (const Message&)
             {
                 auto& strip = engine.getStrip (remoteStrips()[(size_t) t]);
                 strip.mute = ! strip.mute.load();
+                engine.getDirty().authoredField (RigDirty::stripMute, remoteStrips()[(size_t) t]);
                 engine.controlsMoved = true;
             }
         }
         else if (action == "unmuteAll")
         {
             for (auto s : remoteStrips())
+            {
                 engine.getStrip (s).mute = false;
+                engine.getDirty().authoredField (RigDirty::stripMute, s);
+            }
             engine.controlsMoved = true;
         }
         else if (action == "rec")

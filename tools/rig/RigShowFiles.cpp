@@ -219,6 +219,7 @@ bool stage (const juce::File& showFile, const std::vector<Asset>& assets, double
     std::vector<juce::uint64> keys;
     for (const auto& a : assets)
         keys.push_back (hashAudio (*a.audio));
+    out.keys = keys;
 
     // Already saved as it is (same show, same files): nothing to write.
     const auto previousFolder = previous.showFile == juce::File() ? juce::File() : resolve (previous.showFile, previous.revision);

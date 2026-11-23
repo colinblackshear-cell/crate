@@ -173,6 +173,8 @@ RigEngine::RigEngine()
     macros.getParameter = automation.getParameter;
     macros.numParameters = automation.numParameters;
     macros.toolName = automation.toolName;
+    automation.dirty = &dirty;
+    macros.dirty = &dirty;
     arrangeFrom.fill (1.0f);
     arrangeTo.fill (1.0f);
     arrangeRestart.fill (-1.0);
@@ -229,6 +231,7 @@ void RigEngine::newShow()
     screens = keep;
     quantizer.settings = quantizeSettings;
     chords.fromTree (keepChords);
+    dirty.showMadeNew();
 }
 
 bool RigEngine::isBlank() const
@@ -551,25 +554,30 @@ void RigEngine::applyControls (const RigRouting::Result& r)
             moved = true;
         }
 
+    // (Learned buttons are your hand: the dirty model takes these as yours.)
     if (r.presses[RigRouting::mpcMute] % 2 == 1)
     {
         strips[mpcStrip].mute = ! strips[mpcStrip].mute.load();
+        dirty.authoredField (RigDirty::stripMute, mpcStrip);
         moved = true;
     }
     if (r.presses[RigRouting::samplerMute] % 2 == 1)
     {
         strips[samplerStrip].mute = ! strips[samplerStrip].mute.load();
+        dirty.authoredField (RigDirty::stripMute, samplerStrip);
         moved = true;
     }
     if (r.presses[RigRouting::vocoderMute] % 2 == 1)
     {
         strips[vocoderStrip].mute = ! strips[vocoderStrip].mute.load();
+        dirty.authoredField (RigDirty::stripMute, vocoderStrip);
         moved = true;
     }
     for (auto [control, strip] : { std::pair<int, int> { RigRouting::bassMute, bassStrip }, { RigRouting::synthMute, synthStrip }, { RigRouting::inputMute, inputStrip }, { RigRouting::loopsMute, loopsStrip }, { RigRouting::drumsMute, drumsStrip } })
         if (r.presses[(size_t) control] % 2 == 1)
         {
             strips[(size_t) strip].mute = ! strips[(size_t) strip].mute.load();
+            dirty.authoredField (RigDirty::stripMute, strip);
             moved = true;
         }
 
@@ -593,6 +601,7 @@ void RigEngine::applyControls (const RigRouting::Result& r)
         {
             auto& layer = looper.getLayer (i);
             layer.mute = ! layer.mute.load();
+            dirty.authoredField (RigDirty::loopMute, i);
             moved = true;
         }
     }
@@ -601,11 +610,13 @@ void RigEngine::applyControls (const RigRouting::Result& r)
     if (r.presses[RigRouting::inputHear] % 2 == 1)
     {
         inputOn = ! inputOn.load();
+        dirty.authoredField (RigDirty::inputOn, 0);
         moved = true;
     }
     if (r.presses[RigRouting::vocoderOn] % 2 == 1)
     {
         vocoderOn = ! vocoderOn.load();
+        dirty.authoredField (RigDirty::vocoderOn, 0);
         moved = true;
     }
     if (r.presses[RigRouting::metronome] % 2 == 1)
@@ -646,7 +657,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
             if (m.samplePosition >= offset && m.samplePosition < offset + n)
                 midiIn.addEvent (m.getMessage(), m.samplePosition - offset);
     if (! midiIn.isEmpty())
+    {
         lastMidiTime = juce::Time::getMillisecondCounter();
+        dirty.noteMidi();
+    }
 
     mpcMidi.clear();
     samplerMidi.clear();
@@ -1960,6 +1974,8 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     if (onlyTool.load() >= 0)
         setOnlyTool (onlyTool.load());
     controlsMoved = true;
+    // Nothing to compare with until it's opened (readLoopAudio, or markOpened).
+    dirty.showLoaded();
 }
 
 //==============================================================================
@@ -2158,10 +2174,16 @@ juce::Array<RigEngine*> RigEngine::openBoxes()
 //==============================================================================
 namespace
 {
-void setParameter (juce::AudioProcessorValueTreeState& state, const char* id, float plainValue)
+// (Only the song and its parts use this: playback's writes, which the dirty model keeps apart
+// from the values you set.)
+void setParameter (RigDirty& dirty, juce::AudioProcessorValueTreeState& state, const char* id, float plainValue)
 {
     if (auto* p = state.getParameter (id))
+    {
+        dirty.runtimeParam (p, p->convertTo0to1 (plainValue));
         p->setValueNotifyingHost (p->convertTo0to1 (plainValue));
+        dirty.runtimeParamWritten (p);
+    }
 }
 
 float getParameter (juce::AudioProcessorValueTreeState& state, const char* id)
@@ -2197,25 +2219,45 @@ void RigEngine::applyScene (const RigScene::State& s, double beat)
     for (int l = 0; l < RigLooper::kLayers; ++l)
         if (s.loopMutes[(size_t) l] == 0 && looper.getLayer (l).mute.load())
             looper.restartAt (l, beat);
+    // Playback's writes (a check reading these meanwhile tries again).
+    dirty.beginAudioFields();
     for (int st = 0; st < numStrips && st < RigScene::kMaxStrips; ++st)
         if (s.stripMutes[(size_t) st] >= 0)
+        {
+            dirty.runtimeField (RigDirty::stripMute, st, strips[(size_t) st].mute.load() ? 1.0f : 0.0f, s.stripMutes[(size_t) st] == 1 ? 1.0f : 0.0f);
             strips[(size_t) st].mute = s.stripMutes[(size_t) st] == 1;
+        }
     for (int l = 0; l < RigLooper::kLayers; ++l)
         if (s.loopMutes[(size_t) l] >= 0)
+        {
+            // (A loop bank coming in with the part has its mute from the part already.)
+            if (! looper.isSwapPending (l))
+                dirty.runtimeField (RigDirty::loopMute, l, looper.getLayer (l).mute.load() ? 1.0f : 0.0f, s.loopMutes[(size_t) l] == 1 ? 1.0f : 0.0f);
             looper.getLayer (l).mute = s.loopMutes[(size_t) l] == 1;
+        }
     if (s.vocoderOn >= 0)
+    {
+        dirty.runtimeField (RigDirty::vocoderOn, 0, vocoderOn.load() ? 1.0f : 0.0f, s.vocoderOn == 1 ? 1.0f : 0.0f);
         vocoderOn = s.vocoderOn == 1;
+    }
     if (s.inputOn >= 0)
+    {
+        dirty.runtimeField (RigDirty::inputOn, 0, inputOn.load() ? 1.0f : 0.0f, s.inputOn == 1 ? 1.0f : 0.0f);
         inputOn = s.inputOn == 1;
+    }
     if (s.bassSequencer >= 0)
-        setParameter (bass.params, "sequencer", (float) s.bassSequencer);
+        setParameter (dirty, bass.params, "sequencer", (float) s.bassSequencer);
     if (s.arp >= 0)
-        setParameter (synthTool.params, "arpOn", (float) s.arp);
+        setParameter (dirty, synthTool.params, "arpOn", (float) s.arp);
     if (s.drumSequencer >= 0)
-        setParameter (drums.params, "sequencer", (float) s.drumSequencer);
+        setParameter (dirty, drums.params, "sequencer", (float) s.drumSequencer);
     // (On the audio thread: switched off, the sequencer stops itself as it stops following.)
     if (s.mpcBeat >= 0)
+    {
+        dirty.runtimeField (RigDirty::mpcBeat, 0, isMpcBeatOn() ? 1.0f : 0.0f, s.mpcBeat == 1 ? 1.0f : 0.0f);
         mpc.getSequencer().followHost = s.mpcBeat == 1;
+    }
+    dirty.endAudioFields();
 }
 
 void RigEngine::arrange (int n)
@@ -2288,6 +2330,9 @@ int RigEngine::samplesToTimelineEvent (int n) const
 
 void RigEngine::playTimeline (double bar)
 {
+    // What playing the song switches on is playback's, not yours (the dirty model keeps yours).
+    dirty.runtimeField (RigDirty::timelineOn, 0, timeline.on.load() ? 1.0f : 0.0f, 1.0f);
+    dirty.runtimeField (RigDirty::songMode, 0, scenes.songMode ? 1.0f : 0.0f, 0.0f);
     timeline.on = true;
     scenes.songMode = false;
     const auto& lanes = RigTimeline::lanes();
@@ -2297,13 +2342,25 @@ void RigEngine::playTimeline (double bar)
             continue;
         const auto& info = lanes[(size_t) lane];
         if (info.isLoop)
+        {
+            dirty.runtimeField (RigDirty::loopMute, info.index, looper.getLayer (info.index).mute.load() ? 1.0f : 0.0f, 0.0f);
             looper.getLayer (info.index).mute = false;
+        }
         else
+        {
+            dirty.runtimeField (RigDirty::stripMute, info.index, strips[(size_t) info.index].mute.load() ? 1.0f : 0.0f, 0.0f);
             strips[(size_t) info.index].mute = false;
+        }
         if (! info.isLoop && info.index == vocoderStrip)
+        {
+            dirty.runtimeField (RigDirty::vocoderOn, 0, vocoderOn.load() ? 1.0f : 0.0f, 1.0f);
             vocoderOn = true;
+        }
         if (! info.isLoop && info.index == inputStrip)
+        {
+            dirty.runtimeField (RigDirty::inputOn, 0, inputOn.load() ? 1.0f : 0.0f, 1.0f);
             inputOn = true;
+        }
     }
     if (transport.isPlaying())
     {
@@ -2420,6 +2477,7 @@ bool RigEngine::useTake (int layer, int index)
         clip.bars = set->bars;
         clip.notes = take.notes;
         notesChanged();
+        dirty.noteChange();
         // The tool's lane plays in that section (so the song brings it in there).
         if (const int lane = RigTimeline::laneForStrip (strip); lane >= 0)
         {
@@ -2435,7 +2493,7 @@ bool RigEngine::useTake (int layer, int index)
         controlsMoved = true;
         return true;
     }
-    looper.setLayerAudio (layer, take.audio, take.beats);
+    dirty.takeOnLayer (take.id, layer, looper.setLayerAudio (layer, take.audio, take.beats));
     looper.getLayer (layer).mute = false;
     set->playing = index;
     set->fresh = false;
@@ -2472,6 +2530,8 @@ int RigEngine::serviceTakes()
             else if (! RigTakes::isNotesLayer (l) && looper.getState (l) == RigLooper::State::empty && takes.getLayer() != l)
                 takes.forget (l);
         }
+    if (made > 0)
+        dirty.noteChange();
     return made;
 }
 
@@ -2493,6 +2553,7 @@ void RigEngine::notesChanged()
 {
     // (Kept in the order they're in: Edit notes picks them by place while you drag.)
     notePlayer.publish (noteClips);
+    dirty.noteChange();
 }
 
 int RigEngine::takeToLoop (int notesLayer)
@@ -2504,7 +2565,7 @@ int RigEngine::takeToLoop (int notesLayer)
     const int layer = freeLayerForSong();
     if (layer < 0 || take.audio.getNumSamples() == 0)
         return -1;
-    looper.setLayerAudio (layer, take.audio, take.beats);
+    dirty.takeOnLayer (take.id, layer, looper.setLayerAudio (layer, take.audio, take.beats));
     looper.getLayer (layer).source = set->source;
     looper.getLayer (layer).mute = false;
     const auto source = set->source == RigLooper::drums ? juce::String ("Drums") : RigLooper::sourceName (set->source);
@@ -2560,15 +2621,15 @@ void RigEngine::applyClip (int lane, int clip)
             break;
         }
         case bassStrip:
-            setParameter (bass.params, "pattern", (float) clip);
-            setParameter (bass.params, "sequencer", 1.0f);
+            setParameter (dirty, bass.params, "pattern", (float) clip);
+            setParameter (dirty, bass.params, "sequencer", 1.0f);
             break;
         case drumsStrip:
-            setParameter (drums.params, "pattern", (float) clip);
-            setParameter (drums.params, "sequencer", 1.0f);
+            setParameter (dirty, drums.params, "pattern", (float) clip);
+            setParameter (dirty, drums.params, "sequencer", 1.0f);
             break;
         case synthStrip:
-            setParameter (synthTool.params, "arpOn", clip > 0 ? 1.0f : 0.0f);
+            setParameter (dirty, synthTool.params, "arpOn", clip > 0 ? 1.0f : 0.0f);
             break;
         default:
             break;
@@ -2616,6 +2677,7 @@ void RigEngine::tickSong()
         if (! loopBankBusy (why))
         {
             storeLoopBank();
+            dirty.runtimeField (RigDirty::bankCurrent, 0, (float) getCurrentLoopBank(), (float) bank);
             putLoopBankOnLayers (bank, rigsong::sections (timeline)[(size_t) section].start * bpb, nullptr);
         }
     }
@@ -2651,9 +2713,9 @@ void RigEngine::tickScenes()
         mpc.switchAtBar = atBar;
     }
     if (s.bassPattern >= 0)
-        setParameter (bass.params, "pattern", (float) s.bassPattern);
+        setParameter (dirty, bass.params, "pattern", (float) s.bassPattern);
     if (s.drumPattern >= 0)
-        setParameter (drums.params, "pattern", (float) s.drumPattern);
+        setParameter (dirty, drums.params, "pattern", (float) s.drumPattern);
 
     // The part's loop bank comes in on its first beat (unless a layer is still recording).
     if (s.loopBank >= 0 && s.loopBank < getNumLoopBanks()
@@ -2665,6 +2727,7 @@ void RigEngine::tickScenes()
             storeLoopBank();
             const double at = ! transport.isPlaying() ? -1.0
                               : scenes.getQueued() == early ? scenes.getQueuedBeat() : scenes.getCurrentStartBeat();
+            dirty.runtimeField (RigDirty::bankCurrent, 0, (float) getCurrentLoopBank(), (float) s.loopBank);
             putLoopBankOnLayers (s.loopBank, at, &s);
         }
     }
@@ -2686,18 +2749,33 @@ static juce::String takesFolderName (int layer)
 // "Takes/Loop 5/Take 2.wav" and "Takes/Notes 4/Take 1.wav", "Bank 2/Loop 1.wav" (other banks).
 std::vector<rigshow::Asset> RigEngine::loopAssets() const
 {
+    // (Each says what it is in the engine too, for the dirty model; saving ignores that.)
     std::vector<rigshow::Asset> assets;
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
-        auto audio = std::make_shared<juce::AudioBuffer<float>> (looper.copyLayerAudio (i));
+        int version = -1;
+        auto audio = std::make_shared<juce::AudioBuffer<float>> (looper.copyLayerAudio (i, &version));
         if (audio->getNumSamples() > 0)
-            assets.push_back ({ "Loop " + juce::String (i + 1) + ".wav", std::move (audio) });
+        {
+            rigshow::Asset a { "Loop " + juce::String (i + 1) + ".wav", std::move (audio) };
+            a.kind = rigshow::Asset::Kind::liveLayer;
+            a.layer = i;
+            a.bank = getCurrentLoopBank();
+            a.version = version;
+            assets.push_back (std::move (a));
+        }
     }
     for (const auto& set : takes.getSets())
         for (const auto& take : set.takes)
             if (take.audio.getNumSamples() > 0)
-                assets.push_back ({ "Takes/" + takesFolderName (set.layer) + "/Take " + juce::String (take.number) + ".wav",
-                                    std::shared_ptr<const juce::AudioBuffer<float>> (&take.audio, [] (const juce::AudioBuffer<float>*) {}) });
+            {
+                rigshow::Asset a { "Takes/" + takesFolderName (set.layer) + "/Take " + juce::String (take.number) + ".wav",
+                                   std::shared_ptr<const juce::AudioBuffer<float>> (&take.audio, [] (const juce::AudioBuffer<float>*) {}) };
+                a.kind = rigshow::Asset::Kind::take;
+                a.layer = set.layer;
+                a.takeId = take.id;
+                assets.push_back (std::move (a));
+            }
     for (int b = 0; b < (int) loopBanks.size(); ++b)
     {
         if (b == getCurrentLoopBank())
@@ -2707,21 +2785,38 @@ std::vector<rigshow::Asset> RigEngine::loopAssets() const
             const auto& l = loopBanks[(size_t) b].layers[(size_t) i];
             if (l.audio == nullptr || l.beats <= 0 || l.audio->getNumSamples() == 0)
                 continue;
-            assets.push_back ({ "Bank " + juce::String (b + 1) + "/Loop " + juce::String (i + 1) + ".wav", l.audio });
+            rigshow::Asset a { "Bank " + juce::String (b + 1) + "/Loop " + juce::String (i + 1) + ".wav", l.audio };
+            a.kind = rigshow::Asset::Kind::bank;
+            a.layer = i;
+            a.bank = b;
+            assets.push_back (std::move (a));
         }
     }
     return assets;
 }
 
-rigshow::Result RigEngine::saveShowFile (const juce::File& showFile)
+rigshow::Result RigEngine::saveShowFile (const juce::File& showFile, rigshow::SaveKind kind)
 {
     const juce::ScopedLock sl (rigshow::saveLock());
+    // The dirty model's baseline moves only when this save is committed (and is a document's).
+    auto ticket = dirty.beginSave();
     rigshow::Result result;
     rigshow::Staged staged;
-    if (! rigshow::stage (showFile, loopAssets(), sampleRate, committedAudio, staged, result))
+    auto assets = loopAssets();
+    const bool stagedOk = rigshow::stage (showFile, assets, sampleRate, committedAudio, staged, result);
+    // The loops' copies go now, as before (the dirty model only needs to know what they were).
+    for (auto& a : assets)
+        if (a.kind == rigshow::Asset::Kind::liveLayer)
+            a.audio = nullptr;
+    if (! stagedOk)
+    {
+        dirty.finishSave (ticket, false, kind);
         return result;
+    }
 
+    dirty.beforeTree (ticket);
     auto show = saveShow();
+    dirty.captureSave (ticket, show, staged, assets);
     show.setProperty (rigshow::kRevisionAttribute, staged.revision, nullptr);
     auto xml = show.createXml();
     rigshow::reach ("beforeCommit");
@@ -2730,12 +2825,14 @@ rigshow::Result RigEngine::saveShowFile (const juce::File& showFile)
         rigshow::discard (staged);
         result.ok = false;
         result.error = "Couldn't write " + showFile.getFileName() + " (is the disk full or the folder read-only?). The last saved show is unchanged.";
+        dirty.finishSave (ticket, false, kind);
         return result;
     }
     rigshow::reach ("afterCommit");
     committedAudio = rigshow::committedFrom (staged);
     rigshow::finish (staged, result);
     result.ok = true;
+    dirty.finishSave (ticket, true, kind);
     return result;
 }
 
@@ -2800,6 +2897,8 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
+    std::array<int, RigLooper::kLayers> versions;   // what each layer's sound is, for the dirty model
+    versions.fill (-1);
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
         const double beats = loadedLoopBeats[(size_t) i];
@@ -2816,7 +2915,7 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
             juce::AudioBuffer<float> audio (2, (int) reader->lengthInSamples);
             reader->read (&audio, 0, audio.getNumSamples(), 0, true, true);
             remember (path, file, audio);
-            looper.setLayerAudio (i, std::move (audio), beats);
+            versions[(size_t) i] = looper.setLayerAudio (i, std::move (audio), beats);
             setLoopName (i, loadedLoopNames[(size_t) i]);
         }
     }
@@ -2838,6 +2937,7 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
             {
                 take.audio.setSize (2, (int) reader->lengthInSamples);
                 reader->read (&take.audio, 0, take.audio.getNumSamples(), 0, true, true);
+                take.id = RigTakes::newId();   // its sound is new
                 remember (path, file, take.audio);
                 kept.push_back (std::move (take));
             }
@@ -2876,6 +2976,8 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
         }
     }
     committedAudio = std::move (loaded);
+    // The show is open: as it is now is what's saved.
+    dirty.opened (committedAudio, versions);
 }
 
 //==============================================================================
@@ -2956,6 +3058,8 @@ void RigEngine::storeLoopBank()
     }
     currentLoopBank = juce::jlimit (0, (int) loopBanks.size() - 1, currentLoopBank);
     auto& bank = loopBanks[(size_t) currentLoopBank];
+    std::array<int, RigLooper::kLayers> copied;   // the version each copy is of (-1: not copied)
+    copied.fill (-1);
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
         const auto& live = looper.getLayer (i);
@@ -2967,7 +3071,9 @@ void RigEngine::storeLoopBank()
         const int version = live.version.load();
         if (version != l.version)
         {
-            auto audio = looper.copyLayerAudio (i);
+            int of = -1;
+            auto audio = looper.copyLayerAudio (i, &of);
+            copied[(size_t) i] = of == version ? of : -1;
             const double beats = audio.getNumSamples() > 0 ? live.lengthBeats.load() : 0.0;
             l.audio = beats > 0 ? std::make_shared<const juce::AudioBuffer<float>> (std::move (audio)) : nullptr;
             l.beats = l.audio != nullptr ? beats : 0.0;
@@ -2981,6 +3087,7 @@ void RigEngine::storeLoopBank()
         if (loopFx[(size_t) i].isActive())
             loopFx[(size_t) i].getStateInformation (l.fx);
     }
+    dirty.bankStored (currentLoopBank, copied);
 }
 
 const std::vector<RigEngine::LoopBank>& RigEngine::getLoopBanks()
@@ -3016,11 +3123,16 @@ void RigEngine::serviceLoopBanks()
         }
     }
     if (! waiting)
+    {
+        if (queuedLoopBank >= 0)
+            dirty.noteChange();   // the switch is done
         queuedLoopBank = -1;
+    }
 }
 
 void RigEngine::putLoopBankOnLayers (int index, double beat, const RigScene::State* scene)
 {
+    dirty.bankPut (index, scene);
     const auto& bank = loopBanks[(size_t) index];
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
@@ -3035,7 +3147,7 @@ void RigEngine::putLoopBankOnLayers (int index, double beat, const RigScene::Sta
         juce::AudioBuffer<float> audio;
         if (l.audio != nullptr)
             audio.makeCopyOf (*l.audio);
-        looper.queueLayerAudio (i, std::move (audio), l.audio != nullptr ? l.beats : 0.0, beat, l.level, mute);
+        dirty.bankQueued (index, i, looper.queueLayerAudio (i, std::move (audio), l.audio != nullptr ? l.beats : 0.0, beat, l.level, mute));
         pendingBankFx[(size_t) i] = l.fx;
         bankFxPending[(size_t) i] = true;
         loopBanks[(size_t) index].layers[(size_t) i].version = beat < 0 ? live.version.load() : -1;
@@ -3048,6 +3160,7 @@ void RigEngine::putLoopBankOnLayers (int index, double beat, const RigScene::Sta
     }
     currentLoopBank = index;
     queuedLoopBank = beat < 0 ? -1 : index;
+    dirty.noteChange();
 }
 
 juce::String RigEngine::saveLoopBank (const juce::String& name)
@@ -3059,6 +3172,7 @@ juce::String RigEngine::saveLoopBank (const juce::String& name)
     auto& bank = loopBanks[(size_t) currentLoopBank];
     if (name.trim().isNotEmpty())
         bank.name = name.trim().substring (0, 40);
+    dirty.noteChange();
     const int n = bank.loopCount();
     return "Kept " + juce::String (n) + (n == 1 ? " loop" : " loops") + " in \"" + getLoopBankName (currentLoopBank)
            + "\". Save the show (Cmd+S) to keep it on disk.";
@@ -3088,6 +3202,8 @@ juce::String RigEngine::newLoopBank (const juce::String& name)
     for (auto& scene : scenes.getScenes())
         if (scene.state.loopBank >= index)
             ++scene.state.loopBank;
+    dirty.banksChanged();
+    dirty.authoredField (RigDirty::bankCurrent, 0);
     return "Kept your loops in \"" + kept + "\" and started \"" + getLoopBankName (index)
            + "\", empty and ready to record" + (transport.isPlaying() ? " (from the next bar)." : ".");
 }
@@ -3141,6 +3257,9 @@ juce::String RigEngine::clearAllLoops()
         looper.makeRoom (i);
     }
     clearedLoops = std::move (kept);
+    dirty.banksChanged();
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        dirty.authoredField (RigDirty::loopMute, i);
     return "Cleared all " + juce::String (loops) + (loops == 1 ? " loop" : " loops")
            + " and their effects: empty layers, ready to record. Undo brings them back.";
 }
@@ -3185,6 +3304,9 @@ juce::String RigEngine::undoClearAllLoops()
         if (looper.getState (i) == RigLooper::State::empty)
             looper.makeRoom (i);
     }
+    dirty.banksChanged();
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        dirty.authoredField (RigDirty::loopMute, i);
     const int loops = kept->loopCount();
     return "Brought back " + juce::String (loops) + (loops == 1 ? " loop" : " loops") + " and their effects.";
 }
@@ -3198,10 +3320,14 @@ juce::String RigEngine::switchLoopBank (int index)
         return why;
     storeLoopBank();
     if (index == currentLoopBank && queuedLoopBank < 0)
+    {
+        dirty.authoredField (RigDirty::bankCurrent, 0);   // you picked it (whoever switched to it)
         return "\"" + getLoopBankName (index) + "\" is the bank playing.";
+    }
     const int bpb = juce::jmax (1, transport.getBeatsPerBar());
     const bool playing = transport.isPlaying();
     putLoopBankOnLayers (index, playing ? std::ceil (transport.getPositionInBeats() / bpb - 1.0e-9) * bpb : -1.0, nullptr);
+    dirty.authoredField (RigDirty::bankCurrent, 0);   // you picked it
     const int n = loopBanks[(size_t) index].loopCount();
     return "\"" + getLoopBankName (index) + "\" (" + juce::String (n) + (n == 1 ? " loop" : " loops") + ")"
            + (playing ? " comes in at the next bar." : " is on the layers.");
@@ -3224,6 +3350,7 @@ juce::String RigEngine::duplicateLoopBank (int index)
     for (auto& scene : scenes.getScenes())
         if (scene.state.loopBank > index)
             ++scene.state.loopBank;
+    dirty.banksChanged();
     return "Made \"" + getLoopBankName (index + 1) + "\". Switch to it to change it; \"" + getLoopBankName (index) + "\" stays as it is.";
 }
 
@@ -3233,6 +3360,7 @@ juce::String RigEngine::renameLoopBank (int index, const juce::String& name)
         return {};
     storeLoopBank();
     loopBanks[(size_t) index].name = name.trim().substring (0, 40);
+    dirty.noteChange();
     return "Renamed the bank \"" + getLoopBankName (index) + "\".";
 }
 
@@ -3267,5 +3395,7 @@ juce::String RigEngine::deleteLoopBank (int index)
         else if (scene.state.loopBank > index)
             --scene.state.loopBank;
     }
+    dirty.banksChanged();
+    dirty.authoredField (RigDirty::bankCurrent, 0);
     return "Deleted \"" + name + "\". Now playing \"" + getLoopBankName (currentLoopBank) + "\".";
 }

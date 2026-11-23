@@ -96,6 +96,9 @@ public:
         float swapLevel = 0.8f;
         bool swapMute = false;
         std::atomic<bool> swapPending { false };
+        int swapSerial = 0;                   // under `lock`: the queued swap's serial
+        // The last swap done: (serial << 32) | the version it left (-1 before any).
+        std::atomic<juce::int64> swapApplied { (juce::int64) (juce::uint32) -1 };
         // The bend now and the one it's fading from: where in the loop (in beats) and on which
         // clock beat it took over, so it carries on from there without a jump.
         struct BendAt
@@ -118,6 +121,7 @@ public:
             float* dest[2] {};
             juce::uint8* copied = nullptr;
             int length = 0, pages = 0;
+            int version = -1;   // the layer's version when the copy started (the audio thread's)
             // Under `lock`, while the audio thread copies: the next page in order.
             bool active = false;
             int next = 0, credit = 0;   // credit: samples of copying owed, short of a page
@@ -175,13 +179,24 @@ public:
     // Whether undo would take back an overdub on this layer (the last one only).
     bool canUndo (int layer) const { return undoLayer.load() == layer; }
 
-    // Message thread: puts a sound on a layer, `beats` long, playing from beat 0.
-    void setLayerAudio (int layer, juce::AudioBuffer<float> audio, double beats);
+    // Message thread: puts a sound on a layer, `beats` long, playing from beat 0. Returns the
+    // layer's version that names this sound (-1 if it did nothing).
+    int setLayerAudio (int layer, juce::AudioBuffer<float> audio, double beats);
     // Message thread: swaps a layer's loop for another (a loop bank coming in) at `beat`, from
     // its top, or right away if `beat` < 0. `audio` `beats` long, or empty (or `beats` 0) to leave
     // the layer empty. Its level and mute change with it. A newer swap replaces one not yet done.
-    void queueLayerAudio (int layer, juce::AudioBuffer<float> audio, double beats, double beat, float level, bool mute);
+    // Returns the swap's serial (never reused), which getAppliedSwap names once it's done.
+    int queueLayerAudio (int layer, juce::AudioBuffer<float> audio, double beats, double beat, float level, bool mute);
     bool isSwapPending (int layer) const { return layers[(size_t) layer].swapPending.load(); }
+    // Any thread: the last swap done on a layer (its serial, 0 for none) and the version it left,
+    // read together: while the version is still that, the layer holds exactly the swapped-in sound.
+    int getSwapVersion (int layer) const { return (int) (juce::uint32) layers[(size_t) layer].swapApplied.load (std::memory_order_acquire); }
+    int getAppliedSwap (int layer, int& version) const
+    {
+        const auto v = layers[(size_t) layer].swapApplied.load (std::memory_order_acquire);
+        version = (int) (juce::uint32) v;
+        return (int) (v >> 32);
+    }
     // Message thread: forgets a swap that hasn't happened yet.
     void cancelSwap (int layer);
     // Message thread: new sound for a playing loop, the same length (quantizing it): it keeps its
@@ -201,6 +216,9 @@ public:
     // the lock. With no audio running (or the copier being the thread that runs it), it copies
     // under the lock at once; if the audio stops partway, it finishes under the lock.
     juce::AudioBuffer<float> copyLayerAudio (int layer) const;
+    // The same, and the layer's version at the moment the copy is of (-1 when it's empty), so
+    // (layer, version) names exactly the sound copied.
+    juce::AudioBuffer<float> copyLayerAudio (int layer, int* versionOfCopy) const;
     // How copies were made, for tests and benchmarks.
     struct CopyStats
     {
@@ -308,7 +326,7 @@ private:
     // called off (the copier tries again).
     static void abortSnapshot (Layer&);
     Waited waitForSnapshot (Layer&, int index) const;
-    juce::AudioBuffer<float> copyUnderLock (Layer&, int index) const;
+    juce::AudioBuffer<float> copyUnderLock (Layer&, int index, int* versionOfCopy = nullptr) const;
     // Whether an audio thread (not this one) is running blocks, and how long a pause in them
     // means it has stopped.
     bool audioRunningElsewhere() const;
@@ -324,6 +342,7 @@ private:
     juce::SpinLock undoLock;              // the undo room, while maintain() makes it bigger
     juce::AudioBuffer<float> undoAudio;
     std::atomic<int> undoLayer { -1 };
+    std::atomic<int> swapSerials { 0 };   // queueLayerAudio's serials
     int undoLength = 0;
     std::array<StripFx*, kLayers> effects {};
     std::atomic<int> liveDelay { 0 };

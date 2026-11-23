@@ -57,7 +57,17 @@ struct Asset
 {
     juce::String path;
     std::shared_ptr<const juce::AudioBuffer<float>> audio;
+    // What the sound is in the engine, for its dirty model (saving ignores these): a live loop
+    // layer at a version, a loop bank's buffer (`audio` itself), or a take by its id.
+    enum class Kind { other, liveLayer, bank, take };
+    Kind kind = Kind::other;
+    int layer = -1, bank = -1, version = -1;
+    juce::uint64 takeId = 0;
 };
+
+// Whether a save is the show's own (Save, Save As: what's on disk is now the show) or a copy of
+// it (the last show kept for the next launch, the plugin's state for the host).
+enum class SaveKind { copy, document };
 
 // A WAV that's on disk in a saved revision.
 struct Entry
@@ -94,6 +104,7 @@ struct Staged
     juce::String revision;
     std::vector<Entry> entries;
     bool created = false;    // this save made the folder (so it may remove it if the commit fails)
+    std::vector<juce::uint64> keys;   // each asset's hash as it is in memory, in the assets' order
 };
 
 juce::File currentFolder (const juce::File& showFile);                         // "<show> loops"

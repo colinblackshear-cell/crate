@@ -71,6 +71,8 @@ public:
     // After changing the blocks: tidies them (no zero lengths, fades that fit) and hands the
     // audio thread a copy.
     void changed();
+    // Counts changed() calls (any thread reads it), so a watcher can tell the song was edited.
+    int getEdits() const { return edits.load(); }
     void clear();
     bool isEmpty() const { return blocks.empty(); }
     // Where the last block ends (0 for none).
@@ -116,6 +118,7 @@ public:
     double beatsToNextEvent (double beat, int beatsPerBar) const;
 
 private:
+    std::atomic<int> edits { 0 };
     struct Snapshot
     {
         std::array<Block, kMaxBlocks> blocks {};
