@@ -1,4 +1,5 @@
 #include "TestHelpers.h"
+#include <algorithm>
 
 #include "RigEngine.h"
 #include "RigLooper.h"
@@ -181,6 +182,33 @@ struct RigLooperTests : juce::UnitTest
             rig.clock.playing = true;
             rig.run (8.0);
             expectWithinAbsoluteError (rig.heardAtBeat (4.0), 0.5f, 0.01f);
+        }
+
+        beginTest ("the set lengths go past 16 bars: 32 and 64, and a 64-bar take stops by itself");
+        {
+            const auto& choices = RigLooper::barChoices();
+            expect (std::find (choices.begin(), choices.end(), 32) != choices.end(), "32 bars is a choice");
+            expect (std::find (choices.begin(), choices.end(), 64) != choices.end(), "64 bars is a choice");
+            expectEquals (choices.back(), RigLooper::kMaxBars);
+
+            LooperRig rig;
+            rig.afterBlock = [&rig] { rig.looper.maintain(); };   // 64 bars at 120 BPM is 128 s: more than it starts with
+            rig.signal = [] (double beat) { return (float) std::fmod (beat, 64.0) / 100.0f; };
+            auto& layer = rig.looper.getLayer (4);
+            layer.source = RigLooper::input;
+            layer.level = 1.0f;
+            layer.bars = 64;
+            rig.looper.pressRecord (4);
+            rig.run (0.01);
+            rig.run (63 * 4.0);
+            expect (rig.looper.getState (4) == RigLooper::State::recording, "still recording in bar 64");
+            rig.run (2 * 4.0);
+            expect (rig.looper.getState (4) == RigLooper::State::playing, "stops by itself after 64 bars");
+            expectWithinAbsoluteError (rig.looper.getLayer (4).lengthBeats.load(), 64 * 4.0, 1.0e-6, "64 whole bars");
+            const auto loop = rig.looper.copyLayerAudio (4);
+            expectWithinAbsoluteError ((double) loop.getNumSamples(), 64 * 2.0 * kLoopRate, 2.0 * kBlock);
+            const int at = (int) (100.0 * kLoopRate);   // 200 beats in
+            expectWithinAbsoluteError (loop.getSample (0, at), (float) std::fmod (200.0, 64.0) / 100.0f, 0.01f);
         }
 
         beginTest ("a loop can be much longer than the room a layer starts with: it grows as it records");

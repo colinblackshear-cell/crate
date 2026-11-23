@@ -95,7 +95,7 @@ class RecSetupSheet : public DragSheet
 {
 public:
     RecSetupSheet();
-    std::function<int()> getCountIn, getLength;      // bars 0..2; choice 0..4 (1, 2, 4, 8 bars, FREE)
+    std::function<int()> getCountIn, getLength;      // bars 0..2; choice: an AppSettings length choice
     std::function<void (int)> setCountIn, setLength;
     std::function<void()> onDone;
 
@@ -104,7 +104,7 @@ public:
     void resized() override;
 
 private:
-    PButton countButtons[3], lengthButtons[5], done { "Done", Look::amber };
+    PButton countButtons[3], lengthButtons[8], done { "Done", Look::amber };
 };
 
 //==============================================================================

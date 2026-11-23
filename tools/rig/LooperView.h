@@ -104,6 +104,8 @@ private:
     std::array<bool, RigLooper::kLayers> mutesBeforeSolo {};
     juce::TextButton recNext { "Rec next layer" }, overdub { "Overdub" }, undoButton { "Undo" }, clearButton { "Clear" }, clearAllButton { "Clear all loops" }, quantizeButton { "Quantize" };
     juce::OwnedArray<juce::TextButton> lengthButtons, sourceButtons;
+    // After 8: "16+", a menu of the longer lengths (16, 32, 64 bars); it shows the one picked.
+    juce::TextButton longerButton { "16+" };
     juce::Rectangle<int> controlsArea, lengthLabel, sourceLabel, syncArea, statusArea, headings;
     juce::String shownStatus;
     void updateTop();
