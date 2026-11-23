@@ -2797,6 +2797,8 @@ std::vector<rigshow::Asset> RigEngine::loopAssets() const
 
 rigshow::Result RigEngine::saveShowFile (const juce::File& showFile, rigshow::SaveKind kind)
 {
+    // The dirty model's hashing makes no loop copies while this one copies them (every way out).
+    const RigDirty::SaveGuard saving (dirty);
     const juce::ScopedLock sl (rigshow::saveLock());
     // The dirty model's baseline moves only when this save is committed (and is a document's).
     auto ticket = dirty.beginSave();
@@ -2842,6 +2844,7 @@ juce::ValueTree RigEngine::saveShowForHost (const juce::File& loopsShowFile, rig
     // tidied first, and the state only names a revision that is complete on disk. Nothing here
     // deletes a revision, so whichever state the host ends up keeping (this one, an older one,
     // an undo step) still finds its own sound.
+    const RigDirty::SaveGuard saving (dirty);
     const juce::ScopedLock sl (rigshow::saveLock());
     result = {};
     rigshow::Staged staged;

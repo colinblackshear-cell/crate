@@ -106,6 +106,9 @@ struct RigDirty::ParamWatch : juce::AudioProcessorParameter::Listener
             return;
         if (slot.writing.load() && slot.writer.load() == juce::Thread::getCurrentThreadId())
             return;
+        // (The count first: a save adopting this slot sees it moved, before it's yours.)
+        slot.edits.fetch_add (1);
+        slot.poisoned = false;
         slot.active = false;
         owner.noteChange();
     }
@@ -124,6 +127,11 @@ struct RigDirty::ParamWatch : juce::AudioProcessorParameter::Listener
     std::string key;     // its value in the flattened show (empty: none found)
     juce::String tool;
     Slot slot;
+    // Message thread: the value a document save wrote, as it wrote it, once that save made it
+    // yours (so it reads back exactly, whatever converting it to 0..1 and back would round to).
+    bool hasAdopted = false;
+    float adoptedValue = 0;
+    std::string adoptedText;
 };
 
 //==============================================================================
@@ -135,11 +143,19 @@ struct RigDirty::Hasher : juce::Thread
     {
         while (! threadShouldExit())
         {
+            // A save is copying loops: no copy of ours queues up in front of it (it waits for
+            // at most the one already running). saveEnded wakes us.
+            if (owner.savesWaiting.load() > 0)
+            {
+                wait (100);
+                continue;
+            }
             Job job;
             bool have = false;
             {
                 const std::lock_guard<std::mutex> l (owner.jobsLock);
-                if (! owner.jobs.empty())
+                // (Checked again with the queue held: a save that began meanwhile goes first.)
+                if (! owner.jobs.empty() && owner.savesWaiting.load() == 0)
                 {
                     job = std::move (owner.jobs.front());
                     owner.jobs.pop_front();
@@ -148,8 +164,13 @@ struct RigDirty::Hasher : juce::Thread
             }
             if (! have)
             {
-                wait (200);
+                if (owner.savesWaiting.load() == 0)
+                    wait (200);
                 continue;
+            }
+            {
+                const std::lock_guard<std::mutex> l (owner.statsLock);
+                ++owner.stats.jobsStarted;
             }
             Done d;
             const auto t0 = nowMs();
@@ -297,6 +318,7 @@ void RigDirty::setEnabled (bool on)
         baseline.reset();
         hasBaselineFlag = false;
         candidates.clear();
+        saveSlots.clear();
         publishedGeneration = 0;
     }
 }
@@ -337,17 +359,24 @@ juce::StringArray RigDirty::unmatchedTools() const { return unmatched; }
 
 void RigDirty::resetSlots()
 {
+    auto reset = [] (Slot& s)
+    {
+        s.edits.fetch_add (1);
+        s.poisoned = false;
+        s.active = false;
+    };
     for (auto& w : watches)
     {
-        w->slot.active = false;
+        reset (w->slot);
         w->slot.writing = false;
+        w->hasAdopted = false;
     }
     for (auto& s : stripSlots)
-        s.active = false;
+        reset (s);
     for (auto& s : fieldSlots)
-        s.active = false;
+        reset (s);
     for (auto& s : loopSlots)
-        s.active = false;
+        reset (s);
 }
 
 RigDirty::Slot* RigDirty::slotFor (Field f, int index)
@@ -422,7 +451,11 @@ void RigDirty::authoredField (Field f, int index)
     if (! isEnabled())
         return;
     if (auto* s = slotFor (f, index))
+    {
+        s->edits.fetch_add (1);
+        s->poisoned = false;
         s->active = false;
+    }
     noteChange();
 }
 
@@ -644,21 +677,20 @@ void RigDirty::flatten (const juce::ValueTree& show, Flat& out)
     flattenTree (show, "Show", out, false);
 }
 
-void RigDirty::normalise (Flat& f, int currentBank)
+void RigDirty::playbackValues (Flat& f, int currentBank)
 {
-    f.erase (std::string ("Show@") + rigshow::kRevisionAttribute);
-    // The window writes the dark panel's "off" out when it first shows (it reads a missing one as off).
-    if (auto it = f.find ("Show/Screens@dark"); it != f.end() && it->second == "0")
-        f.erase (it);
-
+    static const std::string edited = "(edited while a save took it)";
     // Parameters playback wrote: the value you set (the tree was read first, then the slots).
     for (auto& w : watches)
     {
         if (w->key.empty() || ! w->slot.active.load())
             continue;
         const float authored = w->slot.authored.load();
+        const bool poisoned = w->slot.poisoned.load();
         if (auto it = f.find (w->key); it != f.end())
-            it->second = w->asStored (authored);
+            it->second = poisoned ? edited
+                       : w->hasAdopted && juce::exactlyEqual (authored, w->adoptedValue) ? w->adoptedText
+                                                                                       : w->asStored (authored);
     }
     // Fields playback wrote: yours, while they still hold what playback left.
     auto field = [&f] (Slot& s, const std::string& key, int kind)
@@ -666,8 +698,9 @@ void RigDirty::normalise (Flat& f, int currentBank)
         if (key.empty() || ! s.active.load())
             return;
         const float runtime = s.runtime.load(), authored = s.authored.load();
+        const bool poisoned = s.poisoned.load();
         if (auto it = f.find (key); it != f.end() && it->second == stored (kind, runtime))
-            it->second = stored (kind, authored);
+            it->second = poisoned ? edited : stored (kind, authored);
     };
     for (int s = 0; s < RigEngine::numStrips; ++s)
         field (stripSlots[(size_t) s], stripKeys[(size_t) s], stripMute);
@@ -691,6 +724,18 @@ void RigDirty::normalise (Flat& f, int currentBank)
                 it->second = stored (loopMute, p.authored);
         }
     }
+}
+
+void RigDirty::normalise (Flat& f, int currentBank, bool withPlayback)
+{
+    f.erase (std::string ("Show@") + rigshow::kRevisionAttribute);
+    // The window writes the dark panel's "off" out when it first shows (it reads a missing one as off).
+    if (auto it = f.find ("Show/Screens@dark"); it != f.end() && it->second == "0")
+        f.erase (it);
+
+    // (A save's tree as written keeps playback's values: only the rest applies to it.)
+    if (withPlayback)
+        playbackValues (f, currentBank);
 
     // The layers are the current bank's: filed under its place, like the other banks.
     const std::string from = "Show/Loop[", to = "Show/LoopBanks/Bank[" + std::to_string (currentBank) + "]/Loop[";
@@ -1274,16 +1319,210 @@ void RigDirty::captureSave (SaveTicket ticket, const juce::ValueTree& show, cons
         const std::lock_guard<std::mutex> l (statsLock);
         stats.seedsUsed += seeds;
     }
-    // The very tree that's committed, with the playback overrides as they are now (read after
-    // it; a song part coming in between the two makes them disagree, so that save doesn't count).
-    auto c = build (show, false);
+    dropAnsweredJobs();
+
+    // The very tree that's committed, as it's written: playback's values and all (a save makes
+    // what it wrote yours). A song part coming in while it was read changes nothing here: the
+    // tree is what the file has, whichever side of the part each setting was read on.
+    Flat raw;
+    flatten (show, raw);
     if ((ticket.epoch & 1) != 0 || ticket.epoch != fieldEpoch.load())
+        say ("save: a song part came in while the tree was read (the file has what was read)");
+    if (auto it = saveSlots.find (ticket.serial); it != saveSlots.end())
     {
-        say ("save: a song part came in while it was read; the baseline stays as it was");
-        return;
+        // What each slot's setting was written as, for adopting it.
+        auto& v = it->second;
+        auto read = [&raw] (const std::string& key, std::pair<bool, float>& out)
+        {
+            if (const auto f = raw.find (key); ! key.empty() && f != raw.end())
+                out = { true, juce::String (f->second).getFloatValue() };
+        };
+        v.params.assign (watches.size(), { false, 0.0f });
+        v.paramTexts.assign (watches.size(), {});
+        for (size_t i = 0; i < watches.size(); ++i)
+            if (const auto& w = watches[i]; ! w->key.empty())
+                if (const auto f = raw.find (w->key); f != raw.end())
+                {
+                    const float plain = juce::String (f->second).getFloatValue();
+                    v.params[i] = { true, w->ranged != nullptr ? w->ranged->convertTo0to1 (plain) : plain };
+                    v.paramTexts[i] = f->second;
+                }
+        for (int i = 0; i < RigEngine::numStrips; ++i)
+            read (stripKeys[(size_t) i], v.strips[(size_t) i]);
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+            read (loopKeys[(size_t) i], v.loops[(size_t) i]);
+        for (int k = vocoderOn; k < numFields; ++k)
+            read (fieldKeys[(size_t) k], v.fields[(size_t) k]);
     }
-    cand->flat = std::move (c.flat);
+    const auto banks = show.getChildWithName ("LoopBanks");
+    normalise (raw, banks.isValid() ? (int) banks.getProperty ("current", 0) : 0, false);
+    cand->flat = std::move (raw);
     candidates[ticket.serial] = std::move (cand);
+}
+
+void RigDirty::dropAnsweredJobs()
+{
+    // Jobs still queued for sounds the save has just hashed: answered, so they never run.
+    int dropped = 0;
+    {
+        const std::lock_guard<std::mutex> l (jobsLock);
+        for (auto it = jobs.begin(); it != jobs.end();)
+        {
+            bool answered = false;
+            if (it->buffer == nullptr)
+            {
+                const auto& c = layerCache[(size_t) it->layer];
+                answered = c.version >= 0 && c.version == it->version;
+                if (answered)
+                    layerInFlight[(size_t) it->layer] = false;
+            }
+            else if (it->takeId != 0)
+            {
+                answered = takeHashes.count (it->takeId) > 0;
+                if (answered)
+                    takesInFlight.erase (it->takeId);
+            }
+            else if (const auto p = pinned.find (it->buffer.get()); p != pinned.end() && p->second.buffer == it->buffer)
+            {
+                answered = true;
+                buffersInFlight.erase (it->buffer.get());
+            }
+            if (answered)
+            {
+                it = jobs.erase (it);
+                ++dropped;
+            }
+            else
+                ++it;
+        }
+    }
+    if (dropped > 0)
+    {
+        const std::lock_guard<std::mutex> l (statsLock);
+        stats.jobsSatisfiedBySave += dropped;
+    }
+}
+
+void RigDirty::beforeTree (SaveTicket& t)
+{
+    t.epoch = fieldEpoch.load();
+    if (! isEnabled() || t.serial == 0)
+        return;
+    // Every slot's edit count now, before the tree: an edit from here on (even one racing the
+    // tree being read) counts as made after the save, and the save leaves that slot alone.
+    auto& v = saveSlots[t.serial];
+    v.paramEdits.resize (watches.size());
+    for (size_t i = 0; i < watches.size(); ++i)
+        v.paramEdits[i] = watches[i]->slot.edits.load();
+    for (size_t i = 0; i < stripSlots.size(); ++i)
+        v.stripEdits[i] = stripSlots[i].edits.load();
+    for (size_t i = 0; i < loopSlots.size(); ++i)
+        v.loopEdits[i] = loopSlots[i].edits.load();
+    for (size_t i = 0; i < fieldSlots.size(); ++i)
+        v.fieldEdits[i] = fieldSlots[i].edits.load();
+    if (afterBeforeTreeForTests)
+        afterBeforeTreeForTests();
+}
+
+bool RigDirty::saveStarting()
+{
+    if (! isEnabled())
+        return false;
+    savesWaiting.fetch_add (1);
+    return true;
+}
+
+void RigDirty::saveEnded()
+{
+    // (Counted even if the model was turned off meanwhile, so the count always comes back to 0.)
+    if (savesWaiting.fetch_sub (1) == 1 && hasher != nullptr)
+        hasher->notify();
+}
+
+bool RigDirty::paramSlotForTests (juce::AudioProcessorParameter* p, float& authored, bool& active) const
+{
+    const auto it = byParam.find (p);
+    if (it == byParam.end())
+        return false;
+    authored = it->second->slot.authored.load();
+    active = it->second->slot.active.load();
+    return true;
+}
+
+bool RigDirty::fieldSlotForTests (Field f, int index, float& authored, bool& active)
+{
+    const auto* s = slotFor (f, index);
+    if (s == nullptr)
+        return false;
+    authored = s->authored.load();
+    active = s->active.load();
+    return true;
+}
+
+RigDirty::Flat RigDirty::baselineForTests() const
+{
+    return baseline != nullptr ? baseline->flat : Flat();
+}
+
+void RigDirty::adopt (const SlotValues& v)
+{
+    // A document save made what it wrote yours: each slot's "yours" becomes the value in the
+    // tree, unless you edited it after the tree's edit counts were taken. `active` and `runtime`
+    // stay as they are (playback goes on; deactivating would let its next write capture a newer
+    // value as yours).
+    //
+    // The audio thread may be in runtimeParam / runtimeField for the same slot meanwhile:
+    //  - with no hand edit, its "yours" rule only sets authored to the value it found, which is
+    //    the value the tree read unless playback moved it since, and then authored was already
+    //    the tree's value (set here before or after: the same value either way);
+    //  - a hand edit bumps `edits` before it clears `active`. One seen before the check below:
+    //    the slot is left alone. One landing between the check and the store: the store may
+    //    overwrite what a playback write just took as yours, so the count is read again after
+    //    the store and a move "poisons" the slot (it reads as edited, never as the saved value)
+    //    until your next edit of it. One after the second read clears `active` after this
+    //    store, so the slot reads your value. So: right, or dirty; never clean over an edit.
+    int adopted = 0, kept = 0, raced = 0;
+    auto one = [&] (Slot& s, juce::uint32 before, const std::pair<bool, float>& value) -> bool
+    {
+        if (! value.first)
+            return false;
+        if (s.edits.load() != before)
+        {
+            ++kept;
+            return false;
+        }
+        s.authored = value.second;
+        if (s.edits.load() != before)
+        {
+            s.poisoned = true;
+            ++raced;
+            return false;
+        }
+        ++adopted;
+        return true;
+    };
+    for (size_t i = 0; i < watches.size() && i < v.params.size() && i < v.paramEdits.size(); ++i)
+    {
+        auto& w = *watches[i];
+        if (one (w.slot, v.paramEdits[i], v.params[i]))
+        {
+            w.hasAdopted = true;
+            w.adoptedValue = v.params[i].second;
+            w.adoptedText = v.paramTexts[i];
+        }
+    }
+    for (int i = 0; i < RigEngine::numStrips; ++i)
+        one (stripSlots[(size_t) i], v.stripEdits[(size_t) i], v.strips[(size_t) i]);
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        one (loopSlots[(size_t) i], v.loopEdits[(size_t) i], v.loops[(size_t) i]);
+    for (int k = vocoderOn; k < numFields; ++k)
+        one (fieldSlots[(size_t) k], v.fieldEdits[(size_t) k], v.fields[(size_t) k]);
+    // The other banks' mutes as written are yours now too.
+    bankMutes.clear();
+    const std::lock_guard<std::mutex> l (statsLock);
+    stats.slotsAdopted += adopted;
+    stats.slotsKeptForEdits += kept;
+    stats.slotsRacedEdits += raced;
 }
 
 void RigDirty::finishSave (SaveTicket ticket, bool ok, rigshow::SaveKind kind)
@@ -1296,9 +1535,20 @@ void RigDirty::finishSave (SaveTicket ticket, bool ok, rigshow::SaveKind kind)
         cand = std::move (it->second);
         candidates.erase (it);
     }
-    // Only a document save that worked, and only the newest one begun, moves the baseline.
+    SlotValues values;
+    bool haveValues = false;
+    if (const auto it = saveSlots.find (ticket.serial); it != saveSlots.end())
+    {
+        values = std::move (it->second);
+        haveValues = true;
+        saveSlots.erase (it);
+    }
+    // Only a document save that worked, and only the newest one begun, moves the baseline (and
+    // makes what it wrote yours). Any other save changes nothing here.
     if (ok && kind == rigshow::SaveKind::document && ticket.serial == saveSerial && cand != nullptr)
     {
+        if (haveValues)
+            adopt (values);
         setBaseline (std::move (cand));
         say ("saved: new baseline " + juce::String ((juce::int64) baselineId));
     }
