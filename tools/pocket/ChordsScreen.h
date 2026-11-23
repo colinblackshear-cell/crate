@@ -8,6 +8,8 @@
 // The CHORDS tool: the song's KEY and the SOUND up top, then COLOUR (PLAIN, 7TH, 9TH, SUS, POWER), PLAY (HOLD,
 // STRUM, ARP, STABS, + BASS), the PROGRESSION (4 or 8 boxes, one chord a bar while the song plays), what the
 // chords PLAY (the synth, a pad's sound, the vocoder's notes), and the eight chord pads low, under the thumb.
+// LIVE (beside KEY) swaps the rows above the pads for LIVE KEY: twelve big keys, OCT - / OCT +, BACK and ON BAR, to
+// change key on the fly while you play the pads (the Mac's Live key, the same way).
 // The thumb bar's REC records the chords onto the next loop layer (PocketApp drives it).
 class ChordsScreen : public juce::Component, private juce::Timer
 {
@@ -37,6 +39,7 @@ public:
     // Screenshot mode: what the pads and the progression show as sounding.
     void setDemo (int soundingPad, int progressionStep) { demoPad = soundingPad; demoStep = progressionStep; repaint(); }
     void pressPad (int pad, bool down);
+    void pressLiveKey (int pitchClass);   // as a LIVE KEY key does (also for the self-checks)
 
     void paint (juce::Graphics&) override;
     void resized() override { layout(); }
@@ -49,7 +52,7 @@ private:
     enum Id
     {
         none = 0, keyId = 1, soundId, colourBase = 10, styleBase = 20, holdId = 19, bassId = 25, progOnId = 30, progLenId, progClearId,
-        boxBase = 40, playsBase = 50, padBase = 60
+        boxBase = 40, playsBase = 50, padBase = 60, liveId = 80, liveKeyBase = 81, liveOctDownId = 95, liveOctUpId, liveHomeId, liveBarId
     };
     struct Hit { juce::Rectangle<float> r; int id; };
 
@@ -66,7 +69,9 @@ private:
 
     pocket::ChordsTool& tool;
     std::vector<Hit> hits;
-    juce::Rectangle<float> titleR, colourLabel, playLabel, progWell, progTitle, statusR, padWell;
+    juce::Rectangle<float> titleR, colourLabel, playLabel, progWell, progTitle, statusR, padWell, liveWell, liveTitle, liveLcd, liveBed;
+    std::array<juce::Rectangle<float>, 12> liveKeyR;
+    int shownLive = -999;
     std::array<juce::Rectangle<float>, pocket::kChordPads> padR;
     std::array<juce::Rectangle<float>, pocket::kProgressionMax> boxR;
     int pressed = 0, shownPad = -2, shownStep = -2, demoPad = -2, demoStep = -2;

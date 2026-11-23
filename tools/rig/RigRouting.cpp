@@ -35,6 +35,14 @@ juce::String RigRouting::controlName (int c)
                 return "Loop " + juce::String (c - loopRecord1 + 1) + " record";
             if (c >= loopMute1 && c <= loopMute8)
                 return "Loop " + juce::String (c - loopMute1 + 1) + " mute";
+            if (c >= liveKeyC && c <= liveKeyB)
+            {
+                static const char* const keys[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+                return juce::String ("Live key ") + keys[c - liveKeyC];
+            }
+            if (c == liveOctaveDown) return "Live key octave down";
+            if (c == liveOctaveUp)   return "Live key octave up";
+            if (c == liveKeyHome)    return "Live key back home";
             return {};
     }
 }

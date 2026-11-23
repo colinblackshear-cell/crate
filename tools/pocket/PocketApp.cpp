@@ -2419,6 +2419,8 @@ PocketApp::RecView PocketApp::recView() const
 void PocketApp::setSongKey (SongKey k)
 {
     const bool changed = k != songKey;
+    if (k.root != songKey.root)
+        chordsTool.resetLiveKey();   // a new song key: the LIVE KEY starts from it
     songKey = k;
     auto& voc = vocoderScreen.engine();
     if (voc.key() != k.root || voc.minor() != k.minor)
@@ -3259,6 +3261,19 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         chordsScreen.toolChanged();
         chordsRender (true, 4.0 * 6 + 0.5);
         savePng (folder.getChildFile ("15c-chords-8-boxes.png"));
+        // LIVE KEY open, playing in B (the song in A), a chord held
+        chordsTool.reset();
+        chordsTool.setKey (songKey);
+        chordsTool.liveOpen = true;
+        chordsTool.liveOnBar = false;
+        chordsTool.setLiveKey (11);
+        chordsScreen.toolChanged();
+        chordsTool.padDown (3, false);
+        chordsRender (false, 0.0);
+        chordsScreen.repaint();
+        toastBox->setVisible (false);
+        savePng (folder.getChildFile ("15d-chords-live-key.png"));
+        chordsTool.releaseAll();
         chordsTool.reset();
         chordsTool.setKey (songKey);
         chordsScreen.toolChanged();

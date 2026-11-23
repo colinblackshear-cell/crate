@@ -12,6 +12,9 @@
 // Along the top: where the chords go (the picked track, or any instrument), what plays them
 // (clicks, the Launchkey's pads, its lowest 16 keys, every key), Hold and Strum. Then Fill
 // (the chords of a key, as the vocoder's chord buttons have them) and Sets (starters, your own).
+// Under that, Live key: twelve key buttons (a little keyboard), Oct - / Oct +, Back to the
+// builder's key, when a change lands (now, next beat, next bar) and Learn (put them on keyboard
+// buttons), so everything the chords play moves key on the fly while you perform.
 // Under them, the key map: Map keys sets every key of your keyboard playing a chord of the key
 // (each scale note's chord, the white keys as I to vii, or your own pads), with how keys outside
 // the scale play, where the chords sit (follow the keys, one octave, smooth voice leading), Bass
@@ -72,13 +75,19 @@ public:
     juce::File pressToLogic();     // the progression as a MIDI file
     juce::File getLastFile() const { return lastFile; }
     void pressCatch();
+    // Live key, as its buttons do.
+    void pressLiveKey (int key);       // 0-11
+    void pressLiveOctave (int delta);
+    void pressLiveHome();
+    void setLiveChange (int change);   // RigChords::LiveChange
     void refresh();
 
-    static constexpr int kPreferredHeight = 430;
+    static constexpr int kPreferredHeight = 486;
 
     class PadButton;
     class KeyBed;
     class DragChip;
+    class LiveKeys;
 
 private:
     void timerCallback() override;
@@ -86,6 +95,8 @@ private:
     void showPadMenu (int pad);
     void showSetsMenu();
     void showStepMenu (int step);
+    void showLiveLearnMenu();
+    void learnNextLiveControl();
     void rename (int pad);
     void say (const juce::String&);
     void wakeVocoder();   // chords for the vocoder: its robot comes on to sing them
@@ -110,6 +121,12 @@ private:
     juce::OwnedArray<juce::TextButton> stepButtons;
     std::unique_ptr<KeyBed> keys;
     std::unique_ptr<DragChip> chip;
+    std::unique_ptr<LiveKeys> liveKeys;
+    juce::ComboBox liveChange;
+    juce::TextButton liveOctDown { "Oct -" }, liveOctUp { "Oct +" }, liveHome { "Back" }, liveLearn { "Learn" };
+    juce::Rectangle<int> liveWell, liveTitle, liveLcd;
+    // Learn all 12 keys in a row: the next control to learn (a RigRouting::Control), or -1.
+    int learningLive = -1;
     juce::File lastFile;
     int loopLayer = -1;
     int shownKeysTo = -2;

@@ -179,6 +179,39 @@ public:
     // The key last played on the map (or -1), for the screen.
     int getLastMapKey() const { return lastMapKey.load(); }
 
+    //==========================================================================
+    // Live key: play everything the chord builder plays in another key, on the fly. The twelve key
+    // buttons move the pads, the key map (every layout, Your keys too) and the progression so the
+    // builder's key (fillKey, "home") becomes the key pressed, the nearest way (D to B is down 3),
+    // and Oct - / Oct + move it all by octaves on top. Nothing you built changes: it's a shift on
+    // what plays, saved with the show. The change lands now, on the next beat or on the next bar
+    // (when the clock runs; stopped, it's at once), and a chord sounding then moves with it.
+    enum class LiveChange { now, beat, bar };
+    static juce::String liveChangeName (int);
+    static constexpr int kLiveOctaves = 2;   // Oct -2 to +2
+    // Any thread (the screen, or a learned keyboard button on the audio thread).
+    void setLiveKey (int key);               // 0-11
+    void setLiveOctave (int octave);         // -2 to +2
+    void nudgeLiveOctave (int delta) { setLiveOctave (liveOctave.load() + delta); }
+    void liveKeyHome();                      // back to the builder's key, octave 0
+    // The key asked for (0-11) and its octave; the semitones that asks for (key and octave).
+    int getLiveKey() const { return (fillKey + liveKeyShift.load() + 12) % 12; }
+    int getLiveOctave() const { return liveOctave.load(); }
+    int getLiveShift() const { return liveTarget.load(); }
+    // What plays now (the audio thread's): semitones, and its key (0-11). Differs from the
+    // above while a change waits for its beat or bar.
+    int getPlayingShift() const { return liveApplied.load(); }
+    int getPlayingKey() const { return ((fillKey + liveApplied.load()) % 12 + 12) % 12; }
+    bool isLiveKeyWaiting() const { return liveTarget.load() != liveApplied.load(); }
+    bool isLiveKeyHome() const { return liveTarget.load() == 0; }
+    std::atomic<int> liveChange { (int) LiveChange::bar };
+    // A chord's name moved by `semitones` ("Dm7" up 2: "Em7", "C/E" up 1: "C#/F"); names that
+    // don't start with a note come back as they are.
+    static juce::String shiftName (const juce::String& name, int semitones);
+    // The name a pad / a key of the map plays under now (after the live key's shift).
+    juce::String livePadName (int pad) const;
+    juce::String liveMapChordName (int note) const;
+
     // Catch: the next chord you hold on your keyboard's keys becomes `pad` (they still play as usual).
     void catchFromKeys (int pad);
     bool isCatching() const { return catchPad.load() >= 0; }
@@ -266,6 +299,7 @@ private:
         int dest = -1, count = 0;
         std::array<int, kMaxNotes> notes {};
         int source = -1;   // pad (0-15), 100 + key note (every key / triggers), 300 progression
+        float velocity = 0.8f;
     };
     static constexpr int kVoices = 32;
     std::array<Voice, kVoices> voices;
@@ -298,6 +332,13 @@ private:
     std::atomic<bool> stopRequested { false };
     double sampleRate = 44100;
     int blockSize = 0;   // this block's, while process() runs
+
+    // Live key: the message thread's ask (key semitones -5..+6 from home, octave), the semitones
+    // that makes, and what the audio thread plays now.
+    std::atomic<int> liveKeyShift { 0 }, liveOctave { 0 }, liveTarget { 0 }, liveApplied { 0 };
+    void updateLiveTarget() { liveTarget = liveKeyShift.load() + 12 * liveOctave.load(); }
+    // Audio thread: moves every sounding chord (and strummed notes still to come) by `delta`.
+    void shiftSounding (int delta, int at, std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to);
 
     // Catch.
     std::atomic<int> catchPad { -1 };

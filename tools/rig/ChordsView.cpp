@@ -104,7 +104,7 @@ public:
         }
         else
         {
-            const auto name = chords.padName (index);
+            const auto name = chords.livePadName (index);
             vintage::lcdText (g, name, text, name.length() > 7 ? 19.0f : 24.0f, juce::Justification::centred,
                               playing || down ? vintage::colours::lcdGreen : vintage::colours::lcdAmber);
         }
@@ -284,7 +284,7 @@ public:
     {
         const auto& chords = view.chords;
         const bool playing = chords.getLastMapKey() == k && chords.anySounding();
-        const auto name = chords.mapChordName (k), degree = chords.mapDegreeName (k);
+        const auto name = chords.liveMapChordName (k), degree = chords.mapDegreeName (k);
         // A chord's name standing up the key, so the longest fit ("F#m7b5").
         g.saveState();
         const auto c = area.getCentre();
@@ -375,6 +375,98 @@ public:
 private:
     ChordsView& view;
     bool dragging = false;
+};
+
+//==============================================================================
+// Live key: the twelve keys as a little keyboard. Amber: the key the chords play in now; blinking:
+// the key a change is waiting to land on (the next beat or bar); the lilac line: the builder's own
+// key (home). A click moves the chords to that key.
+class ChordsView::LiveKeys : public juce::Component,
+                             public juce::SettableTooltipClient
+{
+public:
+    explicit LiveKeys (ChordsView& v) : view (v)
+    {
+        setTooltip ("Live key: click a key and everything the chords play moves to it (the pads, every key of the map, "
+                    "your own keys, the progression), the nearest way. Same fingers, same shapes, a new key. "
+                    "Oct - / Oct + move it all by octaves; Back returns to the key you wrote them in.");
+        setRepaintsOnMouseActivity (true);
+    }
+
+    static bool isBlack (int k) { return k == 1 || k == 3 || k == 6 || k == 8 || k == 10; }
+    juce::Rectangle<float> keyBounds (int k) const
+    {
+        static const int whiteIndex[12] = { 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6 };
+        const float w = (float) getWidth() / 7.0f, h = (float) getHeight();
+        if (! isBlack (k))
+            return { whiteIndex[k] * w, 0.0f, w, h };
+        return { (whiteIndex[k] + 1) * w - w * 0.34f, 0.0f, w * 0.68f, h * 0.56f };
+    }
+    int keyAt (juce::Point<float> p) const
+    {
+        for (int k = 0; k < 12; ++k)
+            if (isBlack (k) && keyBounds (k).contains (p))
+                return k;
+        for (int k = 0; k < 12; ++k)
+            if (! isBlack (k) && keyBounds (k).contains (p))
+                return k;
+        return -1;
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        static const char* const names[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+        const auto& chords = view.chords;
+        const int playing = chords.getPlayingKey(), asked = chords.getLiveKey(), home = chords.fillKey;
+        const bool waiting = chords.isLiveKeyWaiting() && asked != playing;
+        const bool blinkOn = (juce::Time::getMillisecondCounter() / 250) % 2 == 0;
+        const auto over = isMouseOver() ? keyAt (getMouseXYRelative().toFloat()) : -1;
+        auto drawKey = [&] (int k)
+        {
+            const bool black = isBlack (k);
+            auto r = keyBounds (k).reduced (black ? 0.0f : 1.5f, 0.0f);
+            juce::Colour top = black ? juce::Colour (0xff3d3934) : juce::Colour (0xfffbf6ea);
+            juce::Colour bottom = black ? juce::Colour (0xff141210) : juce::Colour (0xffe0d6c1);
+            if (k == playing)
+                top = vintage::colours::selected.brighter (0.2f), bottom = vintage::colours::selected;
+            else if (waiting && k == asked && blinkOn)
+                top = vintage::colours::next.brighter (0.3f), bottom = vintage::colours::next.darker (0.2f);
+            g.setGradientFill (juce::ColourGradient (top, r.getX(), r.getY(), bottom, r.getX(), r.getBottom(), false));
+            g.fillRoundedRectangle (r, 3.0f);
+            if (k == over && k != playing)
+            {
+                g.setColour ((black ? juce::Colours::white : juce::Colours::black).withAlpha (0.08f));
+                g.fillRoundedRectangle (r, 3.0f);
+            }
+            g.setColour (black ? juce::Colours::black : juce::Colour (0xffa99c84));
+            g.drawRoundedRectangle (r, 3.0f, 1.0f);
+            if (k == home)
+            {
+                g.setColour (vintage::colours::sampler);
+                g.fillRoundedRectangle (r.removeFromBottom (4.0f).reduced (3.0f, 0.0f).translated (0.0f, -1.5f), 1.5f);
+            }
+            const bool lit = k == playing || (waiting && k == asked && blinkOn);
+            g.setColour (lit ? juce::Colour (0xff2a241e) : black ? juce::Colour (0xffe8dcc4) : juce::Colour (0xff2a241e));
+            g.setFont (vintage::cond (juce::jmin (black ? 13.0f : 15.0f, r.getWidth() * 0.55f), vintage::Weight::bold));
+            g.drawText (names[k], r.withTrimmedBottom (3.0f).removeFromBottom (juce::jmin (18.0f, r.getHeight() * 0.5f)),
+                        juce::Justification::centred);
+        };
+        for (int k = 0; k < 12; ++k)
+            if (! isBlack (k))
+                drawKey (k);
+        for (int k = 0; k < 12; ++k)
+            if (isBlack (k))
+                drawKey (k);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (const int k = keyAt (e.position); k >= 0)
+            view.pressLiveKey (k);
+    }
+
+private:
+    ChordsView& view;
 };
 
 //==============================================================================
@@ -528,6 +620,31 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
     chip = std::make_unique<DragChip> (*this);
     addAndMakeVisible (*chip);
 
+    liveKeys = std::make_unique<LiveKeys> (*this);
+    addAndMakeVisible (*liveKeys);
+    for (int i = 0; i < 3; ++i)
+        liveChange.addItem (RigChords::liveChangeName (i), i + 1);
+    liveChange.setTooltip ("When a new key lands while the song plays: at once, on the next beat, or on the next bar (the key blinks "
+                           "until then). With the song stopped it changes at once.");
+    liveChange.onChange = [this] { setLiveChange (liveChange.getSelectedId() - 1); };
+    addAndMakeVisible (liveChange);
+    liveOctDown.setTooltip ("Everything the chords play an octave down (to -2).");
+    liveOctUp.setTooltip ("Everything the chords play an octave up (to +2).");
+    liveHome.setTooltip ("Back to the key you wrote the chords in, octave 0.");
+    liveLearn.setTooltip ("Put the live key on your keyboard's buttons or pads (ones that send CC): teach all twelve keys in a row, "
+                          "or one button at a time, Oct - / Oct + and Back too.");
+    liveOctDown.onClick = [this] { pressLiveOctave (-1); };
+    liveOctUp.onClick = [this] { pressLiveOctave (1); };
+    liveHome.onClick = [this] { pressLiveHome(); };
+    liveLearn.onClick = [this] { showLiveLearnMenu(); };
+    vintage::setLit (liveLearn, Lit::arm);
+    for (auto* b : { &liveOctDown, &liveOctUp, &liveHome, &liveLearn })
+    {
+        b->getProperties().set ("fontSize", 15.0f);
+        vintage::setInWell (*b, true);
+        addAndMakeVisible (b);
+    }
+
     refresh();
     startTimerHz (20);
 }
@@ -552,12 +669,120 @@ void ChordsView::say (const juce::String& text)
         onSay (text);
 }
 
+//==============================================================================
+void ChordsView::pressLiveKey (int k)
+{
+    static const char* const names[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+    chords.setLiveKey (k);
+    const bool waits = engine.getTransport().isPlaying() && chords.liveChange.load() != (int) RigChords::LiveChange::now;
+    const int shift = chords.getLiveShift();
+    say (juce::String (waits ? "Next: " : "Playing in ") + names[k]
+         + (shift == 0 ? juce::String (" (home)") : " (" + juce::String (shift > 0 ? "+" : "") + juce::String (shift) + ")")
+         + (waits ? (chords.liveChange.load() == (int) RigChords::LiveChange::beat ? " on the next beat." : " on the next bar.") : "."));
+    refresh();
+}
+
+void ChordsView::pressLiveOctave (int delta)
+{
+    chords.nudgeLiveOctave (delta);
+    const int o = chords.getLiveOctave();
+    say ("Live key octave " + juce::String (o > 0 ? "+" : "") + juce::String (o) + ".");
+    refresh();
+}
+
+void ChordsView::pressLiveHome()
+{
+    chords.liveKeyHome();
+    say ("Back to the chords' own key.");
+    refresh();
+}
+
+void ChordsView::setLiveChange (int change)
+{
+    chords.liveChange = juce::jlimit (0, 2, change);
+    refresh();
+}
+
+void ChordsView::showLiveLearnMenu()
+{
+    static const char* const names[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+    auto& routing = engine.getRouting();
+    juce::PopupMenu m;
+    m.addItem ("Teach all 12 keys in a row (C first)...", [this]
+               {
+                   learningLive = RigRouting::liveKeyC;
+                   learnNextLiveControl();
+               });
+    juce::PopupMenu one;
+    auto addControl = [&] (int control, const juce::String& label)
+    {
+        const auto [channel, cc] = routing.getAssignment (control);
+        juce::ignoreUnused (channel);
+        one.addItem (cc >= 0 ? label + " (CC " + juce::String (cc) + "): forget it" : label + "...", [this, control, cc, label]
+                     {
+                         if (cc >= 0)
+                         {
+                             engine.getRouting().forget (control);
+                             say (label + " forgotten.");
+                         }
+                         else
+                         {
+                             learningLive = -1;
+                             engine.getRouting().learn (control);
+                             say ("Press the button on your keyboard for " + label + ".");
+                         }
+                         refresh();
+                     });
+    };
+    for (int k = 0; k < 12; ++k)
+        addControl (RigRouting::liveKeyC + k, juce::String ("Key ") + names[k]);
+    one.addSeparator();
+    addControl (RigRouting::liveOctaveDown, "Oct -");
+    addControl (RigRouting::liveOctaveUp, "Oct +");
+    addControl (RigRouting::liveKeyHome, "Back");
+    m.addSubMenu ("One button", one);
+    bool any = false;
+    for (int c = RigRouting::liveKeyC; c <= RigRouting::liveKeyHome; ++c)
+        any = any || routing.getAssignment (c).second >= 0;
+    m.addSeparator();
+    m.addItem ("Forget them all", any, false, [this]
+               {
+                   for (int c = RigRouting::liveKeyC; c <= RigRouting::liveKeyHome; ++c)
+                       engine.getRouting().forget (c);
+                   learningLive = -1;
+                   say ("The live key's buttons are forgotten.");
+                   refresh();
+               });
+    if (engine.getRouting().getLearning() >= 0)
+        m.addItem ("Stop learning", [this]
+                   {
+                       engine.getRouting().cancelLearn();
+                       learningLive = -1;
+                       say ("Stopped learning.");
+                       refresh();
+                   });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&liveLearn));
+}
+
+void ChordsView::learnNextLiveControl()
+{
+    if (learningLive < RigRouting::liveKeyC || learningLive > RigRouting::liveKeyB)
+    {
+        learningLive = -1;
+        return;
+    }
+    engine.getRouting().learn (learningLive);
+    say ("Press the button for " + RigRouting::controlName (learningLive) + " (" + juce::String (learningLive - RigRouting::liveKeyC + 1)
+         + " of 12).");
+}
+
 void ChordsView::refresh()
 {
     updateControls();
     for (auto* p : padButtons)
         p->repaint();
     keys->repaint();
+    liveKeys->repaint();
     repaint();
 }
 
@@ -618,11 +843,28 @@ void ChordsView::updateControls()
     for (int i = 0; i < stepButtons.size(); ++i)
     {
         const int pad = chords.steps[(size_t) i].load();
-        const auto text = pad < 0 ? juce::String ("-") : chords.isEmpty (pad) ? juce::String (pad + 1) : chords.padName (pad);
+        const auto text = pad < 0 ? juce::String ("-") : chords.isEmpty (pad) ? juce::String (pad + 1) : chords.livePadName (pad);
         if (stepButtons[i]->getButtonText() != text)
             stepButtons[i]->setButtonText (text);
         stepButtons[i]->setToggleState (i == playing, juce::dontSendNotification);
         stepButtons[i]->setAlpha (i < juce::jmax (1, chords.progressionSteps()) || pad >= 0 ? 1.0f : 0.6f);
+    }
+    {
+        static const char* const names[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+        liveChange.setSelectedId (chords.liveChange.load() + 1, juce::dontSendNotification);
+        const auto homeText = juce::String ("Back to ") + names[chords.fillKey];
+        if (liveHome.getButtonText() != homeText)
+            liveHome.setButtonText (homeText);
+        liveHome.setEnabled (! chords.isLiveKeyHome());
+        liveOctDown.setEnabled (chords.getLiveOctave() > -RigChords::kLiveOctaves);
+        liveOctUp.setEnabled (chords.getLiveOctave() < RigChords::kLiveOctaves);
+        bool learned = false;
+        for (int c = RigRouting::liveKeyC; c <= RigRouting::liveKeyHome; ++c)
+            learned = learned || engine.getRouting().getAssignment (c).second >= 0;
+        const int teaching = engine.getRouting().getLearning();
+        const bool isTeaching = teaching >= RigRouting::liveKeyC && teaching <= RigRouting::liveKeyHome;
+        liveLearn.setToggleState (isTeaching, juce::dontSendNotification);
+        liveLearn.setButtonText (isTeaching ? "Press it..." : learned ? "Learned" : "Learn");
     }
     const bool any = ! chords.isEmpty (selected);
     for (auto* b : { &lowerButton, &higherButton, &octDown, &octUp, &spreadButton, &closeVoicing, &clearButton })
@@ -639,6 +881,25 @@ void ChordsView::timerCallback()
         refresh();
     }
     chords.serviceTake();
+    // Teaching the twelve keys in a row: once one is caught, the next.
+    if (learningLive >= 0 && engine.getRouting().getLearning() != learningLive)
+    {
+        if (engine.getRouting().getLearning() < 0 && engine.getRouting().getAssignment (learningLive).second >= 0)
+        {
+            if (learningLive == RigRouting::liveKeyB)
+            {
+                learningLive = -1;
+                say ("All twelve keys are on your keyboard's buttons.");
+            }
+            else
+            {
+                ++learningLive;
+                learnNextLiveControl();
+            }
+        }
+        else
+            learningLive = -1;   // something else is being taught (or it was stopped)
+    }
     if (const int k = chords.getLastMapKey(); k != shownMapKey && k >= 0)
     {
         shownMapKey = k;
@@ -647,7 +908,7 @@ void ChordsView::timerCallback()
         for (int n : notes)
             text.add (RigChords::noteName (n));
         const auto degree = chords.mapDegreeName (k);
-        say ("Key " + RigChords::noteName (k) + ": " + chords.mapChordName (k) + (degree.isNotEmpty() ? " (" + degree + ")" : juce::String())
+        say ("Key " + RigChords::noteName (k) + ": " + chords.liveMapChordName (k) + (degree.isNotEmpty() ? " (" + degree + ")" : juce::String())
              + (chords.mapVoicing.load() == (int) RigChords::MapVoicing::smooth ? juce::String() : "  " + text.joinIntoString (" ")));
     }
 
@@ -663,6 +924,8 @@ void ChordsView::timerCallback()
     for (auto* p : padButtons)
         p->repaint();
     keys->repaint();
+    liveKeys->repaint();
+    repaint (liveWell);
 }
 
 //==============================================================================
@@ -1382,6 +1645,30 @@ void ChordsView::paint (juce::Graphics& g)
         if (labels[i][0] != 0)
             vintage::engraved (g, labels[i], labelAreas[i], juce::Justification::centredRight, 13.0f);
 
+    // Live key: its well, title and what it plays in.
+    {
+        static const char* const names[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+        vintage::drawWell (g, liveWell.toFloat(), 10.0f);
+        auto title = liveTitle;
+        vintage::engraved (g, "Live key", title.removeFromTop (title.getHeight() / 2 + 2), juce::Justification::bottomLeft, 15.0f, true);
+        vintage::engraved (g, juce::String ("Written in ") + names[chords.fillKey], title, juce::Justification::topLeft, 11.0f, true,
+                           juce::Colour (0xff9c8f7e));
+        auto box = liveLcd.toFloat();
+        vintage::drawLcd (g, box);
+        const int playingShift = chords.getPlayingShift(), octave = chords.getLiveOctave();
+        juce::String text;
+        if (chords.isLiveKeyWaiting() && chords.getLiveKey() != chords.getPlayingKey())
+            text << "NEXT: " << names[chords.getLiveKey()];
+        else
+            text << "IN " << names[chords.getPlayingKey()];
+        if (octave != 0)
+            text << "  OCT " << (octave > 0 ? "+" : "") << octave;
+        if (playingShift != 0 && ! chords.isLiveKeyWaiting())
+            text << "  (" << (playingShift > 0 ? "+" : "") << playingShift << ")";
+        vintage::lcdText (g, text, box.reduced (8.0f, 0), 18.0f, juce::Justification::centredLeft,
+                          chords.isLiveKeyWaiting() ? vintage::colours::next : vintage::colours::lcdAmber);
+    }
+
     vintage::drawWell (g, padsWell.toFloat(), 12.0f);
 
     // The picked pad: its number, name and notes.
@@ -1497,6 +1784,26 @@ void ChordsView::resized()
         fillButton.setBounds (row.removeFromLeft (128));
         row.removeFromLeft (12);
         statusArea = row;
+    }
+    r.removeFromTop (8);
+    // Live key: its title, the twelve keys, octave and Back, when it lands, Learn and what it plays in.
+    liveWell = r.removeFromTop (48);
+    {
+        auto w = liveWell.reduced (10, 5);
+        liveTitle = w.removeFromLeft (92);
+        w.removeFromLeft (6);
+        liveKeys->setBounds (w.removeFromLeft (juce::jlimit (230, 340, w.getWidth() * 34 / 100)));
+        w.removeFromLeft (12);
+        auto half = [] (juce::Rectangle<int> a) { return a.withSizeKeepingCentre (a.getWidth(), juce::jmin (32, a.getHeight())); };
+        liveOctDown.setBounds (half (w.removeFromLeft (62)).reduced (2, 2));
+        liveOctUp.setBounds (half (w.removeFromLeft (62)).reduced (2, 2));
+        liveHome.setBounds (half (w.removeFromLeft (96)).reduced (2, 2));
+        w.removeFromLeft (8);
+        liveChange.setBounds (half (w.removeFromLeft (112)).reduced (0, 3));
+        w.removeFromLeft (8);
+        liveLearn.setBounds (half (w.removeFromLeft (84)).reduced (2, 2));
+        w.removeFromLeft (8);
+        liveLcd = half (w).reduced (0, 3);
     }
     r.removeFromTop (8);
     {
