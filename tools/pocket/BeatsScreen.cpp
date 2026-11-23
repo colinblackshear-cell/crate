@@ -11,15 +11,15 @@ const char* const voiceTags[crate::drums::kVoices] = { "KK", "SN", "CP", "RS", "
 
 struct BelowSwitch : juce::Component {};   // (the tool row picks the view now)
 
-// StepGrid, StepOverview and LivePads stay inside this unnamed namespace on purpose.
-// The iPhone build also links tools/mpc, which has its own global StepGrid with
-// out-of-line paint/mouse methods. Two global classes with one name break the
-// one-definition rule: the linker kept the MPC vtable, so the DRUMS grid ran the MPC
-// paint on the wrong object and froze or crashed the app. Internal names cannot clash.
+// BeatStepGrid, BeatStepOverview and BeatLivePads stay inside this unnamed namespace, with names of their own, on
+// purpose. The iPhone build also links tools/mpc, which has its own global StepGrid with out-of-line paint/mouse
+// methods. Two global classes with one name break the one-definition rule: the linker kept the MPC vtable, so the
+// DRUMS grid ran the MPC paint on the wrong object and froze or crashed the app. (A phone crash in "StepGrid::paint"
+// came back after that fix on an old build; the names now differ too, so even a stale object can't mix them up.)
 
 //==============================================================================
 // The 16 steps of the picked voice, in two rows of 8. Tap to set a hit, hold to set the accent.
-class StepGrid : public juce::Component, private juce::Timer
+class BeatStepGrid : public juce::Component, private juce::Timer
 {
 public:
     std::function<int()> voice;
@@ -127,7 +127,7 @@ private:
 
 // All 12 voices by 16 steps, with the playing step outlined. Tapping a row picks that voice; the picked row
 // is the one being edited, so it is boxed in amber.
-class StepOverview : public juce::Component
+class BeatStepOverview : public juce::Component
 {
 public:
     std::function<const crate::drums::Pattern&()> pattern;
@@ -184,7 +184,7 @@ public:
 };
 
 // PLAY LIVE: the 12 voices as big pads, three across. A hit sounds at once on touch-down.
-class LivePads : public juce::Component
+class BeatLivePads : public juce::Component
 {
 public:
     std::function<void (int)> onHit;
@@ -568,9 +568,9 @@ public:
     DrumData& d;
     PButton play, stepsChip, liveChip, patterns[kPatternSlots], variation, undoHit, clearPattern;
     int wellY = 108;
-    StepGrid grid;
-    StepOverview overview;
-    LivePads pads;
+    BeatStepGrid grid;
+    BeatStepOverview overview;
+    BeatLivePads pads;
     juce::OwnedArray<KnobView> knobs;
     int lastPlayhead = -2;
     bool playingShown = false, padsFlashed = false;
