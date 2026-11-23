@@ -4,8 +4,10 @@
 
 // The opening title and the tour.
 //
-// TitleScreen: Kaleidobox's kaleidoscope (a mandala of petals that turns, and blooms with the mic) and
-// two ways in: TAKE THE 2-MINUTE TOUR or START MAKING. Shown each time the app opens.
+// TitleScreen: the box opens. A dark stage where Kaleidobox's kaleidoscope blooms in, one petal for each tool in its
+// colour, then the name rises under it. The petals turn slowly, and bloom with the mic. Under it: PICK UP WHERE YOU
+// LEFT OFF (the song you had open, its layers as a strip of colours), START MAKING and TAKE THE 2-MINUTE TOUR.
+// Shown each time the app opens; a tap anywhere else goes straight in. The Mac's opening (RigTitle) is the same.
 //
 // TourOverlay: seven coach marks on the real controls (the tool row, REC, BPM and CLICK, the pads, the loop
 // layers, the vocoder's headphones, the menu icon that opens the song drawer). Each stop opens the real screen,
@@ -16,21 +18,33 @@ class TitleScreen : public juce::Component, private juce::Timer
 public:
     TitleScreen();
 
-    std::function<void()> onTour, onStart;
+    std::function<void()> onTour, onStart, onContinue;
     std::function<float()> micLevel;   // 0..1 since the last call
+
+    // The song PICK UP WHERE YOU LEFT OFF opens (no name: the card is hidden), its line and its layers' colours.
+    void setContinue (const juce::String& name, const juce::String& meta, std::vector<juce::Colour> layers);
+    bool hasContinue() const { return continueName.isNotEmpty(); }
+    juce::Rectangle<int> continueCard() const;
 
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
     void visibilityChanged() override;
-    void setDemoAngle (float a) { angle = a; bloom = 0.35f; repaint(); }
+    void setDemoAngle (float a) { angle = a; bloom = 0.35f; opened = 10.0f; repaint(); }   // the screenshots: fully open
+    float openedFor() const { return opened; }   // seconds since it showed (the bloom-in plays over the first ~3)
+
+    // The tools' colours, in the petals' order (the Mac's opening has the same).
+    static const std::vector<juce::Colour>& petalColours();
 
 private:
     void timerCallback() override;
     juce::Rectangle<float> mandalaRect() const;
 
-    pocket::PButton tour { "Take the 2-minute tour", pocket::Look::amber }, start { "Start making" };
-    float angle = 0.0f, bloom = 0.0f;
+    pocket::PButton tour { "Take the 2-minute tour", pocket::Look::dark }, start { "Start making", pocket::Look::amber };
+    float angle = 0.0f, bloom = 0.0f, opened = 0.0f;
+    juce::String continueName, continueMeta;
+    std::vector<juce::Colour> continueLayers;
+    bool pressingContinue = false;
 };
 
 class TourOverlay : public juce::Component

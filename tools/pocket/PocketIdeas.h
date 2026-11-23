@@ -21,6 +21,7 @@ struct IdeaInfo
     juce::Time created, modified;
     int reached = -1;     // the furthest step visited (-1 = none yet)
     bool sent = false;    // sent to the Mac (or out as stems) at least once
+    bool starred = false; // starred on My ideas (its STARRED filter)
     juce::String summary; // "92 BPM · 4 pads · 2 loops", kept up to date by the app
 };
 
@@ -48,6 +49,10 @@ public:
     void reachedStep (int step);
     void markSent();
     void setSummary (const juce::String&);
+    void setStarred (const juce::String& id, bool);
+    // My ideas' own small settings (whether HOW IT WORKS is folded away), kept in the Ideas folder.
+    bool homeFlag (const juce::String& name, bool fallback) const;
+    void setHomeFlag (const juce::String& name, bool);
     juce::String nextName() const;   // "Idea 5"
     // Screenshots: makes an idea look lived in.
     void setDemo (const juce::String& id, int reached, bool sent, const juce::String& summary, juce::Time modified);

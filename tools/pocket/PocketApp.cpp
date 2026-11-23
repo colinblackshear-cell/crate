@@ -232,6 +232,9 @@ PocketApp::PocketApp (Options o)
     ideasScreen->onOpen = [this] (const juce::String& id) { openIdea (id); };
     ideasScreen->onNew = [this] { newIdea(); };
     ideasScreen->onNewBeat = [this] { makeABeat(); };
+    ideasScreen->onCatch = [this] { catchIdea(); };
+    ideasScreen->onSpark = [this] (const crate::spark::Spark& sp) { startSpark (sp); };
+    ideasScreen->onStartWith = [this] (Tool t, bool voice) { startWithTool (t, voice); };
     ideasScreen->onTour = [this] { startTour(); };
     ideasScreen->onPlay = [this] (const juce::String& id) { playIdea (id); };
     ideasScreen->isPlaying = [this] (const juce::String& id) { return id == ideas.current().id && beats.engine().clockRunning(); };
@@ -256,6 +259,11 @@ PocketApp::PocketApp (Options o)
     title->micLevel = [this] { return audio.takeLevel(); };   // a meter only: the mic is never heard here
     title->onStart = [this] { showTitle (false); };
     title->onTour = [this] { showTitle (false); startTour(); };
+    title->onContinue = [this]
+    {
+        showTitle (false);
+        openIdea (ideas.current().id);
+    };
     tour = std::make_unique<TourOverlay>();
     tour->show = [this] (int stop) { return tourStop (stop); };
     tour->onFinish = [this] { endTour(); };
@@ -493,7 +501,7 @@ PocketApp::PocketApp (Options o)
     if (phone)
         fillEmptyIdea();   // the first launch: the pads start with the Street kit
     if (phone)
-        title->setVisible (true);   // the opening title, each time the app opens
+        showTitle (true);   // the opening title, each time the app opens
     sounds.selectFirst();
     animate = phone;
     applyAnimate();
@@ -620,6 +628,13 @@ HoldSpec PocketApp::songHoldSpec (const juce::String& id)
     HoldSpec s;
     const auto* info = ideas.find (id);
     s.title = info != nullptr ? info->name.toUpperCase() : juce::String ("SONG");
+    const bool starred = info != nullptr && info->starred;
+    s.items.push_back ({ starred ? "UNSTAR" : "STAR", starred ? juce::String() : juce::String ("on My ideas' STARRED"), false, true, [this, id, starred]
+    {
+        ideas.setStarred (id, ! starred);
+        ideasScreen->refresh();
+        drawer.refresh();
+    } });
     s.items.push_back ({ "RENAME", {}, false, true, [this, id] { renameIdea (id); } });
     s.items.push_back ({ "DELETE", "asks first", true, true, [this, id] { deleteIdea (id); } });
     return s;
@@ -1364,6 +1379,63 @@ void PocketApp::newIdea()
     if (animate)
         toolRow.flash();   // (an outline for a moment: only in the running app)
     toast ("Pick a tool down here, then press REC: it lands on layer 1, in time.");
+}
+
+// CATCH AN IDEA: like a voice memo. A new song, LOOPS on the mic, and REC at once: free length (stop when you're done),
+// no count-in and no click, so a hum is caught the moment it comes. It lands on layer 1, and the song grows from there.
+void PocketApp::catchIdea()
+{
+    switchIdea (ideas.create (ideas.nextName()));
+    showTool (Tool::loops, false);
+    loopsScreen.setSource ((int) LoopSource::mic);
+    auto go = [this]
+    {
+        if (page != Page::tool || tool != Tool::loops || recBusy())
+            return;
+        if (loopsScreen.recordFrom ((int) LoopSource::mic, 0) >= 0)
+            toast ("Catching it: sing, hum or play. Tap REC when you're done and it loops on layer 1.");
+        applyClick();
+        headerTickNow();
+    };
+    if (! micOn)
+        return askForMic (go);
+    go();
+}
+
+// START THIS SPARK: a new song named for the spark, at its tempo and in its key, with its kit on the pads, opened on
+// the first step's tool. The three steps are said once, so you know where it's going.
+void PocketApp::startSpark (const crate::spark::Spark& spark)
+{
+    using namespace crate::spark;
+    juce::String name = spark.title.upToFirstOccurrenceOf (",", false, false).trim();
+    switchIdea (ideas.create (name.isNotEmpty() ? name : ideas.nextName()));
+    beats.setBpm ((double) spark.bpm);
+    setSongKey ({ spark.root, spark.minor });
+    if (juce::isPositiveAndBelow (spark.kit, (int) factoryKits().size()))
+    {
+        loadFactoryKit (lib, beats.kit(), spark.kit, 0);
+        beats.padsChanged();
+    }
+    saveSong();
+    const auto first = spark.steps[0].tool;
+    const bool voice = first == crate::spark::voice;
+    static const Tool tools[8] = { Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::loops, Tool::drone };
+    showTool (tools[juce::jlimit (0, 7, first)], false);
+    if (voice)
+        loopsScreen.setSource ((int) LoopSource::mic);
+    thumb.repaint();
+    toast ("1 " + spark.steps[0].text + U8(" \xc2\xb7 2 ") + spark.steps[1].text + U8(" \xc2\xb7 3 ") + spark.steps[2].text);
+}
+
+// START A SONG FROM ANY TOOL: a new song, opened on that tool (MY VOICE: LOOPS, set to record the mic).
+void PocketApp::startWithTool (Tool t, bool voice)
+{
+    switchIdea (ideas.create (ideas.nextName()));
+    showTool (t, false);
+    if (voice)
+        loopsScreen.setSource ((int) LoopSource::mic);
+    toast (voice ? "Press REC and sing, hum or play: it lands on layer 1, in time."
+                 : "Play it, then press REC: it lands on layer 1, in time. Then pick the next tool.");
 }
 
 void PocketApp::renameIdea (const juce::String& id)
@@ -2847,6 +2919,19 @@ void PocketApp::applyLessonPhase (int phase)
 // The opening title and the tour
 void PocketApp::showTitle (bool shown)
 {
+    if (shown)
+    {
+        // PICK UP WHERE YOU LEFT OFF: the open song, when it has layers
+        const auto f = IdeasScreen::factsOf (ideas.folderFor (ideas.current().id));
+        std::vector<juce::Colour> colours;
+        for (int t : f.tools)
+            colours.push_back (layerToolColour (t));
+        juce::String meta;
+        if (f.bpm > 0.0)
+            meta << juce::String (f.bpm, 0) << U8(" BPM \xc2\xb7 ");
+        meta << f.layers << (f.layers == 1 ? " layer" : " layers");
+        title->setContinue (f.layers > 0 ? ideas.current().name : juce::String(), meta, colours);
+    }
     title->setVisible (shown);
     if (shown)
         title->toFront (false);
@@ -3011,6 +3096,37 @@ void PocketApp::writeSnapshots (const juce::File& folder)
             for (auto t : tools)
             {
                 auto* o = new juce::DynamicObject();
+                // a short sound of the right shape, so My ideas draws its lanes: hits, notes or a voice
+                const int sr = 22050, beats = (l % 2 == 0) ? 16 : 8;
+                const int len = bpm > 0.0 ? (int) (60.0 / bpm * beats * sr) : sr * 12;
+                juce::AudioBuffer<float> sound (1, len);
+                juce::Random rng (l * 31 + (int) t * 7 + 3);
+                for (int i = 0; i < len; ++i)
+                {
+                    const double secs = (double) i / sr, beat = secs * juce::jmax (60.0, bpm) / 60.0;
+                    const double ph = beat - std::floor (beat);
+                    float v = 0.0f;
+                    if (t == pocket::LayerTool::drums || t == pocket::LayerTool::pads)
+                        v = (float) (std::exp (-ph * 14.0) * (((int) beat % 4 == 2) ? 0.6 : 1.0)) * (rng.nextFloat() * 2.0f - 1.0f);
+                    else if (t == pocket::LayerTool::synth || t == pocket::LayerTool::chords)
+                        v = (float) ((ph < 0.6 ? 0.8 : 0.1) * (0.5 + 0.5 * std::sin ((int) beat * 1.7)) * std::sin (secs * 2200.0));
+                    else
+                        v = (float) ((0.35 + 0.65 * std::abs (std::sin (secs * 2.3) * std::sin (secs * 0.7 + l))) * std::sin (secs * 1400.0 + std::sin (secs * 9.0)));
+                    sound.setSample (0, i, v * 0.7f);
+                }
+                const auto wav = dir.getChildFile ("demo-layer-" + juce::String (l + 1) + ".wav");
+                wav.deleteFile();
+                if (auto out = std::unique_ptr<juce::FileOutputStream> (wav.createOutputStream()))
+                {
+                    juce::WavAudioFormat format;
+                    if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (format.createWriterFor (out.get(), sr, 1, 16, {}, 0)))
+                    {
+                        out.release();
+                        writer->writeFromAudioSampleBuffer (sound, 0, len);
+                    }
+                }
+                o->setProperty ("file", wav.getFileName());
+                o->setProperty ("beats", (double) beats);
                 o->setProperty ("layer", l++);
                 o->setProperty ("tool", (int) t);
                 list.add (juce::var (o));
@@ -3025,6 +3141,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         layersOf (ideas.current().id, 92.0, { LT::drums, LT::synth, LT::vocoder });
         auto porch = ideas.create ("Porch rain groove");
         ideas.setDemo (porch, stepBeat, false, {}, now - day);
+        ideas.setStarred (porch, true);
         layersOf (porch, 84.0, { LT::pads, LT::drums, LT::chords, LT::mic });
         auto hum = ideas.create ("Humming in the car");
         ideas.setDemo (hum, stepRecord, false, {}, now - juce::RelativeTime::days (3));
@@ -3033,6 +3150,12 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     }
     showIdeasList();
     savePng (folder.getChildFile ("00-songs.png"));
+    // further down My ideas: tonight's spark and the tools, then your songs
+    ideasScreen->scrollTo (ideasScreen->getHeight() - 140);
+    savePng (folder.getChildFile ("00-songs-2.png"));
+    ideasScreen->scrollTo (100000);
+    savePng (folder.getChildFile ("00-songs-3.png"));
+    ideasScreen->scrollTo (0);
 
     // The sound recorder (from PADS > RECORD A SOUND, or the drawer's RECORD A SOUND) and its Effects + Chop sheet
     showPage (Page::recorder);
@@ -3093,7 +3216,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("24-hold-song-on-home.png"));
     holdCard.close();
     ideasScreen->holdRow (0);   // the open song: DELETE asks on the app's own card, then opens your last other song
-    holdCard.choose (1);
+    holdCard.choose (2);
     savePng (folder.getChildFile ("24c-delete-open-song-confirm.png"));
     holdCard.close();
     showTool (Tool::loops);

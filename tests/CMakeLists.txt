@@ -34,6 +34,7 @@ target_sources(CrateTests PRIVATE
     RigPerformFxTests.cpp
     RigSynthScreenTests.cpp
     RigGuideTests.cpp
+    RigIdeasTests.cpp
     RigEffectsTests.cpp
     RigMixerTests.cpp
     RigNavigationTests.cpp

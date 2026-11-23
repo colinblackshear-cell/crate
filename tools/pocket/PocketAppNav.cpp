@@ -465,17 +465,18 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
                 other = i;
         expect (other >= 0, "Song menu: song B isn't in the drawer");
         drawer.holdRow (other);
-        expect (holdCard.isOpen() && holdCard.itemCount() == 2 && holdCard.current().title == "NAV B", "Song menu: holding a song in the drawer didn't open RENAME / DELETE");
+        expect (holdCard.isOpen() && holdCard.itemCount() == 3 && holdCard.current().title == "NAV B", "Song menu: holding a song in the drawer didn't open STAR / RENAME / DELETE");
         const auto s = songHoldSpec (idB);
-        expect (s.items[0].text == "RENAME" && s.items[0].action != nullptr && s.items[1].text == "DELETE" && s.items[1].danger && s.items[1].enabled && s.items[1].action != nullptr,
+        expect (s.items[0].text == "STAR" && s.items[0].action != nullptr && s.items[1].text == "RENAME" && s.items[1].action != nullptr
+                && s.items[2].text == "DELETE" && s.items[2].danger && s.items[2].enabled && s.items[2].action != nullptr,
                 "Song menu: RENAME and a red DELETE aren't both there for another song");
         const auto cur = songHoldSpec (idA);
-        expect (cur.items[1].enabled && cur.items[1].action != nullptr, "Song menu: the open song's DELETE is off");
+        expect (cur.items[2].enabled && cur.items[2].action != nullptr, "Song menu: the open song's DELETE is off");
         holdCard.close();
         settle();
         showIdeasList();
         ideasScreen->holdRow (0);
-        expect (holdCard.isOpen() && holdCard.itemCount() == 2, "Song menu: holding a song on Home didn't open RENAME / DELETE");
+        expect (holdCard.isOpen() && holdCard.itemCount() == 3, "Song menu: holding a song on Home didn't open STAR / RENAME / DELETE");
         settle();
         report << "hold menu on a song (drawer and Home): RENAME and a red DELETE (the open song's too)\n";
     }
@@ -571,9 +572,9 @@ juce::String PocketApp::runSongDeleteChecks (juce::String& report, const juce::F
                 return problems.add (what + ": the song isn't on Home");
             ideasScreen->holdRow (row);
         }
-        if (! holdCard.isOpen() || holdCard.itemCount() != 2 || holdCard.current().items[1].text != "DELETE" || ! holdCard.current().items[1].enabled)
+        if (! holdCard.isOpen() || holdCard.itemCount() != 3 || holdCard.current().items[2].text != "DELETE" || ! holdCard.current().items[2].enabled)
             return problems.add (what + ": no DELETE in the song's menu");
-        holdCard.choose (1);
+        holdCard.choose (2);
         if (! holdCard.isOpen() || ! holdCard.current().title.startsWith ("DELETE ") || holdCard.current().items[0].text != "DELETE SONG")
             return problems.add (what + ": DELETE didn't ask first");
         holdCard.choose (0);
@@ -598,7 +599,7 @@ juce::String PocketApp::runSongDeleteChecks (juce::String& report, const juce::F
         if (i.id != openId && expectNext.isEmpty())
             expectNext = i.id;
     ideasScreen->holdRow (homeRowOf (openId));
-    holdCard.choose (1);
+    holdCard.choose (2);
     expect (holdCard.isOpen() && holdCard.current().items[1].text == "KEEP IT", "The open song: the confirm has no KEEP IT");
     holdCard.choose (1);
     expect (ideas.find (openId) != nullptr && ideas.current().id == openId, "The open song: KEEP IT deleted it");

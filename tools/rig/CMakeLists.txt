@@ -75,6 +75,8 @@ set(RIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/SoundsView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/GuideView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigLesson.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RigTitle.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RigIdeas.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Vintage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RigPanels.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Analog.cpp
@@ -92,7 +94,7 @@ set(RIG_SOURCES
     ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
     PARENT_SCOPE)
 
-target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigDirty.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp RigTakes.cpp RigShowFiles.cpp RigNotes.cpp NoteEditor.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp DroneView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp RigLesson.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp
+target_sources(Kaleidobox PRIVATE Main.cpp RigEngine.cpp RigDirty.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp RigTakes.cpp RigShowFiles.cpp RigNotes.cpp NoteEditor.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp DroneView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp RigLesson.cpp RigTitle.cpp RigIdeas.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp
     RigMacros.cpp MacroStrip.cpp
     AutomationPanel.cpp ControllersPanel.cpp RigPhoneLink.cpp ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
     ${MPC_SOURCES}
@@ -155,7 +157,7 @@ juce_add_plugin(KaleidoboxPlugin
 
 # What every Kaleidobox plugin is made of (the instrument and the Input version share it all).
 macro(kaleidobox_plugin_parts target)
-    target_sources(${target} PRIVATE RigPlugin.cpp RigEngine.cpp RigDirty.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp RigTakes.cpp RigShowFiles.cpp RigNotes.cpp NoteEditor.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp DroneView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp RigLesson.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp
+    target_sources(${target} PRIVATE RigPlugin.cpp RigEngine.cpp RigDirty.cpp RigRouting.cpp RigTransport.cpp RigView.cpp StripFx.cpp PluginSlot.cpp PerformFx.cpp StripFxPanel.cpp RigLooper.cpp LooperView.cpp LoopEditor.cpp SongGrid.cpp RigExport.cpp HelpPanel.cpp RigScenes.cpp RigTimeline.cpp RigSong.cpp RigTakes.cpp RigShowFiles.cpp RigNotes.cpp NoteEditor.cpp TimelineView.cpp SongView.cpp MoreView.cpp MixerView.cpp DroneView.cpp SamplerScreen.cpp VocoderScreen.cpp VocoderSettings.cpp GrooveView.cpp RigRecorder.cpp RigCapture.cpp SoundsView.cpp GuideView.cpp RigLesson.cpp RigTitle.cpp RigIdeas.cpp Vintage.cpp RigPanels.cpp Analog.cpp InstrumentShell.cpp SynthScreens.cpp RigSongStart.cpp Pedalboard.cpp EffectsView.cpp RigQuantize.cpp QuantizePanel.cpp RigChords.cpp ChordsView.cpp RigLogicImport.cpp RigAutomation.cpp
     RigMacros.cpp MacroStrip.cpp
     AutomationPanel.cpp ControllersPanel.cpp RigPhoneLink.cpp ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp ${PROJECT_SOURCE_DIR}/core/control/Controllers.cpp
         ${MPC_SOURCES}
