@@ -22,11 +22,12 @@ juce_add_plugin(KaleidoboxDrums
 set(DRUMS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/DrumEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/FactoryKits.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/SampleKits.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/DrumProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/DrumView.cpp
     PARENT_SCOPE)
 
-target_sources(KaleidoboxDrums PRIVATE PluginEntry.cpp DrumEngine.cpp DrumProcessor.cpp DrumView.cpp)
+target_sources(KaleidoboxDrums PRIVATE PluginEntry.cpp DrumEngine.cpp SampleKits.cpp DrumProcessor.cpp DrumView.cpp)
 target_include_directories(KaleidoboxDrums PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(KaleidoboxDrums
     PRIVATE

@@ -288,6 +288,35 @@ void Engine::start (int v, float velocity, bool accent, float tuneLock, float de
     for (auto& p : s.phase)
         p = 0;
     s.bell = 0;
+    s.sample = nullptr;
+    if (const auto* smp = samples[(size_t) v].load(); smp != nullptr && smp->audio != nullptr && smp->audio->getNumSamples() > 0)
+    {
+        // Your own sample: tune changes its speed, decay how long it rings (all the way: as recorded), tone
+        // darkens or thins it.
+        s.hand = false;
+        s.sample = smp->audio.get();
+        s.samplePos = 0;
+        s.sampleStep = ratio * 44100.0 / sampleRate;
+        s.gain = juce::jlimit (0.0f, 1.0f, velocity) * vs.level * human * (accent ? 1.0f + 0.9f * settings.accent : 1.0f);
+        s.envCoeff = vs.decay >= 0.95f ? 1.0f : coeffFor (0.02f + 1.6f * vs.decay * vs.decay, invRate);
+        s.toneMix = (tone - 0.5f) * 2.0f;
+        if (std::abs (s.toneMix) > 0.02f)
+        {
+            const float hz = s.toneMix < 0 ? 18000.0f * std::pow (0.02f, -s.toneMix) : 20.0f * std::pow (60.0f, s.toneMix);
+            s.f1.set (hz, 0.7f, rate);
+        }
+        s.f1.reset();
+        if (v == closedHat && state[openHat].active)
+        {
+            state[openHat].envCoeff = coeffFor (0.012f, invRate);
+            for (auto& c : state[openHat].modeCoeff)
+                c = coeffFor (0.012f, invRate);
+        }
+        ++hitCounts[(size_t) v];
+        lastHit[(size_t) v] = velocity;
+        tap (v, velocity);
+        return;
+    }
     s.hand = isHandDrum (v, sound);
     if (s.hand)
     {
@@ -689,6 +718,49 @@ float Engine::renderHand (VoiceState& s, float& level)
     return x * 0.5f + hit;
 }
 
+void Engine::setSample (int voice, const Sample* sample)
+{
+    if (juce::isPositiveAndBelow (voice, kVoices))
+        samples[(size_t) voice] = sample;
+}
+
+const Sample* Engine::getSample (int voice) const
+{
+    return juce::isPositiveAndBelow (voice, kVoices) ? samples[(size_t) voice].load() : nullptr;
+}
+
+float Engine::renderSample (VoiceState& s)
+{
+    const auto& b = *s.sample;
+    const int n = b.getNumSamples();
+    const int i = (int) s.samplePos;
+    if (i >= n - 1 || s.env < 1.0e-4f)
+    {
+        s.active = false;
+        s.sample = nullptr;
+        return 0.0f;
+    }
+    const float frac = (float) (s.samplePos - i);
+    float x = 0;
+    for (int ch = 0; ch < b.getNumChannels(); ++ch)
+    {
+        const float* d = b.getReadPointer (ch);
+        x += d[i] + frac * (d[i + 1] - d[i]);
+    }
+    x /= (float) juce::jmax (1, b.getNumChannels());
+    if (std::abs (s.toneMix) > 0.02f)
+    {
+        float lp, bp, hp;
+        s.f1.process (x, lp, bp, hp);
+        x = s.toneMix < 0 ? lp : hp;
+    }
+    x *= s.env;
+    s.env *= s.envCoeff;
+    s.samplePos += s.sampleStep;
+    s.t += invRate;
+    return x;
+}
+
 float Engine::renderVoice (int v, VoiceState& s)
 {
     const auto& vs = settings.voices[(size_t) v];
@@ -697,6 +769,9 @@ float Engine::renderVoice (int v, VoiceState& s)
     const int sound = s.sound;
     float out = 0, lp, bp, hp;
     float level = s.env;
+
+    if (s.sample != nullptr)
+        return renderSample (s) * s.gain;
 
     if (s.hand)
     {

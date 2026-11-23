@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "core/Audio.h"
 #include "core/synth/PatternLife.h"
 
 #include <array>
@@ -99,6 +100,16 @@ struct Pattern
     bool operator== (const Pattern&) const;
 };
 
+// A sample on one of the twelve sounds (your own kit): plays instead of the analog sound, with the
+// sound's level, tune, decay, tone and pan still working on it. Audio is 44.1 kHz (AudioFiles::load).
+struct Sample
+{
+    crate::SharedAudio audio;
+    juce::String name;     // for the panel ("snare_vinyl.wav")
+    juce::File file;       // where it came from (may be empty: a sound from the phone's library)
+};
+using SharedSample = std::shared_ptr<const Sample>;
+
 struct VoiceSettings
 {
     float level = 0.8f;   // 0..1
@@ -174,6 +185,11 @@ public:
     // Plays one voice now (the window's pads).
     void trigger (int voice, float velocity, bool accent);
 
+    // Any thread: a sample for a sound (nullptr: back to its analog sound). The caller keeps it alive
+    // until it has been replaced and the audio thread can't be playing it (keep every one it set).
+    void setSample (int voice, const Sample* sample);
+    const Sample* getSample (int voice) const;
+
     // For the window.
     int getCurrentStep() const { return currentStep; }
     bool isPlayingFill() const { return inFill; }
@@ -224,6 +240,10 @@ private:
         float bloom = 0;        // the gong's high tones come in after the stroke (seconds)
         bool jingle = false;    // ankle bells keep ringing each other
         bool shake = false;     // a caxixi: the beads go out and back
+        // Your own sample on this sound: where it's playing and how fast.
+        const juce::AudioBuffer<float>* sample = nullptr;
+        double samplePos = 0, sampleStep = 1;
+        float toneMix = 0;      // -1 dark (low-pass) .. 0 as recorded .. 1 thin (high-pass)
     };
 
     // tune: semitones on top of the sound's; decay: on top of its Decay (-0.5..0.5). A step's locks.
@@ -270,6 +290,8 @@ private:
     bool fillQueued = false;
     bool wasPlaying = false;
     std::array<std::atomic<float>, kVoices> lastHit {};
+    std::array<std::atomic<const Sample*>, kVoices> samples {};
+    float renderSample (VoiceState&);
     struct Roll { int left = 0; double next = 0, gap = 0; float velocity = 0, fade = 0.9f, rise = 0; bool accent = false; float tune = 0, decay = 0; };
     std::array<Roll, kVoices> rolls {};
     // Nudged hits, waiting for their moment.

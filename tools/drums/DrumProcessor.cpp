@@ -1,5 +1,6 @@
 #include "DrumProcessor.h"
 #include "DrumView.h"
+#include "core/AudioFiles.h"
 
 using namespace crate;
 
@@ -188,6 +189,117 @@ DrumProcessor::DrumProcessor()
     // The first patterns are ready-made beats, so there's something to hear straight away.
     for (int i = 0; i < (int) std::size (written) && i < drums::kPatterns; ++i)
         patterns[(size_t) i] = groove (i);
+    formats.registerBasicFormats();
+}
+
+//==============================================================================
+// Your own kit
+void DrumProcessor::setParamValue (const juce::String& id, float value)
+{
+    if (auto* p = params.getParameter (id))
+        p->setValueNotifyingHost (p->convertTo0to1 (value));
+}
+
+void DrumProcessor::setVoiceSample (int voice, drums::SharedSample sample)
+{
+    if (! juce::isPositiveAndBelow (voice, drums::kVoices))
+        return;
+    if (sample != nullptr)
+        keptSamples.push_back (sample);
+    voiceSamples[(size_t) voice] = sample;
+    engine.setSample (voice, sample.get());
+}
+
+bool DrumProcessor::setVoiceSample (int voice, const juce::File& file, juce::String& error)
+{
+    auto audio = AudioFiles::load (file, formats, error);
+    if (audio == nullptr)
+        return false;
+    auto s = std::make_shared<drums::Sample>();
+    s->audio = audio;
+    s->name = file.getFileName();
+    s->file = file;
+    setVoiceSample (voice, std::shared_ptr<const drums::Sample> (s));
+    return true;
+}
+
+drums::SharedSample DrumProcessor::getVoiceSample (int voice) const
+{
+    return juce::isPositiveAndBelow (voice, drums::kVoices) ? voiceSamples[(size_t) voice] : nullptr;
+}
+
+bool DrumProcessor::hasSamples() const
+{
+    for (auto& s : voiceSamples)
+        if (s != nullptr)
+            return true;
+    return false;
+}
+
+void DrumProcessor::clearSamples()
+{
+    for (int v = 0; v < drums::kVoices; ++v)
+        setVoiceSample (v, nullptr);
+    kitName = {};
+}
+
+int DrumProcessor::loadKitFolder (const juce::File& folder)
+{
+    const auto files = drums::kits::mapFiles (drums::kits::audioFilesIn (folder, formats));
+    int loaded = 0;
+    for (int v = 0; v < drums::kVoices; ++v)
+    {
+        juce::String error;
+        if (files[(size_t) v] != juce::File() && setVoiceSample (v, files[(size_t) v], error))
+            ++loaded;
+    }
+    if (loaded > 0)
+        kitName = folder.getFileName();
+    return loaded;
+}
+
+bool DrumProcessor::saveUserKit (const juce::String& name, juce::File* savedTo)
+{
+    drums::kits::Kit kit;
+    kit.name = name.trim().isEmpty() ? juce::String ("My kit") : name.trim();
+    const auto settings = readSettings();
+    kit.voices = settings.voices;
+    kit.hasVoices = true;
+    for (int v = 0; v < drums::kVoices; ++v)
+        if (auto s = voiceSamples[(size_t) v]; s != nullptr)
+            kit.files[(size_t) v] = s->file;
+    auto file = drums::kits::userKitsFolder().getChildFile (juce::File::createLegalFileName (kit.name) + ".drumkit");
+    if (! drums::kits::save (kit, file))
+        return false;
+    kitName = kit.name;
+    if (savedTo != nullptr)
+        *savedTo = file;
+    return true;
+}
+
+bool DrumProcessor::loadUserKit (const juce::File& file)
+{
+    drums::kits::Kit kit;
+    if (! drums::kits::load (file, kit))
+        return false;
+    for (int v = 0; v < drums::kVoices; ++v)
+    {
+        juce::String error;
+        const auto& f = kit.files[(size_t) v];
+        if (f == juce::File() || ! setVoiceSample (v, f, error))
+            setVoiceSample (v, nullptr);
+        if (kit.hasVoices)
+        {
+            const auto& s = kit.voices[(size_t) v];
+            setParamValue (voiceParam (v, "Level"), s.level);
+            setParamValue (voiceParam (v, "Tune"), s.tune);
+            setParamValue (voiceParam (v, "Decay"), s.decay);
+            setParamValue (voiceParam (v, "Tone"), s.tone);
+            setParamValue (voiceParam (v, "Pan"), s.pan);
+        }
+    }
+    kitName = kit.name;
+    return true;
 }
 
 juce::StringArray DrumProcessor::grooveNames()
@@ -651,6 +763,29 @@ void DrumProcessor::getStateInformation (juce::MemoryBlock& dest)
         entries.add (juce::String (code));
     chainTree.setProperty ("entries", entries.joinIntoString (" "), nullptr);
     state.appendChild (chainTree, nullptr);
+    // Your own kit: each sample's file, and the sound itself when it's short (under 10 seconds), so
+    // the project plays on another Mac or after the file moves.
+    state.removeChild (state.getChildWithName ("Samples"), nullptr);
+    if (hasSamples())
+    {
+        juce::ValueTree samplesTree ("Samples");
+        samplesTree.setProperty ("kit", kitName, nullptr);
+        for (int v = 0; v < drums::kVoices; ++v)
+            if (auto smp = voiceSamples[(size_t) v]; smp != nullptr && smp->audio != nullptr)
+            {
+                juce::ValueTree one ("Sample");
+                one.setProperty ("voice", v, nullptr);
+                one.setProperty ("name", smp->name, nullptr);
+                one.setProperty ("file", smp->file.getFullPathName(), nullptr);
+                if (smp->audio->getNumSamples() <= 44100 * 10)
+                {
+                    const auto wav = AudioFiles::toWavData (*smp->audio);
+                    one.setProperty ("wav", wav.toBase64Encoding(), nullptr);
+                }
+                samplesTree.appendChild (one, nullptr);
+            }
+        state.appendChild (samplesTree, nullptr);
+    }
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, dest);
 }
@@ -680,5 +815,33 @@ void DrumProcessor::setStateInformation (const void* data, int size)
             entries.push_back (e.getIntValue());
     setChain (entries);
     state.removeChild (chainTree, nullptr);
+    // Your own kit (older projects have none: all analog).
+    const auto samplesTree = state.getChildWithName ("Samples");
+    for (int v = 0; v < drums::kVoices; ++v)
+        setVoiceSample (v, nullptr);
+    kitName = samplesTree.getProperty ("kit", "").toString();
+    for (const auto& one : samplesTree)
+    {
+        const int v = one.getProperty ("voice", -1);
+        if (! juce::isPositiveAndBelow (v, drums::kVoices))
+            continue;
+        auto smp = std::make_shared<drums::Sample>();
+        smp->name = one.getProperty ("name", "").toString();
+        const auto path = one.getProperty ("file", "").toString();
+        if (juce::File::isAbsolutePath (path))
+            smp->file = juce::File (path);
+        juce::String error;
+        if (smp->file.existsAsFile())
+            smp->audio = AudioFiles::load (smp->file, formats, error);
+        if (smp->audio == nullptr && one.hasProperty ("wav"))
+        {
+            juce::MemoryBlock wav;
+            if (wav.fromBase64Encoding (one.getProperty ("wav").toString()))
+                smp->audio = AudioFiles::fromWavData (wav.getData(), wav.getSize());
+        }
+        if (smp->audio != nullptr)
+            setVoiceSample (v, std::shared_ptr<const drums::Sample> (smp));
+    }
+    state.removeChild (samplesTree, nullptr);
     params.replaceState (state);
 }

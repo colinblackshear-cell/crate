@@ -5,6 +5,7 @@
 #include "core/SafetyLimiter.h"
 
 #include "DrumEngine.h"
+#include "SampleKits.h"
 
 #include <vector>
 
@@ -25,6 +26,22 @@ public:
     // Kits: the whole machine set up for a style (Classic, Deep sub, Latin...).
     static juce::StringArray kitNames();
     void loadKit (int index);
+
+    // Your own kit (SampleKits.h): a sample on any of the twelve sounds, instead of its analog sound.
+    // Message thread. Samples save with the project (the file's place, and the sound itself when it's
+    // short, so a show still plays on another Mac).
+    bool setVoiceSample (int voice, const juce::File&, juce::String& error);
+    void setVoiceSample (int voice, crate::drums::SharedSample);   // nullptr: its analog sound again
+    crate::drums::SharedSample getVoiceSample (int voice) const;
+    bool hasSamples() const;
+    void clearSamples();
+    // A folder of drum hits as a kit (file names matched to the sounds); returns how many got one.
+    int loadKitFolder (const juce::File& folder);
+    // Your kits, in Music/Crate/Drum Kits: the samples and each sound's knobs.
+    bool saveUserKit (const juce::String& name, juce::File* savedTo = nullptr);
+    bool loadUserKit (const juce::File&);
+    juce::String getKitName() const { return kitName; }
+    juce::AudioFormatManager formats;
 
     //==========================================================================
     // Patterns, edited on the message thread.
@@ -120,7 +137,11 @@ private:
     crate::drums::Settings readSettings() const;
 
     crate::drums::Engine engine;
-    crate::SafetyLimiter limiter;   // the last stop: nothing over -0.3 dBFS, and no NaN
+    crate::SafetyLimiter limiter;
+    std::array<crate::drums::SharedSample, crate::drums::kVoices> voiceSamples;
+    std::vector<crate::drums::SharedSample> keptSamples;   // every one the engine was given: it may still be playing it
+    juce::String kitName;
+    void setParamValue (const juce::String& id, float value);   // the last stop: nothing over -0.3 dBFS, and no NaN
 
     juce::SpinLock patternLock;
     std::array<crate::drums::Pattern, crate::drums::kPatterns> patterns, patternsB;   // under patternLock

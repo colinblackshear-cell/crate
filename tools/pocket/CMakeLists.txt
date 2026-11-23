@@ -116,7 +116,7 @@ target_compile_definitions(KaleidoboxPocket PRIVATE CRATE_STRIPFX_NO_PLUGINS=1)
 
 # The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools
 # already define mpc_format; on iOS the phone makes it here.
-target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/drums/DrumEngine.cpp ${TOOLS}/drums/FactoryKits.cpp)
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/drums/DrumEngine.cpp ${TOOLS}/drums/FactoryKits.cpp ${TOOLS}/drums/SampleKits.cpp)
 target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS} ${TOOLS}/drums ${TOOLS}/mpc)
 if(NOT TARGET mpc_format)
     add_library(mpc_format STATIC ${TOOLS}/mpc/mpc/MpcFiles.cpp ${TOOLS}/mpc/mpc/BankWriter.cpp)
