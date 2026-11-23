@@ -57,6 +57,9 @@ bool boxCarriesOn (const RigTimeline&, int section, int lane);
 int setBox (RigTimeline&, int section, int lane, int clip);
 // Empties it: the track is quiet in that section.
 void clearBox (RigTimeline&, int section, int lane);
+// Takes a track out of the whole song: every block on its lane goes (all sections, and any
+// Bars-view blocks). Returns how many went.
+int clearLane (RigTimeline&, int lane);
 // Copies a section's boxes on a lane to another section ("Same as Intro").
 void copyBox (RigTimeline&, int fromSection, int toSection, int lane);
 

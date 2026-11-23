@@ -177,6 +177,61 @@ public:
             expect (! song->undo(), "nothing more to take back");
         }
 
+        beginTest ("one-click deletes: a box's x empties it, a track's x takes it out of the song, Delete empties a picked box");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            RigView view (engine, nullptr);
+            view.setSize (1440, 960);
+            view.pickTrack (GrooveView::machine);
+            view.toSong (-1);
+            view.toSong (-1);
+            expectEquals (sections (engine), 2);
+            view.showView ("Song");
+            auto* song = find<SongView> (view);
+            song->forgetUndo();
+            auto& tl = engine.getTimeline();
+            const int lineIn = RigTimeline::laneForStrip (RigEngine::inputStrip);
+            const int drums = RigTimeline::laneForStrip (RigEngine::drumsStrip);
+            rigsong::setBox (tl, 0, lineIn, -1);
+            rigsong::setBox (tl, 1, lineIn, -1);
+            rigsong::setBox (tl, 0, drums, -1);
+            rigsong::setBox (tl, 1, drums, -1);
+            song->refresh();
+            song->forgetUndo();
+            const auto shows = [song] (int lane)
+            {
+                const auto lanes = song->shownLanes();
+                return std::find (lanes.begin(), lanes.end(), lane) != lanes.end();
+            };
+            expect (shows (lineIn), "Line in is on the board");
+
+            // The box's x: that box only.
+            expect (song->emptyBox (0, drums));
+            expectEquals (rigsong::boxBlock (tl, 0, drums), -1);
+            expect (rigsong::boxBlock (tl, 1, drums) >= 0, "the other section keeps its box");
+            expect (! song->emptyBox (0, drums), "already empty");
+            expectEquals (sections (engine), 2, "no section went");
+
+            // The track's x: out of the whole song, and its row goes.
+            expect (song->removeLaneFromSong (lineIn));
+            expect (! tl.laneUsed (lineIn));
+            expect (! shows (lineIn), "Line in's row is gone");
+            expectEquals (sections (engine), 2);
+            expect (song->undo(), "Undo");
+            expect (rigsong::boxBlock (tl, 0, lineIn) >= 0 && rigsong::boxBlock (tl, 1, lineIn) >= 0, "Undo brings Line in back");
+            expect (shows (lineIn));
+
+            // Delete (button or key) with a box picked: the box goes, not its section.
+            song->select (1, drums);
+            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::deleteKey)));
+            expectEquals (rigsong::boxBlock (tl, 1, drums), -1, "the picked box is empty");
+            expectEquals (sections (engine), 2, "its section stays");
+            song->select (1, drums);
+            song->pressDelete();
+            expectEquals (sections (engine), 2, "an empty picked box: nothing more goes");
+        }
+
         beginTest ("the Guide is always at the top and walks through the whole tool on its real screens");
         {
             RigEngine engine;
