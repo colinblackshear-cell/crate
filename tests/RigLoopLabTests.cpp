@@ -129,9 +129,10 @@ struct RigLoopLabTests : juce::UnitTest
             expect (view.getLab() == nullptr, "no lab for an empty layer");
             view.openLab (2);
             auto* lab = view.getLab();
-            expect (lab != nullptr && lab->isVisible() && lab->getPage() == LoopLab::warpPage);
+            expect (lab != nullptr && lab->isVisible() && lab->getPage() == LoopLab::lastPageUsed(), "opens on the page used last");
             if (lab == nullptr)
                 return;
+            lab->showPage (LoopLab::warpPage);   // other tests may have left In / Out as the last page
             expect (! lab->getBounds().isEmpty() && lab->getHeight() >= 400);
             expect (view.getEditor() == nullptr, "In / Out isn't showing");
 
