@@ -272,7 +272,7 @@ PocketApp::PocketApp (Options o)
     dim->onTap = [this] { closeAllSheets(); };
 
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
-    toolRow.tools = { Tool::loops, Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone, Tool::effects };
+    toolRow.tools = { Tool::loops, Tool::song, Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone, Tool::effects };
     // EFFECTS from a tool opens on that tool's board
     toolRow.onSelect = [this] (Tool t) { if (t == Tool::effects) openEffects (page == Page::tool ? boardForTool (tool) : -1); else showTool (t); };
     thumb.state = [this]
@@ -440,6 +440,7 @@ PocketApp::PocketApp (Options o)
     loopsScreen.engine().setInstrument (0, &synthPart.engine());
     loopsScreen.engine().setInstrument (1, &chordsTool.engine());
     loopsScreen.engine().setDrone (&droneTool);
+    setupSong();
     droneScreen.toast = [this] (const juce::String& t) { toast (t); };
     droneScreen.onChanged = [this] { saveSong(); };
     droneScreen.micOn = [this] { return micOn; };
@@ -451,6 +452,7 @@ PocketApp::PocketApp (Options o)
     loadSong();
     loopsScreen.engine().setCountInBars (appSettings.countInBars);
     headerTick.startTimerHz (15);
+    songTick.startTimerHz (30);
 
     // Every bottom sheet closes with a downward flick or drag as well as its DONE button and a tap on the dim
     sheet.onDismiss = [this] { closeSheet(); };
@@ -482,7 +484,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &droneScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &droneScreen, songScreen.get(), &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         addChildComponent (c);
     addChildComponent (countPanel);
     addChildComponent (thumb);
@@ -877,6 +879,7 @@ void PocketApp::showPage (Page p, int morePage)
     synthScreen.setVisible (onTool && tool == Tool::synth);
     chordsScreen.setVisible (onTool && tool == Tool::chords);
     droneScreen.setVisible (onTool && tool == Tool::drone);
+    songScreen->setVisible (onTool && tool == Tool::song);
     if (! (onTool && tool == Tool::sampler))
         sampler.leave();   // a take still running is kept
     sampler.setVisible (onTool && tool == Tool::sampler);
@@ -978,7 +981,7 @@ void PocketApp::noteStep()
     if (page == Page::recorder)
         s = sheetOpen ? stepShape : stepRecord;
     else if (page == Page::tool)
-        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords || tool == Tool::drone || tool == Tool::effects ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
+        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords || tool == Tool::drone || tool == Tool::effects || tool == Tool::song ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
           : beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
     if (page == Page::tool && tool == Tool::sampler)
         s = stepShape;
@@ -1407,6 +1410,9 @@ void PocketApp::switchIdea (const juce::String& id)
     record.savePadEdits();   // (into the song being left: its pads)
     beats.leave();
     loopsScreen.leave();
+    if (song->isLive())
+        song->stopAndKeep();   // (a run going on is kept with the song being left)
+    song->stopPlaying();
     beats.flush();
     loopsScreen.flush();
     saveSong();
@@ -1613,10 +1619,40 @@ void PocketApp::playIdea (const juce::String& id)
 //==============================================================================
 // PLAY: the loop layers if there are any, otherwise what the tool on screen plays (the drum machine on
 // DRUMS, the pad pattern if it has hits), otherwise the drum machine. STOP: everything.
+void PocketApp::stopClock()
+{
+    auto& b = beats.engine();
+    auto& l = loopsScreen.engine();
+    lockWatch.stopTimer();
+    lockKind = LockKind::none;
+    finishSynthTake();
+    beats.setRecordingPads (false);
+    beats.setRecordingDrums (false);
+    l.setTransport (false);
+    b.setPlaying (false);
+    b.setPatternPlaying (false);
+    b.stopPads();
+}
+
 void PocketApp::togglePlay()
 {
     auto& b = beats.engine();
     auto& l = loopsScreen.engine();
+    // SONG: the thumb's PLAY plays the song from its playhead; STOP stops it (and keeps a REC LIVE run)
+    if (song->isLive())
+    {
+        songScreen->pressRecLive();
+        applyClick();
+        return thumb.repaint();
+    }
+    if (song->isOn() || (! b.clockRunning() && page == Page::tool && tool == Tool::song && ! song->blocks.empty()))
+    {
+        songScreen->pressPlay();
+        applyClick();
+        beats.refreshPads();
+        repaint();
+        return thumb.repaint();
+    }
     if (b.clockRunning())
     {
         lockWatch.stopTimer();
@@ -1916,7 +1952,7 @@ void PocketApp::thumbPressed (int button)
 
 bool PocketApp::recBusy() const
 {
-    return playingIn() || loopsScreen.busyLayer() >= 0 || beats.recordingPads() || sampler.isRecording();
+    return song->isLive() || playingIn() || loopsScreen.busyLayer() >= 0 || beats.recordingPads() || sampler.isRecording();
 }
 
 void PocketApp::recPressed()
@@ -1942,6 +1978,7 @@ void PocketApp::recPressed()
         case Tool::chords: recChords(); break;
         case Tool::drone: recDrone(); break;
         case Tool::effects: recEffects(); break;
+        case Tool::song: songScreen->pressRecLive(); break;
         default: break;
     }
     applyClick();
@@ -1950,6 +1987,8 @@ void PocketApp::recPressed()
 
 void PocketApp::stopRec()
 {
+    if (song->isLive())
+        return songScreen->pressRecLive();   // STOP + KEEP
     if (sampler.isRecording())
         return sampler.stopRecording();
     if (playingIn())
@@ -2596,6 +2635,10 @@ void PocketApp::loadSong()
     chordsScreen.toolChanged();
     droneTool.fromVar (v.getProperty ("drone", {}), songKey.root);
     droneScreen.toolChanged();
+    song->fromVar (v.getProperty ("arrangement", {}));   // older songs: none
+    savedSongEdits = song->edits();
+    songScreen->selectBlock (-1);
+    songScreen->setPlayhead (0);
     if (voc.key() != songKey.root || voc.minor() != songKey.minor)
         voc.setKey (songKey.root, songKey.minor);
     synthScreen.partChanged();
@@ -2609,6 +2652,9 @@ void PocketApp::saveSong()
     o->setProperty ("synth", synthPart.toVar());
     o->setProperty ("chords", chordsTool.toVar());
     o->setProperty ("drone", droneTool.toVar());
+    if (! song->blocks.empty() || ! song->takes().empty())
+        o->setProperty ("arrangement", song->toVar());   // the SONG tool
+    savedSongEdits = song->edits();
     if (const auto b = boardsToVar(); ! b.isVoid())
         o->setProperty ("boards", b);
     auto file = lib.ideaRoot().getChildFile ("song.json");
@@ -2898,7 +2944,7 @@ void PocketApp::resized()
     thumb.setVisible (thumbShown());
 
     const auto content = contentBounds();
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &droneScreen, &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &droneScreen, songScreen.get(), &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         c->setBounds (content);
     padPicker.setBounds (padPickOpen ? padPickerBounds() : padPickerBounds().withY (h));
     chordEdit.bottomInset = insets.getBottom();
@@ -3697,6 +3743,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = runOwnChordChecks (ownChordReport, folder); why.isNotEmpty())
         problems.add ("Own chords: " + why);
 
+    // SONG: REC LIVE through the app (in and out on the bar, MARK, STOP + KEEP), played back, edited, punched, saved
+    juce::String songReport;
+    if (const auto why = runSongChecks (songReport, folder); why.isNotEmpty())
+        problems.add ("Song: " + why);
+
     // The sampler: a trimmed sound is what its pad plays, at once and after the song is opened again
     juce::String samplerReport;
     if (const auto why = runSamplerChecks (samplerReport); why.isNotEmpty())
@@ -3776,7 +3827,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nNavigation (drawer, hold menus, tool slide, sheets):\n" + navReport
                           + "\nDeleting songs (the open one, the last one):\n" + deleteReport
                           + "\nSampler (trim onto a pad, save, reopen):\n" + samplerReport
-                          + "\nOwn chords (EDIT CHORD, save, reopen, key change):\n" + ownChordReport);
+                          + "\nOwn chords (EDIT CHORD, save, reopen, key change):\n" + ownChordReport
+                          + "\nSong (REC LIVE, play, edit, punch, save; 120 BPM):\n" + songReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }

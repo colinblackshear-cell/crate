@@ -63,6 +63,7 @@ target_sources(KaleidoboxPocket PRIVATE
     EffectsSheet.cpp
     LoopsScreen.cpp
     PocketLooper.cpp
+    PocketSong.cpp
     RecordScreen.cpp
     SamplerScreen.cpp
     SoundsScreen.cpp
@@ -74,6 +75,7 @@ target_sources(KaleidoboxPocket PRIVATE
     ChordEditSheet.cpp
     PocketDrone.cpp
     DroneScreen.cpp
+    SongScreen.cpp
     VocoderScreen.cpp
     PocketLinkClient.cpp
     LinkScreens.cpp
@@ -82,6 +84,7 @@ target_sources(KaleidoboxPocket PRIVATE
     EffectsScreen.cpp
     PocketAppEffects.cpp
     PocketAppNav.cpp
+    PocketAppSong.cpp
     PocketAppSampler.cpp
     ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
     ${VOCODER_SOURCES})
