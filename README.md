@@ -87,9 +87,12 @@ It's a virtual MPC: kits, pads and a sequencer.
   **Tune** (a semitone a pad, so you play it as a scale), **Filter** (dark to open), **Tune +
   filter**, **Velocity** (soft to loud) or **Decay** (short to long). Hits you record keep their
   level when the sequence plays them back.
-- **Note repeat** (above the pads): hold a pad and it plays again every 1/8, 1/16, 1/32 or
-  triplet, in time with the sequence and its metronome, whether it's playing, recording or
-  stopped. **Full level** plays every hit at full velocity.
+- **Note repeat** (the red NOTE REPEAT button by the pads): hold the button (it repeats while
+  it's down), or double-tap it to latch it on and press once to switch it off. While it's on,
+  a held pad plays again every 1/4, 1/8, 1/16, 1/32, 1/64 or triplet (the rate buttons beside
+  it), in time with the sequence and its metronome, whether it's playing, recording or
+  stopped. Right-click the button to Learn it onto a keyboard button or pedal (held = on),
+  or to Learn a second button that steps the rate. **Full level** plays every hit at full velocity.
 - **Keyboard pads:** a Launchkey's drum pads (Drum mode, channel 10) play the 16 pads of the bank
   on screen. In Kaleidobox a Novation Launchpad (Drum mode) plays them too, with all four banks
   under your hands: the bank on screen bottom left, the next three on its other blocks.
@@ -113,8 +116,8 @@ MPC2000XL.
   in and out. It records onto the selected track and adds to what's there (overdub).
 - **Timing** corrects what you record to 1/8, 1/16, 1/32 or triplets, with **Swing** (50% is
   straight, 66% is a triplet feel). **Fix timing** snaps a track you already recorded.
-- **Note repeat:** hold a pad and it repeats on every step of the timing grid (or the rate picked
-  above the pads), also while stopped.
+- **Note repeat:** hold NOTE REPEAT (or double-tap it to latch it), then hold a pad and it repeats
+  at the rate picked beside the button (1/4 to 1/64), also while stopped.
 - **Steps:** shows the sequence as a grid for the 16 pads of the bank you're on. Click or drag
   across steps to add or remove hits; right-click a step for soft or hard hits. The selected
   track is bright and the others are faint. Click a pad's name to play it.

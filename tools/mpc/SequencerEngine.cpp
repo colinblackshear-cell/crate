@@ -130,6 +130,22 @@ void SequencerEngine::noteOn (juce::MidiBuffer& out, int pad, int velocity, int 
         }
 }
 
+seq::Grid SequencerEngine::rateGrid (int index)
+{
+    static constexpr seq::Grid grids[noterepeat::kNumRates] = {
+        seq::Grid::quarter, seq::Grid::eighth, seq::Grid::eighthTriplet, seq::Grid::sixteenth,
+        seq::Grid::sixteenthTriplet, seq::Grid::thirtySecond, seq::Grid::thirtySecondTriplet, seq::Grid::sixtyFourth };
+    return grids[juce::jlimit (0, noterepeat::kNumRates - 1, index)];
+}
+
+int SequencerEngine::rateIndex (seq::Grid g)
+{
+    for (int i = 0; i < noterepeat::kNumRates; ++i)
+        if (rateGrid (i) == g)
+            return i;
+    return -1;
+}
+
 void SequencerEngine::recordHit (const Snapshot& snap, int pad, int velocity, double raw, double)
 {
     const auto g = (seq::Grid) grid.load();
@@ -188,7 +204,7 @@ void SequencerEngine::repeatWhileStopped (int numSamples, double samplesPerTick,
     // Stopped, held pads still repeat, counted from the press at the sequence's tempo (straight,
     // no swing: there's no beat to swing against).
     const int step = seq::gridTicks (getRepeatGrid());
-    if (! noteRepeat.load() || step <= 0)
+    if (! isRepeatOn() || step <= 0)
         return;
     const double every = step * samplesPerTick;
     for (int pad = 0; pad < (int) held.size(); ++pad)
@@ -247,7 +263,7 @@ void SequencerEngine::emitSegment (const Snapshot& snap, const Segment& seg, dou
     // Note repeat: held pads play on every grid step.
     const auto g = getRepeatGrid();
     const int step = seq::gridTicks (g);
-    if (noteRepeat.load() && step > 0)
+    if (isRepeatOn() && step > 0)
     {
         const int sw = swing.load();
         for (int n = (int) std::floor (seg.from / step) - 1; n <= (int) std::ceil (seg.to / step) + 1; ++n)

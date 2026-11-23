@@ -65,6 +65,7 @@ juce::var DrumData::toVar() const
 {
     auto* root = new juce::DynamicObject();
     root->setProperty ("bpm", bpm);
+    root->setProperty ("repeatRate", repeatRate);
     root->setProperty ("slot", slot);
     root->setProperty ("variation", variation);
     root->setProperty ("editB", editB);
@@ -149,6 +150,7 @@ DrumData DrumData::fromVar (const juce::var& v)
     if (! v.isObject())
         return d;
     d.bpm = juce::jlimit (40.0, 240.0, (double) v.getProperty ("bpm", d.bpm));
+    d.repeatRate = juce::jlimit (0, 7, (int) v.getProperty ("repeatRate", d.repeatRate));
     d.slot = juce::jlimit (0, kPatternSlots - 1, (int) v.getProperty ("slot", 0));
     d.variation = juce::jlimit (0, 2, (int) v.getProperty ("variation", 0));
     d.editB = (bool) v.getProperty ("editB", false);
@@ -349,14 +351,23 @@ void BeatsEngine::handle (const Event& e)
     switch (e.kind)
     {
         case Event::drum: drums.trigger (juce::jlimit (0, drums::kVoices - 1, e.index), e.velocity, e.accent); break;
-        case Event::padOn: startPad (juce::jlimit (0, kPads - 1, e.index), e.velocity); break;
+        case Event::padOn:
+        {
+            const int pad = juce::jlimit (0, kPads - 1, e.index);
+            startPad (pad, e.velocity);
+            heldPads[(size_t) pad] = { true, e.velocity, wasRunning ? ppq : -1.0, sampleClock };
+            break;
+        }
         case Event::padOff:
+            heldPads[(size_t) juce::jlimit (0, kPads - 1, e.index)].down = false;
             if (slots[(size_t) juce::jlimit (0, kPads - 1, e.index)].mode.load() == (int) PadMode::noteOff)
                 for (auto& v : voices)
                     if (v.audio != nullptr && v.pad == e.index)
                         v.releasing = true;
             break;
         case Event::stopPads:
+            for (auto& h : heldPads)
+                h.down = false;
             for (auto& v : voices)
                 if (v.audio != nullptr)
                     v.releasing = true;
@@ -472,6 +483,8 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
         ppq = 0;
         lastPpq = -1;
         run = run.load() + 1;
+        for (auto& h : heldPads)
+            h.pressPpq = -1;   // (pressed before this run of the clock: no press to keep clear of)
     }
     wasRunning = running;
     clockOn = running;
@@ -534,10 +547,53 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
                 continue;
             if (h.skipRun == thisRun && t < h.skipUntil)
                 continue;
-            triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - start) / beatsPerSample)), h.pad, h.velocity };
+            triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - start) / beatsPerSample)), h.pad, h.velocity, false };
         }
-        std::sort (triggers.begin(), triggers.begin() + numTriggers, [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
     }
+
+    // NOTE REPEAT: each pad held down plays again at the rate. On the clock the repeats fall on its grid (the
+    // press is the first hit, so a repeat too close to it waits for the next one); stopped, they count from the press.
+    const double blockStart = ppq;
+    if (repeatOn.load() && repeatBeats.load() > 0)
+    {
+        const double rate = repeatBeats.load();
+        const double everySamples = rate * 60.0 / tempo * sampleRate;
+        for (int pad = 0; pad < kPads && numTriggers < (int) triggers.size(); ++pad)
+        {
+            const auto& h = heldPads[(size_t) pad];
+            if (! h.down || slots[(size_t) pad].audio.load() == nullptr)
+                continue;
+            if (running)
+            {
+                const double end = blockStart + numSamples * beatsPerSample;
+                // (each block is [start, end) and the next starts at this one's end, so a grid position falls in exactly one)
+                for (double n = std::ceil (blockStart / rate); numTriggers < (int) triggers.size(); n += 1.0)
+                {
+                    const double t = n * rate;
+                    if (t < blockStart)
+                        continue;
+                    if (t >= end)
+                        break;
+                    if (h.pressPpq >= 0 && t - h.pressPpq < rate * 0.5)
+                        continue;
+                    triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - blockStart) / beatsPerSample)), pad, h.velocity, true };
+                }
+            }
+            else
+            {
+                const double since = (double) (sampleClock - h.pressSample);
+                for (long long n = juce::jmax (1LL, (long long) std::ceil (since / everySamples)); numTriggers < (int) triggers.size(); ++n)
+                {
+                    const int offset = juce::roundToInt ((double) n * everySamples - since);
+                    if (offset >= numSamples)
+                        break;
+                    triggers[(size_t) numTriggers++] = { juce::jmax (0, offset), pad, h.velocity, true };
+                }
+            }
+        }
+    }
+    if (numTriggers > 1)
+        std::sort (triggers.begin(), triggers.begin() + numTriggers, [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
     if (running)
         renderClick (left, right, clickOut, numSamples, ppq, beatsPerSample);
 
@@ -560,10 +616,38 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
         }
         if (i < numTriggers)
         {
-            startPad (triggers[(size_t) i].pad, triggers[(size_t) i].velocity);
-            hitsPlayed = hitsPlayed.load() + 1;
+            const auto& t = triggers[(size_t) i];
+            startPad (t.pad, t.velocity);
+            if (! t.repeat)
+                hitsPlayed = hitsPlayed.load() + 1;
+            else
+            {
+                repeatCount = repeatCount.load() + 1;
+                if (running)
+                {
+                    int w1, n1w, w2, n2w;
+                    reportFifo.prepareToWrite (1, w1, n1w, w2, n2w);
+                    if (n1w > 0)
+                        reports[(size_t) w1] = { t.pad, t.velocity, blockStart + t.offset * beatsPerSample };
+                    reportFifo.finishedWrite (n1w + n2w);
+                }
+            }
         }
     }
+    sampleClock += numSamples;
+}
+
+int BeatsEngine::takeRepeats (RepeatReport* dest, int max)
+{
+    int s1, n1, s2, n2;
+    reportFifo.prepareToRead (juce::jmin (max, reportFifo.getNumReady()), s1, n1, s2, n2);
+    int n = 0;
+    for (int i = 0; i < n1; ++i)
+        dest[n++] = reports[(size_t) (s1 + i)];
+    for (int i = 0; i < n2; ++i)
+        dest[n++] = reports[(size_t) (s2 + i)];
+    reportFifo.finishedRead (n1 + n2);
+    return n;
 }
 
 // A click on each beat (higher on the bar): while the click is on, and through a count-in.

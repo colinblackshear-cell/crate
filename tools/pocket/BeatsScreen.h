@@ -5,6 +5,7 @@
 #include "PocketKit.h"
 #include "PocketLibrary.h"
 #include "PocketTheme.h"
+#include "RepeatHold.h"
 
 // Two tools in one: DRUMS (the Mac's 808 engine, mode 0) and PADS (the MPC pads, mode 1). The tool row
 // picks the mode. The thumb bar's REC records either onto the next loop layer (PocketApp drives it).
@@ -61,6 +62,8 @@ public:
     void testTouchPad (int pad);
     void testHoldElapsed();
     void testLiftPad();
+    void testTouchPadSource (int pad, int source);   // a second finger (multi-touch)
+    void testLiftSource (int source);
     juce::Rectangle<float> testPadBounds (int pad) const;   // a pad of the shown bank, in this screen's coordinates (POCKET_STRESS taps it)
 
     // The pad pattern. While recording, pads played from `fromBeat` on go into the pattern, snapped to the
@@ -76,6 +79,15 @@ public:
     void patternChanged();
     double patternPosition() const;   // beats into the pattern, -1 when it isn't playing
     void recordHit (int pad, float velocity);
+
+    // NOTE REPEAT (PADS): hold the red REPEAT strip and every pad you hold plays again at the rate; double-tap the strip to
+    // latch it on, press once to switch it off. The rate chips above the pads set how fast (noterepeat::kRates).
+    void repeatPress (double nowMs = juce::Time::getMillisecondCounterHiRes());
+    void repeatRelease();
+    bool repeatIsOn() const { return repeatHold.isOn(); }
+    bool repeatIsLatched() const { return repeatHold.isLatched(); }
+    void setRepeatRate (int index);
+    int repeatRate() const { return drumData.repeatRate; }
 
     // The drum machine's two ways in: STEPS (the 16 big boxes) and PLAY LIVE (finger drumming on 12 pads).
     int drumMode() const { return drumModeValue; }   // 0 STEPS, 1 PLAY LIVE
@@ -142,6 +154,10 @@ private:
     struct LiveUndo { int slot = 0; bool b = false; crate::drums::Pattern pattern; };
     std::vector<LiveUndo> liveUndo;
     double recFrom = 0.0;
+    noterepeat::Hold repeatHold;
+    void applyRepeatRate();
+    void takeRepeats();   // REC PADS: the repeats the engine played go into the pattern
+    void recordHitAt (int pad, float velocity, double now, bool commit);
     std::vector<pocket::PadPattern> patternUndo;
     bool drumsDirty = false, kitDirty = false;
     int levelsOf = -1, copyFrom = -1, removedPad = -1, copiedTo = -1;

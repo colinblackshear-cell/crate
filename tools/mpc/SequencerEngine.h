@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "RepeatHold.h"
 #include "Sequence.h"
 
 #include <array>
@@ -84,13 +85,35 @@ public:
     void stop();
     void locate (double tick);   // moves the stopped playhead
 
+    noterepeat::Hold repeatHold;   // message thread only
     std::atomic<int> grid { (int) seq::Grid::sixteenth };
     std::atomic<int> swing { 50 };
     std::atomic<bool> noteRepeat { false };
     // Note repeat's rate (a seq::Grid), or -1 to repeat on the timing correct grid, as the
     // MPC2000XL does. Held pads repeat while stopped too, at the sequence's tempo.
     std::atomic<int> repeatGrid { -1 };
-    seq::Grid getRepeatGrid() const { const int r = repeatGrid.load(); return (seq::Grid) (r > 0 ? r : grid.load()); }
+    seq::Grid getRepeatGrid() const
+    {
+        const int r = repeatGrid.load(), g = grid.load();
+        return (seq::Grid) (r > 0 ? r : g > 0 ? g : (int) seq::Grid::sixteenth);   // (timing correct off: 1/16)
+    }
+
+    // NOTE REPEAT as a button you hold (message thread; see RepeatHold.h): press = on while held, a double
+    // tap latches it on, a press while latched turns it off. Every pad screen shares this one state.
+    void repeatPress (double nowMs) { noteRepeat = repeatHold.press (nowMs); }
+    void repeatRelease() { noteRepeat = repeatHold.release(); }
+    void setRepeatLatched (bool on) { repeatHold.latch (on); noteRepeat = on; }
+    // A learned MIDI control (any thread, the audio thread's included): held while the button is down.
+    // It sits beside the screen's own hold, so the two don't undo each other.
+    std::atomic<bool> midiRepeat { false };
+    bool isRepeatOn() const { return noteRepeat.load() || midiRepeat.load(); }   // what the buttons show
+    bool isRepeatLatched() const { return repeatHold.isLatched(); }
+    // The repeat rate as an index into noterepeat::kRates (1/4 ... 1/64), and the other way round.
+    static seq::Grid rateGrid (int index);
+    static int rateIndex (seq::Grid);                   // -1 when it isn't one of the eight
+    int getRepeatRateIndex() const { return rateIndex (getRepeatGrid()); }
+    void setRepeatRateIndex (int index) { repeatGrid = (int) rateGrid (index); }
+    void stepRepeatRate() { setRepeatRateIndex ((juce::jmax (0, getRepeatRateIndex()) + 1) % noterepeat::kNumRates); }
     std::atomic<int> clickMode { (int) ClickMode::recording };
     std::atomic<bool> countIn { true };
     std::atomic<bool> followHost { true };   // in Logic: play along when Logic plays

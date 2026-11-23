@@ -613,6 +613,14 @@ void RigEngine::applyControls (const RigRouting::Result& r)
         chords.nudgeLiveOctave (up - down);
     if (r.presses[RigRouting::liveKeyHome] > 0)
         chords.liveKeyHome();
+    // NOTE REPEAT from the keyboard: held while the learned button is down; the other steps the rate.
+    {
+        auto& sequencer = mpc.getSequencer();
+        if (const int hold = r.holds[RigRouting::noteRepeatHold]; hold >= 0)
+            sequencer.midiRepeat = hold == 1;
+        for (int p = r.presses[RigRouting::noteRepeatRate]; p > 0; --p)
+            sequencer.stepRepeatRate();
+    }
     scenes.nextPresses += r.presses[RigRouting::nextScene];
     scenes.backPresses += r.presses[RigRouting::previousScene];
     if (r.presses[RigRouting::inputHear] % 2 == 1)
@@ -1569,6 +1577,7 @@ juce::ValueTree RigEngine::saveShow() const
     show.setProperty ("inputOn", inputOn.load(), nullptr);
     show.setProperty ("inputJack", inputJack.load(), nullptr);
     show.setProperty ("mpcBeat", isMpcBeatOn(), nullptr);
+    show.setProperty ("repeatRate", mpc.getSequencer().getRepeatRateIndex(), nullptr);   // NOTE REPEAT's rate
 
     if (screens.getNumChildren() > 0 || screens.getNumProperties() > 0)
         show.appendChild (screens.createCopy(), nullptr);
@@ -1775,6 +1784,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     inputJack = juce::jlimit (0, 2, (int) show.getProperty ("inputJack", 0));
     // (Shows from before the MPC had its own on/off played it whenever the Rig played.)
     mpc.getSequencer().followHost = (bool) show.getProperty ("mpcBeat", true);
+    mpc.getSequencer().setRepeatRateIndex ((int) show.getProperty ("repeatRate", noterepeat::kDefaultRate));
     padLoopLayer = -1;
 
     for (int c = 0; c < RigRouting::numControls; ++c)

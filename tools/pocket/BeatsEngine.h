@@ -49,6 +49,7 @@ struct DrumData
     int variation = 0;     // 0 A, 1 B, 2 A then B (crate::drums::Plan::Variation)
     bool editB = false;    // the grid edits the B variation
     double bpm = 97.0;
+    int repeatRate = 3;    // NOTE REPEAT's rate: an index into noterepeat::kRates (3 = 1/16)
     PadPattern padPattern;
 
     DrumData();
@@ -100,6 +101,19 @@ public:
     void padOff (int pad);
     void stopPads();
     juce::uint64 soundingPads() const { return sounding.load(); }
+
+    // NOTE REPEAT (the REPEAT strip): while it's on, every pad held down (padOn without its padOff) plays again at the
+    // rate. The press itself is the first hit; repeats start at the next position of the rate on the shared clock while it
+    // runs, or count from the press at the tempo while it's stopped. Any thread.
+    void setNoteRepeat (bool on) { repeatOn = on; }
+    bool noteRepeatOn() const { return repeatOn.load(); }
+    void setRepeatBeats (double beats) { repeatBeats = juce::jlimit (1.0 / 32.0, 4.0, beats); }   // a quarter note is 1 beat
+    double getRepeatBeats() const { return repeatBeats.load(); }
+    int repeatsPlayed() const { return repeatCount.load(); }   // how many repeats have sounded (for the self-check)
+    // The repeats that sounded while the clock ran, for REC PADS to write into the pattern (the screen calls this on the
+    // message thread; the audio thread writes them into a lock-free queue). `beat` is where on the clock each one fell.
+    struct RepeatReport { int pad = 0; float velocity = 1.0f; double beat = 0; };
+    int takeRepeats (RepeatReport* dest, int max);
 
     // The pad pattern: plays on the shared clock (and runs it) while on. REC adds a click on each beat.
     void setPadPattern (const PadPattern&);
@@ -179,8 +193,17 @@ private:
     juce::SpinLock patternLock;
     std::atomic<int> patternVersion { 0 };
     int livePatternVersion = -1;
-    struct Trigger { int offset; int pad; float velocity; };
+    struct Trigger { int offset; int pad; float velocity; bool repeat; };
     std::array<Trigger, 64> triggers {};
+    // note repeat: the pads held down now, as the audio thread sees them
+    struct Held { bool down = false; float velocity = 1.0f; double pressPpq = -1; long long pressSample = 0; };
+    std::array<Held, kPads> heldPads {};
+    long long sampleClock = 0;
+    std::atomic<bool> repeatOn { false };
+    std::atomic<double> repeatBeats { 0.25 };
+    std::atomic<int> repeatCount { 0 };
+    juce::AbstractFifo reportFifo { 128 };
+    std::array<RepeatReport, 128> reports {};
     float clickEnv = 0, clickPhase = 0, clickFreq = 1000;
     std::atomic<double> clockPpq { 0.0 };
     std::atomic<double> countInUntil { -1.0 };

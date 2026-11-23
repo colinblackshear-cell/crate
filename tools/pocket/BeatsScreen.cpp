@@ -596,6 +596,21 @@ public:
             banks[i].onClick = [this, i] { owner.setBank (i); };
             addAndMakeVisible (banks[i]);
         }
+        // NOTE REPEAT: the rate chips above the pads (they scroll sideways when the screen is narrow), the red strip beside them
+        chipView.setViewedComponent (&chipRow, false);
+        chipView.setScrollBarsShown (false, false);
+        chipView.setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::all);
+        for (int c = 0; c < noterepeat::kNumRates; ++c)
+        {
+            const int rate = noterepeat::kChipOrder[c];
+            chips[c].setText (noterepeat::kRates[rate].name);
+            chips[c].setFontHeight (15.0f);
+            chips[c].onClick = [this, rate] { owner.setRepeatRate (rate); };
+            chipRow.addAndMakeVisible (chips[c]);
+        }
+        addAndMakeVisible (chipView);
+        addAndMakeVisible (repeatStrip);
+
         editPads.setFontHeight (15.0f);
         editPads.onClick = [this]
         {
@@ -659,8 +674,12 @@ public:
         const auto& p = owner.drumData.padPattern;
         barsButton.setText (juce::String (p.bars) + (p.bars == 1 ? " bar" : " bars"));
         quantButton.setText (p.quantize == 4 ? "Snap 1/16" : p.quantize == 2 ? "Snap 1/8" : "Snap off");
+        for (int c = 0; c < noterepeat::kNumRates; ++c)
+            chips[c].setLook (noterepeat::kChipOrder[c] == owner.drumData.repeatRate ? Look::amber : Look::ghost);
         repaint();
     }
+
+    void repeatChanged() { repeatStrip.repaint(); }
 
     void tick()
     {
@@ -675,12 +694,23 @@ public:
             wasPlaying = owner.beatsEngine.patternPlaying();
             repaint (stripBounds().expanded (2).toNearestInt());
         }
+        // a latched REPEAT blinks
+        if (owner.repeatIsLatched())
+            repeatStrip.repaint();
     }
 
     // Settings up top, the pads low (under the thumb).
     juce::Rectangle<float> lcdBounds() const { return { 16, 8, 116, 44 }; }
     juce::Rectangle<float> stripBounds() const { return { 16, 112, (float) getWidth() - 32, 46 }; }
-    juce::Rectangle<float> wellBounds() const { return { 16, 218, (float) getWidth() - 32, (float) getHeight() - 226 }; }
+    juce::Rectangle<float> chipBounds() const { return { 16, 214, (float) getWidth() - 32, 40 }; }
+    juce::Rectangle<float> wellBounds() const { return { 16, 260, (float) getWidth() - 32, (float) getHeight() - 268 }; }
+    // The REPEAT strip down the right side of the well (the thumb side); the pads take the rest.
+    static constexpr float kStripWidth = 46.0f;
+    juce::Rectangle<float> repeatBounds() const
+    {
+        auto inner = wellBounds().reduced (9.5f);
+        return inner.removeFromRight (kStripWidth);
+    }
 
     void paintPattern (juce::Graphics& g)
     {
@@ -732,6 +762,7 @@ public:
     {
         const int i = index % 16, row = 3 - i / 4, col = i % 4;   // A13..A16 on top, A01..A04 at the bottom
         auto inner = wellBounds().reduced (9.5f);
+        inner.removeFromRight (kStripWidth + 8.5f);
         const float gap = 8.5f, w = (inner.getWidth() - 3 * gap) / 4.0f, h = (inner.getHeight() - 3 * gap) / 4.0f;
         return { inner.getX() + (float) col * (w + gap), inner.getY() + (float) row * (h + gap), w, h };
     }
@@ -818,6 +849,13 @@ public:
         undoButton.setBounds (182, 166, 60, 44);
         recordSound.setBounds (248, 166, w - 16 - 248, 44);
         modeExit.setBounds (w - 16 - 84, 112, 84, 46);
+        chipView.setBounds (chipBounds().toNearestInt());
+        const int chipW = 52, gap = 4;
+        chipRow.setSize (juce::jmax (chipView.getWidth(), noterepeat::kNumRates * chipW + (noterepeat::kNumRates - 1) * gap), chipView.getHeight());
+        const int each = (chipRow.getWidth() - (noterepeat::kNumRates - 1) * gap) / noterepeat::kNumRates;
+        for (int c = 0; c < noterepeat::kNumRates; ++c)
+            chips[c].setBounds (c * (each + gap), 0, each, chipRow.getHeight());
+        repeatStrip.setBounds (repeatBounds().toNearestInt());
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -834,11 +872,12 @@ public:
                 owner.togglePatternPlay();   // (16 LEVELS and COPY have their own banner there)
             return;
         }
-        touchPad (padAt (e.position), e.position);
+        touchPad (padAt (e.position), e.position, juce::jlimit (0, kSources - 1, e.source.getIndex()));
     }
 
-    // A finger lands on a pad (the mouse, and the self-checks).
-    void touchPad (int pad, juce::Point<float> at)
+    // A finger lands on a pad (the mouse, and the self-checks). Each finger is its own source, so a second one can
+    // land while the first holds a pad (or the REPEAT strip, which is a component of its own).
+    void touchPad (int pad, juce::Point<float> at, int source = 0)
     {
         if (pad < 0)
             return;
@@ -849,6 +888,7 @@ public:
             // 16 LEVELS: the picked pad's sound, quiet to loud along the bank
             levelDown = pad % 16;
             held = pad;
+            padOfSource[(size_t) source] = pad;
             const float velocity = (float) (levelDown + 1) / 16.0f;
             owner.beatsEngine.padOn (owner.levelsOf, velocity);
             owner.recordHit (owner.levelsOf, velocity);
@@ -857,6 +897,7 @@ public:
         }
         owner.selected = pad;
         held = pad;
+        padOfSource[(size_t) source] = pad;
         longPress = false;
         // the sound starts on the touch, before anything else; the hold only decides later whether a menu follows
         if (! owner.padKit.pads[(size_t) pad].empty())
@@ -881,15 +922,19 @@ public:
                 owner.renameKit();
             return;
         }
-        liftPad();
+        liftPad (juce::jlimit (0, kSources - 1, e.source.getIndex()));
     }
 
-    void liftPad()
+    // A finger lifts: its pad lets go (the others keep sounding and repeating).
+    void liftPad (int source = 0)
     {
         hold.release();
-        if (held >= 0)
-            owner.beatsEngine.padOff (owner.levelsOf >= 0 ? owner.levelsOf : held);
-        held = -1;
+        auto& pad = padOfSource[(size_t) source];
+        if (pad >= 0)
+            owner.beatsEngine.padOff (owner.levelsOf >= 0 ? owner.levelsOf : pad);
+        if (held == pad)
+            held = -1;
+        pad = -1;
         if (levelDown >= 0)
         {
             levelDown = -1;
@@ -939,6 +984,52 @@ private:
     juce::uint64 lastMask = 0;
     int held = -1, levelDown = -1;
     bool longPress = false, renaming = false;
+
+    // NOTE REPEAT, on the phone: a slim red strip beside the pads. Hold = on while held, double-tap latches, a press
+    // while latched switches it off.
+    class RepeatStripView : public juce::Component
+    {
+    public:
+        explicit RepeatStripView (BeatsScreen& o) : owner (o) {}
+
+        void paint (juce::Graphics& g) override
+        {
+            const bool on = owner.repeatIsOn(), latched = owner.repeatIsLatched();
+            const bool lit = on && (! latched || ((juce::Time::getMillisecondCounter() / 350) & 1) == 0);
+            auto r = getLocalBounds().toFloat().reduced (1.0f);
+            g.setColour (lit ? col::red : col::red.darker (0.62f));
+            g.fillRoundedRectangle (r, 11.0f);
+            g.setColour (col::red.withAlpha (lit ? 1.0f : 0.7f));
+            g.drawRoundedRectangle (r, 11.0f, 1.5f);
+
+            // the words read bottom to top, along the strip
+            auto b = getLocalBounds().toFloat();
+            g.saveState();
+            g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, b.getCentreX(), b.getCentreY()));
+            juce::Rectangle<float> rot (b.getCentreX() - b.getHeight() / 2, b.getCentreY() - b.getWidth() / 2, b.getHeight(), b.getWidth());
+            const auto ink = lit ? col::ink : col::cream;
+            g.setColour (ink);
+            g.setFont (spaced (condensedBold (21.0f), 0.14f));
+            g.drawText (latched ? "REPEAT LATCHED" : "REPEAT", rot.removeFromTop (rot.getHeight() * 0.58f), juce::Justification::centred);
+            g.setColour (ink.withAlpha (0.8f));
+            g.setFont (small (11.5f));
+            g.drawText (U8("hold \xc2\xb7 double-tap to latch"), rot, juce::Justification::centredTop);
+            g.restoreState();
+        }
+
+        void mouseDown (const juce::MouseEvent&) override { owner.repeatPress(); }
+        void mouseUp (const juce::MouseEvent&) override { owner.repeatRelease(); }
+
+    private:
+        BeatsScreen& owner;
+    };
+
+    static constexpr int kSources = 12;   // (a phone reports up to ten fingers; the mouse is source 0)
+    std::array<int, kSources> padOfSource = [] { std::array<int, kSources> a {}; a.fill (-1); return a; }();
+    juce::Viewport chipView;
+    juce::Component chipRow;
+    PButton chips[noterepeat::kNumRates];
+    RepeatStripView repeatStrip { owner };
 };
 
 //==============================================================================
@@ -949,6 +1040,7 @@ BeatsScreen::BeatsScreen (PocketHost& h, Library& lib) : host (h), library (lib)
         drumData = DrumData::fromVar (juce::JSON::parse (drumFile));
     beatsEngine.setDrums (drumData);
     beatsEngine.setPadPattern (drumData.padPattern);
+    applyRepeatRate();
 
     padKit.load();
     pushPads();
@@ -1143,6 +1235,8 @@ void BeatsScreen::endPadMode()
 }
 
 void BeatsScreen::testTouchPad (int pad) { padsView->touchPad (pad, padsView->padRectFor (pad).getCentre()); }
+void BeatsScreen::testTouchPadSource (int pad, int source) { padsView->touchPad (pad, padsView->padRectFor (pad).getCentre(), source); }
+void BeatsScreen::testLiftSource (int source) { padsView->liftPad (source); }
 void BeatsScreen::testHoldElapsed() { padsView->fireHoldNow(); }
 void BeatsScreen::testLiftPad() { padsView->liftPad(); }
 juce::Rectangle<float> BeatsScreen::testPadBounds (int pad) const { return padsView->padRectFor (pad) + padsView->getPosition().toFloat(); }
@@ -1222,6 +1316,7 @@ void BeatsScreen::reloadIdea (const juce::String& ideaName)
     liveUndo.clear();
     beatsEngine.setDrums (drumData);
     beatsEngine.setPadPattern (drumData.padPattern);
+    applyRepeatRate();
     setBpm (drumData.bpm);
     padKit.pads = {};
     padKit.name = Kit::mpcName (ideaName.toUpperCase());
@@ -1349,13 +1444,18 @@ void BeatsScreen::clearPattern()
 
 void BeatsScreen::recordHit (int pad, float velocity)
 {
-    if (! recPads || ! beatsEngine.clockRunning() || beatsEngine.clockBeat() < recFrom - 0.25)
+    recordHitAt (pad, velocity, beatsEngine.clockBeat(), true);
+}
+
+// `now`: where on the clock the hit fell (a hand hit: the clock now; a repeat: where the audio thread played it).
+void BeatsScreen::recordHitAt (int pad, float velocity, double now, bool commit)
+{
+    if (! recPads || ! beatsEngine.clockRunning() || now < recFrom - 0.25)
         return;   // (not during the count-in)
     auto& p = drumData.padPattern;
     if ((int) p.hits.size() >= kMaxPadHits)
         return host.toast ("The pattern is full");
     const double len = p.lengthBeats();
-    const double now = beatsEngine.clockBeat();
     double beat = std::fmod (now, len);
     if (p.quantize > 0)
     {
@@ -1377,11 +1477,61 @@ void BeatsScreen::recordHit (int pad, float velocity)
     h.skipRun = beatsEngine.clockRun();
     h.skipUntil = now + 0.5;
     p.hits.push_back (h);
-    patternChanged();
+    if (commit)
+        patternChanged();
+}
+
+// The repeats the audio thread played since the last tick, written into the pattern like hand hits.
+void BeatsScreen::takeRepeats()
+{
+    pocket::BeatsEngine::RepeatReport reports[32];
+    bool any = false;
+    for (int n; (n = beatsEngine.takeRepeats (reports, 32)) > 0;)
+        for (int i = 0; i < n; ++i)
+            if (recPads)
+            {
+                recordHitAt (reports[i].pad, reports[i].velocity, reports[i].beat, false);
+                any = true;
+            }
+    if (any)
+        patternChanged();
+}
+
+//==============================================================================
+// NOTE REPEAT
+void BeatsScreen::repeatPress (double nowMs)
+{
+    beatsEngine.setNoteRepeat (repeatHold.press (nowMs));
+    if (padsView != nullptr)
+        padsView->repeatChanged();
+}
+
+void BeatsScreen::repeatRelease()
+{
+    beatsEngine.setNoteRepeat (repeatHold.release());
+    if (padsView != nullptr)
+        padsView->repeatChanged();
+}
+
+void BeatsScreen::setRepeatRate (int index)
+{
+    drumData.repeatRate = juce::jlimit (0, noterepeat::kNumRates - 1, index);
+    applyRepeatRate();
+    drumsDirty = true;
+    saveSoon();
+    host.toast (juce::String ("Repeat every ") + noterepeat::kRates[drumData.repeatRate].name);
+    if (padsView != nullptr)
+        padsView->refresh();
+}
+
+void BeatsScreen::applyRepeatRate()
+{
+    beatsEngine.setRepeatBeats (noterepeat::kRates[juce::jlimit (0, noterepeat::kNumRates - 1, drumData.repeatRate)].beats);
 }
 
 void BeatsScreen::timerCallback()
 {
+    takeRepeats();
     if (screenMode == 0)
         drumView->tick();
     else

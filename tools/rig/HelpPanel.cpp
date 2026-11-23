@@ -81,7 +81,7 @@ const std::vector<HelpPanel::Guide>& HelpPanel::guides()
             "Sounds (under the pads) opens your sound bank: click a sound to hear it, double-click to put it on the picked pad.",
             "FX (by the knobs) turns the picked pad's filter, decay, delay and reverb, live while it plays.",
             "16 Levels spreads the picked pad over all 16 pads: Tune plays it as a scale, Filter opens up, Velocity soft to loud, Decay short to long.",
-            "Repeat: hold a pad and it plays again every 1/16 (or the rate you pick), in time. Record with the click on to keep the repeats.",
+            "NOTE REPEAT (the red button by the pads): hold it, then hold a pad and the pad plays again every 1/16 (or the rate you pick: 1/4 to 1/64, triplets too), in time. Let go of the button and the repeats stop. Double-tap it to latch it on; press once to switch it off. Record with the click on to keep the repeats.",
             "The Sequencer + Kits side (beside the same pads) is the rest of the MPC: Play, Rec and steps, songs, your kits, and the picked pad's settings. Tapping a pad only plays it; Edit (or a triple-click on the pad) opens its sound editor.",
             "Remove A01 (over the pads), or right-click a pad, takes its sound off. Undo remove puts it back.",
             "Beat on/off: the MPC's sequence plays whenever the Rig plays, or stays quiet (the pads still play). Its Play, Stop and Rec are the Rig's.",

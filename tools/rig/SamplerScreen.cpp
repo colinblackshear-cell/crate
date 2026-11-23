@@ -237,7 +237,7 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     addAndMakeVisible (fxButton);
 
     // Pad tools, under the pads.
-    for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton })
+    for (auto* b : { &levelsButton, &soundsButton })
     {
         setLit (*b, Lit::current);
         b->getProperties().set ("fontSize", 15.0f);
@@ -258,36 +258,13 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
                                     safe->setSixteenLevels (result - 1);
                             });
     };
-    repeatButton.setClickingTogglesState (true);
-    repeatButton.setTooltip ("Note repeat: hold a pad and it plays again on every step, in time with the clock.");
-    repeatButton.onClick = [this]
-    {
-        auto& seq = engine.getMpc().getSequencer();
-        seq.noteRepeat = repeatButton.getToggleState();
-        if (seq.repeatGrid.load() <= 0)
-            seq.repeatGrid = (int) seq::Grid::sixteenth;
-        updatePadTools();
-        if (onSay)
-            onSay (seq.noteRepeat.load() ? "Note repeat: hold a pad and it repeats every " + seq::gridName (seq.getRepeatGrid()) + "."
-                                         : juce::String ("Note repeat is off."));
-    };
-    rateButton.setTooltip ("How fast held pads repeat.");
-    rateButton.onClick = [this]
-    {
-        juce::PopupMenu menu;
-        const int current = (int) engine.getMpc().getSequencer().getRepeatGrid();
-        for (auto g : { seq::Grid::eighth, seq::Grid::eighthTriplet, seq::Grid::sixteenth, seq::Grid::sixteenthTriplet,
-                        seq::Grid::thirtySecond, seq::Grid::thirtySecondTriplet })
-            menu.addItem ((int) g, seq::gridName (g), true, current == (int) g);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&rateButton),
-                            [safe = juce::Component::SafePointer<SamplerScreen> (this)] (int result)
-                            {
-                                if (safe == nullptr || result <= 0)
-                                    return;
-                                safe->engine.getMpc().getSequencer().repeatGrid = result;
-                                safe->updatePadTools();
-                            });
-    };
+    // NOTE REPEAT: hold the red button (double-tap to latch), then hold a pad. The rates are buttons beside it.
+    addAndMakeVisible (repeatButton);
+    addAndMakeVisible (rateButtons);
+    repeatButton.onContextMenu = [this] (juce::Point<int> at) { showRepeatLearnMenu (at); };
+    rateButtons.style = [] (juce::TextButton& b, bool picked) { setLit (b, Lit::current); b.getProperties().set ("fontSize", 14.0f); juce::ignoreUnused (picked); };
+    rateButtons.onSay = [this] (const juce::String& text) { if (onSay) onSay (text); };
+    rateButtons.refresh();
     soundsButton.setClickingTogglesState (true);
     soundsButton.setTooltip ("Your sound bank, over the wave: click a sound to hear it, double-click to put it on the picked pad.");
     soundsButton.onClick = [this] { showSounds (soundsButton.getToggleState()); };
@@ -382,6 +359,7 @@ void SamplerScreen::ownMpc (MpcView* view)
     if (mpcView != nullptr)
     {
         // In the screen's look, on a dark well like the editor's.
+        mpcView->onNoteRepeatMenu = [this] (juce::Point<int> at) { showRepeatLearnMenu (at); };
         mpcView->setHosted (nullptr, [v = mpcView] (juce::Graphics& g)
         {
             drawFace (g, v->getLocalBounds());
@@ -401,7 +379,7 @@ void SamplerScreen::setSide (int side)
     const bool chop = mode == chopSide, pads = mode != editSide;
     // The pads and their tools are on the right of the Chop and Sequencer sides.
     const std::initializer_list<juce::Component*> padSide { &bankButtons[0], &bankButtons[1], &bankButtons[2], &bankButtons[3], &fullLevel,
-                                                            &levelsButton, &repeatButton, &rateButton, &soundsButton };
+                                                            &levelsButton, &repeatButton, &rateButtons, &soundsButton };
     const std::initializer_list<juce::Component*> top { &chopModeButton, &mpcModeButton, &editModeButton, &beatButton, &loopPadsButton,
                                                         &loopBarsButton };
     for (auto* c : getChildren())
@@ -842,9 +820,40 @@ void SamplerScreen::updatePadTools()
     const int type = mpc.levelsType.load();
     levelsButton.setButtonText (type == levels::off ? juce::String ("16 Levels") : "16 Lv: " + levels::typeName (type));
     levelsButton.setToggleState (type != levels::off, juce::dontSendNotification);
-    const auto& seq = mpc.getSequencer();
-    repeatButton.setToggleState (seq.noteRepeat.load(), juce::dontSendNotification);
-    rateButton.setButtonText (seq::gridName (seq.getRepeatGrid()));
+    rateButtons.refresh();
+}
+
+// Right-click on NOTE REPEAT: put the hold, and the rate step, on a keyboard button or pedal (CC 64 is the sustain pedal).
+void SamplerScreen::showRepeatLearnMenu (juce::Point<int> at)
+{
+    juce::PopupMenu menu;
+    auto& routing = engine.getRouting();
+    const auto learnItem = [this, &menu, &routing] (int control, const juce::String& what)
+    {
+        const auto [channel, cc] = routing.getAssignment (control);
+        juce::ignoreUnused (channel);
+        menu.addItem (cc >= 0 ? what + " is on CC " + juce::String (cc) + ": forget it" : "Put " + what + " on a keyboard button or pedal",
+                      [this, control, cc, what]
+                      {
+                          auto& r = engine.getRouting();
+                          if (cc >= 0)
+                          {
+                              r.forget (control);
+                              engine.getMpc().getSequencer().midiRepeat = false;
+                              if (onSay)
+                                  onSay (what + " forgotten.");
+                          }
+                          else
+                          {
+                              r.learn (control);
+                              if (onSay)
+                                  onSay ("Press the button (or the pedal) on your keyboard for " + what + ".");
+                          }
+                      });
+    };
+    learnItem (RigRouting::noteRepeatHold, "Note repeat (hold: on while it's down)");
+    learnItem (RigRouting::noteRepeatRate, "Note repeat rate (each press steps to the next)");
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (juce::Rectangle<int> (at.x, at.y, 1, 1)));
 }
 
 void SamplerScreen::play (juce::Range<int> range)
@@ -953,8 +962,7 @@ void SamplerScreen::timerCallback()
     if (! isShowing())
         return;
 
-    if (repeatButton.getToggleState() != engine.getMpc().getSequencer().noteRepeat.load()
-        || levelsButton.getToggleState() != (engine.getMpc().levelsType.load() != levels::off))
+    if (levelsButton.getToggleState() != (engine.getMpc().levelsType.load() != levels::off))
         updatePadTools();
 
     {
@@ -1347,13 +1355,16 @@ void SamplerScreen::resized()
     right.removeFromTop (12);
     {
         // The pad tools.
-        auto tools = right.removeFromBottom (34);
-        const int w = (tools.getWidth() - 3 * 6) / 4;
-        for (auto* b : { &levelsButton, &repeatButton, &rateButton, &soundsButton })
-        {
-            b->setBounds (tools.removeFromLeft (w));
-            tools.removeFromLeft (6);
-        }
+        // Row 1: the rates. Row 2: 16 Levels, NOTE REPEAT (the red hold button, wider for its two lines), Sounds.
+        auto tools = right.removeFromBottom (40);
+        const int side = (tools.getWidth() - 2 * 6) / 4;
+        levelsButton.setBounds (tools.removeFromLeft (side));
+        tools.removeFromLeft (6);
+        soundsButton.setBounds (tools.removeFromRight (side));
+        tools.removeFromRight (6);
+        repeatButton.setBounds (tools);
+        right.removeFromBottom (6);
+        rateButtons.setBounds (right.removeFromBottom (30));
         padsNote = {};
     }
     right.removeFromBottom (8);
