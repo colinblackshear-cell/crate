@@ -22,7 +22,7 @@ drums::Pattern fromRows (const std::array<const char*, drums::kVoices>& rows, co
         for (int s = 0; s < 16 && rows[(size_t) v][0] != 0 && rows[(size_t) v][s] != 0; ++s)
         {
             const char c = rows[(size_t) v][s];
-            p.hits[(size_t) v][(size_t) s] = c == 'x' ? 1 : (c >= '2' && c <= '4' ? (std::uint8_t) (c - '0') : 0);
+            p.hits[(size_t) v][(size_t) s] = c == 'x' ? 1 : (c >= '2' && c <= '8' ? (std::uint8_t) (c - '0') : 0);
         }
     for (int s = 0; s < 16 && accent[s] != 0; ++s)
         p.accent[(size_t) s] = accent[s] == '>';
@@ -65,6 +65,7 @@ juce::var DrumData::toVar() const
 {
     auto* root = new juce::DynamicObject();
     root->setProperty ("bpm", bpm);
+    root->setProperty ("repeatRate", repeatRate);
     root->setProperty ("slot", slot);
     root->setProperty ("variation", variation);
     root->setProperty ("editB", editB);
@@ -80,6 +81,33 @@ juce::var DrumData::toVar() const
             for (auto& row : p.hits)
                 rows.add (rowText (row));
             o->setProperty ("rows", rows);
+            // How each hit plays (rolls that build, flams): only when one is used.
+            juce::Array<juce::var> shapes;
+            bool anyShape = false;
+            for (auto& row : p.shape)
+            {
+                shapes.add (rowText (row));
+                for (auto sh : row)
+                    anyShape = anyShape || sh != 0;
+            }
+            if (anyShape)
+                o->setProperty ("shapes", shapes);
+            // Soft hits (SOFT/LOUD): 0 full, 1 soft, 2 very soft; only when one is used.
+            juce::Array<juce::var> levels;
+            bool anyLevel = false;
+            for (auto& row : p.velocity)
+            {
+                juce::String t;
+                for (auto level : row)
+                {
+                    const int code = level > 80 ? 0 : level > 45 ? 1 : 2;
+                    t << code;
+                    anyLevel = anyLevel || code != 0;
+                }
+                levels.add (t);
+            }
+            if (anyLevel)
+                o->setProperty ("levels", levels);
             juce::String accent;
             for (bool a : p.accent)
                 accent << (a ? "1" : "0");
@@ -99,6 +127,15 @@ juce::var DrumData::toVar() const
         voices.add (juce::var (o));
     }
     root->setProperty ("voices", voices);
+    bool anySample = false;
+    juce::Array<juce::var> ids;
+    for (auto& id : sampleIds)
+    {
+        ids.add (id);
+        anySample = anySample || id.isNotEmpty();
+    }
+    if (anySample)
+        root->setProperty ("sampleIds", ids);
     root->setProperty ("padPattern", padPattern.toVar());
     return juce::var (root);
 }
@@ -149,6 +186,7 @@ DrumData DrumData::fromVar (const juce::var& v)
     if (! v.isObject())
         return d;
     d.bpm = juce::jlimit (40.0, 240.0, (double) v.getProperty ("bpm", d.bpm));
+    d.repeatRate = juce::jlimit (0, 7, (int) v.getProperty ("repeatRate", d.repeatRate));
     d.slot = juce::jlimit (0, kPatternSlots - 1, (int) v.getProperty ("slot", 0));
     d.variation = juce::jlimit (0, 2, (int) v.getProperty ("variation", 0));
     d.editB = (bool) v.getProperty ("editB", false);
@@ -170,7 +208,21 @@ DrumData DrumData::fromVar (const juce::var& v)
                     {
                         auto text = (*rows)[r].toString();
                         for (int s = 0; s < juce::jmin (drums::kMaxSteps, text.length()); ++s)
-                            p.hits[(size_t) r][(size_t) s] = (std::uint8_t) juce::jlimit (0, 4, text[s] - '0');
+                            p.hits[(size_t) r][(size_t) s] = (std::uint8_t) juce::jlimit (0, drums::kMaxRoll, text[s] - '0');
+                    }
+                if (auto* shapes = o.getProperty ("shapes", {}).getArray())
+                    for (int r = 0; r < juce::jmin (drums::kVoices, shapes->size()); ++r)
+                    {
+                        auto text = (*shapes)[r].toString();
+                        for (int s = 0; s < juce::jmin (drums::kMaxSteps, text.length()); ++s)
+                            p.shape[(size_t) r][(size_t) s] = (std::uint8_t) juce::jlimit (0, (int) drums::numShapes - 1, text[s] - '0');
+                    }
+                if (auto* levels = o.getProperty ("levels", {}).getArray())
+                    for (int r = 0; r < juce::jmin (drums::kVoices, levels->size()); ++r)
+                    {
+                        auto text = (*levels)[r].toString();
+                        for (int s = 0; s < juce::jmin (drums::kMaxSteps, text.length()); ++s)
+                            p.velocity[(size_t) r][(size_t) s] = (std::uint8_t) (text[s] == '1' ? 60 : text[s] == '2' ? 30 : 100);
                     }
                 auto accent = o.getProperty ("accent", "").toString();
                 for (int s = 0; s < juce::jmin (drums::kMaxSteps, accent.length()); ++s)
@@ -178,6 +230,9 @@ DrumData DrumData::fromVar (const juce::var& v)
             }
         }
     }
+    if (auto* ids = v.getProperty ("sampleIds", {}).getArray())
+        for (int i = 0; i < juce::jmin (drums::kVoices, ids->size()); ++i)
+            d.sampleIds[(size_t) i] = (*ids)[i].toString();
     if (auto* voices = v.getProperty ("voices", {}).getArray())
         for (int i = 0; i < juce::jmin (drums::kVoices, voices->size()); ++i)
         {
@@ -224,6 +279,21 @@ void BeatsEngine::setDrums (const DrumData& d)
     wantedSlot = d.slot;
     wantedVariation = d.variation;
     bpm = d.bpm;
+}
+
+void BeatsEngine::setDrumSample (int voice, crate::drums::SharedSample sample)
+{
+    if (! juce::isPositiveAndBelow (voice, drums::kVoices))
+        return;
+    if (sample != nullptr)
+        keptDrumSamples.push_back (sample);
+    drumSamples[(size_t) voice] = sample;
+    drums.setSample (voice, sample.get());
+}
+
+crate::drums::SharedSample BeatsEngine::getDrumSample (int voice) const
+{
+    return juce::isPositiveAndBelow (voice, drums::kVoices) ? drumSamples[(size_t) voice] : nullptr;
 }
 
 void BeatsEngine::setPlaying (bool on) { wantPlay = on; }
@@ -349,14 +419,23 @@ void BeatsEngine::handle (const Event& e)
     switch (e.kind)
     {
         case Event::drum: drums.trigger (juce::jlimit (0, drums::kVoices - 1, e.index), e.velocity, e.accent); break;
-        case Event::padOn: startPad (juce::jlimit (0, kPads - 1, e.index), e.velocity); break;
+        case Event::padOn:
+        {
+            const int pad = juce::jlimit (0, kPads - 1, e.index);
+            startPad (pad, e.velocity);
+            heldPads[(size_t) pad] = { true, e.velocity, wasRunning ? ppq : -1.0, sampleClock };
+            break;
+        }
         case Event::padOff:
+            heldPads[(size_t) juce::jlimit (0, kPads - 1, e.index)].down = false;
             if (slots[(size_t) juce::jlimit (0, kPads - 1, e.index)].mode.load() == (int) PadMode::noteOff)
                 for (auto& v : voices)
                     if (v.audio != nullptr && v.pad == e.index)
                         v.releasing = true;
             break;
         case Event::stopPads:
+            for (auto& h : heldPads)
+                h.down = false;
             for (auto& v : voices)
                 if (v.audio != nullptr)
                     v.releasing = true;
@@ -472,6 +551,8 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
         ppq = 0;
         lastPpq = -1;
         run = run.load() + 1;
+        for (auto& h : heldPads)
+            h.pressPpq = -1;   // (pressed before this run of the clock: no press to keep clear of)
     }
     wasRunning = running;
     clockOn = running;
@@ -534,10 +615,53 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
                 continue;
             if (h.skipRun == thisRun && t < h.skipUntil)
                 continue;
-            triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - start) / beatsPerSample)), h.pad, h.velocity };
+            triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - start) / beatsPerSample)), h.pad, h.velocity, false };
         }
-        std::sort (triggers.begin(), triggers.begin() + numTriggers, [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
     }
+
+    // NOTE REPEAT: each pad held down plays again at the rate. On the clock the repeats fall on its grid (the
+    // press is the first hit, so a repeat too close to it waits for the next one); stopped, they count from the press.
+    const double blockStart = ppq;
+    if (repeatOn.load() && repeatBeats.load() > 0)
+    {
+        const double rate = repeatBeats.load();
+        const double everySamples = rate * 60.0 / tempo * sampleRate;
+        for (int pad = 0; pad < kPads && numTriggers < (int) triggers.size(); ++pad)
+        {
+            const auto& h = heldPads[(size_t) pad];
+            if (! h.down || slots[(size_t) pad].audio.load() == nullptr)
+                continue;
+            if (running)
+            {
+                const double end = blockStart + numSamples * beatsPerSample;
+                // (each block is [start, end) and the next starts at this one's end, so a grid position falls in exactly one)
+                for (double n = std::ceil (blockStart / rate); numTriggers < (int) triggers.size(); n += 1.0)
+                {
+                    const double t = n * rate;
+                    if (t < blockStart)
+                        continue;
+                    if (t >= end)
+                        break;
+                    if (h.pressPpq >= 0 && t - h.pressPpq < rate * 0.5)
+                        continue;
+                    triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - blockStart) / beatsPerSample)), pad, h.velocity, true };
+                }
+            }
+            else
+            {
+                const double since = (double) (sampleClock - h.pressSample);
+                for (long long n = juce::jmax (1LL, (long long) std::ceil (since / everySamples)); numTriggers < (int) triggers.size(); ++n)
+                {
+                    const int offset = juce::roundToInt ((double) n * everySamples - since);
+                    if (offset >= numSamples)
+                        break;
+                    triggers[(size_t) numTriggers++] = { juce::jmax (0, offset), pad, h.velocity, true };
+                }
+            }
+        }
+    }
+    if (numTriggers > 1)
+        std::sort (triggers.begin(), triggers.begin() + numTriggers, [] (const Trigger& a, const Trigger& b) { return a.offset < b.offset; });
     if (running)
         renderClick (left, right, clickOut, numSamples, ppq, beatsPerSample);
 
@@ -560,10 +684,38 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
         }
         if (i < numTriggers)
         {
-            startPad (triggers[(size_t) i].pad, triggers[(size_t) i].velocity);
-            hitsPlayed = hitsPlayed.load() + 1;
+            const auto& t = triggers[(size_t) i];
+            startPad (t.pad, t.velocity);
+            if (! t.repeat)
+                hitsPlayed = hitsPlayed.load() + 1;
+            else
+            {
+                repeatCount = repeatCount.load() + 1;
+                if (running)
+                {
+                    int w1, n1w, w2, n2w;
+                    reportFifo.prepareToWrite (1, w1, n1w, w2, n2w);
+                    if (n1w > 0)
+                        reports[(size_t) w1] = { t.pad, t.velocity, blockStart + t.offset * beatsPerSample };
+                    reportFifo.finishedWrite (n1w + n2w);
+                }
+            }
         }
     }
+    sampleClock += numSamples;
+}
+
+int BeatsEngine::takeRepeats (RepeatReport* dest, int max)
+{
+    int s1, n1, s2, n2;
+    reportFifo.prepareToRead (juce::jmin (max, reportFifo.getNumReady()), s1, n1, s2, n2);
+    int n = 0;
+    for (int i = 0; i < n1; ++i)
+        dest[n++] = reports[(size_t) (s1 + i)];
+    for (int i = 0; i < n2; ++i)
+        dest[n++] = reports[(size_t) (s2 + i)];
+    reportFifo.finishedRead (n1 + n2);
+    return n;
 }
 
 // A click on each beat (higher on the bar): while the click is on, and through a count-in.

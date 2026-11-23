@@ -50,6 +50,7 @@ public:
     void attachPart (int layer, std::shared_ptr<const pocket::NotePart>);
     // The pads' sounds, for rendering a PADS layer's notes again after the song is opened.
     std::function<std::vector<pocket::PadSetup>()> kitSounds;
+    std::function<std::array<crate::drums::SharedSample, crate::drums::kVoices>()> drumSampleSounds;
     // OPEN <TOOL> on the panel.
     std::function<void (pocket::Tool)> onOpenTool;
     // The layer the next take lands on: the picked empty layer, else the first empty one. -1 = all used.
@@ -74,6 +75,10 @@ public:
     void flush() { save(); }                // before switching ideas
     void reloadIdea();
     void sendToMac (bool onlyPicked);
+    // A layer's loop as a sound at 44.1 kHz, with its effects and board when it has any (nullptr: no loop), its name
+    // ("Pocket loop 3 Synth") and length in beats. The whole layers mixed: layer -1.
+    crate::SharedAudio layerSound (int layer, juce::String* name = nullptr, double* beats = nullptr) const;
+    int layersWithLoops() const;
     // The tour's spotlights: 0 = the first six layers, 1 = TO MAC.
     juce::Rectangle<int> tourSpot (int which) const;
 

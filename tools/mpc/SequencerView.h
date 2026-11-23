@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "MpcProcessor.h"
+#include "NoteRepeatControls.h"
 
 // The sequencer's controls, MPC style. The transport bar (sequence, play, stop, record, where
 // you are, tempo, bars, metronome) sits across the window; the sequence view replaces the pads
@@ -88,6 +89,7 @@ public:
     explicit SequencerView (MpcProcessor&);
     ~SequencerView() override;
 
+    noterepeatui::HoldButton& repeatButton() { return noteRepeat; }
     void setPadBank (int b) { steps.padBank = b; steps.repaint(); }
     void refresh();
     std::function<void (const juce::String&, bool warning)> onStatus;
@@ -111,7 +113,7 @@ private:
     juce::Label gridLabel { {}, "Timing" }, swingLabel { {}, "Swing" };
     juce::ComboBox gridChoice;
     juce::Slider swing;
-    juce::ToggleButton noteRepeat { "Note repeat" };
+    noterepeatui::HoldButton noteRepeat { processor.getSequencer() };
     juce::TextButton fix { "Fix timing" }, clearTrack { "Clear" }, undo { "Undo" }, redo { "Redo" };
     juce::TextButton prevBar { "<" }, nextBar { ">" };
     juce::Label barLabel;

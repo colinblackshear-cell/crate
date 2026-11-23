@@ -544,9 +544,6 @@ SequencerView::SequencerView (MpcProcessor& p) : processor (p), project (p.getPr
     swing.setTooltip ("Swing pushes every other 1/8 or 1/16 late. 50% is straight; 66% is a triplet feel.");
     swing.onValueChange = [this, &engine] { engine.swing = (int) swing.getValue(); steps.repaint(); };
 
-    noteRepeat.setTooltip ("Hold a pad while it plays to repeat it on every step of the timing grid");
-    noteRepeat.onClick = [this, &engine] { engine.noteRepeat = noteRepeat.getToggleState(); };
-
     fix.setTooltip ("Snap this track's notes to the timing grid (with swing)");
     fix.onClick = [this, &engine]
     {
@@ -579,7 +576,7 @@ SequencerView::SequencerView (MpcProcessor& p) : processor (p), project (p.getPr
     importButton.setTooltip ("Open a MIDI file as a new sequence. Notes 35 to 98 land on pads A01 to D16, like on the MPC.");
     importButton.onClick = [this] { importMidi(); };
 
-    for (auto* b : std::initializer_list<juce::Button*> { &mute, &noteRepeat, &fix, &clearTrack, &undo, &redo, &prevBar,
+    for (auto* b : std::initializer_list<juce::Button*> { &mute, &fix, &clearTrack, &undo, &redo, &prevBar,
                                                           &nextBar, &exportButton, &importButton })
         b->setWantsKeyboardFocus (false);
 
@@ -632,9 +629,6 @@ void SequencerView::timerCallback()
 {
     // While playing, the grid follows the bar that's playing.
     const auto& engine = processor.getSequencer();
-    // Note repeat can be turned on from the pads too.
-    if (noteRepeat.getToggleState() != engine.noteRepeat.load())
-        noteRepeat.setToggleState (engine.noteRepeat.load(), juce::dontSendNotification);
     const auto& s = project.currentSequence();
     if (engine.isPlaying() && engine.getPosition() >= 0)
     {
@@ -715,7 +709,7 @@ void SequencerView::resized()
 {
     auto r = getLocalBounds().reduced (10);
 
-    auto row1 = r.removeFromTop (28);
+    auto row1 = r.removeFromTop (34);
     track.setBounds (row1.removeFromLeft (juce::jmin (170, row1.getWidth() / 4)));
     row1.removeFromLeft (6);
     mute.setBounds (row1.removeFromLeft (64));
@@ -723,7 +717,7 @@ void SequencerView::resized()
     gridChoice.setBounds (row1.removeFromLeft (110));
     row1.removeFromLeft (8);
     swingLabel.setBounds (row1.removeFromLeft (46));
-    swing.setBounds (row1.removeFromLeft (juce::jmax (60, row1.getWidth() - 120)));
+    swing.setBounds (row1.removeFromLeft (juce::jmax (60, row1.getWidth() - 150)));
     row1.removeFromLeft (8);
     noteRepeat.setBounds (row1);
     r.removeFromTop (6);

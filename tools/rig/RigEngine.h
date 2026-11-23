@@ -20,6 +20,7 @@
 #include "RigTimeline.h"
 #include "RigRecorder.h"
 #include "RigCapture.h"
+#include "core/SoundSet.h"
 #include "RigQuantize.h"
 #include "RigChords.h"
 #include "RigTakes.h"
@@ -58,6 +59,21 @@ public:
     // `index` on the MPC's pads A01-A16 of kit `kit` (-1 = a new kit) and makes it the kit that plays.
     // A new Rig starts with the Street kit on its first kit, as the phone does. Returns what to say.
     juce::String loadFactoryKit (int index, int kit = -1);
+    // The factory kit MPC kit `kit` came from (by its name, "Street kit"), or -1.
+    int factoryKitOf (int kit);
+    // The factory sound that pad `pad` (0..63) of the current kit had, when the kit is a factory kit
+    // and that pad is one of its 16 ("Street kick"), or {}. hasFactoryPad: it's playing something else.
+    juce::String factoryPadName (int pad);
+    bool padDiffersFromFactory (int pad);
+    // Puts that factory sound back on the pad (its settings back to the kit's). Returns what to say.
+    juce::String restoreFactoryPad (int pad);
+    // Puts all 16 of the current factory kit's sounds back, on the same kit. Returns what to say.
+    juce::String resetFactoryKit();
+    // Sets (core/SoundSet.h): bank 0..3 of the current kit (-1: the whole kit) as a set named `name`.
+    SoundSet padsAsSet (int bank, const juce::String& name);
+    // A whole-kit set goes on a new kit (yours stay); a one-bank set onto bank `bank` of the current kit
+    // (its 16 pads are replaced). Returns what to say.
+    juce::String loadSet (const SoundSet&, int bank);
     // Set by the app and the Logic plugin before they make their Rig: a new Rig (and New song) has
     // the Street kit on the pads. Off for the tests, whose Rigs start with empty pads.
     static inline std::atomic<bool> startWithFactoryKit { false };
@@ -186,6 +202,8 @@ public:
     void preview (std::shared_ptr<const juce::AudioBuffer<float>>);
     bool isPreviewing() const { return previewPlaying.load(); }
     int captureDest = RigCapture::toSampler;
+    // Where the next recording goes instead of captureDest (the Sampler screen's Sample a tool); -1: captureDest.
+    int captureDestOnce = -1;
     // The last recording made "for Logic" (a WAV to drag onto a Logic track), and where they go:
     // ~/Music/Crate/Rig/To Logic. Message thread.
     juce::File lastLogicFile;
