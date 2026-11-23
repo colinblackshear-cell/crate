@@ -506,7 +506,7 @@ int SamplerScreen::chopToPads (int slices)
     if (onPadSet)
         onPadSet (first);
     host.toastAction ("Chopped into " + juce::String (used) + " pads, " + Kit::padLabel (first) + " to " + Kit::padLabel (first + used - 1)
-                          + ". Hold a pad > SOUND PAGE to edit its slice.",
+                          + ". Hold a pad > EDIT THIS SLICE to edit one on its own.",
                       "UNDO",
                       [safe = juce::Component::SafePointer<SamplerScreen> (this), first, before]
                       {

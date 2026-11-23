@@ -125,6 +125,7 @@ private:
     void holdMenu (const pocket::HoldSpec&, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight) override;
     void toastAction (const juce::String& text, const juce::String& button, std::function<void()> then) override;
     void openSamplePage (int pad) override;
+    void editPadSlice (int pad) override;
     void togglePlay() override;
     void padSoundEdited (const juce::String& soundId) override;
     void padSoundSwapped (const juce::String& oldId, const juce::String& newId) override;

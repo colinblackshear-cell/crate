@@ -363,6 +363,25 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     fullLevel.onClick = [this] { engine.getMpc().fullLevel = fullLevel.getToggleState(); };
     addAndMakeVisible (fullLevel);
 
+    // The pad open in the Sampler: which pad, the pads either side, Back, As a new sound, Save.
+    for (auto* b : { &padPrevButton, &padNextButton, &padBackButton, &padNewButton, &padSaveButton })
+    {
+        b->getProperties().set ("fontSize", 16.0f);
+        addChildComponent (*b);
+    }
+    setLit (padSaveButton, Lit::next);
+    padSaveButton.setToggleState (true, juce::dontSendNotification);
+    padPrevButton.setTooltip ("The pad before: saves an edit onto this pad first, then opens that one.");
+    padNextButton.setTooltip ("The pad after: saves an edit onto this pad first, then opens that one.");
+    padBackButton.setTooltip ("Back to the pads (an edit goes onto the pad first).");
+    padNewButton.setTooltip ("Saves what's in the Sampler to your library as a new sound; the pad keeps its own.");
+    padSaveButton.setTooltip ("Puts what's in the Sampler on the pad now: it plays the edit straight away.");
+    padPrevButton.onClick = [this] { pressStepPad (-1); };
+    padNextButton.onClick = [this] { pressStepPad (1); };
+    padBackButton.onClick = [this] { pressBackToPads(); };
+    padNewButton.onClick = [this] { pressPadAsNewSound(); };
+    padSaveButton.onClick = [this] { pressSaveToPad(); };
+
     refresh();
     startTimerHz (30);
 }
@@ -410,9 +429,12 @@ void SamplerScreen::setSide (int side)
                                                             &levelsButton, &repeatButton, &rateButton, &soundsButton, &kitsButton };
     const std::initializer_list<juce::Component*> top { &chopModeButton, &mpcModeButton, &editModeButton, &beatButton, &loopPadsButton,
                                                         &loopBarsButton };
+    const std::initializer_list<juce::Component*> padBarButtons { &padPrevButton, &padNextButton, &padBackButton, &padNewButton, &padSaveButton };
     for (auto* c : getChildren())
     {
-        if (c == ownedEditor.get())
+        if (std::find (padBarButtons.begin(), padBarButtons.end(), c) != padBarButtons.end())
+            c->setVisible (editPad >= 0);
+        else if (c == ownedEditor.get())
             c->setVisible (mode == editSide);
         else if (c == ownedMpc.get())
             c->setVisible (mode == mpcSide);
@@ -459,6 +481,11 @@ void SamplerScreen::pressLoopPads()
 }
 
 void SamplerScreen::pressEditPad()
+{
+    openPadInSampler (getSelectedPad());
+}
+
+void SamplerScreen::pressQuickEditPad()
 {
     if (mpcView == nullptr)
         return;
@@ -544,7 +571,8 @@ void SamplerScreen::showPadMenu (int padInBank)
     const bool full = ! engine.getMpc().getProject().currentBank().pads[(size_t) pad].isEmpty();
     juce::PopupMenu menu;
     menu.addSectionHeader ("Pad " + padLabel (pad));
-    menu.addItem ("Edit its sound (trim, fades, effects)...", full, false, [this] { pressEditPad(); });
+    menu.addItem ("Open it alone in the Sampler (edit, effects, keys)", full, false, [this] { pressEditPad(); });
+    menu.addItem ("Quick pad editor (trim, fades, effects)...", full, false, [this] { pressQuickEditPad(); });
     menu.addItem ("Remove its sound", full, false, [this] { pressRemovePad(); });
     if (canUndoRemovePad())
         menu.addItem ("Undo remove (put \"" + removedPad.name + "\" back)", [this] { pressUndoRemovePad(); });
@@ -564,6 +592,131 @@ void SamplerScreen::updateTopButtons()
     if (loopPadsButton.getButtonText() != loopText)
         loopPadsButton.setButtonText (loopText);
     loopBarsButton.setButtonText (loopBars <= 0 ? juce::String ("Free") : juce::String (loopBars) + (loopBars == 1 ? " bar" : " bars"));
+}
+
+juce::String SamplerScreen::editLabel() const
+{
+    auto& project = engine.getMpc().getProject();
+    if (editPad < 0 || ! juce::isPositiveAndBelow (editKit, (int) project.getBanks().size()))
+        return {};
+    const auto& pad = project.getBanks()[(size_t) editKit].pads[(size_t) editPad];
+    return "Editing pad " + padLabel (editPad) + juce::String::fromUTF8 (" \xc2\xb7 ") + (pad.name.isNotEmpty() ? pad.name : editName);
+}
+
+void SamplerScreen::openPadInSampler (int pad)
+{
+    auto& project = engine.getMpc().getProject();
+    if (! juce::isPositiveAndBelow (pad, mpc::kPadCount))
+        return;
+    const auto& slot = project.currentBank().pads[(size_t) pad];
+    if (slot.isEmpty())
+    {
+        if (onSay)
+            onSay ("Pad " + padLabel (pad) + " is empty. Put a sound on it first (To pads, Sounds, Kits, or drop one on it).");
+        return;
+    }
+    saveEditIfChanged();   // the pad you were on keeps its edit
+    auto& doc = engine.getSampler().getDocument();
+    const auto name = slot.name.isNotEmpty() ? slot.name : "Pad " + padLabel (pad);
+    engine.getSampler().setChops ({});
+    doc.load (slot.audio, name, "Open pad " + padLabel (pad));
+    editPad = pad;
+    editKit = project.getCurrentIndex();
+    editOpenedAudio = doc.getAudio().get();
+    editName = name;
+    if (pad / kPadsPerBank != engine.getMpc().padBankOnScreen.load())
+        pressBank (pad / kPadsPerBank);
+    selectedSlice = pad;
+    if (mpcView != nullptr)
+        mpcView->selectPad (pad);
+    setSide (editSide);
+    updatePadBar();
+    resized();
+    if (onSay)
+        onSay ("Pad " + padLabel (pad) + "'s sound is open alone in the Sampler: trim, fades, effects, keys. Save to "
+               + padLabel (pad) + " puts it back on the pad (leaving does too).");
+}
+
+bool SamplerScreen::padEditChanged() const
+{
+    if (editPad < 0)
+        return false;
+    const auto& doc = engine.getSampler().getDocument();
+    // Only an edit of the pad's own sound: a sound opened or recorded over it since isn't the pad's.
+    return doc.hasAudio() && doc.getAudio().get() != editOpenedAudio && doc.getName() == editName;
+}
+
+bool SamplerScreen::saveEditIfChanged()
+{
+    if (! padEditChanged())
+        return false;
+    pressSaveToPad();
+    return true;
+}
+
+void SamplerScreen::pressSaveToPad()
+{
+    auto& project = engine.getMpc().getProject();
+    auto& doc = engine.getSampler().getDocument();
+    if (editPad < 0 || ! juce::isPositiveAndBelow (editKit, (int) project.getBanks().size()) || ! doc.hasAudio())
+        return;
+    auto& slot = project.getBanks()[(size_t) editKit].pads[(size_t) editPad];
+    if (editKit == project.getCurrentIndex())
+        engine.getMpc().releasePad (editPad);
+    slot.audio = doc.getAudio();
+    if (slot.name.isEmpty())
+        slot.name = editName.substring (0, 16);
+    slot.mono = slot.audio->getNumChannels() == 1 || slot.mono;
+    project.changed();
+    editOpenedAudio = doc.getAudio().get();
+    editName = doc.getName();
+    updateKnobs();
+    repaint();
+    if (onSay)
+        onSay ("Pad " + padLabel (editPad) + " plays the edit now (" + juce::String (slot.audio->getNumSamples() / crate::kSampleRate, 2) + " s).");
+}
+
+void SamplerScreen::pressBackToPads()
+{
+    const bool saved = saveEditIfChanged();
+    const int was = editPad;
+    editPad = editKit = -1;
+    editOpenedAudio = nullptr;
+    setSide (chopSide);
+    resized();
+    if (onSay && was >= 0)
+        onSay (saved ? "Saved onto pad " + padLabel (was) + ". Back to the pads." : juce::String ("Back to the pads."));
+}
+
+void SamplerScreen::pressStepPad (int delta)
+{
+    if (editPad < 0)
+        return;
+    auto& kit = engine.getMpc().getProject().currentBank();
+    // the next pad with a sound, either way, wrapping round the kit
+    for (int step = 1; step < mpc::kPadCount; ++step)
+    {
+        const int pad = ((editPad + delta * step) % mpc::kPadCount + mpc::kPadCount) % mpc::kPadCount;
+        if (! kit.pads[(size_t) pad].isEmpty())
+            return openPadInSampler (pad);
+    }
+}
+
+void SamplerScreen::pressPadAsNewSound()
+{
+    if (! engine.getSampler().getDocument().hasAudio())
+        return;
+    editor.saveSoundToLibrary();
+}
+
+void SamplerScreen::updatePadBar()
+{
+    if (editPad < 0)
+        return;
+    const auto text = "Save to " + padLabel (editPad);
+    if (padSaveButton.getButtonText() != text)
+        padSaveButton.setButtonText (text);
+    padSaveButton.setEnabled (engine.getSampler().getDocument().hasAudio());
 }
 
 bool SamplerScreen::canUndoClear() const
@@ -1042,6 +1195,13 @@ void SamplerScreen::timerCallback()
 {
     updateRemoveButton();
     updateClearButton();
+    if (editPad >= 0)
+    {
+        if (editKit >= (int) engine.getMpc().getProject().getBanks().size())
+            pressBackToPads();
+        else
+            updatePadBar();
+    }
     // Pads that played light for a moment.
     const auto played = engine.getMpc().takePlayedPads (1);
     const int bank = engine.getMpc().padBankOnScreen.load();
@@ -1432,6 +1592,22 @@ void SamplerScreen::resized()
         beatButton.setBounds (m.removeFromRight (112));
     }
     r.removeFromTop (10);
+    padBar = {};
+    if (editPad >= 0)
+    {
+        padBar = r.removeFromTop (46);
+        auto b = padBar.reduced (12, 4);
+        padSaveButton.setBounds (b.removeFromRight (128));
+        b.removeFromRight (8);
+        padNewButton.setBounds (b.removeFromRight (140));
+        b.removeFromRight (8);
+        padBackButton.setBounds (b.removeFromRight (124));
+        b.removeFromRight (8);
+        padNextButton.setBounds (b.removeFromRight (44));
+        b.removeFromRight (6);
+        padPrevButton.setBounds (b.removeFromRight (44));
+        r.removeFromTop (10);
+    }
     if (ownedEditor != nullptr)
         ownedEditor->setBounds (r.withTrimmedLeft (-10).withTrimmedRight (-10).withTrimmedBottom (-8));
     const float scale = juce::jlimit (0.7f, 1.0f, r.getHeight() / 500.0f);

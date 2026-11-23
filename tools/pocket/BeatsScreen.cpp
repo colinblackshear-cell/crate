@@ -1013,7 +1013,8 @@ HoldSpec BeatsScreen::padMenuSpec (int pad)
         addFactoryItem (s, pad);
         return s;
     }
-    s.items.push_back ({ "SOUND PAGE", U8("sampler \xc2\xb7 in / out \xc2\xb7 trim"), false, true, [this, pad] { host.openSamplePage (pad); } });
+    s.items.push_back ({ "EDIT THIS SLICE", U8("fades \xc2\xb7 effects \xc2\xb7 name"), false, true, [this, pad] { host.editPadSlice (pad); } });
+    s.items.push_back ({ "SOUND PAGE", U8("the whole sound \xc2\xb7 in / out"), false, true, [this, pad] { host.openSamplePage (pad); } });
     s.items.push_back ({ U8("SWAP SOUND\xe2\x80\xa6"), {}, false, true, swap });
     s.items.push_back ({ "RECORD A NEW SOUND", "sampler", false, true, [this, pad] { host.openSampler (pad); } });
     s.items.push_back ({ U8("VOLUME \xc2\xb7 PAN \xc2\xb7 TUNE"), {}, false, true, [this, pad] { host.openPadSheet (pad); } });

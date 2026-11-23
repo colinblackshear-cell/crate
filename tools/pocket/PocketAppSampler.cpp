@@ -133,8 +133,8 @@ juce::String PocketApp::runSamplerChecks (juce::String& report)
     // ------------------------------------------------------------------ SAMPLER (PADS > hold > SOUND PAGE): IN, OUT, TRIM
     showTool (Tool::pads, false);
     beats.holdPad (pad);
-    if (holdCard.isOpen() && holdCard.itemCount() > 0 && holdCard.current().items[0].text == "SOUND PAGE")
-        holdCard.choose (0);
+    if (holdCard.isOpen() && holdCard.itemCount() > 1 && holdCard.current().items[1].text == "SOUND PAGE")
+        holdCard.choose (1);
     else
         problems.add ("Sampler: the pad's hold menu has no SOUND PAGE");
     expect (page == Page::tool && tool == Tool::sampler && sampler.target() == pad && sampler.soundId() == factoryId,
@@ -284,11 +284,56 @@ juce::String PocketApp::runSamplerChecks (juce::String& report)
             pressToastAction();
         expect (k.pads[0].soundId == before, "Chop: UNDO didn't put A01 back");
         hideToast();
+
+        // EDIT THIS SLICE: a chopped pad's part becomes its own sound, open alone in the sound editor aimed at the pad
+        sampler.useTake (lib.load (lib.items().back().id));
+        sampler.setTarget (-1);
+        expect (sampler.chopToPads (8) == 8, "Edit slice: 8 EQUAL SLICES didn't fill 8 pads");
+        hideToast();
+        {
+            const auto chopId = k.pads[4].soundId;
+            const int length = k.pads[4].audio != nullptr ? k.pads[4].audio->getNumSamples() : 0;
+            showTool (Tool::pads, false);
+            beats.holdPad (4);
+            const bool hasRow = holdCard.isOpen() && holdCard.itemCount() > 0 && holdCard.current().items[0].text == "EDIT THIS SLICE";
+            expect (hasRow, "Edit slice: a pad's hold menu doesn't start with EDIT THIS SLICE");
+            if (hasRow)
+                holdCard.choose (0);
+            else
+                holdCard.close();
+            const auto& pad = k.pads[4];
+            expect (pad.soundId != chopId && pad.from == 0 && pad.to < 0, "Edit slice: A05 doesn't play its slice as its own whole sound");
+            expect (pad.audio != nullptr && std::abs (pad.audio->getNumSamples() - length) < 4, "Edit slice: A05's own sound isn't the length of its slice");
+            expect (k.pads[5].soundId == chopId, "Edit slice: the other slices moved off the chopped sound");
+            expect (page == Page::recorder && record.padTarget() == 4 && record.soundId() == pad.soundId, "Edit slice: the sound editor isn't open on A05's slice, aimed at A05");
+            expect (toastHasAction(), "Edit slice: no UNDO");
+            if (toastHasAction())
+                pressToastAction();
+            expect (k.pads[4].soundId == chopId && k.pads[4].from > 0, "Edit slice: UNDO didn't put A05 back on its slice");
+            hideToast();
+            // a pad that already plays its own whole sound opens that sound, no copy
+            const auto ownId = k.pads[20].soundId;
+            if (! k.pads[20].empty() && lib.find (ownId) != nullptr)
+            {
+                int sharing = 0;
+                for (auto& q : k.pads)
+                    sharing += (! q.empty() && q.soundId == ownId) ? 1 : 0;
+                const auto* own = lib.find (ownId);
+                if (sharing == 1 && k.pads[20].from == 0 && k.pads[20].to < 0 && own->tag != pocket::kTagFactory)
+                {
+                    const auto count = lib.items().size();
+                    editPadSlice (20);
+                    expect (lib.items().size() == count && record.soundId() == ownId, "Edit slice: a pad's own whole sound got copied");
+                }
+            }
+            showTool (Tool::pads, false);
+        }
         showIdeasList();
         switchIdea (songId);
         ideas.remove (fresh);
         report << "sampler: FACTORY SOUND BACK on a pad's hold menu; CLEAR empties the page (the pad keeps it), UNDO brings it back; "
-                  "CHOP TO PADS puts 16 slices of one sound on A01-A16, each pad's sample page shows its slice, UNDO puts the kit back\n";
+                  "CHOP TO PADS puts 16 slices of one sound on A01-A16, each pad's sample page shows its slice, UNDO puts the kit back; "
+                  "EDIT THIS SLICE makes a chop its pad's own sound and opens it alone in the sound editor (UNDO puts the chop back)\n";
     }
 
     showIdeasList();

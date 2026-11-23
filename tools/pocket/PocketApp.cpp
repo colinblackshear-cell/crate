@@ -653,6 +653,54 @@ void PocketApp::openSamplePage (int pad)
     sampler.editForPad (pad);
 }
 
+// EDIT THIS SLICE (a pad's hold menu): the pad's part of its sound, alone in the sound editor and aimed at the pad.
+// A part of a longer sound, a sound other pads play too, or a factory sound becomes the pad's own copy first, so the
+// edit changes this pad only (UNDO puts the pad back on the sound it played).
+void PocketApp::editPadSlice (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads))
+        return;
+    auto& kit = beats.kit();
+    const auto old = kit.pads[(size_t) pad];
+    const auto* item = lib.find (old.soundId);
+    auto whole = item != nullptr ? lib.load (old.soundId) : nullptr;
+    if (old.empty() || whole == nullptr)
+        return toast (old.empty() ? "Pad " + Kit::padLabel (pad) + " is empty" : juce::String ("That sound is gone from Sounds"));
+    const int n = whole->getNumSamples();
+    const int from = juce::jlimit (0, juce::jmax (0, n - 1), old.from);
+    const int to = old.to < 0 ? n : juce::jlimit (from + 1, n, old.to);
+    int sharing = 0;
+    for (int i = 0; i < kPads; ++i)
+        sharing += (i != pad && ! kit.pads[(size_t) i].empty() && kit.pads[(size_t) i].soundId == old.soundId) ? 1 : 0;
+    auto id = old.soundId;
+    if (from > 0 || to < n || sharing > 0 || item->tag == pocket::kTagFactory)
+    {
+        juce::AudioBuffer<float> part (whole->getNumChannels(), to - from);
+        for (int c = 0; c < part.getNumChannels(); ++c)
+            part.copyFrom (c, 0, *whole, c, from, to - from);
+        const auto name = old.name.isNotEmpty() ? old.name : item->name + " " + Kit::padLabel (pad);
+        const auto fx = item->fx;
+        id = lib.add (name, pocket::kTagRecorded, part, fx, {});
+        const auto* copy = lib.find (id);
+        auto copied = copy != nullptr ? lib.load (id) : nullptr;
+        if (copied == nullptr)
+            return toast ("The slice couldn't be saved");
+        kit.assign (pad, *copy, copied, 0, -1, old.name);
+        beats.padsChanged();
+    }
+    closePadSheet();
+    showPage (Page::recorder);
+    record.editForPad (pad, id);
+    if (id != old.soundId)
+        toastAction ("Pad " + Kit::padLabel (pad) + U8(" has its slice as its own sound now: edit it, then SAVE TO PAD"), "UNDO",
+                     [this, pad, old]
+                     {
+                         beats.kit().pads[(size_t) pad] = old;
+                         beats.padsChanged();
+                         record.endPadMode();
+                     });
+}
+
 // RECORD A NEW SOUND (a pad's hold menu, PADS): the SAMPLER, empty and aimed at the pad, for REC
 void PocketApp::openSampler (int pad)
 {

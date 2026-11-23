@@ -103,6 +103,7 @@ public:
     // Clear: an empty editor, as an undoable step (Undo brings the sound back). Libraries, pads and
     // files that have the sound keep it.
     void clearSound();
+    void saveSoundToLibrary() { saveToLibrary(); }
     static inline const juce::String kClearAction { "Clear the sound" };
 
 private:

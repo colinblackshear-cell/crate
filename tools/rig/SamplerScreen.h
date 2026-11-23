@@ -66,7 +66,21 @@ public:
     void pressBeat();
     void pressLoopPads();
     int loopBars = 0;
+    // Edit (and right-click > Open in the Sampler, or a triple-click): the picked pad's sound opens
+    // alone in the Sampler's full editor (Edit · Effects · Keys), aimed at that pad. A bar across the
+    // top says which pad, steps to the pad before or after, Back to pads, As a new sound, and Save to
+    // A04. Leaving by any of those saves an edit onto the pad first, so nothing is lost.
     void pressEditPad();
+    void openPadInSampler (int pad);   // 0..63 in the current kit
+    bool isEditingPad() const { return editPad >= 0; }
+    int getEditPad() const { return editPad; }
+    bool padEditChanged() const;       // the Sampler holds an edit not on the pad yet
+    void pressSaveToPad();
+    void pressBackToPads();
+    void pressStepPad (int delta);
+    void pressPadAsNewSound();
+    // The MPC's own small pad editor (trim, fades, effects), as Edit opened before.
+    void pressQuickEditPad();
     // Remove: takes the sound off the picked pad (its name, settings and effects with it). Until
     // something goes on that pad again, the button says Undo and puts it all back.
     void pressRemovePad();
@@ -173,6 +187,16 @@ private:
     juce::TextButton levelsButton { "16 Levels" }, repeatButton { "Repeat" }, rateButton { "1/16" }, soundsButton { "Sounds" },
         fxButton { "FX" }, kitsButton { "Kits" };
     void updateClearButton();
+    // The pad open in the Sampler (-1: none), its kit, and what the Sampler held when it opened.
+    int editPad = -1, editKit = -1;
+    const void* editOpenedAudio = nullptr;
+    juce::String editName;
+    juce::Rectangle<int> padBar;
+    juce::TextButton padPrevButton { "<" }, padNextButton { ">" }, padBackButton { "Back to pads" },
+        padNewButton { "As a new sound" }, padSaveButton { "Save to A01" };
+    bool saveEditIfChanged();
+    void updatePadBar();
+    juce::String editLabel() const;
     BankBrowser browser { engine.getMpc() };
     bool fxShown = false, soundsShown = false;
     juce::TextButton bankButtons[4] { juce::TextButton ("A"), juce::TextButton ("B"), juce::TextButton ("C"), juce::TextButton ("D") };

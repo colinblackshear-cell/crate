@@ -198,6 +198,74 @@ struct RigSamplerScreenTests : juce::UnitTest
             expect (! screen.canUndoClear());
         }
 
+        beginTest ("a pad's chop opens alone in the Sampler: edit it, Save to the pad, step to the next, Back saves too");
+        {
+            RigEngine engine;
+            engine.prepare (kRate, kBlock);
+            auto* full = dynamic_cast<EditorView*> (engine.getSampler().createEditorAndMakeActive());
+            SamplerScreen screen (engine, *full);
+            screen.ownEditor (full);
+            screen.setSize (1500, 760);
+            auto& doc = engine.getSampler().getDocument();
+
+            doc.load (hits(), "Dusty break", "Load");
+            screen.pressChop (SamplerScreen::even16);
+            screen.pressToPads();
+            auto& kit = engine.getMpc().getProject().currentBank();
+            for (int i = 4; i < 16; ++i)
+                kit.pads[(size_t) i] = {};   // only A01..A04 have chops
+            const auto slice3 = kit.pads[2].audio;
+            const int slice3Length = slice3->getNumSamples();
+
+            screen.openPadInSampler (2);
+            expect (screen.isEditingPad() && screen.getEditPad() == 2);
+            expect (screen.isEditMode(), "the Sampler's editor shows");
+            expect (doc.getAudio() == slice3, "it holds just that chop");
+            expect (! screen.padEditChanged());
+            bool barShows = false;
+            for (auto* c : screen.getChildren())
+                if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText() == "Save to A03")
+                    barShows = b->isVisible();
+            expect (barShows, "Save to A03 is on screen");
+
+            full->runEdit ("reverse");
+            expect (screen.padEditChanged());
+            expect (kit.pads[2].audio == slice3, "nothing changes on the pad until it's saved");
+            screen.pressSaveToPad();
+            expect (kit.pads[2].audio != slice3 && kit.pads[2].audio == doc.getAudio(), "Save puts the edit on the pad");
+            expectEquals (kit.pads[2].audio->getNumSamples(), slice3Length);
+            expect (! screen.padEditChanged());
+
+            // Step on: an unsaved edit goes onto the pad first.
+            full->runEdit ("fadeOut");
+            const auto edited = doc.getAudio();
+            screen.pressStepPad (1);
+            expect (kit.pads[2].audio == edited, "stepping saves the edit onto A03");
+            expectEquals (screen.getEditPad(), 3);
+            screen.pressStepPad (1);
+            expectEquals (screen.getEditPad(), 0, "it skips the empty pads and wraps round");
+            screen.pressStepPad (-1);
+            expectEquals (screen.getEditPad(), 3);
+
+            // A different sound opened over it isn't saved onto the pad.
+            const auto a04 = kit.pads[3].audio;
+            doc.load (hits(), "Something else", "Load");
+            expect (! screen.padEditChanged());
+            screen.pressBackToPads();
+            expect (kit.pads[3].audio == a04, "the pad keeps its own sound");
+            expect (! screen.isEditingPad() && ! screen.isEditMode(), "back on the pads");
+
+            // An empty pad doesn't open; Edit opens the selected pad.
+            screen.openPadInSampler (9);
+            expect (! screen.isEditingPad());
+            screen.pressPad (1);
+            screen.pressEditPad();
+            expect (screen.isEditingPad() && screen.getEditPad() == 1);
+            juce::Image image (juce::Image::ARGB, 1500, 760, true);
+            juce::Graphics g (image);
+            screen.paintEntireComponent (g, false);
+        }
+
         beginTest ("the full editor is on the Sampler screen: Edit shows it, Chop shows the pads");
         {
             RigEngine engine;
