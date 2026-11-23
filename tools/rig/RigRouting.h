@@ -48,6 +48,7 @@ public:
         drumsMute,                                 // a button
         liveKeyC, liveKeyB = liveKeyC + 11,        // buttons: the chord builder's live key, C to B
         liveOctaveDown, liveOctaveUp, liveKeyHome, // buttons: its octave, and back to its own key
+        chordsOnOff,                               // a button: the chord builder's chords on / plain notes
         numControls
     };
     static juce::String controlName (int control);

@@ -65,6 +65,8 @@ public:
     void setTarget (int target);   // RigChords::kFollowKeys or a RigRouting::Dest
     void setTrigger (int trigger);
     void pressHold();
+    void pressChordsOn();          // Chords on / off: chords, or plain single notes
+    void showChordsOnMenu();       // its right-click: put it on a keyboard button (Learn), or forget it
     void pressFill();
     void pressMapKeys();           // Map keys: the key map on, or back to what played the pads before
     void setKey (int key, int scale, int type);
@@ -108,6 +110,21 @@ private:
     juce::String status;
 
     juce::ComboBox target, trigger, strum, key, scale, type, length, mapLayout, mapOffScale, mapVoicing, mapOctave;
+    // Chords on / off (a right-click puts it on a keyboard button).
+    struct OnOffButton : juce::TextButton
+    {
+        std::function<void()> onMenu;
+        using juce::TextButton::clicked;
+        void clicked (const juce::ModifierKeys& m) override
+        {
+            if (m.isPopupMenu() && onMenu != nullptr)
+                onMenu();
+            else
+                juce::TextButton::clicked (m);
+        }
+    };
+    OnOffButton chordsOnButton;
+    bool shownChordsOn = true;
     juce::TextButton holdButton { "Hold" }, fillButton { "Fill pads 1-8" }, setsButton { "Sets" }, closeButton { "Close" },
         lowerButton { "Lower" }, higherButton { "Higher" }, octDown { "Oct -" }, octUp { "Oct +" }, spreadButton { "Spread" },
         closeVoicing { "Tight" }, catchButton { "Catch" }, nameButton { "Name" }, clearButton { "Clear" },

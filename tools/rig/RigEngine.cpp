@@ -613,6 +613,8 @@ void RigEngine::applyControls (const RigRouting::Result& r)
         chords.nudgeLiveOctave (up - down);
     if (r.presses[RigRouting::liveKeyHome] > 0)
         chords.liveKeyHome();
+    if (r.presses[RigRouting::chordsOnOff] % 2 == 1)
+        chords.toggleChords();
     scenes.nextPresses += r.presses[RigRouting::nextScene];
     scenes.backPresses += r.presses[RigRouting::previousScene];
     if (r.presses[RigRouting::inputHear] % 2 == 1)

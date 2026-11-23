@@ -674,6 +674,128 @@ public:
             expect (chords.isLiveKeyHome(), "a learned Back");
         }
 
+        beginTest ("Chords on / off: plain single notes, no stuck notes, a learned button, saved");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            auto& chords = engine.getChords();
+            chords.target = (int) RigRouting::Dest::synth;
+            engine.getRouting().keysTo = (int) RigRouting::Dest::synth;
+            chords.fillFromKey (0, 0, 0);   // C major
+            chords.trigger = (int) RigChords::Trigger::keyMap;
+            chords.mapLayout = (int) RigChords::MapLayout::scaleNotes;
+            chords.rebuildMap();
+            expect (chords.areChordsOn(), "on to start");
+
+            // On: D plays Dm.
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 62, 0.9f));
+            run (engine);
+            expect (synthCount (engine) >= 3, "D plays a chord");
+            // Off while D is down: it plays on until let go, then nothing sticks.
+            chords.toggleChords();
+            run (engine);
+            expect (synthCount (engine) >= 3, "the held chord plays on");
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 62));
+            run (engine);
+            expectEquals (synthCount (engine), 0, "let go: nothing stuck");
+
+            // Off: every key plays just itself, on the chords' instrument.
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 64, 0.9f));
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 61, 0.9f));
+            run (engine);
+            expectEquals (synthCount (engine), 2, "two keys, two notes");
+            expect (synthHas (engine, 64) && synthHas (engine, 61));
+            // A live key change doesn't move a plain note (it's the key you pressed).
+            chords.setLiveKey (2);
+            run (engine);
+            expect (synthHas (engine, 64) && synthHas (engine, 61), "plain notes stay put");
+            chords.liveKeyHome();
+            // Back on while they're down: they let go as plain notes, nothing stuck.
+            chords.toggleChords();
+            run (engine);
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 64));
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 61));
+            run (engine);
+            expectEquals (synthCount (engine), 0, "switched back: nothing stuck");
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 67, 0.9f));
+            run (engine);
+            expect (synthCount (engine) >= 3, "on again: G plays G major");
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 67));
+            run (engine);
+
+            // Low keys and every key play themselves too.
+            chords.setChordsOn (false);
+            chords.trigger = (int) RigChords::Trigger::everyKey;
+            engine.addMidiNow (juce::MidiMessage::noteOn (1, 53, 0.9f));
+            run (engine);
+            expectEquals (synthCount (engine), 1);
+            expect (synthHas (engine, 53));
+            engine.addMidiNow (juce::MidiMessage::noteOff (1, 53));
+            run (engine);
+            expectEquals (synthCount (engine), 0);
+
+            // A pad plays its chord's lowest note; Hold's latched chord stops when it flips.
+            chords.trigger = (int) RigChords::Trigger::screen;
+            chords.press (5);   // Am: A C E
+            run (engine);
+            expectEquals (synthCount (engine), 1, "a pad: one note");
+            expect (synthHas (engine, chords.getPad (5).notes[0]), "its lowest");
+            chords.release (5);
+            run (engine);
+            expectEquals (synthCount (engine), 0);
+            chords.audition (5, 5000);
+            run (engine);
+            expect (synthCount (engine) >= 3, "hearing a pad you build: the whole chord");
+            chords.release (5);
+            run (engine);
+            chords.setChordsOn (true);
+            chords.hold = true;
+            chords.press (5);
+            run (engine);
+            expect (synthCount (engine) >= 3, "latched");
+            chords.toggleChords();
+            run (engine);
+            expectEquals (synthCount (engine), 0, "flipping it lets a latched chord go");
+            chords.hold = false;
+
+            // The progression keeps its chords with chords off.
+            chords.steps[0] = 0;
+            chords.progressionOn = true;
+            engine.getTransport().play();
+            run (engine, 2);
+            expect (synthCount (engine) >= 3, "progression: chords");
+            engine.getTransport().stop();
+            chords.progressionOn = false;
+            run (engine, 2);
+            expectEquals (synthCount (engine), 0);
+
+            // A learned keyboard button flips it (a press and its release are one flip).
+            auto& routing = engine.getRouting();
+            routing.setAssignment (RigRouting::chordsOnOff, 1, 44);
+            expectEquals (RigRouting::controlName (RigRouting::chordsOnOff), juce::String ("Chords on/off"));
+            engine.addMidiNow (juce::MidiMessage::controllerEvent (1, 44, 127));
+            engine.addMidiNow (juce::MidiMessage::controllerEvent (1, 44, 0));
+            run (engine);
+            expect (chords.areChordsOn(), "a learned button turns them back on");
+
+            // Saved with the show, with its button; a set keeps what you're playing.
+            chords.setChordsOn (false);
+            const auto show = engine.saveShow();
+            RigEngine other;
+            other.loadShow (show);
+            expect (! other.getChords().areChordsOn(), "saved off");
+            expectEquals (other.getRouting().getAssignment (RigRouting::chordsOnOff).second, 44);
+            const auto setFile = juce::File::createTempFile (".chords");
+            chords.setChordsOn (true);
+            expect (chords.saveSet (setFile));
+            chords.setChordsOn (false);
+            expect (chords.loadSet (setFile));
+            expect (! chords.areChordsOn(), "a set leaves it as it is");
+            setFile.deleteFile();
+            chords.reset();
+            expect (chords.areChordsOn(), "a new song: on");
+        }
+
         beginTest ("Live key on the Chords drawer: the keys, octaves, Back and Learn");
         {
             RigEngine engine;

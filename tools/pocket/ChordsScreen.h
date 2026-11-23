@@ -40,6 +40,7 @@ public:
     void setDemo (int soundingPad, int progressionStep) { demoPad = soundingPad; demoStep = progressionStep; repaint(); }
     void pressPad (int pad, bool down);
     void pressLiveKey (int pitchClass);   // as a LIVE KEY key does (also for the self-checks)
+    void pressChordsOn();                 // the CHORDS ON / OFF chip over the pads (also for the self-checks)
 
     void paint (juce::Graphics&) override;
     void resized() override { layout(); }
@@ -52,12 +53,14 @@ private:
     enum Id
     {
         none = 0, keyId = 1, soundId, colourBase = 10, styleBase = 20, holdId = 19, bassId = 25, progOnId = 30, progLenId, progClearId,
-        boxBase = 40, playsBase = 50, padBase = 60, liveId = 80, liveKeyBase = 81, liveOctDownId = 95, liveOctUpId, liveHomeId, liveBarId
+        boxBase = 40, playsBase = 50, padBase = 60, liveId = 80, liveKeyBase = 81, liveOctDownId = 95, liveOctUpId, liveHomeId, liveBarId,
+        chordsOnId = 99
     };
     struct Hit { juce::Rectangle<float> r; int id; };
 
     void timerCallback() override;
     void layout();
+    void placeChordsChip (float y);   // CHORDS ON / OFF and the status beside it, just over the pads
     int idAt (juce::Point<float>) const;
     void press (int id);
     void changed();

@@ -43,6 +43,7 @@ juce::String RigRouting::controlName (int c)
             if (c == liveOctaveDown) return "Live key octave down";
             if (c == liveOctaveUp)   return "Live key octave up";
             if (c == liveKeyHome)    return "Live key back home";
+            if (c == chordsOnOff)    return "Chords on/off";
             return {};
     }
 }

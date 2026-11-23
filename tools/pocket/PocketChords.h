@@ -79,6 +79,10 @@ public:
     // next bar (2) while the clock runs (stopped: at once). A chord sounding then moves with it.
     void setLiveShift (int semitones, int when) { liveWhen = juce::jlimit (0, 2, when); liveTarget = semitones; }
     int playingShift() const { return liveApplied.load(); }   // what plays now (differs while a change waits)
+    // CHORDS ON / OFF: off, a pad plays its chord's lowest note alone (the progression keeps its chords).
+    // `full`: the whole chord anyway (HEAR, while you build one).
+    void setChordsOn (bool on) { chordsOff = ! on; }
+    void setFullChord (bool full) { fullChord = full; }
     bool clockRunning() const;   // the song playing (a LIVE KEY change waits for its bar only then)
     void setSynthSettings (const crate::synthtool::Settings& s) { voice.setSettings (s); }
     void setPadSound (crate::SharedAudio a, double tune) { padPlayer.setSound (std::move (a), tune); }
@@ -101,9 +105,9 @@ public:
     void renderAt (float* left, float* right, int numSamples, bool running, double beat, double bpm);
 
 private:
-    void sendToVocoder (int pad);
+    void sendToVocoder (int pad, bool single);
     void logChange (double beat, int pad);
-    int notesOf (int pad, int* out) const;
+    int notesOf (int pad, int* out, bool single = false) const;   // single: the lowest note alone (chords off)
 
     BeatsEngine& beats;
     SynthCore voice;
@@ -120,6 +124,7 @@ private:
     std::atomic<int> current { -1 }, progStep { -1 }, sends { 0 };
     std::atomic<bool> currentFromProg { false };
     std::atomic<int> liveTarget { 0 }, liveWhen { 2 }, liveApplied { 0 };
+    std::atomic<bool> chordsOff { false }, fullChord { false };
     std::atomic<float> peak { 0.0f };
     std::array<std::atomic<int>, 6> sentNotes;
     std::array<std::atomic<double>, 64> logBeat;
@@ -132,6 +137,7 @@ private:
     int playing = -1, playingVersion = -1, playingStyle = -1;
     int shiftNow = 0, playingShiftNow = 0;   // the live key's shift, and the one the sounding chord was played with
     double liveWaitUntil = -1;                // the beat a waiting live key change lands on, -1 none
+    bool playingSingle = false;               // the sounding pad plays one note (chords off)
     bool playingProg = false, playingAudible = false, wasRunning = false, wasSynth = true, wasPad = false;
     std::array<int, kMaxChordNotes> notes {};
     int numNotes = 0;
@@ -157,6 +163,7 @@ public:
     int colour = 1;            // ChordColour (7TH to start, as the design)
     int style = styleChord;
     bool hold = true;          // pads latch: tap again (or another) to change
+    bool chordsOn = true;      // CHORDS ON / OFF: off, each pad plays its chord's lowest note (the Mac's Chords on, the same way)
     bool bass = false;         // + BASS: the root an octave under
     std::array<int, kProgressionMax> progression;
     int progLength = 4;        // 4 or 8 boxes
@@ -175,6 +182,8 @@ public:
     void padDown (int pad, bool setBox = true);
     void padUp (int pad);
     void releaseAll();         // no pad held or latched
+    // CHORDS ON / OFF. Flipping it lets go of a latched chord; a pad held down changes under your finger.
+    void setChordsOn (bool on);
     int heldPad() const { return live; }
     int soundingPad() const { return eng.soundingPad(); }
     juce::Array<int> padNotes (int pad) const;
