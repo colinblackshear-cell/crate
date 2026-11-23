@@ -144,6 +144,7 @@ public:
         {
             auto& m = owner.engine.getStrip (stripFor (index)).mute;
             m = ! m.load();
+            owner.engine.getDirty().authoredField (RigDirty::stripMute, stripFor (index));
             owner.songHint();
             tick();
         };
@@ -403,7 +404,10 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
         if (track == bass || track == machine)
             pressPlay();
         else if (track == vocoder)
+        {
             engine.vocoderOn = extraButton.getToggleState();
+            engine.getDirty().authoredField (RigDirty::vocoderOn, 0);
+        }
         else if (track == lineIn)
             setLineIn (extraButton.getToggleState());
         else if (track == drone)
@@ -822,6 +826,7 @@ void GrooveView::pressTrackButton (int t)
             break;
         case vocoder:
             engine.vocoderOn = ! going;
+            engine.getDirty().authoredField (RigDirty::vocoderOn, 0);
             break;
         case sampler:
         {
@@ -874,6 +879,7 @@ bool GrooveView::lineInLive() const
 void GrooveView::setLineIn (bool on)
 {
     engine.inputOn = on;
+    engine.getDirty().authoredField (RigDirty::inputOn, 0);
     if (on)
     {
         engine.micOn = true;   // Line in hears the interface only while the input is on
@@ -976,11 +982,20 @@ void GrooveView::selectTrack (int t)
         return;
     track = t;
     // The keys play the track you're on (the loops have no notes, so the keys stay put).
+    // (Following the screen: playback-like, so the dirty model keeps what you set.)
+    auto& routing = engine.getRouting();
     if (const int dest = destFor (t); dest >= 0)
-        engine.getRouting().keysTo = dest;
+    {
+        engine.getDirty().runtimeField (RigDirty::keysTo, 0, (float) routing.keysTo.load(), (float) dest);
+        routing.keysTo = dest;
+    }
     // The keyboard's drum pads play the drums you're on: the MPC's pads or the drum machine.
     if (t == drums || t == machine)
-        engine.getRouting().padsTo = (int) (t == machine ? RigRouting::Dest::drums : RigRouting::Dest::mpc);
+    {
+        const int to = (int) (t == machine ? RigRouting::Dest::drums : RigRouting::Dest::mpc);
+        engine.getDirty().runtimeField (RigDirty::padsTo, 0, (float) routing.padsTo.load(), (float) to);
+        routing.padsTo = to;
+    }
     heldCell = dragStep = -1;
     buildTrack();
     setFollowKnobs();
@@ -999,7 +1014,10 @@ void GrooveView::pressSolo (int t)
     {
         // Bring everything back as it was.
         for (int st = 0; st < RigEngine::numStrips; ++st)
+        {
             engine.getStrip (st).mute = mutesBeforeSolo[(size_t) st];
+            engine.getDirty().authoredField (RigDirty::stripMute, st);
+        }
         soloTrack = -1;
     }
     else
@@ -1008,7 +1026,10 @@ void GrooveView::pressSolo (int t)
             for (int st = 0; st < RigEngine::numStrips; ++st)
                 mutesBeforeSolo[(size_t) st] = engine.getStrip (st).mute.load();
         for (int other = 0; other < numTracks; ++other)
+        {
             engine.getStrip (stripFor (other)).mute = other != t;
+            engine.getDirty().authoredField (RigDirty::stripMute, stripFor (other));
+        }
         soloTrack = t;
     }
     for (auto* c : cards)
@@ -2264,6 +2285,7 @@ void GrooveView::pressPattern (int i)
         {
             auto& layer = engine.getLooper().getLayer (i);
             layer.mute = ! layer.mute.load();
+            engine.getDirty().authoredField (RigDirty::loopMute, i);
             break;
         }
         case lineIn:

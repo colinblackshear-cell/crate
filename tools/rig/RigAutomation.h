@@ -7,6 +7,8 @@
 #include <functional>
 #include <vector>
 
+class RigDirty;
+
 // Automation: knob moves recorded over time, played back on the beat.
 //
 // Press Rec moves and, from the next bar (now, starting the clock, if it's stopped), every
@@ -56,6 +58,8 @@ public:
     std::function<int (int tool)> numParameters;
     std::function<juce::String (int tool)> toolName;
     int numTools = 0;
+    // The engine's dirty model: playback's writes go through its runtime hooks (null: none).
+    RigDirty* dirty = nullptr;
 
     static constexpr int kMaxLanes = 64;
     static constexpr int kMaxRecording = 32;   // settings recorded at once

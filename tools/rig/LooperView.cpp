@@ -183,7 +183,7 @@ public:
                     "Click the name to pick what it records and how long.");
 
         mute.setClickingTogglesState (true);
-        mute.onClick = [this, &layer] { layer.mute = mute.getToggleState(); };
+        mute.onClick = [this, &layer] { layer.mute = mute.getToggleState(); owner.engine.getDirty().authoredField (RigDirty::loopMute, index); };
         mute.setTooltip ("Mute this loop (it keeps its place in time).");
         solo.onClick = [this] { owner.soloLayer (index); };
         solo.setTooltip ("Hear only this loop. Press again to bring the others back.");
@@ -961,7 +961,10 @@ void LooperView::soloLayer (int layer)
     if (soloed >= 0)
     {
         for (int i = 0; i < RigLooper::kLayers; ++i)
+        {
             looper.getLayer (i).mute = mutesBeforeSolo[(size_t) i];
+            engine.getDirty().authoredField (RigDirty::loopMute, i);
+        }
         const bool same = soloed == layer;
         soloed = -1;
         if (same)
@@ -973,6 +976,7 @@ void LooperView::soloLayer (int layer)
     {
         mutesBeforeSolo[(size_t) i] = looper.getLayer (i).mute.load();
         looper.getLayer (i).mute = i != layer;
+        engine.getDirty().authoredField (RigDirty::loopMute, i);
     }
     soloed = layer;
 }

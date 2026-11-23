@@ -985,6 +985,7 @@ void VocoderScreen::pressToLooper()
 void VocoderScreen::pressNotesFrom()
 {
     engine.getRouting().keysTo = (int) RigRouting::Dest::vocoder;
+    engine.getDirty().authoredField (RigDirty::keysTo, 0);
     updateButtons();
 }
 

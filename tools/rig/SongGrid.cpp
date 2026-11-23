@@ -260,7 +260,7 @@ SongGrid::SongGrid (RigEngine& e) : engine (e)
     songMode.setClickingTogglesState (true);
     songMode.setColour (juce::TextButton::buttonOnColourId, RigColours::song);
     songMode.setTooltip ("Parts with a length play that many bars, then the next part starts by itself.");
-    songMode.onClick = [this] { engine.getScenes().songMode = songMode.getToggleState(); };
+    songMode.onClick = [this] { engine.getScenes().songMode = songMode.getToggleState(); engine.getDirty().authoredField (RigDirty::songMode, 0); };
     playButton.setTooltip ("Plays the song from part A, in song mode.");
     playButton.onClick = [this] { playSong(); };
     exportButton.setTooltip ("Saves every loop as WAV files for Logic, all starting on bar 1: each loop on its own, and (if you've "
@@ -336,6 +336,8 @@ void SongGrid::playSong()
     }
     scenes.songMode = true;
     engine.getTimeline().on = false;   // the parts run it, not the timeline
+    engine.getDirty().authoredField (RigDirty::songMode, 0);
+    engine.getDirty().authoredField (RigDirty::timelineOn, 0);
     songMode.setToggleState (true, juce::dontSendNotification);
     scenes.launch (0);
     if (! engine.getTransport().isPlaying())

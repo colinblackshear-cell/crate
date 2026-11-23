@@ -963,6 +963,7 @@ int SongView::addSectionFromPlaying()
 void SongView::setSongMode (bool song)
 {
     timeline().on = song;
+    engine.getDirty().authoredField (RigDirty::timelineOn, 0);
     if (! song)
         timeline().cycle = false;
     say (song ? "Song: Play (and space) plays this song from the green marker." : "Jam: Play runs whatever you've switched on. The song waits here.");

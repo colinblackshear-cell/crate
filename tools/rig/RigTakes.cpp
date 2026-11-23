@@ -58,6 +58,7 @@ bool RigTakes::start (int layer, int source, double startBar, double bars, bool 
     set->source = source;
     set->startBar = startBar;
     set->bars = bars;
+    changed();
 
     startBeat = startBar * bpb;
     endBeat = (startBar + bars) * bpb;
@@ -277,6 +278,7 @@ int RigTakes::collect()
             }
             ++made;
             ++takesMade;
+            changed();
         }
         events[(size_t) pick].clear();
         status[(size_t) pick].store (0, std::memory_order_release);
@@ -326,6 +328,7 @@ bool RigTakes::deleteTake (int layer, int take)
     set->takes.erase (set->takes.begin() + take);
     if (set->playing > take)
         --set->playing;
+    changed();
     return true;
 }
 
@@ -338,6 +341,7 @@ void RigTakes::keepOnlyPlaying (int layer)
     set->takes.clear();
     set->takes.push_back (std::move (keep));
     set->playing = 0;
+    changed();
 }
 
 void RigTakes::forget (int layer)
@@ -345,6 +349,7 @@ void RigTakes::forget (int layer)
     if (layer == activeLayer.load())
         return;   // (it's recording)
     sets.erase (std::remove_if (sets.begin(), sets.end(), [layer] (const Set& s) { return s.layer == layer; }), sets.end());
+    changed();
 }
 
 void RigTakes::clear()
@@ -357,6 +362,7 @@ void RigTakes::clear()
             status[(size_t) i] = 0;
     sets.clear();
     activeLayer = -1;
+    changed();
 }
 
 void RigTakes::restore (Set set)
@@ -369,4 +375,5 @@ void RigTakes::restore (Set set)
     set.fresh = false;
     forget (set.layer);
     sets.push_back (std::move (set));
+    changed();
 }

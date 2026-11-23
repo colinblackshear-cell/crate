@@ -61,16 +61,17 @@ void RigLooper::prepare (double rate, int maxBlock)
     undoLayer = -1;
 }
 
-void RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double beats)
+int RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double beats)
 {
     auto& layer = layers[(size_t) index];
     if (audio.getNumSamples() == 0 || beats <= 0)
-        return;
+        return -1;
     if (audio.getNumChannels() == 1)
     {
         audio.setSize (2, audio.getNumSamples(), true);
         audio.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
     }
+    int version = 0;
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
         abortSnapshot (layer);
@@ -83,12 +84,14 @@ void RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double
         layer.state = (int) State::playing;
         if (undoLayer == index)
             undoLayer = -1;
+        // (Inside the lock, so a version read under it names exactly this sound.)
+        version = ++layer.version;
     }
-    ++layer.version;
     // The old buffer is freed here, outside the lock.
+    return version;
 }
 
-void RigLooper::queueLayerAudio (int index, juce::AudioBuffer<float> audio, double beats, double beat, float level, bool mute)
+int RigLooper::queueLayerAudio (int index, juce::AudioBuffer<float> audio, double beats, double beat, float level, bool mute)
 {
     auto& layer = layers[(size_t) index];
     if (audio.getNumChannels() == 1)
@@ -101,6 +104,7 @@ void RigLooper::queueLayerAudio (int index, juce::AudioBuffer<float> audio, doub
         audio = {};
         beats = 0;
     }
+    int serial = 0;
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
         std::swap (layer.swapAudio, audio);
@@ -108,11 +112,14 @@ void RigLooper::queueLayerAudio (int index, juce::AudioBuffer<float> audio, doub
         layer.swapBeat = beat;
         layer.swapLevel = juce::jlimit (0.0f, 1.0f, level);
         layer.swapMute = mute;
+        layer.swapSerial = ++swapSerials;
+        serial = layer.swapSerial;
         layer.swapPending = true;
         if (beat < 0)
             applySwap (layer, index);
     }
     // A swap not yet done (or the sound it replaced) is freed here, outside the lock.
+    return serial;
 }
 
 void RigLooper::cancelSwap (int index)
@@ -163,7 +170,9 @@ void RigLooper::applySwap (Layer& layer, int index)
     layer.swapPending = false;
     if (undoLayer == index)
         undoLayer = -1;
-    ++layer.version;
+    const int version = ++layer.version;
+    // Which queued swap this was, and the version it left: the layer now holds exactly that sound.
+    layer.swapApplied.store (((juce::int64) layer.swapSerial << 32) | (juce::uint32) version, std::memory_order_release);
 }
 
 bool RigLooper::replaceLayerAudio (int index, juce::AudioBuffer<float> audio)
@@ -182,8 +191,8 @@ bool RigLooper::replaceLayerAudio (int index, juce::AudioBuffer<float> audio)
         std::swap (layer.audio, audio);
         if (undoLayer == index)
             undoLayer = -1;
+        ++layer.version;
     }
-    ++layer.version;
     return true;   // the old buffer is freed here, outside the lock
 }
 
@@ -222,6 +231,7 @@ void RigLooper::startSnapshot (Layer& layer)
     {
         s.active = true;
         s.next = s.credit = 0;
+        s.version = layer.version.load (std::memory_order_relaxed);   // the sound as it is now
         s.state.store (snapActive, std::memory_order_relaxed);
     }
 }
@@ -327,7 +337,7 @@ RigLooper::Waited RigLooper::waitForSnapshot (Layer& layer, int index) const
     }
 }
 
-juce::AudioBuffer<float> RigLooper::copyUnderLock (Layer& layer, int index) const
+juce::AudioBuffer<float> RigLooper::copyUnderLock (Layer& layer, int index, int* versionOfCopy) const
 {
     const juce::SpinLock::ScopedLockType sl (layer.lock);
     statUnderLock.fetch_add (1, std::memory_order_relaxed);
@@ -336,6 +346,8 @@ juce::AudioBuffer<float> RigLooper::copyUnderLock (Layer& layer, int index) cons
     const auto state = (State) layer.state.load();
     if (layer.length <= 0 || (state != State::playing && state != State::overdubbing))
         return {};
+    if (versionOfCopy != nullptr)
+        *versionOfCopy = layer.version.load();
     juce::AudioBuffer<float> copy (2, layer.length);
     for (int ch = 0; ch < 2; ++ch)
         copy.copyFrom (ch, 0, layer.audio, juce::jmin (ch, layer.audio.getNumChannels() - 1), 0, layer.length);
@@ -344,12 +356,19 @@ juce::AudioBuffer<float> RigLooper::copyUnderLock (Layer& layer, int index) cons
 
 juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index) const
 {
+    return copyLayerAudio (index, nullptr);
+}
+
+juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index, int* versionOfCopy) const
+{
+    if (versionOfCopy != nullptr)
+        *versionOfCopy = -1;
     auto& layer = const_cast<Layer&> (layers[(size_t) index]);
     if (const auto st = (State) layer.state.load(); st != State::playing && st != State::overdubbing)
         return {};
     const juce::ScopedLock cl (copyMutex);
     if (copyUnderLockForTests.load() || ! audioRunningElsewhere())
-        return copyUnderLock (layer, index);
+        return copyUnderLock (layer, index, versionOfCopy);
 
     auto& s = layer.snap;
     for (int round = 0; round < kCopyRounds; ++round)
@@ -380,21 +399,25 @@ juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index) const
                 statByAudio.fetch_add (1, std::memory_order_relaxed);
                 statBeforeOverdub.fetch_add ((int) std::count (copied.begin(), copied.end(), (juce::uint8) 2),
                                              std::memory_order_relaxed);
+                if (versionOfCopy != nullptr)
+                    *versionOfCopy = s.version;
                 return out;
             case Waited::finishedUnderLock:
                 statFinishedUnderLock.fetch_add (1, std::memory_order_relaxed);
+                if (versionOfCopy != nullptr)
+                    *versionOfCopy = s.version;
                 return out;
             case Waited::nothing:
                 return {};
             case Waited::audioStopped:
-                return copyUnderLock (layer, index);
+                return copyUnderLock (layer, index, versionOfCopy);
             case Waited::aborted:
                 statRetries.fetch_add (1, std::memory_order_relaxed);
                 break;
         }
     }
     // Replaced every time: it can't be pinned down without holding it still.
-    return copyUnderLock (layer, index);
+    return copyUnderLock (layer, index, versionOfCopy);
 }
 
 RigLooper::CopyStats RigLooper::getCopyStats() const
@@ -444,8 +467,8 @@ void RigLooper::reset (int index)
         layer.bendFade = 0;
         if (undoLayer == index)
             undoLayer = -1;
+        ++layer.version;
     }
-    ++layer.version;
 }
 
 void RigLooper::makeRoom (int index)
@@ -888,7 +911,9 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 audioR = layer.audio.getWritePointer (1);
                 capacity = layer.audio.getNumSamples();
                 target = layer.mute.load() ? 0.0f : layer.level.load();
-                changed = true;
+                // (applySwap moved the version itself; moving it again would hide that this
+                // version is exactly the swapped-in sound. Nothing after a swap writes this block.)
+                changed = false;
             }
             auto state = (State) layer.state.load (std::memory_order_relaxed);
 
