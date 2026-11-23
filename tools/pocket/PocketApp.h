@@ -27,6 +27,7 @@
 #include "ChordsScreen.h"
 #include "DroneScreen.h"
 #include "ChordEditSheet.h"
+#include "DrumKitSheet.h"
 #include "PocketKey.h"
 #include "PocketIntro.h"
 #include "PocketLesson.h"
@@ -125,6 +126,7 @@ private:
     void holdMenu (const pocket::HoldSpec&, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight) override;
     void toastAction (const juce::String& text, const juce::String& button, std::function<void()> then) override;
     void openSamplePage (int pad) override;
+    void editPadSlice (int pad) override;
     void togglePlay() override;
     void padSoundEdited (const juce::String& soundId) override;
     void padSoundSwapped (const juce::String& oldId, const juce::String& newId) override;
@@ -198,6 +200,15 @@ private:
     // their parts move), and the 4 x 4 pad picker.
     void repadSound (const juce::String& oldId, const juce::String& newId, int shift);
     void setupSampler();
+    // The SAMPLER's A TOOL: every tool's REC lands on a loop layer, so a layer (or the loops mixed) comes onto the page.
+    void showSampleToolMenu();
+    void sampleLayer (int layer);   // -1: the loops mixed
+    // Sets (PADS > Sounds > SETS): the bank on screen saved as a set (core/SoundSet.h) in Documents/Sets, the same
+    // folder layout as the Mac's ~/Music/Crate/Sets; a set loaded onto the bank (a whole-kit set onto all 64 pads), UNDO.
+    juce::File setsFolder() const { return lib.getRoot().getChildFile ("Sets"); }
+    void showSetsMenu (juce::Component* anchor = nullptr);   // the menu over `anchor` (the Sounds sheet when null)
+    juce::File saveBankAsSet (const juce::String& name, bool wholeKit);
+    bool loadSetFolder (const juce::File&);
     // A bottom sheet over the dim, sliding up (shown) or down: the pad picker, the chord editor.
     void showDragSheet (pocket::DragSheet&, juce::Rectangle<int> bounds, bool& openFlag, bool shown);
     void openPadPicker();
@@ -332,6 +343,11 @@ private:
     SamplerScreen sampler;
     SamplerPadPicker padPicker;
     ChordEditSheet chordEdit { chordsTool };   // CHORDS > hold a pad > EDIT CHORD
+    DrumKitSheet drumKit { lib };   // DRUMS > KIT
+    void openDrumKit() override;
+    void closeDrumKit();
+    void refreshDrumKit();
+    juce::Rectangle<int> drumKitBounds() const;
     void openChordEdit (int pad);
     void closeChordEdit();
     juce::Rectangle<int> chordEditBounds() const;
@@ -406,7 +422,7 @@ private:
     Tool tool = Tool::pads;
     int morePageShown = -1;
     bool sheetOpen = false, padSheetOpen = false, sendOpen = false, tempoOpen = false, bankOpen = false, recSetupOpen = false, phonesOpen = false,
-         padPickOpen = false, chordEditOpen = false;
+         padPickOpen = false, chordEditOpen = false, drumKitOpen = false;
     juce::String shownHeader;
     bool shownBusy = false, shownPlaying = false;
     void headerTickNow();

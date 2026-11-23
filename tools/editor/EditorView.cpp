@@ -87,6 +87,8 @@ EditorView::EditorView (EditorProcessor& p)
     openButton.onClick = [this] { chooseFile(); };
     saveButton.setTooltip ("Save this sound to the shared library, where every Kaleidobox tool can use it (Cmd+S)");
     saveButton.onClick = [this] { saveToLibrary(); };
+    clearButton.setTooltip ("Empties the editor for a new sound. Undo (Cmd+Z) brings this one back; the library and the pads keep their copies.");
+    clearButton.onClick = [this] { clearSound(); };
     exportButton.setTooltip ("Save a copy anywhere as WAV or AIFF");
     exportButton.onClick = [this] { exportFile(); };
     nameLabel.setColour (juce::Label::textColourId, crate::Theme::textDim);
@@ -302,7 +304,7 @@ EditorView::EditorView (EditorProcessor& p)
              &chopInfo, &saveSlicesButton,
              &keysHeading, &rootLabel, &keyModeLabel, &attackLabel, &releaseLabel, &rootBox, &keyModeBox,
              &attackSlider, &releaseSlider, &computerKeys, &keyboard,
-             &recordButton, &meter, &recordTime, &openButton, &saveButton, &exportButton, &nameLabel, &nameEditor,
+             &recordButton, &meter, &recordTime, &openButton, &clearButton, &saveButton, &exportButton, &nameLabel, &nameEditor,
              &libraryList, &wave, &playButton, &loopButton, &zoomOutButton, &zoomInButton, &fitButton, &zoomSelButton,
              &infoLabel, &editHeading, &undoButton, &redoButton, &cutButton, &copyButton, &pasteButton,
              &deleteButton, &cropButton, &silenceButton, &trimSilenceButton, &snapToggle, &fadeInButton,
@@ -373,6 +375,8 @@ void EditorView::resized()
     saveButton.setBounds (top.removeFromRight (128));
     top.removeFromRight (6);
     openButton.setBounds (top.removeFromRight (82));
+    top.removeFromRight (6);
+    clearButton.setBounds (top.removeFromRight (64));
     top.removeFromRight (16);
     nameLabel.setBounds (top.removeFromLeft (46));
     nameEditor.setBounds (top.withSizeKeepingCentre (top.getWidth(), 28));
@@ -500,6 +504,18 @@ void EditorView::resized()
 }
 
 //==============================================================================
+void EditorView::clearSound()
+{
+    if (processor.isRecording() || ! document.hasAudio())
+        return;
+    processor.stop();
+    const auto name = document.getName().isNotEmpty() ? document.getName() : juce::String ("the sound");
+    processor.setChops ({});
+    chopsFromHits = false;
+    document.load (nullptr, {}, kClearAction);
+    say ("Cleared " + name + ". Undo brings it back; the library and the pads keep their copies.");
+}
+
 void EditorView::say (const juce::String& text, bool problem)
 {
     message.setText (text, juce::dontSendNotification);
@@ -551,6 +567,7 @@ void EditorView::refresh()
         b->setEnabled (selected && ! recording);
     pasteButton.setEnabled (processor.clipboard.getNumSamples() > 0 && ! recording);
     openButton.setEnabled (! recording);
+    clearButton.setEnabled (has && ! recording);
     effects.setApplyText (selected ? "Apply to selection" : "Apply to whole sound");
 
     playButton.setButtonText (processor.isPlaying() ? "Stop" : "Play");

@@ -8,6 +8,7 @@
 #include "PadGrid.h"
 #include "PadSoundEditor.h"
 #include "LivePanel.h"
+#include "NoteRepeatControls.h"
 #include "SequencerView.h"
 #include "core/ui/LibraryList.h"
 #include "core/ui/Theme.h"
@@ -53,7 +54,10 @@ public:
     // The pad tools above the pads, as their buttons do (public for tests).
     // 16 Levels: spread the selected pad's sound over the 16 pads (levels::off to stop).
     void setSixteenLevels (int type);
+    // NOTE REPEAT from code: latched on or off, at a rate (a seq::Grid; -1 leaves it as it is).
     void setNoteRepeat (bool on, int grid = -1);
+    // Right-click on a NOTE REPEAT button (the Rig offers to learn it onto a keyboard button).
+    std::function<void (juce::Point<int> screenPosition)> onNoteRepeatMenu;
     int getSelectedPad() const { return grid.getSelectedPad(); }
     void selectPad (int pad);
 
@@ -123,9 +127,11 @@ private:
     juce::TextButton padsTab { "Pads" }, sequenceTab { "Steps" };
 
     // Pad tools, MPC style: 16 Levels, Note repeat and its rate, Full level.
-    juce::Label levelsLabel { {}, "16 Levels" }, repeatLabel { {}, "at" };
-    juce::ComboBox levelsChoice, repeatRate;
-    juce::TextButton noteRepeatButton { "Note repeat" }, fullLevelButton { "Full level" };
+    juce::Label levelsLabel { {}, "16 Levels" };
+    juce::ComboBox levelsChoice;
+    noterepeatui::HoldButton noteRepeatButton { processor.getSequencer() };   // hold, or double-tap to latch
+    noterepeatui::RateButtons repeatRates { processor.getSequencer() };
+    juce::TextButton fullLevelButton { "Full level" };
     BankBrowser browser { processor };
     // Computer keys play the 16 pads on screen, laid out like the MPC's pads (bottom row first).
     static constexpr const char* kPadKeys = "zxcvasdfqwer1234";

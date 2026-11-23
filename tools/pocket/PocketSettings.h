@@ -19,6 +19,7 @@ public:
             countInBars = juce::jlimit (0, 2, p.contains ("countInBars") ? (int) p["countInBars"] : ((bool) p.getWithDefault ("countIn", true) ? 1 : 0));
             recLength = juce::jlimit (0, kLengthChoices - 1, p.contains ("recLength") ? (int) p["recLength"] : (int) p.getWithDefault ("singLength", 2));
             click = (bool) p.getWithDefault ("click", false);
+            padsRecTo = juce::jlimit (0, 1, (int) p.getWithDefault ("padsRecTo", 0));
             singMode = juce::jlimit (0, 2, (int) p.getWithDefault ("singMode", 1));
             singHold = (bool) p.getWithDefault ("singHold", true);
             singPadSound = (bool) p.getWithDefault ("singPadSound", false);
@@ -32,6 +33,9 @@ public:
     int countInBars = 1;
     int recLength = 2;
     bool click = false;    // a click on every beat while the song plays (the thumb bar's CLICK)
+    // Where REC on PADS records: 0 = the pad pattern, then locked onto the next loop layer (as it always did);
+    // 1 = only into the pad pattern (it loops and stays editable; REC again stops).
+    int padsRecTo = 0;
     // The Vocoder tool: 0 = my voice, 1 = vocoder, 2 = both; chord pads latch; chord pads also play the
     // picked pad's sound
     int singMode = 1;
@@ -55,6 +59,7 @@ public:
         o->setProperty ("countInBars", countInBars);
         o->setProperty ("recLength", recLength);
         o->setProperty ("click", click);
+        o->setProperty ("padsRecTo", padsRecTo);
         o->setProperty ("singMode", singMode);
         o->setProperty ("singHold", singHold);
         o->setProperty ("singPadSound", singPadSound);

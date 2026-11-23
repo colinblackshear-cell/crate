@@ -102,8 +102,22 @@ public:
             setup->lands[2]->onClick();
             expect (view.getRecLands() == RigView::RecLands::sample);
             expect (setup->lands[2]->on && ! setup->lands[0]->on);
+            setup->lands[4]->onClick();
+            expect (view.getRecLands() == RigView::RecLands::pattern, "the fifth row: the pads into the MPC pattern");
             view.showRecMenu();   // the arrow again closes it
             expect (view.getRecSetup() == nullptr);
+
+            // Rec with the pads into the MPC pattern: the MPC records, Rec again stops it
+            view.pressRec();
+            juce::AudioBuffer<float> out (2, 480);
+            for (int b = 0; b < 4; ++b)
+                engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, 480);
+            expect (engine.getMpc().getSequencer().isRecording(), "Rec records the pads into the MPC pattern");
+            view.pressRec();
+            for (int b = 0; b < 4; ++b)
+                engine.process (nullptr, 0, out.getArrayOfWritePointers(), 2, 480);
+            expect (! engine.getMpc().getSequencer().isRecording(), "Rec again stops it");
+            expect (engine.getLooper().getState (0) == RigLooper::State::empty, "nothing went on a loop layer");
         }
 
         beginTest ("Make a beat: kick, snare, hats glow on the drum machine, Rec lands it on layer 1");

@@ -54,6 +54,46 @@ public:
             RigEngine::startWithFactoryKit = false;
         }
 
+        beginTest ("your own sound over a factory pad: put the factory sound back, one pad or all 16");
+        {
+            RigEngine engine;
+            auto& project = engine.getMpc().getProject();
+            engine.loadFactoryKit (0, 0);
+            const auto kick = project.currentBank().pads[0].audio;
+            expectEquals (engine.factoryKitOf (0), 0);
+            expectEquals (engine.factoryPadName (0), juce::String ("Street kick"));
+            expect (! engine.padDiffersFromFactory (0), "still the factory kick");
+
+            // Your own sound on A01, and A02 removed.
+            juce::AudioBuffer<float> mine (1, 1000);
+            mine.clear();
+            mine.setSample (0, 10, 0.5f);
+            auto& a01 = project.currentBank().pads[0];
+            a01.audio = crate::share (std::move (mine));
+            a01.name = "My sound";
+            project.currentBank().pads[1] = {};
+            expect (engine.padDiffersFromFactory (0) && engine.padDiffersFromFactory (1));
+            expect (engine.factoryPadName (16).isEmpty(), "B01 isn't part of the kit");
+
+            const auto said = engine.restoreFactoryPad (0);
+            expect (said.contains ("Street kick"), said);
+            expect (project.currentBank().pads[0].audio == kick, "the very same factory kick");
+            expect (engine.padDiffersFromFactory (1), "A02 is still empty");
+
+            const auto reset = engine.resetFactoryKit();
+            expect (reset.contains ("16"), reset);
+            expectEquals (project.currentBank().usedPads(), 16);
+            expectEquals ((int) project.getBanks().size(), 1, "on the same kit, not a new one");
+            for (int p = 0; p < 16; ++p)
+                expect (! engine.padDiffersFromFactory (p));
+
+            // A kit that isn't a factory kit has nothing to put back.
+            project.currentBank().name = "My kit";
+            expectEquals (engine.factoryKitOf (0), -1);
+            expect (! engine.padDiffersFromFactory (0));
+            expect (engine.resetFactoryKit().contains ("isn't a factory kit"));
+        }
+
         beginTest ("the tests' Rigs start with empty pads");
         {
             RigEngine engine;
