@@ -601,7 +601,7 @@ void ChordsScreen::paint (juce::Graphics& g)
             if (k == home)
             {
                 g.setColour (kChords);
-                g.fillRoundedRectangle (r.withHeight (4.0f).reduced (4.0f, 0.0f), 2.0f);
+                g.fillRoundedRectangle (r.removeFromBottom (5.0f).reduced (6.0f, 0.0f).translated (0.0f, -2.0f), 2.0f);
             }
             g.setColour (lit || ! black ? col::ink : kPadText);
             g.setFont (condensedBold (black ? 15.0f : 18.0f));
