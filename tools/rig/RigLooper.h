@@ -17,6 +17,11 @@
 // over it; Undo takes back the last overdub. Each layer records from one source: your audio
 // input, one of the tools, or the whole Rig mix (never the loops themselves).
 //
+// All the loops share one timeline: when the clock starts, every loop starts from its top
+// (bar 1) together, and a loop recorded while others play is turned round as it closes so its
+// bar 1 lines up with theirs (it sounds exactly where it was played). So their playheads always
+// move together, and Stop then Play never drops a loop in partway.
+//
 // Loops play by the beat, so they follow the tempo when it changes. A loop or a whole song
 // from a file can be dropped on a layer, either stretched to the Rig's tempo or setting it.
 //
@@ -83,6 +88,13 @@ public:
         friend class RigLooper;
         std::atomic<int> presses { 0 }, clears { 0 }, undos { 0 };
         std::atomic<double> restartBeat { -1.0 };
+        // Every loop counts its bars on one shared timeline, so their playheads move together.
+        // A loop recorded while others played is turned round by this many beats (see
+        // finishRecording) so its bar 1 falls on theirs: until maintain() has done it, the sound
+        // plays unturned from startBeat, and its place on the shared timeline is
+        // startBeat - syncShift. 0: none waiting.
+        std::atomic<double> syncShift { 0.0 };
+        bool restartPending = false;          // audio thread: the clock just started
         juce::SpinLock lock;                  // the audio, while the window swaps it
         juce::AudioBuffer<float> audio;       // capacity; the loop is the first `length` samples
         int length = 0;
@@ -334,11 +346,16 @@ private:
     juce::uint32 stallLimitMs() const;
 
     void finishRecording (Layer&);
+    // Where a layer's bar 1 is on the shared timeline.
+    static double syncAnchor (const Layer& l) { return l.startBeat - l.syncShift.load (std::memory_order_relaxed); }
+    // Message thread (maintain): turns round a loop that's waiting to be put on the shared bars.
+    void applySyncShift (int index);
     void applySwap (Layer&, int index);   // under the layer's lock
     // Where a bend plays from (beats into the loop), given where straight would be.
     static double bentPosition (const Layer::BendAt&, double straightPos, double beat, double lengthBeats, int beatsPerBar);
 
     double sampleRate = 44100.0;
+    bool wasPlaying = false;              // audio thread: the clock, last block
     std::array<Layer, kLayers> layers;
     juce::SpinLock undoLock;              // the undo room, while maintain() makes it bigger
     juce::AudioBuffer<float> undoAudio;

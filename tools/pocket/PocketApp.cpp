@@ -2215,6 +2215,7 @@ void PocketApp::lockWatchTick()
                 return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::synth, lockBars))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
             auto part = std::make_shared<pocket::NotePart>();
             part->kind = pocket::NotePart::synth;
             part->notes = synthPart.pattern;
@@ -2252,6 +2253,7 @@ void PocketApp::lockWatchTick()
                 return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
             lockLayer = layer;
             lockArmed = true;
             beats.setRecordingDrums (false);
@@ -2278,6 +2280,7 @@ void PocketApp::lockWatchTick()
                 return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars, (int) pocket::LayerTool::pads))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
+            loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
             // the notes it's printed from, for QUANTIZE: the pattern, the drum machine if it plays along, the kit
             auto part = std::make_shared<pocket::NotePart>();
             part->kind = pocket::NotePart::pads;
