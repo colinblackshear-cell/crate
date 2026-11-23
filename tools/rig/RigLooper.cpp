@@ -80,6 +80,7 @@ int RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double 
         layer.publishedLength.store (layer.length, std::memory_order_relaxed);
         layer.startBeat = 0;
         layer.stopBeat = -1;
+        layer.syncShift = 0.0;
         layer.lengthBeats = beats;
         layer.state = (int) State::playing;
         if (undoLayer == index)
@@ -143,6 +144,7 @@ void RigLooper::applySwap (Layer& layer, int index)
         return;
     }
     abortSnapshot (layer);
+    layer.syncShift = 0.0;   // the new sound plays from its own top at swapBeat
     if (layer.swapBeats > 0 && layer.swapAudio.getNumSamples() > 0)
     {
         std::swap (layer.audio, layer.swapAudio);
@@ -465,6 +467,7 @@ void RigLooper::reset (int index)
         layer.bend = straight;
         layer.bendNow = layer.bendBefore = {};
         layer.bendFade = 0;
+        layer.syncShift = 0.0;
         if (undoLayer == index)
             undoLayer = -1;
         ++layer.version;
@@ -671,6 +674,48 @@ void RigLooper::maintain()
         std::swap (undoAudio, room);
         undoLayer = -1;
     }
+
+    // New loops onto the shared bars.
+    for (int i = 0; i < kLayers; ++i)
+        if (layers[(size_t) i].syncShift.load() != 0.0)
+            applySyncShift (i);
+}
+
+void RigLooper::applySyncShift (int index)
+{
+    auto& layer = layers[(size_t) index];
+    const double shift = layer.syncShift.load();
+    if ((State) layer.state.load() != State::playing)
+        return;   // overdubbing: after it (cleared or replaced: it was reset)
+    // A copy made the safe way (the loop keeps playing), turned round off the audio thread.
+    int version = -1;
+    auto turned = copyLayerAudio (index, &version);
+    const int len = turned.getNumSamples();
+    const double beats = layer.lengthBeats.load();
+    if (len < 2 || version < 0 || beats <= 0)
+        return;
+    const int by = (int) (std::llround (shift / beats * len) % len);
+    if (by > 0)
+        for (int ch = 0; ch < turned.getNumChannels(); ++ch)
+        {
+            auto* d = turned.getWritePointer (ch);
+            std::rotate (d, d + (len - by), d + len);
+        }
+    {
+        const juce::SpinLock::ScopedLockType sl (layer.lock);
+        // Only if nothing touched it meanwhile (an overdub, a clear, a new sound): else next time.
+        if (layer.version.load() != version || layer.syncShift.load() != shift || layer.length != len
+            || (State) layer.state.load() != State::playing)
+            return;
+        abortSnapshot (layer);
+        std::swap (layer.audio, turned);
+        layer.startBeat -= shift;
+        layer.syncShift = 0.0;
+        if (undoLayer == index)
+            undoLayer = -1;
+        ++layer.version;
+    }
+    // The unturned sound is freed here, outside the lock.
 }
 
 void RigLooper::finishRecording (Layer& layer)
@@ -692,6 +737,42 @@ void RigLooper::finishRecording (Layer& layer)
         layer.audio.applyGainRamp (ch, 0, fade, 0.0f, 1.0f);
         layer.audio.applyGainRamp (ch, layer.length - fade, fade, 1.0f, 0.0f);
     }
+    // Onto the shared bars: its bar 1 goes where the other loops' bar 1 is (the longest one
+    // playing), so their playheads move together. It sounds exactly as before: maintain() turns
+    // the sound round by the same amount as it moves the loop's start.
+    double shift = 0.0;
+    // (With none playing, a loop still recording that began earlier is the one to line up with:
+    // it closes on its own top.)
+    double refBeats = 0.0, refAnchor = 0.0, earliestTake = layer.startBeat;
+    for (auto& other : layers)
+    {
+        if (&other == &layer)
+            continue;
+        const auto st = (State) other.state.load();
+        if (st == State::recording && other.startBeat < earliestTake)
+            earliestTake = other.startBeat;
+        if (st != State::playing && st != State::overdubbing)
+            continue;
+        const juce::SpinLock::ScopedTryLockType ol (other.lock);
+        if (! ol.isLocked() || other.length < 2 || other.lengthBeats.load() <= refBeats)
+            continue;
+        refBeats = other.lengthBeats.load();
+        refAnchor = syncAnchor (other);
+    }
+    if (refBeats <= 0 && earliestTake < layer.startBeat)
+    {
+        refBeats = 1.0;
+        refAnchor = earliestTake;
+    }
+    if (const double beats = layer.lengthBeats.load(); refBeats > 0 && beats > 0)
+    {
+        shift = std::fmod (layer.startBeat - refAnchor, beats);
+        if (shift < 0)
+            shift += beats;
+        if (shift < 1.0e-6 || beats - shift < 1.0e-6)
+            shift = 0.0;
+    }
+    layer.syncShift = shift;
     layer.state = (int) State::playing;
     ++layer.version;
 }
@@ -711,6 +792,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
         layer.publishedLength.store (layer.length, std::memory_order_relaxed);
         layer.lengthBeats = 0;
         layer.position = 0;
+        layer.syncShift = 0.0;
         if (undoLayer == index)
             undoLayer = -1;
         ++layer.version;
@@ -735,7 +817,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
     {
         const auto state = (State) layer.state.load();
         if (state == State::playing || state == State::overdubbing)
-            layer.startBeat = restart;
+            layer.startBeat = restart + layer.syncShift.load();   // its bar 1 there
     }
 
     for (int p = layer.presses.exchange (0); p > 0; --p)
@@ -750,8 +832,10 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 // A count-in waits whole bars first: from stop, that many; while playing, the next
                 // bar line counts as the first.
                 const int countIn = juce::jlimit (0, 4, layer.countIn.load());
-                layer.startBeat = clock.playing ? std::ceil (clock.beat / bpb - 1.0e-9) * bpb + juce::jmax (0, countIn - 1) * bpb
-                                                : clock.beat + countIn * bpb;
+                // Always on a bar line, even if the clock was left partway into a bar.
+                layer.startBeat = std::ceil (clock.beat / bpb - 1.0e-9) * bpb
+                                  + (clock.playing ? juce::jmax (0, countIn - 1) : countIn) * bpb;
+                layer.syncShift = 0.0;
                 layer.startsAt = layer.startBeat;
                 const int bars = layer.bars.load();
                 layer.stopBeat = bars > 0 ? layer.startBeat + bars * bpb : -1.0;
@@ -842,6 +926,11 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
     bool wantsPlay = false;
     const double beatsPerSample = clock.bpm / (60.0 * sampleRate);
     const float gainStep = 1.0f / (0.01f * (float) sampleRate);   // 10 ms to any level
+    // The clock just started: every loop starts again from its top, together.
+    if (clock.playing && ! wasPlaying)
+        for (auto& layer : layers)
+            layer.restartPending = true;
+    wasPlaying = clock.playing;
 
     for (int index = 0; index < kLayers; ++index)
     {
@@ -878,6 +967,19 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             continue;
         }
 
+        if (std::exchange (layer.restartPending, false))
+        {
+            const auto st = (State) layer.state.load();
+            if (st == State::playing || st == State::overdubbing)
+            {
+                // From the bar it starts in (Logic can start partway into one).
+                const int bpbNow = juce::jmax (1, clock.beatsPerBar);
+                layer.startBeat = std::floor (clock.beat / bpbNow + 1.0e-9) * bpbNow + layer.syncShift.load();
+                layer.bendNow = { layer.bendNow.mode, 0.0, clock.beat };
+                layer.bendBefore = layer.bendNow;
+                layer.bendFade = 0;
+            }
+        }
         handleRequests (layer, index, clock, wantsPlay);
         // The moment a copy asked for is of: here, after this block's requests.
         if (layer.snap.state.load (std::memory_order_acquire) == snapPosted)
@@ -1069,7 +1171,8 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         }
         else if ((state == State::playing || state == State::overdubbing) && layer.lengthBeats.load() > 0)
         {
-            double p = std::fmod (clock.beat - layer.startBeat, layer.lengthBeats.load());
+            // Where it is on the shared bars (the same for every loop).
+            double p = std::fmod (clock.beat - syncAnchor (layer), layer.lengthBeats.load());
             layer.position = (p < 0 ? p + layer.lengthBeats.load() : p) / layer.lengthBeats.load();
         }
         if (peak > layer.peak.load())
