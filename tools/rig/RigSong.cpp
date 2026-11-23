@@ -398,6 +398,17 @@ void clearBox (RigTimeline& tl, int section, int lane)
     tl.changed();
 }
 
+int clearLane (RigTimeline& tl, int lane)
+{
+    auto& blocks = tl.getBlocks();
+    const auto before = blocks.size();
+    blocks.erase (std::remove_if (blocks.begin(), blocks.end(), [lane] (const Block& b) { return b.lane == lane; }), blocks.end());
+    const int gone = (int) (before - blocks.size());
+    if (gone > 0)
+        tl.changed();
+    return gone;
+}
+
 void copyBox (RigTimeline& tl, int fromSection, int toSection, int lane)
 {
     const auto list = ensure (tl);
