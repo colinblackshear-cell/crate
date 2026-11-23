@@ -194,7 +194,8 @@ void DroneTool::fromVar (const juce::var& v, int songRoot)
         return;
     auto num = [&v] (const char* id, float fallback, float lo, float hi) { return juce::jlimit (lo, hi, (float) (double) v.getProperty (id, fallback)); };
     auto whole = [&v] (const char* id, int fallback, int lo, int hi) { return juce::jlimit (lo, hi, (int) v.getProperty (id, fallback)); };
-    on = (bool) v.getProperty ("on", false);
+    // A song opens silent: the drone waits for its On button (the rest is as saved), as on the Mac.
+    on = false;
     followKey = (bool) v.getProperty ("followKey", true);
     root = followKey ? juce::jlimit (0, 11, songRoot) : whole ("root", songRoot, 0, 11);
     octave = whole ("octave", 0, -1, 1);

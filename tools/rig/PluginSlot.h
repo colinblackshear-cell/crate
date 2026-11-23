@@ -30,14 +30,51 @@ public:
 
     static juce::File listFile();
 
+    // The standalone app looks at each plugin in a helper: itself, started again with
+    // kScanArgument, so a plugin that freezes or crashes while it's being looked at takes only
+    // the helper down (it's skipped, and tried again at the next scan), never the app. Main.cpp
+    // sets scanHelper; without one (inside Logic, tests) the plugins are looked at in here.
+    static inline juce::File scanHelper;
+    static constexpr const char* kScanArgument = "--kaleidobox-scan-plugin";
+    static inline int scanTimeoutMs = 60000;   // per plugin; Arturia's first open can be slow
+    // True when this launch is the helper (Main.cpp: no window, no audio, a second copy is fine).
+    static bool isScanHelperLaunch (const juce::StringArray& commandLine);
+    // The helper's whole job: looks at one plugin file, writes what it found, exits. False when
+    // the command line isn't the helper's.
+    static bool runScanHelper (const juce::StringArray& commandLine);
+
+    // Looks at one plugin in the helper and waits for it (not on the message thread): what it
+    // found, or that it froze (it's stopped after scanTimeoutMs) or crashed.
+    enum class Looked { found, froze, crashed, cancelled };
+    static Looked lookInHelper (const juce::String& formatName, const juce::String& fileOrIdentifier,
+                                juce::OwnedArray<juce::PluginDescription>& found, std::function<bool()> cancelled = {});
+
+    // A plugin that was being opened when Kaleidobox last stopped (it froze or crashed while it
+    // opened): a show doesn't open it again by itself. Message thread.
+    void opening (const juce::PluginDescription&, bool starting);
+    bool frozeLastTime (const juce::PluginDescription&) const;
+    // The plugins a show left closed for that reason, for the launch to say so. Takes them.
+    juce::StringArray takeLeftClosed();
+    void leftClosed (const juce::String& name) { closedAtOpen.addIfNotAlreadyThere (name); }
+
 private:
+    struct Job { int format; juce::String id, name; };
+    struct Outcome;
+    class HelperScan;
     void timerCallback() override;
     void save();
+    void finished (const Outcome&);
+    void allDone();
+    static juce::File openingFile();
 
     std::unique_ptr<juce::PluginDirectoryScanner> scanner;
+    std::unique_ptr<HelperScan> helperScan;
+    std::vector<Job> jobs;
+    juce::StringArray skippedThisScan, frozeWhileOpening, openingNow, closedAtOpen;
     int formatIndex = 0;
     bool scanning = false, scannedOnce = false;
     std::function<void (const juce::String&, bool)> onProgress;
+    std::shared_ptr<bool> alive = std::make_shared<bool> (true);
 
     JUCE_DECLARE_NON_COPYABLE (PluginHost)
 };
@@ -110,6 +147,7 @@ private:
     std::atomic<bool> loaded { false };
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer noMidi;
+    juce::ValueTree leftClosed;   // a show's plugin that froze last time: kept, so saving keeps it
     juce::AudioPlayHead* playHead = nullptr;
     double rate = 44100.0;
     int block = 512;

@@ -281,7 +281,7 @@ struct DroneRigTests : juce::UnitTest
             expect (engine.isBlank());
 
             engine.loadShow (show);
-            expect (engine.getDrone().isOn(), "the show's drone is on");
+            expect (! engine.getDrone().isOn(), "a show opens silent: the drone waits for its On button");
             expectEquals (param (d, "droneRoot"), 4.0f);
             expectWithinAbsoluteError (param (d, "droneResonate"), 0.5f, 1.0e-4f);
             expectEquals (engine.getDrone().getFeed(), (int) DroneProcessor::feedDrums);

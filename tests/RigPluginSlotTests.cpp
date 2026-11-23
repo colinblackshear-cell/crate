@@ -198,6 +198,116 @@ struct RigPluginSlotTests : juce::UnitTest
             for (const auto& d : host->effects())
                 expect (! d.isInstrument);
         }
+
+        beginTest ("a plugin installed as an Audio Unit and a VST3 shows once, as the Audio Unit");
+        {
+            juce::SharedResourcePointer<PluginHost> host;
+            juce::PluginDescription au, vst3, other;
+            au.name = vst3.name = "Test Twin";
+            au.manufacturerName = vst3.manufacturerName = other.manufacturerName = "Testuria";
+            au.isInstrument = vst3.isInstrument = other.isInstrument = true;
+            au.pluginFormatName = "AudioUnit";
+            au.fileOrIdentifier = "AudioUnit:Synths/aumu,Twin,Tstu";
+            vst3.pluginFormatName = other.pluginFormatName = "VST3";
+            vst3.fileOrIdentifier = "/Library/Audio/Plug-Ins/VST3/Test Twin.vst3";
+            other.name = "Test Only VST3";
+            other.fileOrIdentifier = "/Library/Audio/Plug-Ins/VST3/Test Only VST3.vst3";
+            au.uniqueId = 11;
+            vst3.uniqueId = 12;
+            other.uniqueId = 13;
+            for (auto* d : { &au, &vst3, &other })
+                host->list.addType (*d);
+            int twins = 0, onlys = 0;
+            for (const auto& d : host->instruments())
+            {
+                if (d.name == "Test Twin")
+                {
+                    ++twins;
+                    expectEquals (d.pluginFormatName, juce::String ("AudioUnit"));
+                }
+                onlys += d.name == "Test Only VST3" ? 1 : 0;
+            }
+            expectEquals (twins, 1);
+            expectEquals (onlys, 1);
+            for (auto* d : { &au, &vst3, &other })
+                host->list.removeType (*d);
+        }
+
+        beginTest ("the plugin scan's helper launch is told apart from a normal launch");
+        {
+            expect (! PluginHost::isScanHelperLaunch ({}));
+            expect (! PluginHost::isScanHelperLaunch (juce::StringArray { "-NSDocumentRevisionsDebugMode", "YES" }));
+            expect (PluginHost::isScanHelperLaunch (juce::StringArray { PluginHost::kScanArgument, "VST3", "/tmp/out.xml", "/x.vst3" }));
+            expect (! PluginHost::runScanHelper ({}));
+            expect (! PluginHost::runScanHelper (juce::StringArray { PluginHost::kScanArgument, "VST3" }));   // not all there
+        }
+
+       #if JUCE_LINUX || JUCE_MAC
+        beginTest ("a plugin that freezes or crashes in the scan's helper is caught, and the app carries on");
+        [&]
+        {
+            juce::SharedResourcePointer<PluginHost> host;
+            if (host->formats.getNumFormats() == 0)
+                return;
+            // A stand-in helper: the plugin called "good" is found, "hang" never answers and
+            // "crash" crashes. Arguments: flag, format, file to write, plugin.
+            juce::PluginDescription good;
+            good.name = "Helper Found Synth";
+            good.manufacturerName = "Testuria";
+            good.pluginFormatName = host->formats.getFormat (0)->getName();
+            good.fileOrIdentifier = "good";
+            good.isInstrument = true;
+            good.uniqueId = 77;
+            juce::XmlElement answer ("KaleidoboxScan");
+            answer.addChildElement (good.createXml().release());
+            const auto folder = juce::File::createTempFile ("helper");
+            folder.createDirectory();
+            const auto answerFile = folder.getChildFile ("answer.xml");
+            answer.writeTo (answerFile);
+            const auto script = folder.getChildFile ("helper.sh");
+            script.replaceWithText ("#!/bin/sh\n"
+                                    "case \"$4\" in\n"
+                                    "  good) cp '" + answerFile.getFullPathName() + "' \"$3\" ;;\n"
+                                    "  hang) sleep 30 ;;\n"
+                                    "  crash) kill -SEGV $$ ;;\n"
+                                    "esac\n", false, false, "\n");
+            script.setExecutePermission (true);
+
+            const auto helperBefore = PluginHost::scanHelper;
+            const int timeoutBefore = PluginHost::scanTimeoutMs;
+            PluginHost::scanHelper = script;
+            PluginHost::scanTimeoutMs = 1500;
+            const auto format = host->formats.getFormat (0)->getName();
+            juce::OwnedArray<juce::PluginDescription> found;
+            const auto t0 = juce::Time::getMillisecondCounter();
+            expect (PluginHost::lookInHelper (format, "hang", found) == PluginHost::Looked::froze, "a plugin that never answers is stopped");
+            expect (juce::Time::getMillisecondCounter() - t0 < 6000, "and not waited for longer than the time allowed");
+            expect (PluginHost::lookInHelper (format, "crash", found) == PluginHost::Looked::crashed);
+            expect (found.isEmpty());
+            expect (PluginHost::lookInHelper (format, "good", found) == PluginHost::Looked::found);
+            expectEquals (found.size(), 1);
+            if (! found.isEmpty())
+                expectEquals (found[0]->name, good.name);
+            expect (PluginHost::lookInHelper (format, "hang", found, [] { return true; }) == PluginHost::Looked::cancelled);
+
+            PluginHost::scanHelper = helperBefore;
+            PluginHost::scanTimeoutMs = timeoutBefore;
+            folder.deleteRecursively();
+        }();
+       #endif
+
+        beginTest ("a show opens with the Drone off, its other settings as saved");
+        {
+            RigEngine engine;
+            auto& d = engine.getDrone().params;
+            d.getParameter ("droneOn")->setValueNotifyingHost (1.0f);
+            d.getParameter ("droneReeds")->setValueNotifyingHost (0.75f);
+            expect (engine.getDrone().isOn());
+            const auto show = engine.saveShow();
+            engine.loadShow (show);
+            expect (! engine.getDrone().isOn(), "the drone waits for its On button");
+            expectWithinAbsoluteError (d.getParameter ("droneReeds")->getValue(), 0.75f, 0.01f);
+        }
     }
 };
 
