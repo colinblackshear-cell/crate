@@ -190,6 +190,8 @@ std::vector<float> renderPart (const NotePart& part, const LoopQuantize& q, doub
         {
             auto d = part.drums;
             d.bpm = bpm;
+            for (int v = 0; v < crate::drums::kVoices; ++v)
+                eng->setDrumSample (v, part.drumSamples[(size_t) v]);
             eng->setDrums (d);
             eng->setPlaying (true);
         }

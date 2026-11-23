@@ -770,6 +770,8 @@ void LoopsScreen::quantizeLayer (int layer, const LoopQuantize& q)
     {
         auto filled = std::make_shared<NotePart> (*take->part);
         filled->kit = kitSounds();
+        if (drumSampleSounds)
+            filled->drumSamples = drumSampleSounds();
         take->part = filled;
     }
     auto copy = loops.copyOf (layer);
@@ -795,6 +797,8 @@ void LoopsScreen::followTempo()
         {
             auto filled = std::make_shared<NotePart> (*take->part);
             filled->kit = kitSounds();
+            if (drumSampleSounds)
+                filled->drumSamples = drumSampleSounds();
             take->part = filled;
         }
         auto copy = loops.copyOf (l);
@@ -1690,6 +1694,52 @@ juce::String LoopsScreen::selfCheck (juce::String& report)
             if (! dubbed || engine->state (0) != LoopState::playing || ! grew)
                 problems.add ("overdub did not record on top of the layer");
         }
+    }
+
+    // the shared bars: a take recorded partway into another lines up its bar 1 with it (turned round, so it
+    // sounds where it was played), and its playhead moves with the other's
+    {
+        auto beatsEngine = std::make_unique<BeatsEngine>();
+        auto engine = std::make_unique<LoopsEngine> (*beatsEngine);
+        engine->prepare (sr);
+        engine->setCountInBars (0);
+        engine->setMic (true, false);
+        beatsEngine->setBpm (bpm);
+        Pump pump (*beatsEngine, *engine);
+        pump.input = [d] (juce::int64 n) { return (float) ((double) n * d); };
+        engine->arm (0, LoopSource::mic, 2);   // A: 8 beats
+        for (int guard = 0; guard < 2000000 && engine->state (0) != LoopState::playing; guard += 512)
+            pump.run (512);
+        while (engine->beatNow() < 9.0)
+            pump.run (512);
+        engine->arm (1, LoopSource::mic, 2);   // B: from beat 12, 4 beats into A
+        for (int guard = 0; guard < 2000000 && engine->state (1) != LoopState::playing; guard += 512)
+            pump.run (512);
+        const auto before = engine->takeOf (1);
+        const double startBefore = engine->startBeat (1);
+        std::vector<float> was;
+        if (before != nullptr)
+            was.assign (before->data.begin(), before->data.begin() + before->length.load());
+        pump.run (512);
+        engine->maintain();
+        for (int i = 0; i < 4; ++i)
+            pump.run (512);
+        const auto after = engine->takeOf (1);
+        const double startAfter = engine->startBeat (1);
+        const float pa = engine->position (0), pb = engine->position (1);
+        bool turnedRight = after != nullptr && after != before && (int) was.size() == after->length.load();
+        const int len = (int) was.size();
+        const int by = len > 0 ? (int) (std::llround (4.0 / 8.0 * len) % len) : 0;
+        for (int i = 0; turnedRight && i < len; i += 997)
+            turnedRight = after->data[(size_t) ((i + by) % len)] == was[(size_t) i];
+        report << "shared bars: B started on beat " << juce::String (startBefore, 2) << ", now its bar 1 is beat " << juce::String (startAfter, 2)
+               << ", playheads " << juce::String (pa, 3) << " / " << juce::String (pb, 3) << "\n";
+        if (std::abs (std::fmod (startAfter, 8.0)) > 1.0e-6 || std::abs (startBefore - startAfter - 4.0) > 1.0e-6)
+            problems.add ("shared bars: the new take's bar 1 didn't move onto the other loop's (beat " + juce::String (startAfter, 3) + ")");
+        if (! turnedRight)
+            problems.add ("shared bars: the new take's sound wasn't turned round to match");
+        if (std::abs (pa - pb) > 0.002f)
+            problems.add ("shared bars: the playheads don't move together (" + juce::String (pa, 3) + " / " + juce::String (pb, 3) + ")");
     }
 
     // effects: moves play back (volume off for the first half of the loop, full for the second)

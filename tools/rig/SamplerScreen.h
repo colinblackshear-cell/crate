@@ -5,6 +5,7 @@
 #include "RigEngine.h"
 #include "Vintage.h"
 #include "BankBrowser.h"
+#include "NoteRepeatControls.h"
 
 class EditorView;
 class MpcView;
@@ -206,8 +207,11 @@ private:
     juce::TextButton snapButton { "Snap to zero" }, toPadsButton { "To pads" }, openButton { "Open" }, editorButton { "Editor" },
         zoomOut { juce::String::fromUTF8 ("\xe2\x88\x92") }, zoomIn { "+" }, fullLevel { "Full level" }, sendButton { "Send to MPC" },
         clearButton { "Clear" };
-    juce::TextButton levelsButton { "16 Levels" }, repeatButton { "Repeat" }, rateButton { "1/16" }, soundsButton { "Sounds" },
-        fxButton { "FX" }, kitsButton { "Kits" };
+    juce::TextButton levelsButton { "16 Levels" }, soundsButton { "Sounds" }, fxButton { "FX" }, kitsButton { "Kits" };
+    // NOTE REPEAT: the red hold button (double-tap to latch) and its rates, shared with every pad screen.
+    noterepeatui::HoldButton repeatButton { engine.getMpc().getSequencer() };
+    noterepeatui::RateButtons rateButtons { engine.getMpc().getSequencer() };
+    void showRepeatLearnMenu (juce::Point<int> screenPosition);
     void updateClearButton();
     std::array<Pad, kPadsPerBank> setUndoPads;
     int setUndoKit = -1, setUndoBank = -1;

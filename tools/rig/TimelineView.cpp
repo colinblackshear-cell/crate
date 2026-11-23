@@ -57,6 +57,19 @@ int laneOfRow (int row)
     return row < RigLooper::kLayers ? RigTimeline::laneForLoop (row) : row - (RigLooper::kLayers - RigTimeline::kFirstLoops);
 }
 
+// The x on the picked block: one click deletes it (Undo brings it back).
+void drawCross (juce::Graphics& g, juce::Rectangle<float> c, bool hot)
+{
+    if (c.isEmpty())
+        return;
+    g.setColour (juce::Colour (0xff1a1410).withAlpha (hot ? 0.95f : 0.75f));
+    g.fillEllipse (c);
+    g.setColour (hot ? juce::Colour (0xffff6b5a) : juce::Colours::white.withAlpha (0.9f));
+    const auto x = c.reduced (c.getWidth() * 0.31f);
+    g.drawLine ({ x.getTopLeft(), x.getBottomRight() }, 1.6f);
+    g.drawLine ({ x.getBottomLeft(), x.getTopRight() }, 1.6f);
+}
+
 const juce::StringArray& sectionNames()
 {
     static const juce::StringArray list { "Intro", "Verse", "Pre-chorus", "Chorus", "Bridge", "Drop", "Break", "Solo", "Outro" };
@@ -316,8 +329,19 @@ public:
             g.setColour (juce::Colours::white);
             g.fillRect (fadeHandle (b, true));
             g.fillRect (fadeHandle (b, false));
+            drawCross (g, blockCross (b), blockCross (b).expanded (3).contains (hover));
         }
     }
+
+    // The picked block's x, at its right end (clear of the stretch edge and the fade corners).
+    juce::Rectangle<float> blockCross (const RigTimeline::Block& b) const
+    {
+        const auto r = blockBounds (b);
+        if (r.getWidth() < 60 || r.getHeight() < 16)
+            return {};
+        return { r.getRight() - 25.0f, r.getCentreY() - 7.0f, 14.0f, 14.0f };
+    }
+    juce::Point<float> hover { -1000.0f, -1000.0f };
 
     juce::Rectangle<float> fadeHandle (const RigTimeline::Block& b, bool in) const
     {
@@ -427,6 +451,11 @@ public:
             return;
         }
 
+        if (hit == owner.selected && ! e.mods.isPopupMenu() && blockCross (blocks[(size_t) hit]).expanded (3).contains (e.position))
+        {
+            owner.deleteSelected();
+            return;
+        }
         owner.select (hit);
         const auto b = blocks[(size_t) hit];
         if (e.mods.isPopupMenu())
@@ -549,10 +578,19 @@ public:
         drag = Drag::none;
     }
 
+    void mouseExit (const juce::MouseEvent&) override
+    {
+        hover = { -1000.0f, -1000.0f };
+        repaint();
+    }
+
     void mouseMove (const juce::MouseEvent& e) override
     {
         auto pointer = juce::MouseCursor::NormalCursor;
         const auto& blocks = owner.timeline.getBlocks();
+        const bool wasOver = juce::isPositiveAndBelow (owner.selected, (int) blocks.size())
+                             && blockCross (blocks[(size_t) owner.selected]).expanded (3).contains (hover);
+        hover = e.position;
         for (const auto& b : blocks)
         {
             const auto r = blockBounds (b);
@@ -563,6 +601,12 @@ public:
             else
                 pointer = juce::MouseCursor::DraggingHandCursor;
         }
+        const bool over = juce::isPositiveAndBelow (owner.selected, (int) blocks.size())
+                          && blockCross (blocks[(size_t) owner.selected]).expanded (3).contains (e.position);
+        if (over)
+            pointer = juce::MouseCursor::PointingHandCursor;
+        if (over != wasOver)
+            repaint();
         setMouseCursor (pointer);
     }
 
@@ -1004,9 +1048,11 @@ void TimelineView::deleteSelected()
     if (! juce::isPositiveAndBelow (selected, (int) blocks.size()))
         return;
     pushUndo();
+    const auto lane = blocks[(size_t) selected].lane;
     blocks.erase (blocks.begin() + selected);
     selected = -1;
     edited();
+    say ("Deleted the " + laneName (lane) + " block. Undo (Cmd+Z) brings it back.");
 }
 
 void TimelineView::duplicateSelected()

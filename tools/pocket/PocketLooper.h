@@ -122,6 +122,9 @@ public:
     // and the count-in is on) and runs `bars` bars (0 = until stop()).
     bool arm (int layer, LoopSource, int bars, int tool = -1, int tap = 0);   // tool: a LayerTool, -1 = the source's usual one;
                                                                               // tap: the layer a layerTap take records
+    // A take printed from a pattern (its notes go with it, for QUANTIZE) keeps its own top: it isn't moved onto
+    // the shared bars as it closes. Call right after arm().
+    void keepOwnTop (int layer) { layers[(size_t) layer].keepTop = true; }
     // Recording: ends at the end of the bar. Waiting for the next bar: cancels.
     void stop (int layer);
     // A playing layer records on top of itself from the next loop.
@@ -224,6 +227,11 @@ private:
         std::atomic<double> uiStart { 0.0 };   // beat the loop (or the recording) started on
         std::atomic<int> uiBars { 0 };         // the recording's length in bars, 0 = until stopped
         std::atomic<double> regionFrom { 0.0 }, regionTo { 0.0 };   // HEAR IN-OUT
+        // All the loops share one timeline. A take recorded while others played is turned round by this many
+        // beats as it closes, so its bar 1 falls on theirs (maintain() does it, with a turned copy); until then
+        // it plays unturned from startBeat and its place on the shared bars is startBeat - shift.
+        std::atomic<double> uiShift { 0.0 };
+        std::atomic<bool> keepTop { false };
         // the audio thread's
         LoopTake* take = nullptr;
         LoopState st = LoopState::empty;
@@ -231,6 +239,7 @@ private:
         int tap = 0;          // layerTap: the layer it records
         int bars = 0, writeIdx = 0;
         double armBeat = -1, startBeat = 0, lenBeats = 0, endBeat = -1, dubBeat = 0;
+        double shift = 0;     // uiShift, the audio thread's
         bool fresh = false;   // armed while the clock was stopped
         int withCountIn = 0;  // bars
         float gain = 0.0f;
@@ -255,6 +264,7 @@ private:
     void playLayer (Layer&, int index, double blockBeat, double bps, int n);
     void recordLayer (Layer&, int index, double blockBeat, double bps, int n);
     void finishRecording (Layer&, double endBeat);
+    void setShift (Layer& l, double s) { l.shift = s; l.uiShift = s; }
     void cancelRecording (Layer&);
     void release (Layer&);
 

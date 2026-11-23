@@ -37,6 +37,7 @@ struct NotePart
     bool drumsOn = false;
     DrumData drums;
     std::vector<PadSetup> kit;     // the pads' sounds (not saved: the song's kit fills it after loading)
+    std::array<crate::drums::SharedSample, crate::drums::kVoices> drumSamples {};   // the drum machine's own sounds (the same)
 
     // SYNTH: the note pattern in its sound
     SynthPattern notes;

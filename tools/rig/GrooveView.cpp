@@ -1,4 +1,5 @@
 #include "GrooveView.h"
+#include "StepMarks.h"
 #include "core/ui/ToolIcons.h"
 #include "RigColours.h"
 #include "RigPanels.h"
@@ -479,6 +480,39 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
                                "or straight 16ths. Sets the step size, the pattern's length and the swing.");
         feelButton.onClick = [this] { showFeelMenu(); };
         addChildComponent (feelButton);
+    }
+
+    // The drum machine's bars (Bar 1 to 4 of up to 64 steps) and its step tools.
+    for (int i = 0; i < 4; ++i)
+    {
+        auto& b = machineBars[(size_t) i];
+        wellButton (b, Lit::current, 14.0f);
+        b.setTooltip ("Show bar " + juce::String (i + 1) + " of the drum machine's steps (steps " + juce::String (i * 16 + 1) + " to " + juce::String (i * 16 + 16)
+                      + "). A bar past the end of the pattern makes the pattern longer.");
+        b.onClick = [this, i] { setMachinePage (i); };
+        addChildComponent (b);
+    }
+    {
+        static const StepTool tools[] = { StepTool::roll, StepTool::builds, StepTool::flam, StepTool::level };
+        static const char* tips[] = { "ROLL: pick it, then click a step for a stutter roll of N quick hits (click the chip again to change N: 2, 3, 4, 6, 8). "
+                                      "Click the same step again to take it back to one hit. Pick it again to put the tool down.",
+                                      "BUILDS: a roll that gets louder with every hit (it uses the ROLL size). Pick it again to put it down.",
+                                      "FLAM: a hit with a soft grace hit just before it. Pick it again to put it down.",
+                                      "SOFT/LOUD: click a lit step to step its level: full, soft, very soft. Pick it again to put it down." };
+        for (int i = 0; i < 4; ++i)
+        {
+            auto& b = toolChips[(size_t) i];
+            wellButton (b, Lit::current, 14.0f);
+            b.setTooltip (tips[i]);
+            b.onClick = [this, i]
+            {
+                if (tools[i] == StepTool::roll && machineToolOn (StepTool::roll))
+                    setMachineRoll (crate::drums::steptools::nextRollChoice (machineRoll));
+                else
+                    setMachineTool (tools[i], ! machineToolOn (tools[i]));
+            };
+            addChildComponent (b);
+        }
     }
 
     // Start on the track the keys already play, so nothing changes until you pick one.
@@ -964,7 +998,7 @@ juce::String GrooveView::trackHint() const
     switch (track)
     {
         case drums:   return juce::String ("Click a sound's name to change it");
-        case machine: return juce::String ("Top row: accents. Right-click a step for a roll; click a name to hear it");
+        case machine: return juce::String ("Top row: accents. Pick the ROLL chip, then a step, for a roll; click a name to hear it");
         case bass:    return juce::String ("Drag a note up or down");
         case synth:   return juce::String ("Hold a chord; it plays on the lit steps");
         case vocoder: return juce::String ("Switch a part on, then set how much of it underneath");
@@ -1235,7 +1269,7 @@ void GrooveView::buildTrack()
         b->setVisible (hasKeys());
     screenKeys.setVisible (hasKeys());
     keysState.allNotesOff (1);
-    barButton.setVisible (track == drums || (track == machine && machineLength() > 16));
+    barButton.setVisible (track == drums);
     clearButton.setVisible (track == drums || track == bass || track == synth || track == machine || track == loops);
     for (auto* b : { &overdubButton, &undoButton, &redoButton })
         b->setVisible (track == loops);
@@ -1274,6 +1308,12 @@ void GrooveView::updateButtons()
     }
     mutateButton.setVisible (hasLife());
     feelButton.setVisible (track == machine);
+    if (track != machine)
+        for (int i = 0; i < 4; ++i)
+        {
+            machineBars[(size_t) i].setVisible (false);
+            toolChips[(size_t) i].setVisible (false);
+        }
     if (track != loops)
     {
         const auto text = canUndoClear() ? juce::String ("Undo clear") : juce::String ("Clear");
@@ -1317,10 +1357,21 @@ void GrooveView::updateButtons()
             extraButton.setToggleState (on, juce::dontSendNotification);
             extraButton.setButtonText (juce::String::fromUTF8 (on ? "\xe2\x96\xa0 Stop" : "\xe2\x96\xb6 Play"));
             extraButton.setTooltip ("Play: the drum machine plays its pattern (and Kaleidobox starts if it's stopped). Stop: only the pads and keys play it.");
-            barButton.setVisible (machineLength() > 16);
-            if (machineLength() <= 16)
-                machinePage = 0;
-            barButton.setButtonText (machinePage == 0 ? "Steps 1-16" : "Steps 17-32");
+            const int length = machineLength();
+            machinePage = juce::jlimit (0, 3, machinePage);
+            for (int i = 0; i < 4; ++i)
+            {
+                machineBars[(size_t) i].setVisible (true);
+                setLit (&machineBars[(size_t) i], i == machinePage, Lit::current);
+                machineBars[(size_t) i].setAlpha (i * 16 < length ? 1.0f : 0.55f);
+            }
+            for (int i = 0; i < 4; ++i)
+            {
+                static const StepTool tools[] = { StepTool::roll, StepTool::builds, StepTool::flam, StepTool::level };
+                toolChips[(size_t) i].setVisible (lifeMode == lifeHits);
+                setLit (&toolChips[(size_t) i], machineToolOn (tools[i]), Lit::current);
+            }
+            toolChips[0].setButtonText (juce::String ("Roll ") + juce::String::fromUTF8 ("\xc3\x97") + juce::String (machineRoll));
             break;
         }
         case bass:
@@ -1842,8 +1893,12 @@ GrooveView::Cell GrooveView::cellAt (int row, int i) const
             const int voice = machineVoice (row);
             const int h = p.hits[(size_t) voice][(size_t) step];
             c.lit = h > 0;
+            c.hits = h;
+            c.shape = p.shape[(size_t) voice][(size_t) step];
             if (h >= 2)
-                c.label = juce::String::fromUTF8 ("\xc3\x97") + juce::String (h);
+                c.label = juce::String::fromUTF8 ("\xc3\x97") + juce::String (h) + (c.shape == crate::drums::builds ? "^" : "");
+            else if (h == 1 && c.shape == crate::drums::flam)
+                c.label = "f";
             else if (h == 1 && p.accent[(size_t) step])
                 c.label = ">";
             // Its life, where it has one (and always in that mode).
@@ -2030,10 +2085,12 @@ void GrooveView::pressCell (int row, int i)
                 break;
             }
             const int voice = machineVoice (row);
-            auto& h = p.hits[(size_t) voice][(size_t) step];
-            h = (std::uint8_t) (h == 0 ? 1 : 0);
-            if (step >= p.length && h != 0)
-                p.length = step < 16 ? 16 : crate::drums::kMaxSteps;
+            // The picked chip (Roll, Builds, Flam, Soft/Loud) or, with none, a plain hit that lights or clears.
+            const auto what = machineToolPicked && lifeMode == lifeHits ? machineTool : StepTool::hit;
+            crate::drums::steptools::apply (p, what, voice, step, machineRoll);
+            const auto h = p.hits[(size_t) voice][(size_t) step];
+            if (h != 0)
+                crate::drums::steptools::extendTo (p, step);
             setMachinePattern (p);
             // A lit step means you want to hear the pattern; stopped, you hear the sound.
             if (h != 0)
@@ -2139,8 +2196,7 @@ void GrooveView::pressRoll (int row, int i)
     const int step = i + machinePage * 16;
     if (step >= p.length || row == 0)
         return;
-    auto& h = p.hits[(size_t) machineVoice (row)][(size_t) step];
-    h = (std::uint8_t) (h <= 1 ? 2 : h >= 4 ? 1 : h + 1);
+    crate::drums::steptools::cycleRoll (p, machineVoice (row), step);   // none or one -> 2 -> 3 -> 4 -> 6 -> 8 -> one
     setMachinePattern (p);
     setParam (d.params, "sequencer", 1.0f);
     repaint();
@@ -2162,6 +2218,39 @@ void GrooveView::setMachinePattern (const crate::drums::Pattern& p)
 {
     auto& d = engine.getDrums();
     d.setPattern (d.getSelectedPattern(), p, d.editVariation);
+}
+
+void GrooveView::setMachineTool (StepTool t, bool on)
+{
+    machineToolPicked = on;
+    machineTool = t;
+    if (on)
+        say (t == StepTool::roll ? "ROLL: click a step for a roll of " + juce::String (machineRoll) + " hits (click the chip again to change it)."
+             : t == StepTool::builds ? "BUILDS: click a step for a roll of " + juce::String (machineRoll) + " hits that gets louder."
+             : t == StepTool::flam ? "FLAM: click a step for a hit with a grace hit before it."
+                                   : "SOFT/LOUD: click a lit step to step its level.");
+    updateButtons();
+    repaint();
+}
+
+void GrooveView::setMachineRoll (int n)
+{
+    machineRoll = juce::jlimit (2, crate::drums::kMaxRoll, n);
+    say ("Rolls are " + juce::String (machineRoll) + " hits now.");
+    updateButtons();
+}
+
+void GrooveView::setMachinePage (int bar)
+{
+    machinePage = juce::jlimit (0, 3, bar);
+    if (track == machine && machinePage * 16 >= machineLength())
+    {
+        auto p = machinePattern();
+        crate::drums::steptools::extendTo (p, machinePage * 16);
+        setMachinePattern (p);
+    }
+    updateButtons();
+    repaint();
 }
 
 void GrooveView::releaseCell()
@@ -2373,7 +2462,7 @@ void GrooveView::timerCallback()
         for (int i = 0; i < numSteps(); ++i)
         {
             const auto c = cellAt (row, i);
-            sig << (c.lit ? 1 : 0) << (c.strong ? 1 : 0) << (c.dim ? 1 : 0) << (c.playing ? 1 : 0) << c.label << c.sub;
+            sig << (c.lit ? 1 : 0) << (c.strong ? 1 : 0) << (c.dim ? 1 : 0) << (c.playing ? 1 : 0) << c.label << c.sub << c.shape;
         }
     }
     if (track == loops)
@@ -2645,7 +2734,17 @@ void GrooveView::paint (juce::Graphics& g)
             }
             else
             {
-                if (c.label.isNotEmpty())
+                const bool marked = track == machine && c.lit && (c.hits >= 2 || c.shape == crate::drums::flam);
+                if (marked)
+                {
+                    // A roll's ticks and count, a roll that builds rising, a flam's grace tick.
+                    g.setColour (ink);
+                    auto marks = r.withTrimmedBottom (3.0f).reduced (5.0f, c.sub.isNotEmpty() ? 4.0f : 6.0f).toFloat();
+                    if (c.sub.isNotEmpty())
+                        marks = marks.withTrimmedBottom (marks.getHeight() * 0.38f);
+                    crate::drums::steptools::drawHitMarks (g, marks, c.hits, c.shape, ink, true, vintage::cond (14.0f, Weight::extra));
+                }
+                else if (c.label.isNotEmpty())
                 {
                     g.setColour (p.wellInk.withAlpha (c.dim ? 0.5f : 0.95f));
                     g.setFont (vintage::cond (16.0f, Weight::extra));
@@ -2809,6 +2908,25 @@ void GrooveView::resized()
         {
             lifeArea.removeFromRight (6);
             feelButton.setBounds (lifeArea.removeFromRight (90));
+        }
+    }
+    toolsArea = {};
+    if (track == machine)
+    {
+        toolsArea = c.removeFromTop (30);
+        c.removeFromTop (6);
+        auto row = toolsArea.withTrimmedLeft (kLabelWidth);
+        for (auto& b : machineBars)
+        {
+            b.setBounds (row.removeFromLeft (66));
+            row.removeFromLeft (6);
+        }
+        row.removeFromLeft (24);
+        for (auto& b : toolChips)
+        {
+            const int w = b.getButtonText() == "Soft/Loud" ? 100 : b.getButtonText().startsWith ("Roll") ? 92 : 78;
+            b.setBounds (row.removeFromLeft (w));
+            row.removeFromLeft (6);
         }
     }
     numbersArea = bigCells() ? juce::Rectangle<int>() : c.removeFromTop (20);
@@ -3070,6 +3188,7 @@ void GrooveView::mutate (float amount)
                 {
                     std::swap (p.hits[(size_t) v][(size_t) from], p.hits[(size_t) v][(size_t) to]);
                     std::swap (p.chance[(size_t) v][(size_t) from], p.chance[(size_t) v][(size_t) to]);
+                    std::swap (p.shape[(size_t) v][(size_t) from], p.shape[(size_t) v][(size_t) to]);
                     ++changes;
                 }
             }
@@ -3270,6 +3389,7 @@ void GrooveView::turnRow (int row, int by)
         turn (p.pitch[(size_t) voice]);
         turn (p.decayLock[(size_t) voice]);
         turn (p.velocity[(size_t) voice]);
+        turn (p.shape[(size_t) voice]);
         setMachinePattern (p);
     }
     else if (track == bass)

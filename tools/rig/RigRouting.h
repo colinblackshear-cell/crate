@@ -48,9 +48,14 @@ public:
         drumsMute,                                 // a button
         liveKeyC, liveKeyB = liveKeyC + 11,        // buttons: the chord builder's live key, C to B
         liveOctaveDown, liveOctaveUp, liveKeyHome, // buttons: its octave, and back to its own key
+        noteRepeatHold,                            // a button HELD: repeat is on while it's down (CC 64 up: the sustain pedal)
+        noteRepeatRate,                            // a button: each press steps to the next repeat rate
         numControls
     };
     static juce::String controlName (int control);
+    // A button that counts as held while its value is 64 or more (a press AND a release matter, and a
+    // pedal's on/off lands halfway), not a button that toggles on a press.
+    static bool isHold (int control) { return control == noteRepeatHold; }
     static bool isFader (int control) { return control <= masterLevel || control == vocoderLevel || control == bassLevel || control == synthLevel || control == inputLevel || control == loopsLevel || control == drumsLevel; }
 
     // What a block of incoming MIDI turned into.
@@ -60,6 +65,8 @@ public:
         std::array<float, numControls> values {};
         // How many times each button was pressed.
         std::array<int, numControls> presses {};
+        // Hold controls (isHold): 1 if the button is down at the end of this block, 0 if it let go, -1 if it didn't change.
+        std::array<signed char, numControls> holds {};
         // Learned knobs that moved: which tool, which parameter, the new value (0..1).
         struct ParamMove { int tool = 0, parameter = 0; float value = 0; };
         std::array<ParamMove, 32> paramMoves {};
