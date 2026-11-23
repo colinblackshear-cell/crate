@@ -115,6 +115,9 @@ target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/synth/SynthEngine.cpp)
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/StripFx.cpp ${TOOLS}/rig/Pedalboard.cpp)
 # CHORDS > EDIT CHORD names the chord you build with the Mac chord builder's own namer (RigChords::nameOf: no plugins, no routing)
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/RigChords.cpp)
+# SONG > BOUNCE writes MP3 with the Mac's encoder hookup
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/Mp3Writer.cpp)
+target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS}/rig)
 target_compile_definitions(KaleidoboxPocket PRIVATE CRATE_STRIPFX_NO_PLUGINS=1)
 
 # The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools

@@ -1,5 +1,8 @@
 #include "PocketApp.h"
 
+#include "core/AudioFiles.h"
+#include "Mp3Writer.h"
+
 // The SONG tool in the app: the song's hookup to the looper and the clock, its timer, and its checks.
 using namespace pocket;
 
@@ -29,6 +32,14 @@ void PocketApp::setupSong()
     songScreen = std::make_unique<SongScreen> (*song, L);
     songScreen->toast = [this] (const juce::String& t) { toast (t); };
     songScreen->onChanged = [this] { saveSong(); };
+    songScreen->onBounce = [this] (const SongScreen::Bounce& b)
+    {
+        juce::String said;
+        const auto files = bounceSong (b, said);
+        toast (said);
+        shareBounce (files);
+    };
+    songScreen->onBounceToMac = [this] { bounceToMac(); };
 }
 
 void PocketApp::songTickNow()
@@ -263,7 +274,182 @@ juce::String PocketApp::runSongChecks (juce::String& report, const juce::File& f
     expect (song->useTake (0) && song->blocks.size() == 4, "Take 1 didn't come back with its edits (the split)");
     savePng (folder.getChildFile ("song-3-take-1.png"));
 
+    // ------------------------------------------------------------------ BOUNCE: each layer + the mix, WAV
+    {
+        SongScreen::Bounce b;
+        b.wav = true;
+        b.mp3 = false;
+        b.tailSeconds = 0;
+        juce::String said;
+        const auto files = bounceSong (b, said);
+        expect (files.size() == 4, "BOUNCE didn't write 3 layers + the mix (" + juce::String (files.size()) + "): " + said);
+        juce::WavAudioFormat wav;
+        if (files.size() > 0)
+            if (std::unique_ptr<juce::AudioFormatReader> r { wav.createReaderFor (files.getLast().createInputStream().release(), true) })
+                expect (std::abs ((double) r->lengthInSamples - std::ceil (song->lengthBars() - 1.0e-6) * 4.0 * 60.0 / bpm * crate::kSampleRate) < 2.0,
+                        "the bounced mix isn't the song's length");
+        report << said << " (" << files.size() << " files)\n";
+        b.what = SongScreen::Bounce::loops;
+        b.eachLayer = false;
+        expect (bounceSong (b, said).size() == 1, "BOUNCE of the layers playing now didn't write one mix");
+    }
+
     loopsScreen.setDemoMode (wasDemo);
     report << "blocks " << (int) song->blocks.size() << ", takes " << (int) song->takes().size() << "\n";
     return problems.joinIntoString ("; ");
+}
+
+//==============================================================================
+// BOUNCE on SONG: the song, a section or the layers playing now, as the mix or each layer + the mix, as WAV and/or MP3,
+// into the song's Bounces folder (Files > Kaleidobox Pocket), then the Share sheet (AirDrop to the Mac, Files...).
+juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce::String& said)
+{
+    juce::Array<juce::File> files;
+    const double bpm = beats.drums().bpm, rate = crate::kSampleRate;
+    const double samplesPerBar = 4.0 * 60.0 / bpm * rate;
+    juce::Range<double> bars;
+    juce::String what = "Song";
+    if (o.what == SongScreen::Bounce::loops)
+        what = "Loops";
+    else if (o.what == SongScreen::Bounce::part)
+    {
+        const auto secs = song->sections();
+        if (! juce::isPositiveAndBelow (o.section, (int) secs.size()))
+        {
+            said = "Tap a section on the ruler first.";
+            return files;
+        }
+        bars = { secs[(size_t) o.section].start, secs[(size_t) o.section].end };
+        what = secs[(size_t) o.section].name;
+    }
+    else
+        bars = { 0.0, std::ceil (song->lengthBars() - 1.0e-6) };
+
+    // the layers in it, as they sound (effects, moves and board)
+    struct Part { int layer; crate::SharedAudio audio; double beats; juce::String name; };
+    std::vector<Part> parts;
+    double longest = 0;
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        if (! loopsScreen.hasLayer (l))
+            continue;
+        if (o.what == SongScreen::Bounce::loops ? loopsScreen.engine().isMuted (l) : ! song->layerUsed (l))
+            continue;
+        juce::String name;
+        double b = 0;
+        if (auto a = loopsScreen.layerSound (l, &name, &b); a != nullptr && b > 0)
+        {
+            parts.push_back ({ l, a, b, name });
+            longest = juce::jmax (longest, b);
+        }
+    }
+    if (o.what == SongScreen::Bounce::loops)
+        bars = { 0.0, std::ceil (longest / 4.0 - 1.0e-6) };
+    if (parts.empty() || bars.getLength() <= 0.0)
+    {
+        said = o.what == SongScreen::Bounce::loops ? "No layers playing to bounce." : "Nothing in the song to bounce yet.";
+        return files;
+    }
+
+    const int body = (int) std::round (bars.getLength() * samplesPerBar);
+    const int total = body + (int) (rate * o.tailSeconds);
+    auto folder = lib.ideaRoot().getChildFile ("Bounces").getNonexistentChildFile (
+        juce::File::createLegalFileName (ideas.current().name + " " + what + " " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M")), {}, false);
+    folder.createDirectory();
+    const auto tempo = juce::String (bpm, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") + " BPM";
+    auto write = [&] (const juce::String& base, const juce::AudioBuffer<float>& audio)
+    {
+        if (o.wav || ! mp3::available())
+        {
+            const auto f = folder.getChildFile (juce::File::createLegalFileName (base) + ".wav");
+            juce::WavAudioFormat wav;
+            if (auto stream = std::unique_ptr<juce::OutputStream> (f.createOutputStream()))
+                if (auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (rate).withNumChannels (2).withBitsPerSample (24)))
+                    if (writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()))
+                        files.add (f);
+        }
+        if (o.mp3 && mp3::available())
+        {
+            const auto f = folder.getChildFile (juce::File::createLegalFileName (base) + ".mp3");
+            if (mp3::write (f, audio, rate, 320))
+                files.add (f);
+        }
+    };
+
+    juce::AudioBuffer<float> mix (2, juce::jmax (1, total));
+    mix.clear();
+    for (const auto& p : parts)
+    {
+        juce::AudioBuffer<float> stem (2, juce::jmax (1, total));
+        stem.clear();
+        const auto& src = *p.audio;
+        const int n = src.getNumSamples();
+        const double samplesPerBeat = (double) n / p.beats;
+        float g = 0.0f;
+        for (int i = 0; i < body; ++i)
+        {
+            const double bar = bars.getStart() + i / samplesPerBar;
+            const float target = o.what == SongScreen::Bounce::loops ? 1.0f : song->gainOf (p.layer, bar);
+            g += (target - g) * 0.01f;   // a few milliseconds, as the phone plays it
+            if (g < 1.0e-5f && target <= 0.0f)
+                continue;
+            double top = o.what == SongScreen::Bounce::loops ? 0.0 : song->originBarOf (p.layer, bar);
+            if (top < -1.0e8)
+                top = 0.0;
+            const double beat = PocketSong::wrap ((bar - top) * 4.0, p.beats);
+            const int at = juce::jlimit (0, n - 1, (int) (beat * samplesPerBeat));
+            for (int ch = 0; ch < 2; ++ch)
+                stem.setSample (ch, i, src.getSample (juce::jmin (ch, src.getNumChannels() - 1), at) * g);
+        }
+        if (o.eachLayer)
+            write (what + " - Layer " + juce::String (p.layer + 1) + " " + p.name.fromFirstOccurrenceOf ("Pocket loop ", false, false).fromFirstOccurrenceOf (" ", false, false)
+                       + " - " + tempo,
+                   stem);
+        for (int ch = 0; ch < 2; ++ch)
+            mix.addFrom (ch, 0, stem, ch, 0, total);
+    }
+    if (const float peak = mix.getMagnitude (0, mix.getNumSamples()); peak > 0.98f)
+        mix.applyGain (0.98f / peak);
+    write (what + " - Mix - " + tempo, mix);
+    said = "Bounced " + juce::String (files.size()) + (files.size() == 1 ? " file" : " files") + " to Files > Kaleidobox Pocket > " + ideas.current().name
+           + " > Bounces.";
+    lastBounce = files;
+    return files;
+}
+
+void PocketApp::shareBounce (const juce::Array<juce::File>& files)
+{
+    juce::Array<juce::URL> urls;
+    for (const auto& f : files)
+        urls.add (juce::URL (f));
+    if (urls.isEmpty())
+        return;
+    bounceSharing = juce::ContentSharer::shareFilesScoped (urls, [safe = juce::Component::SafePointer<PocketApp> (this)] (bool ok, const juce::String& error)
+    {
+        if (safe != nullptr && ! ok && error.isNotEmpty())
+            safe->toast ("Couldn't share: " + error);
+    }, this);
+}
+
+void PocketApp::bounceToMac()
+{
+    if (lastBounce.isEmpty())
+        return toast ("Bounce first: then TO MAC sends its files.");
+    MacSend send;
+    for (const auto& f : lastBounce)
+        if (f.hasFileExtension ("wav"))
+        {
+            juce::AudioFormatManager formats;
+            formats.registerBasicFormats();
+            juce::String error;
+            if (auto a = crate::AudioFiles::load (f, formats, error))
+                send.items.push_back ({ f.getFileNameWithoutExtension(), a, 0.0 });
+        }
+    if (send.items.empty())
+        return toast ("The bounce has no WAVs to send (it's MP3 only): use SHARE to AirDrop them.");
+    send.title = juce::String ((int) send.items.size()) + (send.items.size() == 1 ? " bounce" : " stems");
+    send.detail = "WAVs";
+    send.dests = { "sounds" };
+    send.dest = "sounds";
+    sendToMac (std::move (send));
 }

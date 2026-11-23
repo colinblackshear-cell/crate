@@ -121,6 +121,36 @@ juce::String PocketSong::suggestName() const
     return base;
 }
 
+float PocketSong::gainOf (int layer, double bar) const
+{
+    if (! layerUsed (layer))
+        return 1.0f;
+    float g = 0.0f;
+    for (const auto& b : blocks)
+    {
+        if (b.layer != layer || bar < b.start - kEps || bar >= b.end() - kEps)
+            continue;
+        float v = b.level;
+        if (b.fadeIn > kEps && bar < b.start + b.fadeIn)
+            v *= (float) ((bar - b.start) / b.fadeIn);
+        if (b.fadeOut > kEps && bar > b.end() - b.fadeOut)
+            v *= (float) ((b.end() - bar) / b.fadeOut);
+        g = juce::jmax (g, v);
+    }
+    return g;
+}
+
+double PocketSong::originBarOf (int layer, double bar) const
+{
+    for (int i = (int) blocks.size(); --i >= 0;)
+    {
+        const auto& b = blocks[(size_t) i];
+        if (b.layer == layer && bar >= b.start - kEps && bar < b.end() - kEps)
+            return b.start - b.offset;
+    }
+    return kNone;
+}
+
 double PocketSong::loopBars (int layer) const
 {
     return host.loopBeats ? host.loopBeats (layer) / kBeatsPerBar : 0.0;

@@ -73,6 +73,10 @@ public:
     std::vector<Section> sections() const;
     juce::String suggestName() const;
     static double wrap (double x, double length);
+    // Like gain() / originBeat(), on the blocks as they are here (the message thread's, for a bounce):
+    // the layer's level at `bar` (1 when the song doesn't use it), and the song bar its loop's top is on (-1e9: none).
+    float gainOf (int layer, double bar) const;
+    double originBarOf (int layer, double bar) const;
 
     // Edits the song screen makes (each keeps the loop where it was in time).
     bool split (int block, double bar);

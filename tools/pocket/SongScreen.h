@@ -27,6 +27,19 @@ public:
     std::function<void (const juce::String&)> toast;
     std::function<void()> onChanged;          // something to save
 
+    // BOUNCE: what, how it's split, the format. The app writes the files (and shares them).
+    struct Bounce
+    {
+        enum What { song, part, loops } what = song;   // part: one section
+        int section = -1;
+        bool eachLayer = true, wav = true, mp3 = true;
+        double tailSeconds = 2.0;
+    };
+    Bounce bounceSettings;
+    std::function<void (const Bounce&)> onBounce;
+    std::function<void()> onBounceToMac;
+    void showBounceMenu();
+
     // What the buttons do (also for the thumb bar and the self-checks).
     void pressRecLive();
     void pressPlay();
@@ -41,7 +54,7 @@ public:
     enum Id
     {
         none = 0, recId = 1, playId, takesId, markId, cancelId, keepId,
-        splitId, copyId, deleteId, slipId, fadeInId, fadeOutId, levelId, punchId, endId, zoomOutId, zoomInId,
+        splitId, copyId, deleteId, slipId, fadeInId, fadeOutId, levelId, punchId, endId, zoomOutId, zoomInId, bounceId,
         tileBase = 40, laneArea = 60, rulerArea = 61
     };
     void press (int id);

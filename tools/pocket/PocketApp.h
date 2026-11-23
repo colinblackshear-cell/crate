@@ -332,6 +332,11 @@ private:
     void setupSong();
     void songTickNow();
     void stopClock();
+    juce::Array<juce::File> bounceSong (const SongScreen::Bounce&, juce::String& said);   // PocketAppSong.cpp
+    void shareBounce (const juce::Array<juce::File>&);
+    void bounceToMac();
+    juce::Array<juce::File> lastBounce;
+    juce::ScopedMessageBox bounceSharing;
     juce::TimedCallback songTick { [this] { songTickNow(); } };
     int savedSongEdits = -1;
     juce::uint32 songSavedAt = 0;

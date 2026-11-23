@@ -161,7 +161,7 @@ void SongScreen::layout()
     y += rowH + gap;
     row (y, { { 1.0f, fadeInId }, { 1.0f, fadeOutId }, { 1.0f, levelId } });
     y += rowH + gap;
-    row (y, { { 1.25f, punchId }, { 1.0f, endId }, { 0.42f, zoomOutId }, { 0.42f, zoomInId } });
+    row (y, { { 1.15f, punchId }, { 1.0f, bounceId }, { 0.42f, zoomOutId }, { 0.42f, zoomInId } });
 }
 
 juce::Rectangle<float> SongScreen::hitRect (int id) const
@@ -345,6 +345,7 @@ void SongScreen::press (int id)
             repaint();
             break;
         }
+        case bounceId: showBounceMenu(); break;
         case zoomOutId: barW = juce::jmax (6.0f, barW / 1.5f); repaint(); break;
         case zoomInId: barW = juce::jmin (90.0f, barW * 1.5f); repaint(); break;
         default:
@@ -639,6 +640,7 @@ void SongScreen::paint (juce::Graphics& g)
                 break;
             }
             case endId: drawChip (g, h.r, "REC FROM END", false, down, 13.0f); break;
+            case bounceId: drawChip (g, h.r, U8("BOUNCE \xe2\x96\xbe"), false, down, 13.0f); break;
             case zoomOutId: drawChip (g, h.r, U8("\xe2\x88\x92"), false, down, 18.0f); break;
             case zoomInId: drawChip (g, h.r, "+", false, down, 18.0f); break;
             default: break;
@@ -818,4 +820,60 @@ void SongScreen::paintLanes (juce::Graphics& g)
                               : "Record some loops in LOOPS first. Then REC LIVE brings them in and out to build the song.",
                           lanesR.reduced (16.0f).toNearestInt(), juce::Justification::centred, 4);
     }
+}
+
+void SongScreen::showBounceMenu()
+{
+    if (song.isLive())
+        return say ("BOUNCE after STOP + KEEP.");
+    auto& b = bounceSettings;
+    const auto secs = song.sections();
+    const bool sectionPicked = juce::isPositiveAndBelow (section, (int) secs.size()) && ! song.markers.empty();
+    juce::PopupMenu m;
+    m.addSectionHeader ("BOUNCE");
+    m.addItem (1, "The song: each layer + the mix");
+    m.addItem (2, "The song: the mix");
+    if (sectionPicked)
+    {
+        m.addItem (3, secs[(size_t) section].name + ": each layer + the mix");
+        m.addItem (4, secs[(size_t) section].name + ": the mix");
+    }
+    else
+        m.addItem (-1, "A section: tap one on the ruler first", false);
+    m.addItem (5, "Layers playing now: each + the mix");
+    m.addItem (6, "Layers playing now: the mix");
+    m.addSeparator();
+    m.addItem (10, "WAV (for Logic)", true, b.wav);
+    m.addItem (11, "MP3 (to share)", true, b.mp3);
+    m.addItem (12, "Echo tail (2 s)", true, b.tailSeconds > 0.0);
+    m.addSeparator();
+    m.addItem (20, "TO MAC: the last bounce");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (hitRect (bounceId).toNearestInt())),
+                     [safe = juce::Component::SafePointer<SongScreen> (this)] (int r)
+                     {
+                         if (safe == nullptr || r <= 0)
+                             return;
+                         auto& o = safe->bounceSettings;
+                         if (r >= 10 && r <= 12)
+                         {
+                             if (r == 10 && (! o.wav || o.mp3))
+                                 o.wav = ! o.wav;
+                             else if (r == 11 && (! o.mp3 || o.wav))
+                                 o.mp3 = ! o.mp3;
+                             else if (r == 12)
+                                 o.tailSeconds = o.tailSeconds > 0.0 ? 0.0 : 2.0;
+                             return safe->showBounceMenu();   // open again, to pick what
+                         }
+                         if (r == 20)
+                         {
+                             if (safe->onBounceToMac)
+                                 safe->onBounceToMac();
+                             return;
+                         }
+                         o.what = r <= 2 ? Bounce::song : r <= 4 ? Bounce::part : Bounce::loops;
+                         o.eachLayer = r % 2 == 1;
+                         o.section = safe->section;
+                         if (safe->onBounce)
+                             safe->onBounce (o);
+                     });
 }
