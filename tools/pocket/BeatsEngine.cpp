@@ -22,7 +22,7 @@ drums::Pattern fromRows (const std::array<const char*, drums::kVoices>& rows, co
         for (int s = 0; s < 16 && rows[(size_t) v][0] != 0 && rows[(size_t) v][s] != 0; ++s)
         {
             const char c = rows[(size_t) v][s];
-            p.hits[(size_t) v][(size_t) s] = c == 'x' ? 1 : (c >= '2' && c <= '4' ? (std::uint8_t) (c - '0') : 0);
+            p.hits[(size_t) v][(size_t) s] = c == 'x' ? 1 : (c >= '2' && c <= '8' ? (std::uint8_t) (c - '0') : 0);
         }
     for (int s = 0; s < 16 && accent[s] != 0; ++s)
         p.accent[(size_t) s] = accent[s] == '>';
@@ -81,6 +81,17 @@ juce::var DrumData::toVar() const
             for (auto& row : p.hits)
                 rows.add (rowText (row));
             o->setProperty ("rows", rows);
+            // How each hit plays (rolls that build, flams): only when one is used.
+            juce::Array<juce::var> shapes;
+            bool anyShape = false;
+            for (auto& row : p.shape)
+            {
+                shapes.add (rowText (row));
+                for (auto sh : row)
+                    anyShape = anyShape || sh != 0;
+            }
+            if (anyShape)
+                o->setProperty ("shapes", shapes);
             juce::String accent;
             for (bool a : p.accent)
                 accent << (a ? "1" : "0");
@@ -172,7 +183,14 @@ DrumData DrumData::fromVar (const juce::var& v)
                     {
                         auto text = (*rows)[r].toString();
                         for (int s = 0; s < juce::jmin (drums::kMaxSteps, text.length()); ++s)
-                            p.hits[(size_t) r][(size_t) s] = (std::uint8_t) juce::jlimit (0, 4, text[s] - '0');
+                            p.hits[(size_t) r][(size_t) s] = (std::uint8_t) juce::jlimit (0, drums::kMaxRoll, text[s] - '0');
+                    }
+                if (auto* shapes = o.getProperty ("shapes", {}).getArray())
+                    for (int r = 0; r < juce::jmin (drums::kVoices, shapes->size()); ++r)
+                    {
+                        auto text = (*shapes)[r].toString();
+                        for (int s = 0; s < juce::jmin (drums::kMaxSteps, text.length()); ++s)
+                            p.shape[(size_t) r][(size_t) s] = (std::uint8_t) juce::jlimit (0, (int) drums::numShapes - 1, text[s] - '0');
                     }
                 auto accent = o.getProperty ("accent", "").toString();
                 for (int s = 0; s < juce::jmin (drums::kMaxSteps, accent.length()); ++s)

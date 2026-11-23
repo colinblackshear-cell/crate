@@ -3070,6 +3070,7 @@ void GrooveView::mutate (float amount)
                 {
                     std::swap (p.hits[(size_t) v][(size_t) from], p.hits[(size_t) v][(size_t) to]);
                     std::swap (p.chance[(size_t) v][(size_t) from], p.chance[(size_t) v][(size_t) to]);
+                    std::swap (p.shape[(size_t) v][(size_t) from], p.shape[(size_t) v][(size_t) to]);
                     ++changes;
                 }
             }
@@ -3270,6 +3271,7 @@ void GrooveView::turnRow (int row, int by)
         turn (p.pitch[(size_t) voice]);
         turn (p.decayLock[(size_t) voice]);
         turn (p.velocity[(size_t) voice]);
+        turn (p.shape[(size_t) voice]);
         setMachinePattern (p);
     }
     else if (track == bass)

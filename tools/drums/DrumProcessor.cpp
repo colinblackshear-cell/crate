@@ -27,7 +27,7 @@ float get (const juce::AudioProcessorValueTreeState& p, const juce::String& id)
 
 juce::String percent (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)) + "%"; }
 
-// A beat written out: one string per sound ('x' a hit, '2'-'4' a roll, '.' rest) and the accents ('>').
+// A beat written out: one string per sound ('x' a hit, '2'-'8' a roll, '.' rest) and the accents ('>').
 struct Written
 {
     const char* name;
@@ -210,7 +210,7 @@ drums::Pattern DrumProcessor::groove (int index)
         for (int s = 0; s < juce::jmin (drums::kMaxSteps, row.length()); ++s)
         {
             const auto c = row[s];
-            p.hits[(size_t) v][(size_t) s] = (std::uint8_t) (c == 'x' ? 1 : (c >= '2' && c <= '4') ? c - '0' : 0);
+            p.hits[(size_t) v][(size_t) s] = (std::uint8_t) (c == 'x' ? 1 : (c >= '2' && c <= '8') ? c - '0' : 0);
         }
     }
     const juce::String accent (w.accent);
@@ -501,7 +501,7 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
         juce::ValueTree life ("Life");
         for (int v = 0; v < drums::kVoices; ++v)
         {
-            juce::StringArray chance, cond, nudge, pitch, decay, velocity;
+            juce::StringArray chance, cond, nudge, pitch, decay, velocity, shape;
             for (int s = 0; s < drums::kMaxSteps; ++s)
             {
                 chance.add (juce::String ((int) p.chance[(size_t) v][(size_t) s]));
@@ -510,6 +510,7 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
                 pitch.add (juce::String ((int) p.pitch[(size_t) v][(size_t) s]));
                 decay.add (juce::String ((int) p.decayLock[(size_t) v][(size_t) s]));
                 velocity.add (juce::String ((int) p.velocity[(size_t) v][(size_t) s]));
+                shape.add (juce::String ((int) p.shape[(size_t) v][(size_t) s]));
             }
             juce::ValueTree row ("Row");
             row.setProperty ("voice", v, nullptr);
@@ -520,6 +521,7 @@ juce::ValueTree DrumProcessor::patternToTree (const drums::Pattern& p)
             row.setProperty ("pitch", pitch.joinIntoString (","), nullptr);
             row.setProperty ("decay", decay.joinIntoString (","), nullptr);
             row.setProperty ("velocity", velocity.joinIntoString (","), nullptr);
+            row.setProperty ("shape", shape.joinIntoString (","), nullptr);
             life.appendChild (row, nullptr);
         }
         t.appendChild (life, nullptr);
@@ -535,7 +537,7 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
     {
         const auto row = t.getProperty (voiceKeys[v]).toString();
         for (int s = 0; s < juce::jmin (drums::kMaxSteps, row.length()); ++s)
-            p.hits[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (0, 4, (int) (row[s] - '0'));
+            p.hits[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (0, drums::kMaxRoll, (int) (row[s] - '0'));
     }
     const auto accent = t.getProperty ("accent").toString();
     for (int s = 0; s < juce::jmin (drums::kMaxSteps, accent.length()); ++s)
@@ -552,6 +554,7 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
         const auto pitch = juce::StringArray::fromTokens (row.getProperty ("pitch").toString(), ",", "");
         const auto decay = juce::StringArray::fromTokens (row.getProperty ("decay").toString(), ",", "");
         const auto velocity = juce::StringArray::fromTokens (row.getProperty ("velocity").toString(), ",", "");
+        const auto shape = juce::StringArray::fromTokens (row.getProperty ("shape").toString(), ",", "");
         for (int s = 0; s < drums::kMaxSteps; ++s)
         {
             if (s < chance.size())
@@ -566,6 +569,8 @@ drums::Pattern DrumProcessor::patternFromTree (const juce::ValueTree& t)
                 p.decayLock[(size_t) v][(size_t) s] = (std::int8_t) juce::jlimit (-50, 50, decay[s].getIntValue());
             if (s < velocity.size())
                 p.velocity[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (1, 100, velocity[s].getIntValue());
+            if (s < shape.size())
+                p.shape[(size_t) v][(size_t) s] = (std::uint8_t) juce::jlimit (0, (int) drums::numShapes - 1, shape[s].getIntValue());
         }
     }
     return p;

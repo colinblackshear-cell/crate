@@ -13,8 +13,8 @@
 // a snappy snare, clap, rim shot, three toms, clave, cowbell, closed and open hats (the closed
 // hat cuts the open one off) and a cymbal.
 //
-// A pattern is a grid of steps (up to 32) for the 12 sounds, with an accent row that makes a
-// whole step hit harder. A hit can be a roll (2, 3 or 4 quick hits in its step). Swing pushes
+// A pattern is a grid of steps (up to 64) for the 12 sounds, with an accent row that makes a
+// whole step hit harder. A hit can be a roll (2 to 8 quick hits in its step), a roll that builds, or a flam. Swing pushes
 // every second step late. A fill pattern can take over every few times round, or once when
 // you press Fill.
 //
@@ -34,7 +34,8 @@
 namespace crate::drums
 {
 constexpr int kVoices = 12;
-constexpr int kMaxSteps = 32;
+constexpr int kMaxSteps = 64;   // four bars of 16ths
+constexpr int kMaxRoll = 8;     // a roll is up to 8 hits in its step
 constexpr int kPatterns = 16;
 constexpr int kChain = 32;   // patterns in the chain
 
@@ -57,10 +58,16 @@ juce::StringArray soundNames (int voice);
 // True for the hand drums among them (the ritual kit).
 bool isHandDrum (int voice, int sound);
 
+// How a hit plays: plain (a roll fades a little each hit), building (each hit of the roll louder), or a flam.
+enum Shape : std::uint8_t { plain, builds, flam, numShapes };
+
 struct Pattern
 {
-    // 0 = no hit, 1 = a hit, 2-4 = a roll of that many hits in the step.
+    // 0 = no hit, 1 = a hit, 2-8 = a roll of that many hits in the step.
     std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> hits {};
+    // How each hit plays (Shape): a roll that fades (the classic), one that builds, or a flam (a soft
+    // grace hit just before the main one).
+    std::array<std::array<std::uint8_t, kMaxSteps>, kVoices> shape {};
     std::array<bool, kMaxSteps> accent {};
     int length = 16;   // 1..32 steps
 
@@ -176,6 +183,8 @@ public:
     int getChainPosition() const { return chainPos; }
     // Counts up each time a voice sounds, so the window can flash it.
     std::array<std::atomic<int>, kVoices> hitCounts {};
+    // How hard each voice's last hit was (0..1), for the tests and the lamps.
+    float lastVelocity (int voice) const { return lastHit[(size_t) juce::jlimit (0, kVoices - 1, voice)].load(); }
 
     // Optional: every hit is also written here as a note at its sample in the block (the Rig's
     // plugin slot and recorder can use it).
@@ -228,7 +237,7 @@ private:
     // A hit of `voice` at `step`, by the pattern's life: plays now, later (nudged), or not at all.
     void hitVoice (int voice, int step, const Pattern&, double stepStartBeat, double stepLength, long long index, bool lookAhead);
     bool lifeSays (int voice, int step, const Pattern&, long long index);
-    void schedule (int voice, double beat, int hits, double gap, float velocity, bool accent, float tune = 0.0f, float decay = 0.0f);
+    void schedule (int voice, double beat, int hits, double gap, float velocity, bool accent, float tune = 0.0f, float decay = 0.0f, int shape = plain);
     const Pattern* byCode (int code) const;
     const Pattern* basePattern (long long loop, int& code) const;
     void resync (long long index);
@@ -260,10 +269,11 @@ private:
     std::atomic<bool> fillOnce { false };
     bool fillQueued = false;
     bool wasPlaying = false;
-    struct Roll { int left = 0; double next = 0, gap = 0; float velocity = 0; bool accent = false; float tune = 0, decay = 0; };
+    std::array<std::atomic<float>, kVoices> lastHit {};
+    struct Roll { int left = 0; double next = 0, gap = 0; float velocity = 0, fade = 0.9f, rise = 0; bool accent = false; float tune = 0, decay = 0; };
     std::array<Roll, kVoices> rolls {};
     // Nudged hits, waiting for their moment.
-    struct Pending { double beat = -1; int hits = 1; double gap = 0; float velocity = 1; bool accent = false; float tune = 0, decay = 0; };
+    struct Pending { double beat = -1; int hits = 1; double gap = 0; float velocity = 1; bool accent = false; float tune = 0, decay = 0; int shape = plain; };
     std::array<std::array<Pending, 2>, kVoices> pending {};
     long long firstLoop = 0;        // the time round when Play was pressed (for First / Not first)
     long long lookedAheadFor = -1;  // the step whose early hits were already started

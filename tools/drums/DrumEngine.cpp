@@ -159,7 +159,7 @@ bool Pattern::isEmpty() const
 bool Pattern::operator== (const Pattern& o) const
 {
     return hits == o.hits && accent == o.accent && length == o.length && chance == o.chance && cond == o.cond && nudge == o.nudge
-           && rowLength == o.rowLength && pitch == o.pitch && decayLock == o.decayLock && velocity == o.velocity;
+           && rowLength == o.rowLength && pitch == o.pitch && decayLock == o.decayLock && velocity == o.velocity && shape == o.shape;
 }
 
 bool Pattern::hasLife() const
@@ -170,7 +170,8 @@ bool Pattern::hasLife() const
             return true;
         for (int st = 0; st < kMaxSteps; ++st)
             if (chance[(size_t) v][(size_t) st] != 100 || cond[(size_t) v][(size_t) st] != 0 || nudge[(size_t) v][(size_t) st] != 0
-                || pitch[(size_t) v][(size_t) st] != 0 || decayLock[(size_t) v][(size_t) st] != 0 || velocity[(size_t) v][(size_t) st] != 100)
+                || pitch[(size_t) v][(size_t) st] != 0 || decayLock[(size_t) v][(size_t) st] != 0 || velocity[(size_t) v][(size_t) st] != 100
+                || shape[(size_t) v][(size_t) st] != plain)
                 return true;
     }
     return false;
@@ -300,6 +301,7 @@ void Engine::start (int v, float velocity, bool accent, float tuneLock, float de
         }
         s.envCoeff = coeffFor (decay, invRate);
         ++hitCounts[(size_t) v];
+        lastHit[(size_t) v] = velocity;
         tap (v, velocity);
         return;
     }
@@ -420,6 +422,7 @@ void Engine::start (int v, float velocity, bool accent, float tuneLock, float de
     }
     s.envCoeff = coeffFor (decay, invRate);
     ++hitCounts[(size_t) v];
+    lastHit[(size_t) v] = velocity;
     tap (v, velocity);
 }
 
@@ -929,22 +932,29 @@ void Engine::hitVoice (int v, int step, const Pattern& p, double stepStart, doub
         return;
     const bool accent = p.accent[(size_t) step];
     const int h = p.hits[(size_t) v][(size_t) step];
-    const int hits = juce::jlimit (1, 4, (int) h);
-    const double gap = stepLength / hits;
+    const int shape = p.shape[(size_t) v][(size_t) step];
+    int hits = juce::jlimit (1, kMaxRoll, (int) h);
+    double gap = stepLength / hits;
+    if (shape == flam)
+    {
+        // A flam: a soft grace hit, then the main one a moment later (about 25 ms at 120 BPM).
+        hits = 2;
+        gap = juce::jmin (0.05, stepLength * 0.5);
+    }
     const double at = stepStart + p.nudge[(size_t) v][(size_t) step] / 100.0 * stepLength;
     schedule (v, at, hits, gap, juce::jlimit (1, 100, (int) p.velocity[(size_t) v][(size_t) step]) / 100.0f, accent,
-              (float) p.pitch[(size_t) v][(size_t) step], p.decayLock[(size_t) v][(size_t) step] / 100.0f);
+              (float) p.pitch[(size_t) v][(size_t) step], p.decayLock[(size_t) v][(size_t) step] / 100.0f, shape);
 }
 
-void Engine::schedule (int v, double beat, int hits, double gap, float velocity, bool accent, float tune, float decay)
+void Engine::schedule (int v, double beat, int hits, double gap, float velocity, bool accent, float tune, float decay, int shape)
 {
     for (auto& slot : pending[(size_t) v])
         if (slot.beat < 0)
         {
-            slot = { beat, hits, gap, velocity, accent, tune, decay };
+            slot = { beat, hits, gap, velocity, accent, tune, decay, shape };
             return;
         }
-    pending[(size_t) v][0] = { beat, hits, gap, velocity, accent, tune, decay };
+    pending[(size_t) v][0] = { beat, hits, gap, velocity, accent, tune, decay, shape };
 }
 
 const Pattern* Engine::byCode (int code) const
@@ -1125,14 +1135,35 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 for (auto& slot : pending[(size_t) v])
                     if (slot.beat >= 0 && beat >= slot.beat - 1.0e-9)
                     {
-                        start (v, slot.velocity, slot.accent, slot.tune, slot.decay);
+                        // The first hit: a building roll starts soft, a flam's grace hit is soft.
+                        const float first = slot.hits > 1 && slot.shape == builds ? 0.35f
+                                          : slot.hits > 1 && slot.shape == flam   ? 0.5f : 1.0f;
+                        start (v, first * slot.velocity, slot.accent && slot.shape != flam, slot.tune, slot.decay);
                         auto& r = rolls[(size_t) v];
                         r.left = slot.hits - 1;
                         if (r.left > 0)
                         {
                             r.gap = slot.gap;
                             r.next = slot.beat + slot.gap;
-                            r.velocity = 0.8f * slot.velocity;
+                            if (slot.shape == builds)
+                            {
+                                // Each hit louder, up to the full hit on the last.
+                                r.rise = 0.65f * slot.velocity / (float) r.left;
+                                r.velocity = first * slot.velocity + r.rise;
+                                r.fade = 1.0f;
+                            }
+                            else if (slot.shape == flam)
+                            {
+                                r.rise = 0;
+                                r.velocity = slot.velocity;   // the main hit, full
+                                r.fade = 1.0f;
+                            }
+                            else
+                            {
+                                r.rise = 0;
+                                r.velocity = 0.8f * slot.velocity;
+                                r.fade = 0.9f;
+                            }
                             r.accent = slot.accent;
                             r.tune = slot.tune;
                             r.decay = slot.decay;
@@ -1144,8 +1175,8 @@ void Engine::render (float* left, float* right, int numSamples, const juce::Midi
                 auto& r = rolls[(size_t) v];
                 if (r.left > 0 && beat >= r.next)
                 {
-                    start (v, r.velocity, r.accent, r.tune, r.decay);
-                    r.velocity *= 0.9f;
+                    start (v, juce::jmin (1.0f, r.velocity), r.accent, r.tune, r.decay);
+                    r.velocity = r.velocity * r.fade + r.rise;
                     r.next += r.gap;
                     --r.left;
                 }

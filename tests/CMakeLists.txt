@@ -59,6 +59,7 @@ target_sources(CrateTests PRIVATE
     RigShowFilesTests.cpp
     DroneRigTests.cpp
     NoteRepeatTests.cpp
+    DrumStepToolsTests.cpp
     ${PROJECT_SOURCE_DIR}/tools/pocket/PocketLinkClient.cpp
     ${PROJECT_SOURCE_DIR}/tools/pocket/BeatsEngine.cpp
     ${PROJECT_SOURCE_DIR}/tools/rig/RigPlugin.cpp
