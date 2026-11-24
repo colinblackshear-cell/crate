@@ -91,15 +91,21 @@ juce::String row (const Result& r)
            + r.kase.paddedRight (' ', 30) + f (r.wall.median()).paddedLeft (' ', 8) + f (r.wall.p99()).paddedLeft (' ', 9)
            + f (r.wall.most()).paddedLeft (' ', 10) + f (r.cpu.median()).paddedLeft (' ', 8) + f (r.cpu.p99()).paddedLeft (' ', 9)
            + f (r.cpu.most()).paddedLeft (' ', 10) + juce::String (r.late).paddedLeft (' ', 6) + juce::String (r.missing).paddedLeft (' ', 6)
-           + juce::String (r.mandatoryBytes / 1024).paddedLeft (' ', 10) + juce::String (r.discretionaryBytes / 1024).paddedLeft (' ', 10)
-           + juce::String (r.wholeBytes / 1024).paddedLeft (' ', 10) + juce::String (r.maxMandatoryPages).paddedLeft (' ', 5)
-           + juce::String (r.maxDiscretionaryPages).paddedLeft (' ', 6) + juce::String (r.roomsMost).paddedLeft (' ', 4)
+           + juce::String (r.mandatoryBytes / 1024).paddedLeft (' ', 11) + juce::String (r.discretionaryBytes / 1024).paddedLeft (' ', 11)
+           + juce::String (r.wholeBytes / 1024).paddedLeft (' ', 11) + juce::String (r.maxMandatoryPages).paddedLeft (' ', 7)
+           + juce::String (r.maxDiscretionaryPages).paddedLeft (' ', 7) + juce::String (r.roomsMost).paddedLeft (' ', 4)
            + juce::String (juce::roundToInt (r.peakMB)).paddedLeft (' ', 7) + "  " + path + (r.undoOffered ? "" : " (no undo)") + (r.exact ? "" : " NOT EXACT");
 }
 
 juce::String header()
 {
-    return "  kHz  buf  case                            wall us: med      p99       max  cpu us: med   p99      max  late  miss  mand KB  disc KB  whole KB mxMd mxDsc rms  pkMB  undo path";
+    // (The same widths as a row's.)
+    return juce::String ("kHz").paddedLeft (' ', 5) + " " + juce::String ("buf").paddedLeft (' ', 4) + "  " + juce::String ("case").paddedRight (' ', 30)
+           + juce::String ("wall med").paddedLeft (' ', 8) + juce::String ("p99").paddedLeft (' ', 9) + juce::String ("max").paddedLeft (' ', 10)
+           + juce::String ("cpu med").paddedLeft (' ', 8) + juce::String ("p99").paddedLeft (' ', 9) + juce::String ("max").paddedLeft (' ', 10)
+           + juce::String ("late").paddedLeft (' ', 6) + juce::String ("miss").paddedLeft (' ', 6) + juce::String ("mand KB").paddedLeft (' ', 11)
+           + juce::String ("disc KB").paddedLeft (' ', 11) + juce::String ("whole KB").paddedLeft (' ', 11) + juce::String ("mxMd").paddedLeft (' ', 7)
+           + juce::String ("mxDsc").paddedLeft (' ', 7) + juce::String ("rms").paddedLeft (' ', 4) + juce::String ("pkMB").paddedLeft (' ', 7) + "  undo path";
 }
 
 // The loops: 0 is the longest (its buffer is the undo room's size: undo by swap); 1 is 5%
