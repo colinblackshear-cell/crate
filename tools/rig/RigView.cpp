@@ -30,6 +30,7 @@
 #include "RigSongStart.h"
 #include "QuantizePanel.h"
 #include "ControllersPanel.h"
+#include "core/visuals/VisualSettings.h"
 
 namespace Theme = crate::Theme;
 
@@ -469,6 +470,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     // Your show, and starting a song from nothing.
     header.show.onClick = [this] { if (toolMode()) showToolMenu(); else showShowMenu(); };
     header.menu.onClick = [this] { if (toolMode()) showToolMenu(); else showShowMenu(); };
+    crate::visuals::load (visualState, crate::visuals::defaultFile());
+    header.visuals.onClick = [this] { showVisualsMenu(); };
     header.jam.onClick = [this]
     {
         engine.jam();
@@ -1042,6 +1045,8 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
 RigView::~RigView()
 {
+    visualsWindow.reset();
+    visualsView.reset();
     if (activity != nullptr)
     {
         juce::Desktop::getInstance().removeGlobalMouseListener (activity.get());
@@ -4184,11 +4189,13 @@ void RigView::showTitle (bool show)
                 recent.push_back ({ s.name, s.file });
     title->setRecent (std::move (recent));
     title->micLevel = [this] { return juce::jlimit (0.0f, 1.0f, engine.micPeak.load() * 2.0f); };
+    // (Each copies its pointer first: closing the title deletes the button's callback, captures and all,
+    // while it runs.)
     auto safe = juce::Component::SafePointer<RigView> (this);
-    title->onStart = [safe] { if (safe != nullptr) { safe->showTitle (false); safe->showTab ("Ideas"); } };
-    title->onContinue = [safe] { if (safe != nullptr) { safe->showTitle (false); safe->showView ("Play"); } };
-    title->onTour = [safe] { if (safe != nullptr) { safe->showTitle (false); safe->showTab ("Ideas"); safe->tourStop = 0; safe->showHelp (true); } };
-    title->onRecent = [safe] (const juce::File& f) { if (safe != nullptr) { safe->showTitle (false); safe->askOpenSong (f); } };
+    title->onStart = [safe] { if (auto v = safe; v != nullptr) { v->showTitle (false); v->showTab ("Ideas"); } };
+    title->onContinue = [safe] { if (auto v = safe; v != nullptr) { v->showTitle (false); v->showView ("Play"); } };
+    title->onTour = [safe] { if (auto v = safe; v != nullptr) { v->showTitle (false); v->showTab ("Ideas"); v->tourStop = 0; v->showHelp (true); } };
+    title->onRecent = [safe] (const juce::File& f) { if (auto v = safe; v != nullptr) { const auto file = f; v->showTitle (false); v->askOpenSong (file); } };
     addAndMakeVisible (*title);
     title->setBounds (getLocalBounds());
     title->toFront (true);
@@ -4196,6 +4203,41 @@ void RigView::showTitle (bool show)
 
 bool RigView::keyPressed (const juce::KeyPress& key)
 {
+    // F8: Kaleidobox Visuals on and off (where it last showed). While it shows, Esc closes it and
+    // Option+1-5 pick a look, Option+0 Drift (1-8 still play the song's sections).
+    if (key.getKeyCode() == juce::KeyPress::F8Key)
+    {
+        showVisuals (visualsAt == VisualsPlace::off ? visualsLast : VisualsPlace::off, visualsDisplay);
+        return true;
+    }
+    if (visualsAt != VisualsPlace::off)
+    {
+        if (key == juce::KeyPress::escapeKey)
+        {
+            showVisuals (VisualsPlace::off);
+            return true;
+        }
+        const auto vc = key.getTextCharacter();
+        const auto code = key.getKeyCode();
+        if (key.getModifiers().isAltDown() && ! key.getModifiers().isCommandDown())
+        {
+            const int digit = code >= '0' && code <= '9' ? code - '0' : (vc >= '0' && vc <= '9' ? (int) (vc - '0') : -1);
+            if (digit >= 1 && digit <= crate::visuals::kLooks)
+            {
+                visualState.drift = false;
+                visualState.look = digit - 1;
+                crate::visuals::save (visualState, crate::visuals::defaultFile());
+                if (visualsView != nullptr) visualsView->pickLook (digit - 1);
+                return true;
+            }
+            if (digit == 0)
+            {
+                visualState.drift = ! visualState.drift.load();
+                crate::visuals::save (visualState, crate::visuals::defaultFile());
+                return true;
+            }
+        }
+    }
     if (key == juce::KeyPress::spaceKey)
     {
         engine.playOrStop();
@@ -4830,6 +4872,14 @@ void RigView::resized()
         chordsDrawer->setBounds (drawerArea.removeFromBottom (juce::jmin (drawerArea.getHeight() - 120, ChordsView::kPreferredHeight)));
         chordsDrawer->toFront (false);
     }
+    if (visualsView != nullptr)
+    {
+        // Over the screen, between the top bar and the Rec dock (they stay, so you can still play and record).
+        const int top = stageShown ? screenBar.getY() : header.getBottom();
+        const int bottom = stageShown ? getHeight() : dock.getY();
+        visualsView->setBounds (juce::Rectangle<int>::leftTopRightBottom (kCheek, top, getWidth() - kCheek, bottom));
+        visualsView->toFront (false);
+    }
     if (title != nullptr)
     {
         title->setBounds (getLocalBounds());
@@ -5137,4 +5187,172 @@ juce::String RigView::quantizeNow()
     if (groove != nullptr)
         groove->repaint();
     return text;
+}
+
+//==============================================================================
+// Kaleidobox Visuals
+
+// Full screen, on this display or another (a projector): the picture in its own window, in macOS's
+// own full screen. Esc (or Visuals > Turn off) closes it.
+class RigView::VisualsWindow : public juce::DocumentWindow
+{
+public:
+    VisualsWindow (RigView& v, std::unique_ptr<crate::visuals::VisualsView> picture, juce::Rectangle<int> displayArea)
+        : juce::DocumentWindow ("Kaleidobox Visuals", juce::Colours::black, juce::DocumentWindow::closeButton), view (v)
+    {
+        setUsingNativeTitleBar (true);
+        setContentOwned (picture.release(), false);
+        setResizable (true, false);
+        setBounds (displayArea.reduced (displayArea.getWidth() / 8, displayArea.getHeight() / 8));
+        setVisible (true);
+        setFullScreen (true);
+    }
+    void closeButtonPressed() override
+    {
+        juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<RigView> (&view)] { if (sp != nullptr) sp->showVisuals (RigView::VisualsPlace::off); });
+    }
+    bool keyPressed (const juce::KeyPress& k) override
+    {
+        if (k == juce::KeyPress::escapeKey || k.getKeyCode() == juce::KeyPress::F8Key)
+        {
+            closeButtonPressed();
+            return true;
+        }
+        return view.keyPressed (k);
+    }
+    crate::visuals::VisualsView* picture() { return dynamic_cast<crate::visuals::VisualsView*> (getContentComponent()); }
+
+private:
+    RigView& view;
+};
+
+void RigView::showVisuals (VisualsPlace place, int display)
+{
+    const auto& displays = juce::Desktop::getInstance().getDisplays().displays;
+    if (place == VisualsPlace::display && ! juce::isPositiveAndBelow (display, displays.size()))
+        place = VisualsPlace::fullScreen;
+    visualsWindow.reset();
+    visualsView.reset();
+    visualsAt = place;
+    if (place != VisualsPlace::off)
+    {
+        visualsLast = place;
+        visualsDisplay = display;
+    }
+
+    auto make = [this] (bool controls)
+    {
+        crate::visuals::VisualsView::Options o;
+        o.controls = controls;
+        o.font = [] (float h) { return vintage::cond (h, vintage::Weight::bold, 0.06f); };
+        auto v = std::make_unique<crate::visuals::VisualsView> (engine.visualTap, visualState, o);
+        v->clock = [this]
+        {
+            auto& t = engine.getTransport();
+            crate::visuals::Clock c;
+            c.beats = t.getPositionInBeats();
+            c.bpm = t.getBpm();
+            c.beatsPerBar = t.getBeatsPerBar();
+            c.playing = t.isPlaying();
+            return c;
+        };
+        v->onClose = [this] { juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<RigView> (this)] { if (sp != nullptr) sp->showVisuals (VisualsPlace::off); }); };
+        v->onChanged = [this] { crate::visuals::save (visualState, crate::visuals::defaultFile()); updateVisualsButton(); };
+        return v;
+    };
+
+    if (place == VisualsPlace::window)
+    {
+        visualsView = make (true);
+        addAndMakeVisible (*visualsView);
+        resized();
+    }
+    else if (place != VisualsPlace::off)
+    {
+        // Full screen: the display this window is on; a display: that one, with only the picture.
+        const auto* here = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds());
+        const auto area = place == VisualsPlace::display ? displays[display].totalArea
+                        : here != nullptr ? here->totalArea : juce::Rectangle<int> (0, 0, 1280, 800);
+        visualsWindow = std::make_unique<VisualsWindow> (*this, make (place == VisualsPlace::fullScreen), area);
+    }
+    updateVisualsButton();
+}
+
+void RigView::updateVisualsButton()
+{
+    using P = VisualsPlace;
+    const juce::String where = visualsAt == P::off ? "OFF" : visualsAt == P::window ? "IN WINDOW" : visualsAt == P::fullScreen ? "FULL SCREEN" : "2ND SCREEN";
+    header.visuals.sub = where;
+    header.visuals.lit = visualsAt == P::off ? vintage::Lit::none : vintage::Lit::current;
+    header.visuals.repaint();
+}
+
+void RigView::showVisualsMenu()
+{
+    using P = VisualsPlace;
+    juce::PopupMenu m;
+    m.addSectionHeader ("Visuals: your sound as a light show");
+    m.addItem ("In this window", true, visualsAt == P::window, [this] { showVisuals (P::window); });
+    m.addItem ("Full screen", true, visualsAt == P::fullScreen, [this] { showVisuals (P::fullScreen); });
+    // A second screen or projector: only the picture, full screen there, while you play on this one.
+    const auto& displays = juce::Desktop::getInstance().getDisplays().displays;
+    const auto* here = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds());
+    for (int i = 0; i < displays.size(); ++i)
+    {
+        if (here != nullptr && displays[i].totalArea == here->totalArea)
+            continue;
+        const auto size = displays[i].totalArea;
+        m.addItem ("On screen " + juce::String (i + 1) + " (" + juce::String (size.getWidth()) + " x " + juce::String (size.getHeight()) + "), picture only",
+                   true, visualsAt == P::display && visualsDisplay == i, [this, i] { showVisuals (P::display, i); });
+    }
+    if (displays.size() < 2)
+        m.addItem ("On a second screen (plug one in)", false, false, nullptr);
+    m.addItem (visualsAt == P::off ? "Off" : "Turn off   (F8)", visualsAt != P::off, visualsAt == P::off, [this] { showVisuals (P::off); });
+
+    m.addSectionHeader ("Look   (Option+1-5)");
+    for (int i = 0; i < crate::visuals::kLooks; ++i)
+        m.addItem (juce::String (i + 1) + "  " + crate::visuals::lookName (i), true, ! visualState.drift.load() && visualState.look.load() == i,
+                   [this, i]
+                   {
+                       visualState.drift = false;
+                       visualState.look = i;
+                       crate::visuals::save (visualState, crate::visuals::defaultFile());
+                       if (visualsView != nullptr) visualsView->pickLook (i);
+                       if (visualsAt == P::off) showVisuals (visualsLast, visualsDisplay);
+                   });
+    m.addItem ("Drift: a new look every 8 bars   (Option+0)", true, visualState.drift.load(), [this]
+               {
+                   visualState.drift = ! visualState.drift.load();
+                   crate::visuals::save (visualState, crate::visuals::defaultFile());
+                   if (visualsAt == P::off) showVisuals (visualsLast, visualsDisplay);
+               });
+
+    juce::PopupMenu colours;
+    for (int c = 0; c < (int) crate::visuals::Colours::count; ++c)
+    {
+        if (c == (int) crate::visuals::Colours::tools)
+            colours.addSeparator();
+        colours.addItem (crate::visuals::coloursName ((crate::visuals::Colours) c), true, visualState.colours.load() == c, [this, c]
+                         {
+                             visualState.colours = c;
+                             crate::visuals::save (visualState, crate::visuals::defaultFile());
+                         });
+    }
+    m.addSubMenu ("Colours", colours);
+    auto levels = [this] (std::atomic<int>& value)
+    {
+        juce::PopupMenu sub;
+        const char* names[4] { "1  Calm", "2", "3", "4  Wild" };
+        for (int i = 1; i <= 4; ++i)
+            sub.addItem (names[i - 1], true, value.load() == i, [this, &value, i]
+                         {
+                             value = i;
+                             crate::visuals::save (visualState, crate::visuals::defaultFile());
+                         });
+        return sub;
+    };
+    m.addSubMenu ("Wild", levels (visualState.wild));
+    m.addSubMenu ("Trails", levels (visualState.trails));
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (header.visuals));
 }

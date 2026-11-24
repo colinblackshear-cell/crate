@@ -141,6 +141,19 @@ void PocketAudio::audioDeviceIOCallbackWithContext (const float* const* in, int 
         renderer->render (out[0], numOut > 1 ? out[1] : nullptr, n);
     }
 
+    // Visuals hears what plays out, after everything has gone in (nothing while it's off).
+    struct TapAtEnd
+    {
+        crate::visuals::VisualTap& tap;
+        float* const* out;
+        int numOut, n;
+        ~TapAtEnd()
+        {
+            if (tap.listening() && numOut > 0 && out[0] != nullptr)
+                tap.push (out[0], numOut > 1 ? out[1] : nullptr, n);
+        }
+    } tapAtEnd { visualTap, out, numOut, n };
+
     if (! playing.load() || numOut < 1)
         return;
 

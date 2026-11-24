@@ -845,14 +845,20 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     // keys) instead of the tool's own sound.
     // The tool's own sound gets its level trim (so every sound is as loud as the others); a
     // plugin's sound is left as the plugin makes it.
-    auto playTool = [] (juce::AudioProcessor& tool, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi, PluginSlot& slot,
-                        juce::MidiBuffer& tap, auto setTap, const RigSounds::Trim& trim, float& trimWas)
+    // With Visuals open, the notes the tool plays (its steps, arp and keys) are heard by the picture too.
+    const bool visualsHear = visualTap.listening();
+    auto playTool = [this, visualsHear] (juce::AudioProcessor& tool, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi, PluginSlot& slot,
+                                         juce::MidiBuffer& tap, auto setTap, const RigSounds::Trim& trim, float& trimWas)
     {
         block.clear();
         const bool external = slot.isLoaded() && ! slot.bypassed.load();
         tap.clear();
-        setTap (external ? &tap : nullptr);
+        setTap (external || visualsHear ? &tap : nullptr);
         tool.processBlock (block, midi);
+        if (visualsHear)
+            for (const auto m : tap)
+                if (m.getMessage().isNoteOn())
+                    visualTap.noteOn (m.getMessage().getNoteNumber(), m.getMessage().getFloatVelocity());
         if (external && ! slot.process (block, tap))
             block.clear();
         const float to = external ? 1.0f : trim.gain();
@@ -1183,6 +1189,10 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     const float peak = juce::jmax (mix.getMagnitude (0, 0, n), mix.getMagnitude (1, 0, n));
     if (peak > master.peak.load())
         master.peak = peak;
+
+    // Kaleidobox Visuals hears what you hear (a copy of this block; nothing while it's off).
+    if (visualTap.listening())
+        visualTap.push (mix.getReadPointer (0), mix.getReadPointer (1), n);
 }
 
 juce::File RigEngine::logicFolder()
@@ -1370,6 +1380,13 @@ void RigEngine::applyStrip (int id, juce::AudioBuffer<float>& buffer)
     const float peak = juce::jmax (buffer.getMagnitude (0, 0, n), buffer.getMagnitude (1, 0, n));
     if (peak > strip.peak.load())
         strip.peak = peak;
+    // Each tool's colour in Visuals' "Tools" colours: DRUMS, PADS (the MPC and the Sampler), BASS, SYNTH, VOCODER, DRONE.
+    if (visualTap.listening())
+    {
+        const int slot = id == drumsStrip ? 0 : (id == mpcStrip || id == samplerStrip) ? 1 : id == bassStrip ? 2
+                       : id == synthStrip ? 3 : id == vocoderStrip ? 4 : id == droneStrip ? 5 : -1;
+        visualTap.toolLevel (slot, peak);
+    }
 }
 
 void RigEngine::processReturns (juce::AudioBuffer<float>& mix, int n)

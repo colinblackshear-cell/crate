@@ -31,6 +31,7 @@
 #include "RigDirty.h"
 #include "core/SafetyLimiter.h"
 #include "core/control/Controllers.h"
+#include "core/visuals/VisualTap.h"
 
 #include <array>
 
@@ -49,6 +50,10 @@ class RigEngine : public juce::AudioIODeviceCallback,
 public:
     RigEngine();
     ~RigEngine() override;
+
+    // Kaleidobox Visuals' ears: the mix, each tool's level and the Bass's and Synth's notes, copied
+    // for the picture without locks, and only while a picture is open.
+    crate::visuals::VisualTap visualTap;
 
     MpcProcessor& getMpc() { return mpc; }
     // Puts chopped slices (from the Sampler) on the MPC's pads in a new kit, from A01, and makes

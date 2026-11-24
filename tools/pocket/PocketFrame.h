@@ -25,12 +25,12 @@ void drawChip (juce::Graphics&, juce::Rectangle<float>, const juce::String& text
 class ThumbBar : public juce::Component
 {
 public:
-    enum Button { bpm, click, rec, play, undo, count };
+    enum Button { bpm, click, rec, play, undo, visuals, count };   // visuals: Kaleidobox Visuals on / off
 
     struct State
     {
         double bpm = 97.0;
-        bool click = false, recBusy = false, recCounting = false, playing = false;
+        bool click = false, recBusy = false, recCounting = false, playing = false, visuals = false;
     };
     std::function<State()> state;
     std::function<void (int)> onPress;   // a Button
