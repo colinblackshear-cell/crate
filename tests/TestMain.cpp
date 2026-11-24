@@ -1,10 +1,15 @@
 #include <juce_events/juce_events.h>
 #include <juce_core/juce_core.h>
 
+int runOverdubUndoBench (int argc, char** argv);   // OverdubUndoBench.cpp
+
 // CrateTests runs every test; CrateTests "Some test name" runs just the tests with that name.
+// CrateTests --overdub-undo-bench ... runs the overdub/undo benchmark instead (see its file).
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juce;
+    if (argc > 1 && juce::String (argv[1]) == "--overdub-undo-bench")
+        return runOverdubUndoBench (argc, argv);
 
     juce::UnitTestRunner runner;
     runner.setAssertOnFailure (false);

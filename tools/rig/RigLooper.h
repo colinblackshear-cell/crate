@@ -260,6 +260,39 @@ public:
         int byAudioThread = 0, pagesCopiedBeforeOverdub = 0, retries = 0, underLock = 0, finishedUnderLock = 0;
     };
     CopyStats getCopyStats() const;
+
+    // What the audio thread copies, for tests and benchmarks: pages (kCopyPageSamples of both
+    // channels) and bytes, by kind, in total and per block. Mandatory copies are made whatever
+    // the budget (before an overdub writes a page, before a stale page is read); discretionary
+    // ones are the copies made in order, a slice each block. wholeLoop is a copy of a whole loop
+    // in one block (the old overdub start and undo), which nothing should ever make.
+    enum CopyKind { undoBeforeWrite, undoBeforeRead, saveBeforeWrite, undoInOrder, saveInOrder, wholeLoop, numCopyKinds };
+    static bool isMandatoryCopy (int kind) { return kind != undoInOrder && kind != saveInOrder; }
+    struct CopyCounters
+    {
+        std::array<juce::int64, numCopyKinds> pages {}, bytes {};   // in total
+        std::array<int, numCopyKinds> maxPages {};                   // the most in one block
+        std::array<juce::int64, numCopyKinds> maxBytes {};
+        int maxMandatory = 0, maxDiscretionary = 0, maxTotal = 0;    // pages in one block
+        int maxLooks = 0;                                            // page marks looked at in one block
+        juce::int64 blocks = 0;
+        juce::int64 skippedLayerBlocks = 0;   // a layer's block not played (its lock was busy)
+        // Blocks whose copying went over the budget's bounds: the most a block may copy, and
+        // the most it may copy that it must (see the design of the copy budget).
+        juce::int64 overBudgetBlocks = 0, overMandatoryBlocks = 0, overLookBlocks = 0;
+        double mostCredit = 0, deepestDebt = 0;   // pages: the most ever available, the most owed
+        int adoptions = 0, swaps = 0, restorations = 0;
+        int roomBuffersMost = 0;   // undo-room-sized buffers alive at once, at the most
+    };
+    CopyCounters getCopyCounters() const;
+    void resetCopyCounters();
+    // Undo-room-sized buffers alive now (the room, a spare waiting, one being made or freed).
+    int roomBuffersNow() const { return roomBuffers.load(); }
+    // Tests only: the loop as it sounds now (exactly what a copy would be), read under the lock
+    // without changing anything (a copy may finish work first).
+    juce::AudioBuffer<float> soundingLoopForTests (int layer) const;
+    // Whether undo is made a slice at a time (false: a whole copy in the block of the press).
+    static constexpr bool kIncrementalUndo = false;
     // Tests only: called once while the audio thread copies (`underLock` false), and while a
     // copy under the lock holds it (true); always copy under the lock (as before); and a slice
     // size (samples a block) instead of kCopySpeed, to make a copy slow.
@@ -360,7 +393,11 @@ private:
     void copyBeforeWrite (Layer& layer, int sample)
     {
         if (layer.snap.active && layer.snap.copied[sample >> kCopyPageShift] == 0)
-            copyPage (layer, sample >> kCopyPageShift, 2);
+        {
+            const int page = sample >> kCopyPageShift;
+            copyPage (layer, page, 2);
+            noteCopy (saveBeforeWrite, juce::jmin (kCopyPageSamples, layer.snap.length - (page << kCopyPageShift)));
+        }
     }
     // Copies a page of the loop into the copy, and marks it (1 in order, 2 before an overdub).
     static void copyPage (Layer&, int page, juce::uint8 mark);
@@ -418,6 +455,40 @@ private:
     std::atomic<juce::uint32> blocksDone { 0 }, lastBlockMs { 0 }, longestGap256 { 0 };
     std::atomic<juce::Thread::ThreadID> audioThread { nullptr };
     mutable std::atomic<int> statByAudio { 0 }, statBeforeOverdub { 0 }, statRetries { 0 }, statUnderLock { 0 }, statFinishedUnderLock { 0 };
+
+    // The copy counters (getCopyCounters). The block's own tallies are the audio thread's; it
+    // adds them to the atomics as the block ends.
+    struct BlockTally
+    {
+        std::array<int, numCopyKinds> pages {};
+        std::array<juce::int64, numCopyKinds> bytes {};
+        int looks = 0;
+    };
+    BlockTally tally;
+    void noteCopy (int kind, int samples)
+    {
+        ++tally.pages[(size_t) kind];
+        tally.bytes[(size_t) kind] += (juce::int64) samples * 2 * (juce::int64) sizeof (float);
+    }
+    void noteWholeCopy (int samples)
+    {
+        tally.pages[(size_t) wholeLoop] += (samples + kCopyPageSamples - 1) / kCopyPageSamples;
+        tally.bytes[(size_t) wholeLoop] += (juce::int64) samples * 2 * (juce::int64) sizeof (float);
+    }
+    void publishTally (int blockSize, double creditNow);
+    struct Counters
+    {
+        std::array<std::atomic<juce::int64>, numCopyKinds> pages {}, bytes {}, maxBytes {};
+        std::array<std::atomic<int>, numCopyKinds> maxPages {};
+        std::atomic<int> maxMandatory { 0 }, maxDiscretionary { 0 }, maxTotal { 0 }, maxLooks { 0 };
+        std::atomic<juce::int64> blocks { 0 }, skipped { 0 }, overBudget { 0 }, overMandatory { 0 }, overLooks { 0 };
+        std::atomic<double> mostCredit { 0 }, deepestDebt { 0 };
+        std::atomic<int> adoptions { 0 }, swaps { 0 }, restorations { 0 }, roomBuffersMost { 1 };
+    };
+    Counters counters;
+    std::atomic<int> roomBuffers { 1 };   // undo-room-sized buffers alive (see roomBuffersNow)
+    void roomBufferMade() { const int now = ++roomBuffers; if (now > counters.roomBuffersMost.load()) counters.roomBuffersMost = now; }
+    void roomBufferFreed() { --roomBuffers; }
 
     JUCE_DECLARE_NON_COPYABLE (RigLooper)
 };

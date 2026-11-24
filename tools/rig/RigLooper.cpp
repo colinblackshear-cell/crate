@@ -31,6 +31,14 @@ void endRewrite (std::atomic<juce::uint32>& seq)
     seq.store (seq.load (std::memory_order_relaxed) + 1, std::memory_order_release);
 }
 
+template <typename T>
+void raiseTo (std::atomic<T>& a, T v)
+{
+    for (T now = a.load (std::memory_order_relaxed); v > now && ! a.compare_exchange_weak (now, v, std::memory_order_relaxed);)
+    {
+    }
+}
+
 // Raises a bin to `v` (only ever written by the one holding the layer's lock).
 void raise (std::atomic<float>& bin, float v)
 {
@@ -382,8 +390,12 @@ void RigLooper::continueSnapshot (Layer& layer, int blockSize)
     s.credit -= budget * kCopyPageSamples;
     while (s.next < s.pages && budget > 0)
     {
+        ++tally.looks;
         if (s.copied[s.next] == 0)
+        {
             copyPage (layer, s.next, 1);
+            noteCopy (saveInOrder, juce::jmin (kCopyPageSamples, s.length - (s.next << kCopyPageShift)));
+        }
         ++s.next;
         --budget;
     }
@@ -547,6 +559,105 @@ juce::AudioBuffer<float> RigLooper::copyLayerAudio (int index, int* versionOfCop
 RigLooper::CopyStats RigLooper::getCopyStats() const
 {
     return { statByAudio.load(), statBeforeOverdub.load(), statRetries.load(), statUnderLock.load(), statFinishedUnderLock.load() };
+}
+
+void RigLooper::publishTally (int blockSize, double creditNow)
+{
+    // The bounds a block's copying must keep to (see the copy budget's design): what the block
+    // earns (48,000 pages a second of audio, at most 1,024 pages), the most it may copy, and the
+    // most that may be copies it must make whatever the budget.
+    const double earned = 48000.0 * blockSize / sampleRate;
+    const double cap = juce::jmin (1024.0, earned);
+    const int mandatoryBound = (int) std::floor (7.0 * cap / 16.0) + 8;
+    const int forTests = copySliceForTests.load (std::memory_order_relaxed);
+    const double accrual = forTests > 0 ? juce::jmin (1024.0, (double) forTests / kCopyPageSamples) : cap;
+    const int blockBound = (int) juce::jmin (1024.0, juce::jmax (std::floor (accrual + 1.0), (double) mandatoryBound));
+    const int lookBound = (int) std::floor (8.0 * accrual) + 8;
+
+    int mandatory = 0, discretionary = 0;
+    for (int k = 0; k < numCopyKinds; ++k)
+    {
+        const int p = tally.pages[(size_t) k];
+        (isMandatoryCopy (k) ? mandatory : discretionary) += p;
+        if (p == 0)
+            continue;
+        counters.pages[(size_t) k].fetch_add (p, std::memory_order_relaxed);
+        counters.bytes[(size_t) k].fetch_add (tally.bytes[(size_t) k], std::memory_order_relaxed);
+        raiseTo (counters.maxPages[(size_t) k], p);
+        raiseTo (counters.maxBytes[(size_t) k], tally.bytes[(size_t) k]);
+    }
+    raiseTo (counters.maxMandatory, mandatory);
+    raiseTo (counters.maxDiscretionary, discretionary);
+    raiseTo (counters.maxTotal, mandatory + discretionary);
+    raiseTo (counters.maxLooks, tally.looks);
+    if (mandatory + discretionary > blockBound)
+        counters.overBudget.fetch_add (1, std::memory_order_relaxed);
+    if (mandatory > mandatoryBound)
+        counters.overMandatory.fetch_add (1, std::memory_order_relaxed);
+    if (tally.looks > lookBound)
+        counters.overLooks.fetch_add (1, std::memory_order_relaxed);
+    raiseTo (counters.mostCredit, creditNow);
+    raiseTo (counters.deepestDebt, -creditNow);
+    counters.blocks.fetch_add (1, std::memory_order_relaxed);
+    tally = {};
+}
+
+RigLooper::CopyCounters RigLooper::getCopyCounters() const
+{
+    CopyCounters c;
+    for (size_t k = 0; k < (size_t) numCopyKinds; ++k)
+    {
+        c.pages[k] = counters.pages[k].load();
+        c.bytes[k] = counters.bytes[k].load();
+        c.maxPages[k] = counters.maxPages[k].load();
+        c.maxBytes[k] = counters.maxBytes[k].load();
+    }
+    c.maxMandatory = counters.maxMandatory.load();
+    c.maxDiscretionary = counters.maxDiscretionary.load();
+    c.maxTotal = counters.maxTotal.load();
+    c.maxLooks = counters.maxLooks.load();
+    c.blocks = counters.blocks.load();
+    c.skippedLayerBlocks = counters.skipped.load();
+    c.overBudgetBlocks = counters.overBudget.load();
+    c.overMandatoryBlocks = counters.overMandatory.load();
+    c.overLookBlocks = counters.overLooks.load();
+    c.mostCredit = counters.mostCredit.load();
+    c.deepestDebt = counters.deepestDebt.load();
+    c.adoptions = counters.adoptions.load();
+    c.swaps = counters.swaps.load();
+    c.restorations = counters.restorations.load();
+    c.roomBuffersMost = counters.roomBuffersMost.load();
+    return c;
+}
+
+void RigLooper::resetCopyCounters()
+{
+    for (size_t k = 0; k < (size_t) numCopyKinds; ++k)
+    {
+        counters.pages[k] = 0;
+        counters.bytes[k] = 0;
+        counters.maxPages[k] = 0;
+        counters.maxBytes[k] = 0;
+    }
+    counters.maxMandatory = counters.maxDiscretionary = counters.maxTotal = counters.maxLooks = 0;
+    counters.blocks = counters.skipped = counters.overBudget = counters.overMandatory = counters.overLooks = 0;
+    counters.mostCredit = 0;
+    counters.deepestDebt = 0;
+    counters.adoptions = counters.swaps = counters.restorations = 0;
+    counters.roomBuffersMost = roomBuffers.load();
+}
+
+juce::AudioBuffer<float> RigLooper::soundingLoopForTests (int index) const
+{
+    auto& layer = const_cast<Layer&> (layers[(size_t) index]);
+    const juce::SpinLock::ScopedLockType sl (layer.lock);
+    const auto state = (State) layer.state.load();
+    if (layer.length <= 0 || (state != State::playing && state != State::overdubbing))
+        return {};
+    juce::AudioBuffer<float> copy (2, layer.length);
+    for (int ch = 0; ch < 2; ++ch)
+        copy.copyFrom (ch, 0, layer.audio, juce::jmin (ch, layer.audio.getNumChannels() - 1), 0, layer.length);
+    return copy;
 }
 
 std::vector<float> RigLooper::readPeaks (int index, int count) const
@@ -803,10 +914,14 @@ void RigLooper::maintain()
     longest = juce::jmin (longest, (int) (sampleRate * kMaxUndoSeconds));
     if (longest > undoAudio.getNumSamples())
     {
-        juce::AudioBuffer<float> room (2, longest);
-        const juce::SpinLock::ScopedLockType sl (undoLock);
-        std::swap (undoAudio, room);
-        undoLayer = -1;
+        roomBufferMade();
+        {
+            juce::AudioBuffer<float> room (2, longest);
+            const juce::SpinLock::ScopedLockType sl (undoLock);
+            std::swap (undoAudio, room);
+            undoLayer = -1;
+        }
+        roomBufferFreed();
     }
 
     // New loops onto the shared bars.
@@ -951,6 +1066,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
             abortSnapshot (layer);
             for (int ch = 0; ch < 2; ++ch)
                 layer.audio.copyFrom (ch, 0, undoAudio, ch, 0, undoLength);
+            noteWholeCopy (undoLength);
             peakOps += installPeaks (layer, undoPeaks.get(), undoPeakShift, undoPeakCovered);   // its waveform too
             layer.state = (int) State::playing;
             ++layer.version;
@@ -1012,6 +1128,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 {
                     for (int ch = 0; ch < 2; ++ch)
                         undoAudio.copyFrom (ch, 0, layer.audio, ch, 0, layer.length);
+                    noteWholeCopy (layer.length);
                     for (int b = 0; b < kPeakBins; ++b)
                         undoPeaks[(size_t) b] = layer.peaks.bins[(size_t) b].load (std::memory_order_relaxed);
                     undoPeakShift = layer.peaks.shift.load (std::memory_order_relaxed);
@@ -1113,6 +1230,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         const juce::SpinLock::ScopedTryLockType sl (layer.lock);
         if (! sl.isLocked())
         {
+            counters.skipped.fetch_add (1, std::memory_order_relaxed);
             finishLayer();   // the window is swapping in a new sound; back next block (the effects ring on)
             continue;
         }
@@ -1351,6 +1469,8 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             ++layer.version;
         finishLayer();
     }
+
+    publishTally (n, 0.0);
 
     // The beat a copier listens for: blocks done, and the longest recent gap between them.
     const auto now = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
