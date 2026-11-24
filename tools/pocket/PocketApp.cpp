@@ -1961,6 +1961,9 @@ void PocketApp::routeChanged()
         toast (route == pocket::Route::none ? "Headphones out: you don't hear yourself now, so the speaker can't squeal."
                                             : "Bluetooth: hear myself is off (it comes back late). HEAR in the banner turns it on.");
     }
+    // The mic to record from: the headset's own when it has one, else the phone's (never AirPods' mic,
+    // which would turn the whole sound into a phone call).
+    pocket::pickMic();
     // Bluetooth's delay goes into the takes' latency compensation.
     audio.updateLatency (pocket::routeLatencySamples (audio.deviceRate()));
     applyMic();
@@ -1968,6 +1971,38 @@ void PocketApp::routeChanged()
         headphones.refresh();
     singScreen.repaint();
     vocoderScreen.repaint();
+
+    // A route change often comes as a burst; once it has settled, check the mic still gives sound.
+    const int generation = ++micCheckGeneration;
+    juce::Timer::callAfterDelay (1200, [safe = juce::Component::SafePointer<PocketApp> (this), generation]
+    {
+        if (safe != nullptr)
+            safe->checkMic (generation, 0);
+    });
+}
+
+void PocketApp::checkMic (int generation, int step)
+{
+    if (generation != micCheckGeneration || ! audio.isRunning())
+        return;   // a newer route change has its own check
+    if (audio.inputDead())
+    {
+        // The phone restarted its audio mid-switch and came back without the mic: open it again.
+        if (! audio.reopenInput() && step == 0 && ! audio.isRecording())
+            toast ("The mic didn't come back after the headphones changed. Unplug them and plug them in again.");
+    }
+    else if (audio.silentSeconds() > 0.8 && ! pocket::micIsBuiltIn())
+    {
+        // The headphones say they have a mic, but it sends nothing (some USB-C headphones do this).
+        if (pocket::avoidSilentMic())
+            toast ("Your headphones' mic sends no sound, so the iPhone's own mic records you.");
+    }
+    if (step == 0)   // and once more, for the slow ones (Bluetooth can take a few seconds)
+        juce::Timer::callAfterDelay (2500, [safe = juce::Component::SafePointer<PocketApp> (this), generation]
+        {
+            if (safe != nullptr)
+                safe->checkMic (generation, 1);
+        });
 }
 
 //==============================================================================

@@ -30,6 +30,11 @@ void watchRoute (std::function<void()>) {}
 
 int routeLatencySamples (double) { return -1; }
 
+bool pickMic() { return false; }
+bool avoidSilentMic() { return false; }
+bool micIsBuiltIn() { return true; }
+const char* micName() { return "IPHONE MIC"; }
+
 const char* routeName (Route r)
 {
     switch (r)

@@ -275,6 +275,8 @@ private:
     // The mic and the headphones
     void applyMic();
     void routeChanged();
+    void checkMic (int generation, int step);   // after a route change: is the mic still alive?
+    int micCheckGeneration = 0;
     void openHeadphones (std::function<void()> then);
     void closeHeadphones();
     void chooseHeadphones (bool wearing);

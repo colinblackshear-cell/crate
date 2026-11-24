@@ -45,6 +45,14 @@ public:
     void updateLatency (int samples);
     bool hasOutputDevice() const { return running; }
 
+    // The mic after a route change (headphones in or out, AirPods). Message thread.
+    //   inputDead:     the mic is allowed but the device opened with no live input channel
+    //   silentSeconds: how long the live input has given exact zeros (a real mic never does)
+    //   reopenInput:   closes and reopens the device with the mic on; never while a take records
+    bool inputDead() const;
+    double silentSeconds() const { return (double) silentRun.load() / sampleRate; }
+    bool reopenInput();
+
     // Kaleidobox Visuals' ears: a copy of what plays out (only while the picture is open).
     crate::visuals::VisualTap visualTap;
 
@@ -63,6 +71,8 @@ private:
     Renderer* renderer = nullptr;
     juce::AudioDeviceManager devices;
     bool running = false;
+    bool micAllowed = false;
+    std::atomic<juce::int64> silentRun { 0 };
     double sampleRate = 44100.0;
     std::atomic<int> latency { 0 };
 
