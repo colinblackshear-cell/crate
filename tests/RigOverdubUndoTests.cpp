@@ -26,7 +26,12 @@ std::atomic<int> allocations { 0 }, frees { 0 };
 }
 
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
- #include <sanitizer/allocator_interface.h>
+ #if __has_include(<sanitizer/allocator_interface.h>)
+  #include <sanitizer/allocator_interface.h>
+ #else
+// (Not every compiler ships this header; the runtimes have the function.)
+extern "C" int __sanitizer_install_malloc_and_free_hooks (void (*) (const volatile void*, size_t), void (*) (const volatile void*));
+ #endif
 namespace oduAlloc
 {
 constexpr bool counted = true;
