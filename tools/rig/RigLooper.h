@@ -44,13 +44,14 @@ public:
     static constexpr double kMaxUndoSeconds = 600.0;
     static constexpr double kGrowAheadSeconds = 12.0;   // grows when less than this is left
     static constexpr double kGrowStepSeconds = 300.0;   // grows by at most this at a time
-    // Copying a playing loop (copyLayerAudio) is done by the audio thread, a slice each block:
-    // kCopySpeed samples for each sample of the block (between kCopyMinSlice and kCopyMaxSlice),
-    // in pages of kCopyPageSamples. A copy the loop's replacement interrupts is tried again, at
+    // Copying a playing loop (copyLayerAudio), and keeping an overdub's undo, is done by the audio
+    // thread a slice each block, in pages of kCopyPageSamples, from one copy budget for all the
+    // layers: kCopyPagesPerSecond pages a second of audio (at most kCopyMaxPages a block), never
+    // saved up beyond one block's worth. A copy the loop's replacement interrupts is tried again, at
     // most kCopyRounds times. With no block for kStallFloorMs (or four of the longest recent gaps
     // between blocks, up to kStallCapMs) the audio is taken to have stopped.
     static constexpr int kCopyPageShift = 10, kCopyPageSamples = 1 << kCopyPageShift;
-    static constexpr int kCopySpeed = 1024, kCopyMinSlice = 1 << 15, kCopyMaxSlice = 1 << 20, kCopyRounds = 3;
+    static constexpr int kCopyPagesPerSecond = 48000, kCopyMaxPages = 1024, kCopyRounds = 3;
     static constexpr juce::uint32 kStallFloorMs = 1000, kStallCapMs = 5000;
     // The waveform each layer keeps for the window (see readPeaks): kPeakBins loudness bins, each
     // the loudest sample of 2^shift samples of the loop. A loop takes from half to all of them, so
@@ -142,7 +143,7 @@ public:
             int version = -1;   // the layer's version when the copy started (the audio thread's)
             // Under `lock`, while the audio thread copies: the next page in order.
             bool active = false;
-            int next = 0, credit = 0;   // credit: samples of copying owed, short of a page
+            int next = 0;
         };
         Snapshot snap;
 
@@ -280,6 +281,7 @@ public:
         // Blocks whose copying went over the budget's bounds: the most a block may copy, and
         // the most it may copy that it must (see the design of the copy budget).
         juce::int64 overBudgetBlocks = 0, overMandatoryBlocks = 0, overLookBlocks = 0;
+        juce::int64 overCreditBlocks = 0;   // blocks with more credit than one block's worth and a page
         double mostCredit = 0, deepestDebt = 0;   // pages: the most ever available, the most owed
         int adoptions = 0, swaps = 0, restorations = 0;
         int roomBuffersMost = 0;   // undo-room-sized buffers alive at once, at the most
@@ -302,8 +304,8 @@ public:
     // Whether undo is made a slice at a time (false: a whole copy in the block of the press).
     static constexpr bool kIncrementalUndo = false;
     // Tests only: called once while the audio thread copies (`underLock` false), and while a
-    // copy under the lock holds it (true); always copy under the lock (as before); and a slice
-    // size (samples a block) instead of kCopySpeed, to make a copy slow.
+    // copy under the lock holds it (true); always copy under the lock (as before); and the copy
+    // budget as samples a block instead of kCopyPagesPerSecond, to make copying slow.
     static inline std::function<void (int layer, bool underLock)> copyPauseForTests;
     static inline std::atomic<bool> copyUnderLockForTests { false };
     static inline std::atomic<int> copySliceForTests { 0 };
@@ -397,7 +399,7 @@ private:
     // Audio thread, under the layer's lock: take a posted copy; copy the next slice; copy a page
     // before an overdub writes over it.
     void startSnapshot (Layer&);
-    void continueSnapshot (Layer&, int blockSize);
+    void continueSnapshot (Layer&);
     void copyBeforeWrite (Layer& layer, int sample)
     {
         if (layer.snap.active && layer.snap.copied[sample >> kCopyPageShift] == 0)
@@ -405,6 +407,7 @@ private:
             const int page = sample >> kCopyPageShift;
             copyPage (layer, page, 2);
             noteCopy (saveBeforeWrite, juce::jmin (kCopyPageSamples, layer.snap.length - (page << kCopyPageShift)));
+            credit -= 1.0;   // charged to the block's credit, which it may take below nothing
         }
     }
     // Copies a page of the loop into the copy, and marks it (1 in order, 2 before an overdub).
@@ -514,13 +517,21 @@ private:
         tally.pages[(size_t) wholeLoop] += (samples + kCopyPageSamples - 1) / kCopyPageSamples;
         tally.bytes[(size_t) wholeLoop] += (juce::int64) samples * 2 * (juce::int64) sizeof (float);
     }
-    void publishTally (int blockSize, double creditNow);
+    void publishTally (int blockSize, double creditAvailable, double creditNow);
+    // The copy budget (audio thread): pages of copying this block may still make (below zero:
+    // owed, after copies that had to be made), what the block earned, and the most pages it may
+    // look at. One credit for all the layers.
+    double credit = 0, accrual = 0;
+    int lookLimit = 0;
+    // Layers whose lock this block holds (each is tried once a block); a lock is held to the end
+    // of the block while the layer has copying in order to do.
+    std::array<bool, kLayers> heldLocks {};
     struct Counters
     {
         std::array<std::atomic<juce::int64>, numCopyKinds> pages {}, bytes {}, maxBytes {};
         std::array<std::atomic<int>, numCopyKinds> maxPages {};
         std::atomic<int> maxMandatory { 0 }, maxDiscretionary { 0 }, maxTotal { 0 }, maxLooks { 0 };
-        std::atomic<juce::int64> blocks { 0 }, skipped { 0 }, overBudget { 0 }, overMandatory { 0 }, overLooks { 0 };
+        std::atomic<juce::int64> blocks { 0 }, skipped { 0 }, overBudget { 0 }, overMandatory { 0 }, overLooks { 0 }, overCredit { 0 };
         std::atomic<double> mostCredit { 0 }, deepestDebt { 0 };
         std::atomic<int> adoptions { 0 }, swaps { 0 }, restorations { 0 }, roomBuffersMost { 1 };
     };

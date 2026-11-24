@@ -451,7 +451,7 @@ void RigLooper::startSnapshot (Layer& layer)
     else
     {
         s.active = true;
-        s.next = s.credit = 0;
+        s.next = 0;
         s.version = layer.version.load (std::memory_order_relaxed);   // the sound as it is now
         s.state.store (snapActive, std::memory_order_relaxed);
     }
@@ -467,31 +467,21 @@ void RigLooper::copyPage (Layer& layer, int page, juce::uint8 mark)
     s.copied[page] = mark;
 }
 
-void RigLooper::continueSnapshot (Layer& layer, int blockSize)
+void RigLooper::continueSnapshot (Layer& layer)
 {
+    // In order, with what is left of the block's credit (after every copy that had to be made),
+    // and within the block's limit of pages looked at.
     auto& s = layer.snap;
-    const int forTests = copySliceForTests.load (std::memory_order_relaxed);
-    const int slice = forTests > 0 ? forTests : juce::jlimit (kCopyMinSlice, kCopyMaxSlice, blockSize * kCopySpeed);
-    // Each page looked at counts, copied or not, so the work a block is bounded. (A slice
-    // under a page, for tests only, adds up over blocks.)
-    s.credit += slice;
-    int budget = s.credit / kCopyPageSamples;
-    s.credit -= budget * kCopyPageSamples;
-    while (s.next < s.pages && budget > 0)
+    while (s.next < s.pages && credit >= 1.0 && tally.looks < lookLimit)
     {
         ++tally.looks;
         if (s.copied[s.next] == 0)
         {
             copyPage (layer, s.next, 1);
             noteCopy (saveInOrder, juce::jmin (kCopyPageSamples, s.length - (s.next << kCopyPageShift)));
+            credit -= 1.0;
         }
         ++s.next;
-        --budget;
-    }
-    if (s.next >= s.pages)
-    {
-        s.active = false;
-        s.state.store (snapDone, std::memory_order_release);
     }
 }
 
@@ -650,16 +640,15 @@ RigLooper::CopyStats RigLooper::getCopyStats() const
     return { statByAudio.load(), statBeforeOverdub.load(), statRetries.load(), statUnderLock.load(), statFinishedUnderLock.load() };
 }
 
-void RigLooper::publishTally (int blockSize, double creditNow)
+void RigLooper::publishTally (int blockSize, double creditAvailable, double creditNow)
 {
-    // The bounds a block's copying must keep to (see the copy budget's design): what the block
-    // earns (48,000 pages a second of audio, at most 1,024 pages), the most it may copy, and the
-    // most that may be copies it must make whatever the budget.
+    // The bounds a block's copying must keep to (see the copy budget's design): the most it may
+    // copy (what it earned, `accrual`, and the fraction of a page, or its mandatory bound if more),
+    // and the most that may be copies it must make whatever the budget, for the budget's real rate
+    // (a slowed test budget doesn't slow those).
     const double earned = 48000.0 * blockSize / sampleRate;
     const double cap = juce::jmin (1024.0, earned);
     const int mandatoryBound = (int) std::floor (7.0 * cap / 16.0) + 8;
-    const int forTests = copySliceForTests.load (std::memory_order_relaxed);
-    const double accrual = forTests > 0 ? juce::jmin (1024.0, (double) forTests / kCopyPageSamples) : cap;
     const int blockBound = (int) juce::jmin (1024.0, juce::jmax (std::floor (accrual + 1.0), (double) mandatoryBound));
     const int lookBound = (int) std::floor (8.0 * accrual) + 8;
 
@@ -685,7 +674,9 @@ void RigLooper::publishTally (int blockSize, double creditNow)
         counters.overMandatory.fetch_add (1, std::memory_order_relaxed);
     if (tally.looks > lookBound)
         counters.overLooks.fetch_add (1, std::memory_order_relaxed);
-    raiseTo (counters.mostCredit, creditNow);
+    raiseTo (counters.mostCredit, creditAvailable);
+    if (creditAvailable > juce::jmin ((double) kCopyMaxPages, accrual + 1.0) + 1.0e-9)
+        counters.overCredit.fetch_add (1, std::memory_order_relaxed);
     raiseTo (counters.deepestDebt, -creditNow);
     counters.blocks.fetch_add (1, std::memory_order_relaxed);
     tally = {};
@@ -710,6 +701,7 @@ RigLooper::CopyCounters RigLooper::getCopyCounters() const
     c.overBudgetBlocks = counters.overBudget.load();
     c.overMandatoryBlocks = counters.overMandatory.load();
     c.overLookBlocks = counters.overLooks.load();
+    c.overCreditBlocks = counters.overCredit.load();
     c.mostCredit = counters.mostCredit.load();
     c.deepestDebt = counters.deepestDebt.load();
     c.adoptions = counters.adoptions.load();
@@ -729,7 +721,7 @@ void RigLooper::resetCopyCounters()
         counters.maxBytes[k] = 0;
     }
     counters.maxMandatory = counters.maxDiscretionary = counters.maxTotal = counters.maxLooks = 0;
-    counters.blocks = counters.skipped = counters.overBudget = counters.overMandatory = counters.overLooks = 0;
+    counters.blocks = counters.skipped = counters.overBudget = counters.overMandatory = counters.overLooks = counters.overCredit = 0;
     counters.mostCredit = 0;
     counters.deepestDebt = 0;
     counters.adoptions = counters.swaps = counters.restorations = 0;
@@ -1095,11 +1087,18 @@ int RigLooper::finishRecording (Layer& layer)
             earliestTake = other.startBeat;
         if (st != State::playing && st != State::overdubbing)
             continue;
-        const juce::SpinLock::ScopedTryLockType ol (other.lock);
-        if (! ol.isLocked() || other.length < 2 || other.lengthBeats.load() <= refBeats)
+        // (A layer whose lock this block still holds, for its copying at the block's end, is read
+        // as it is: this is the thread holding it.)
+        const bool mine = heldLocks[(size_t) (&other - layers.data())];
+        if (! mine && ! other.lock.tryEnter())
             continue;
-        refBeats = other.lengthBeats.load();
-        refAnchor = syncAnchor (other);
+        if (other.length >= 2 && other.lengthBeats.load() > refBeats)
+        {
+            refBeats = other.lengthBeats.load();
+            refAnchor = syncAnchor (other);
+        }
+        if (! mine)
+            other.lock.exit();
     }
     if (refBeats <= 0 && earliestTake < layer.startBeat)
     {
@@ -1284,6 +1283,17 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         for (auto& layer : layers)
             layer.restartPending = true;
     wasPlaying = clock.playing;
+    // This block's copy credit: what it earns (48,000 pages a second of audio, at most 1,024
+    // pages), added to what's left, never more than one block's worth and the fraction of a page.
+    // A debt (copies that had to be made) is paid back first.
+    {
+        const int forTests = copySliceForTests.load (std::memory_order_relaxed);
+        accrual = forTests > 0 ? juce::jmin ((double) kCopyMaxPages, (double) forTests / kCopyPageSamples)
+                                : juce::jmin ((double) kCopyMaxPages, kCopyPagesPerSecond * (double) n / sampleRate);
+        credit = juce::jmin (credit + accrual, juce::jmin ((double) kCopyMaxPages, accrual + 1.0));
+        lookLimit = (int) std::floor (8.0 * accrual) + 8;
+    }
+    const double available = credit;
     // A bigger undo room waiting: taken now if no undo is held (else at the press that needs it).
     adoptTried = false;
     if (spareReady.load (std::memory_order_acquire) && undoLayer.load() < 0)
@@ -1317,13 +1327,15 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 out.addFrom (ch, 0, own, ch, 0, n);
         };
 
-        const juce::SpinLock::ScopedTryLockType sl (layer.lock);
-        if (! sl.isLocked())
+        // The layer's one try of its lock this block. It's let go of at the end of the layer's
+        // turn, or, if it has copying to do with the block's credit, at the end of the block.
+        if (! layer.lock.tryEnter())
         {
             counters.skipped.fetch_add (1, std::memory_order_relaxed);
             finishLayer();   // the window is swapping in a new sound; back next block (the effects ring on)
             continue;
         }
+        heldLocks[(size_t) index] = true;
 
         if (std::exchange (layer.restartPending, false))
         {
@@ -1536,8 +1548,6 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             layer.peaks.covered.store (layer.writeIndex, std::memory_order_relaxed);   // (only grows)
         if (peakOps > statPeakOps.load (std::memory_order_relaxed))
             statPeakOps.store (peakOps, std::memory_order_relaxed);
-        if (layer.snap.active)
-            continueSnapshot (layer, n);
 
         // What the window shows.
         const auto state = (State) layer.state.load();
@@ -1558,9 +1568,30 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         if (changed)
             ++layer.version;
         finishLayer();
+        if (! layer.snap.active)
+        {
+            heldLocks[(size_t) index] = false;
+            layer.lock.exit();
+        }
     }
 
-    publishTally (n, 0.0);
+    // The copying in order, with what's left of the credit: undo work first, then a save's copy.
+    for (int index = 0; index < kLayers; ++index)
+        if (heldLocks[(size_t) index] && layers[(size_t) index].snap.active)
+        {
+            auto& layer = layers[(size_t) index];
+            continueSnapshot (layer);
+            if (layer.snap.next >= layer.snap.pages)
+            {
+                layer.snap.active = false;
+                layer.snap.state.store (snapDone, std::memory_order_release);
+            }
+        }
+    for (int index = 0; index < kLayers; ++index)
+        if (std::exchange (heldLocks[(size_t) index], false))
+            layers[(size_t) index].lock.exit();
+
+    publishTally (n, available, credit);
 
     // The beat a copier listens for: blocks done, and the longest recent gap between them.
     const auto now = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());

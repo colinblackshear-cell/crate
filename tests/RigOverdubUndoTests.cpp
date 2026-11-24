@@ -1262,3 +1262,110 @@ struct RigOverdubUndoRoomTests : juce::UnitTest
 };
 
 static RigOverdubUndoRoomTests rigOverdubUndoRoomTests;
+
+//==============================================================================
+// The copy budget: one credit for all the layers, earned by the block's duration.
+struct RigCopyBudgetTests : juce::UnitTest
+{
+    RigCopyBudgetTests() : juce::UnitTest ("Rig copy budget", "Rig") {}
+
+    // Copies `layer` on another thread while `d` plays here; returns the blocks it took.
+    int copyWhilePlaying (Drive& d, int layer, juce::AudioBuffer<float>* result = nullptr)
+    {
+        std::atomic<bool> done { false };
+        juce::AudioBuffer<float> copy;
+        const auto stats0 = d.looper.getCopyStats();
+        std::thread copier ([&] { copy = d.looper.copyLayerAudio (layer); done = true; });
+        // The blocks the copy took: from its first page copied in order to its last.
+        int blocks = 0, k = 0;
+        auto pages = d.looper.getCopyCounters().pages[RigLooper::saveInOrder];
+        while (! done)
+        {
+            d.block();
+            const auto now = d.looper.getCopyCounters().pages[RigLooper::saveInOrder];
+            blocks += now != pages ? 1 : 0;
+            pages = now;
+            if (++k % 64 == 0)
+                std::this_thread::yield();
+        }
+        copier.join();
+        expectEquals (d.looper.getCopyStats().byAudioThread - stats0.byAudioThread, 1, "copied by the audio thread");
+        if (result != nullptr)
+            *result = copy;
+        return blocks;
+    }
+
+    void runTest() override
+    {
+        beginTest ("Safeguard 3: credit never bursts, with the block size changed every block and after a long idle stretch");
+        {
+            Drive d (kRate, 1024);
+            juce::Random r (5);
+            d.blockSize = [&r] (juce::int64 k) { return (k / 500) % 2 == 0 ? 1 + r.nextInt (1024) : 16; };
+            putLoop (d, 0, odu::markedLoop (2000 * 1024, 70));
+            d.looper.resetCopyCounters();
+            d.blocks (3000);   // idle: nothing to copy
+            juce::AudioBuffer<float> copy;
+            copyWhilePlaying (d, 0, &copy);
+            d.blocks (2000);
+            copyWhilePlaying (d, 0);
+            const auto c = d.looper.getCopyCounters();
+            logMessage ("  most credit " + juce::String (c.mostCredit, 2) + " pages; most a block " + juce::String (c.maxTotal) + " pages");
+            expectEquals ((int) c.overCreditBlocks, 0, "never more than one block's worth and a fraction of a page");
+            expectEquals ((int) c.overBudgetBlocks, 0, "never more copied than that");
+            expectLessOrEqual (c.mostCredit, 1025.0);
+            expect (same (copy, odu::markedLoop (2000 * 1024, 70)), "and the copy is exact");
+        }
+
+        beginTest ("A save's copy takes its time from the block's duration: 2 and 4 times the blocks at 96 and 192 kHz");
+        {
+            std::array<int, 3> took {};
+            const double rates[] = { 48000.0, 96000.0, 192000.0 };
+            for (int k = 0; k < 3; ++k)
+            {
+                Drive d (rates[k], 256);
+                putLoop (d, 0, odu::markedLoop (4096 * 1024, 71));
+                d.blocks (4);
+                took[(size_t) k] = copyWhilePlaying (d, 0);
+                const double perBlock = 48000.0 * 256 / rates[k];
+                logMessage ("  " + juce::String (rates[k] / 1000.0, 0) + " kHz: " + juce::String (took[(size_t) k]) + " blocks for 4096 pages ("
+                            + juce::String (perBlock, 0) + " a block)");
+                expectGreaterOrEqual (took[(size_t) k], (int) (4096 / perBlock));
+                expectLessOrEqual (took[(size_t) k], (int) (4096 / perBlock) + 4);
+            }
+        }
+
+        beginTest ("A save's copies before an overdub writes are charged to the same credit");
+        {
+            RigLooper::copySliceForTests = 4 * RigLooper::kCopyPageSamples;   // 4 pages a block
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            // Squeezed 8 times: the overdub crosses 2 pages a block.
+            d.looper.setLayerAudio (0, odu::markedLoop (600 * 1024, 72), 600 * 1024 / 192000.0);
+            d.looper.getLayer (0).source = RigLooper::input;
+            d.blocks (2);
+            d.looper.pressRecord (0);
+            d.blocks (2);
+            d.looper.resetCopyCounters();
+            const int took = copyWhilePlaying (d, 0);
+            expect (d.looper.getState (0) == State::overdubbing);
+            d.looper.pressRecord (0);
+            d.block();
+            RigLooper::copySliceForTests = 0;
+            logMessage ("  the copy took " + juce::String (took) + " blocks");
+            const auto c = d.looper.getCopyCounters();
+            logMessage ("  " + juce::String (c.pages[RigLooper::saveBeforeWrite]) + " pages before the overdub wrote them, "
+                        + juce::String (c.pages[RigLooper::saveInOrder]) + " in order; deepest debt " + juce::String (c.deepestDebt, 2) + " pages");
+            expectGreaterThan ((int) c.pages[RigLooper::saveBeforeWrite], 10);
+            expectGreaterThan ((int) c.pages[RigLooper::saveInOrder], 10);
+            // 2 or 3 pages a block must be copied before the overdub writes them; uncharged, the
+            // copy in order would add its 4 to them.
+            expectLessOrEqual (c.maxTotal, 5, "never more than the block's credit (4 pages and the fraction)");
+            expectLessOrEqual (c.deepestDebt, 8.0, "a debt only of what had to be copied");
+            expectEquals ((int) c.overBudgetBlocks, 0);
+            expectEquals ((int) c.overCreditBlocks, 0);
+        }
+    }
+};
+
+static RigCopyBudgetTests rigCopyBudgetTests;
