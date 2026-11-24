@@ -621,6 +621,8 @@ void RigEngine::applyControls (const RigRouting::Result& r)
         for (int p = r.presses[RigRouting::noteRepeatRate]; p > 0; --p)
             sequencer.stepRepeatRate();
     }
+    if (r.presses[RigRouting::chordsOnOff] % 2 == 1)
+        chords.toggleChords();
     scenes.nextPresses += r.presses[RigRouting::nextScene];
     scenes.backPresses += r.presses[RigRouting::previousScene];
     if (r.presses[RigRouting::inputHear] % 2 == 1)

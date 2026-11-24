@@ -3548,6 +3548,17 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         toastBox->setVisible (false);
         savePng (folder.getChildFile ("15d-chords-live-key.png"));
         chordsTool.releaseAll();
+        // CHORDS OFF: each pad plays one note (its chord's lowest), a pad held
+        chordsTool.reset();
+        chordsTool.setKey (songKey);
+        chordsTool.setChordsOn (false);
+        chordsScreen.toolChanged();
+        chordsTool.padDown (3, false);
+        chordsRender (false, 0.0);
+        chordsScreen.repaint();
+        toastBox->setVisible (false);
+        savePng (folder.getChildFile ("15e-chords-off.png"));
+        chordsTool.releaseAll();
         chordsTool.reset();
         chordsTool.setKey (songKey);
         chordsScreen.toolChanged();

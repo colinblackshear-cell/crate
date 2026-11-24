@@ -45,6 +45,7 @@ juce::String RigRouting::controlName (int c)
             if (c == liveKeyHome)    return "Live key back home";
             if (c == noteRepeatHold) return "Note repeat (hold)";
             if (c == noteRepeatRate) return "Note repeat rate";
+            if (c == chordsOnOff)    return "Chords on/off";
             return {};
     }
 }

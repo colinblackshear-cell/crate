@@ -51,6 +51,7 @@ juce::Array<int> toArray (const std::vector<int>& v, int add = 0)
 }
 
 constexpr int kProgressionSource = 300;   // the progression's voice
+constexpr int kPlainSource = 600;         // + the key: a plain note (chords off)
 }
 
 RigChords::RigChords()
@@ -340,13 +341,14 @@ void RigChords::shiftSounding (int delta, int at, std::array<juce::MidiBuffer*, 
 {
     // Every note off first, then the moved ones on, so a note one chord lets go and another takes
     // up (C in Am moving to C in F) sounds again rather than being cut.
+    // Plain notes (chords off) stay where they are: they're the keys you're holding.
     for (auto& voice : voices)
-        if (voice.source >= 0)
+        if (voice.source >= 0 && ! voice.fixed)
             for (int i = 0; i < voice.count; ++i)
                 noteOff (voice.dest, voice.notes[(size_t) i], at, to);
     for (auto& voice : voices)
     {
-        if (voice.source < 0)
+        if (voice.source < 0 || voice.fixed)
             continue;
         int kept = 0;
         for (int i = 0; i < voice.count; ++i)
@@ -855,11 +857,11 @@ juce::String RigChords::nameOf (const juce::Array<int>& input)
 }
 
 //==============================================================================
-void RigChords::queue (int pad, float velocity)
+void RigChords::queue (int pad, float velocity, bool full)
 {
     const auto scope = pressFifo.write (1);
     if (scope.blockSize1 > 0)
-        pressQueue[(size_t) scope.startIndex1] = { pad, velocity };
+        pressQueue[(size_t) scope.startIndex1] = { pad, velocity, full };
 }
 
 void RigChords::press (int pad, float velocity)
@@ -906,7 +908,9 @@ void RigChords::audition (int pad, int ms)
 {
     if (isEmpty (pad) || hold.load())
         return;
-    press (pad, 0.75f);
+    // The whole chord, even with chords off: you're hearing the one you build.
+    down[(size_t) pad] = true;
+    queue (pad, 0.75f, true);
     juce::Timer::callAfterDelay (ms, [this, pad] { release (pad); });
 }
 
@@ -998,6 +1002,7 @@ void RigChords::takeTriggers (juce::MidiBuffer& midi, int padChannel, int splitN
         return;
     const auto mode = (Trigger) trigger.load();
     const bool catching = catchPad.load() >= 0;
+    const bool plain = ! chordsOn.load();   // chords off: the keys that play chords play their own note
     bool anyTaken = false;
     for (const auto m : midi)
     {
@@ -1024,11 +1029,19 @@ void RigChords::takeTriggers (juce::MidiBuffer& midi, int padChannel, int splitN
         auto& wasTaken = takenBy[(size_t) ch][(size_t) note];
         if (msg.isNoteOn())
         {
-            int code = -1;   // what it triggers: channel 1 = a pad (0-15), channel 2 = a key's shape, 3 = the key map
+            int code = -1;   // what it triggers: channel 1 = a pad (0-15), channel 2 = a key's shape, 3 = the key map, 4 = a plain note
             int channel = 1;
             // While catching, the keys you hold are the chord being caught, not triggers.
             const bool keysFree = ! (catching && ! isPad);
-            if (mode == Trigger::pads && isPad && note >= RigRouting::kFirstPadNote && note < RigRouting::kFirstPadNote + kPads)
+            const bool splitOk = splitNote <= 0 || note >= splitNote;
+            if (plain && keysFree && ! isPad
+                && ((mode == Trigger::lowKeys && note >= lowKey.load() && note < lowKey.load() + kPads)
+                    || ((mode == Trigger::everyKey || mode == Trigger::keyMap) && splitOk)))
+            {
+                code = note;
+                channel = 4;
+            }
+            else if (mode == Trigger::pads && isPad && note >= RigRouting::kFirstPadNote && note < RigRouting::kFirstPadNote + kPads)
                 code = note - RigRouting::kFirstPadNote;
             else if (mode == Trigger::lowKeys && keysFree && ! isPad && note >= lowKey.load() && note < lowKey.load() + kPads)
                 code = note - lowKey.load();
@@ -1107,7 +1120,7 @@ void RigChords::noteOff (int dest, int note, int at, std::array<juce::MidiBuffer
 }
 
 void RigChords::startVoice (int source, int pad, int transpose, float velocity, int dest, int at,
-                            std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples)
+                            std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples, bool lowestOnly)
 {
     if (pad < 0 || pad >= kPads)
     {
@@ -1122,13 +1135,15 @@ void RigChords::startVoice (int source, int pad, int transpose, float velocity, 
         if (note < 0)
             break;
         notes[(size_t) count++] = note + transpose;
+        if (lowestOnly)
+            break;   // chords off: the chord's lowest note, plain
     }
     startNotes (source, notes.data(), count, velocity, dest, at, to, strumSamples);
     sounding = pad;
 }
 
 void RigChords::startNotes (int source, const int* chord, int numNotes, float velocity, int dest, int at,
-                            std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples)
+                            std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples, bool fixed)
 {
     stopVoice (source, at, to);
     if (dest <= 0)
@@ -1147,7 +1162,8 @@ void RigChords::startNotes (int source, const int* chord, int numNotes, float ve
     voice.dest = dest;
     voice.count = 0;
     voice.velocity = velocity;
-    const int shift = liveApplied.load();   // the live key
+    voice.fixed = fixed;
+    const int shift = fixed ? 0 : liveApplied.load();   // the live key (a plain note is the key you pressed)
     int index = 0;
     for (int i = 0; i < numNotes; ++i)
     {
@@ -1277,8 +1293,25 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
     const int strumSamples = juce::roundToInt (strumTimes()[(size_t) juce::jlimit (0, 3, strum.load())] * 0.001 * clock.sampleRate);
     const int dest = resolveTarget (keysTo);
     const bool latch = hold.load();
+    // Chords on / off. Flipping it lets go of a chord Hold latched; chords held down play on
+    // until their keys come up (their note-offs find them), so nothing sticks.
+    const bool plain = ! chordsOn.load();
+    if (plain != wasPlain)
+    {
+        wasPlain = plain;
+        if (heldSource >= 0)
+        {
+            stopVoice (heldSource, 0, to);
+            heldSource = -1;
+        }
+    }
+    // A plain note: the key itself, on the chords' instrument (never latched, strummed or moved by the live key).
+    auto pressPlain = [&] (int note, float velocity, int at)
+    {
+        startNotes (kPlainSource + note, &note, 1, velocity, dest, at, to, 0, true);
+    };
 
-    auto pressSource = [&] (int source, int pad, int transpose, float velocity, int at)
+    auto pressSource = [&] (int source, int pad, int transpose, float velocity, int at, bool full = false)
     {
         if (latch)
         {
@@ -1291,7 +1324,7 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
             stopVoice (heldSource, at, to);
             heldSource = source;
         }
-        startVoice (source, pad, transpose, velocity, dest, at, to, strumSamples);
+        startVoice (source, pad, transpose, velocity, dest, at, to, strumSamples, plain && ! full);
     };
     auto releaseSource = [&] (int source, int at)
     {
@@ -1302,6 +1335,8 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
     // A key of the map: its chord, voiced, as the key's own source.
     auto pressMapSource = [&] (int note, float velocity, int at)
     {
+        if (plain)
+            return pressPlain (note, velocity, at);
         std::array<int, kMaxNotes> notes {};
         const int count = voiceMapKey (note, notes, lastMapCentre);
         if (count == 0)
@@ -1335,9 +1370,13 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
                 if (p.pad >= kMapPress)
                     pressMapSource (p.pad - kMapPress, p.velocity, 0);
                 else if (p.pad >= 0)
-                    pressSource (p.pad, p.pad, 0, p.velocity, 0);
+                    pressSource (p.pad, p.pad, 0, p.velocity, 0, p.full);
                 else if (-p.pad - 1 >= kMapPress)
+                {
+                    // Whichever it played (a chord, or a plain note with chords off).
                     releaseSource (kMapSource + (-p.pad - 1 - kMapPress), 0);
+                    stopVoice (kPlainSource + (-p.pad - 1 - kMapPress), 0, to);
+                }
                 else
                     releaseSource (-p.pad - 1, 0);
             }
@@ -1351,9 +1390,16 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
     {
         const auto msg = m.getMessage();
         const int code = msg.getNoteNumber(), at = juce::jlimit (0, juce::jmax (0, numSamples - 1), m.samplePosition);
-        const bool shape = msg.getChannel() == 2, mapped = msg.getChannel() == 3;
-        const int source = mapped ? kMapSource + code : 100 + (shape ? 16 + code : code);
-        if (msg.isNoteOn())
+        const bool shape = msg.getChannel() == 2, mapped = msg.getChannel() == 3, plainNote = msg.getChannel() == 4;
+        const int source = plainNote ? kPlainSource + code : mapped ? kMapSource + code : 100 + (shape ? 16 + code : code);
+        if (plainNote)
+        {
+            if (msg.isNoteOn())
+                pressPlain (code, msg.getFloatVelocity(), at);
+            else
+                stopVoice (source, at, to);
+        }
+        else if (msg.isNoteOn())
         {
             if (mapped)
                 pressMapSource (code, msg.getFloatVelocity(), at);
@@ -1528,6 +1574,7 @@ void RigChords::reset()
     target = kFollowKeys;
     trigger = (int) Trigger::screen;
     hold = false;
+    chordsOn = true;
     strum = 0;
     lowKey = 36;
     shapePad = 0;
@@ -1553,6 +1600,7 @@ juce::ValueTree RigChords::toTree() const
     t.setProperty ("target", target.load(), nullptr);
     t.setProperty ("trigger", trigger.load(), nullptr);
     t.setProperty ("hold", hold.load(), nullptr);
+    t.setProperty ("chordsOn", chordsOn.load(), nullptr);
     t.setProperty ("strum", strum.load(), nullptr);
     t.setProperty ("lowKey", lowKey.load(), nullptr);
     t.setProperty ("shapePad", shapePad.load(), nullptr);
@@ -1615,6 +1663,7 @@ void RigChords::fromTree (const juce::ValueTree& t)
     target = juce::jlimit (kFollowKeys, RigRouting::kNumDests - 1, (int) t.getProperty ("target", kFollowKeys));
     trigger = juce::jlimit (0, (int) Trigger::keyMap, (int) t.getProperty ("trigger", 0));
     hold = (bool) t.getProperty ("hold", false);
+    chordsOn = (bool) t.getProperty ("chordsOn", true);
     strum = juce::jlimit (0, 3, (int) t.getProperty ("strum", 0));
     lowKey = juce::jlimit (0, 127 - kPads, (int) t.getProperty ("lowKey", 36));
     shapePad = juce::jlimit (0, kPads - 1, (int) t.getProperty ("shapePad", 0));
@@ -1694,11 +1743,13 @@ bool RigChords::loadSet (const juce::File& file)
             // A set is your chords and progression; where they play stays as it is.
             // So does the live key: the set's chords come in in the key you're playing in.
             const int keepTarget = target.load(), keepTrigger = trigger.load();
+            const bool keepOn = chordsOn.load();
             const bool wasHome = liveKeyShift.load() == 0;
             const int keepKey = getLiveKey(), keepOctave = liveOctave.load(), keepChange = liveChange.load();
             fromTree (t);
             target = keepTarget;
             trigger = keepTrigger;
+            chordsOn = keepOn;
             liveChange = keepChange;
             setLiveOctave (keepOctave);
             if (wasHome)

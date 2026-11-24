@@ -279,7 +279,7 @@ void ChordsEngine::logChange (double beat, int pad)
     }
 }
 
-int ChordsEngine::notesOf (int pad, int* out) const
+int ChordsEngine::notesOf (int pad, int* out, bool single) const
 {
     if (! juce::isPositiveAndBelow (pad, kChordPads))
         return 0;
@@ -291,6 +291,8 @@ int ChordsEngine::notesOf (int pad, int* out) const
             break;
         if (v + shiftNow >= 0 && v + shiftNow <= 127)   // LIVE KEY
             out[n++] = v + shiftNow;
+        if (single && n > 0)
+            break;   // chords off: the lowest note alone
     }
     return n;
 }
@@ -309,10 +311,10 @@ void ChordsEngine::render (float* left, float* right, int n)
     renderAt (left, right, n, beats.clockRunning(), beats.clockBeat(), beats.getBpm());
 }
 
-void ChordsEngine::sendToVocoder (int pad)
+void ChordsEngine::sendToVocoder (int pad, bool single)
 {
     int buf[kMaxChordNotes];
-    const int count = pad >= 0 ? notesOf (pad, buf) : 0;
+    const int count = pad >= 0 ? notesOf (pad, buf, single) : 0;
     forVocoder.clearQuick();
     for (int i = 0; i < count && i < 6; ++i)
         forVocoder.add (buf[i]);
@@ -412,8 +414,9 @@ void ChordsEngine::renderAt (float* left, float* right, int n, bool running, dou
         if (i == 0 || prog)
             progStep = step;
         const bool aud = want >= 0 && ! (prog && muted);
+        const bool single = ! prog && chordsOff.load() && ! fullChord.load();   // CHORDS OFF: a pad plays one note
         if (want != playing || prog != playingProg || version != playingVersion || style != playingStyle || aud != playingAudible
-            || shiftNow != playingShiftNow)
+            || shiftNow != playingShiftNow || single != playingSingle)
         {
             // the chord changes here
             synthOff (i);
@@ -421,7 +424,8 @@ void ChordsEngine::renderAt (float* left, float* right, int n, bool running, dou
             padPlayer.release();
             offBeat = -1;
             strumLeft.fill (-1);
-            const bool newChord = want != playing || version != playingVersion || shiftNow != playingShiftNow;
+            const bool newChord = want != playing || version != playingVersion || shiftNow != playingShiftNow || single != playingSingle;
+            playingSingle = single;
             playingShiftNow = shiftNow;
             playing = want;
             playingProg = prog;
@@ -430,9 +434,9 @@ void ChordsEngine::renderAt (float* left, float* right, int n, bool running, dou
             playingAudible = aud;
             current = want;
             currentFromProg = prog;
-            numNotes = want >= 0 ? notesOf (want, notes.data()) : 0;
+            numNotes = want >= 0 ? notesOf (want, notes.data(), single) : 0;
             if (vocOn && newChord && want >= 0)   // let go: the vocoder keeps the last chord
-                sendToVocoder (want);
+                sendToVocoder (want, single);
             if (newChord)
                 logChange (t, want);
             arpAt = 0;
@@ -531,6 +535,7 @@ void ChordsTool::reset()
     colour = (int) ChordColour::seventh;
     style = styleChord;
     hold = true;
+    chordsOn = true;
     bass = false;
     progression.fill (-1);
     progLength = 4;
@@ -635,6 +640,7 @@ void ChordsTool::audition (int pad, int ms)
     const int id = ++auditionId;
     live = pad;
     momentary = true;
+    eng.setFullChord (true);   // the whole chord, even with chords off: you're hearing the one you build
     eng.setLivePad (pad);
     if (onPlay)
         onPlay();
@@ -646,6 +652,7 @@ void ChordsTool::audition (int pad, int ms)
             live = -1;
             momentary = false;
             eng.setLivePad (-1);
+            eng.setFullChord (false);
         }
     });
 }
@@ -660,6 +667,7 @@ void ChordsTool::apply()
 {
     refreshNotes();
     applyLive();
+    eng.setChordsOn (chordsOn);
     eng.setStyle (style);
     eng.setProgression (progression, juce::jmax (1, usedBoxes()), progressionOn && usedBoxes() > 0);
     eng.setPlays (playsSynth, playsPad && eng.hasPadSound(), playsVocoder);
@@ -682,9 +690,11 @@ void ChordsTool::padDown (int pad, bool setBox)
         progressionEdited();
         momentary = true;
         live = pad;
+        eng.setFullChord (false);
         eng.setLivePad (live);
         return;
     }
+    eng.setFullChord (false);
     momentary = ! hold;
     live = hold && live == pad ? -1 : pad;   // HOLD: the lit pad again lets go
     eng.setLivePad (live);
@@ -707,6 +717,16 @@ void ChordsTool::releaseAll()
     live = -1;
     momentary = false;
     eng.setLivePad (-1);
+}
+
+void ChordsTool::setChordsOn (bool on)
+{
+    if (on == chordsOn)
+        return;
+    chordsOn = on;
+    if (live >= 0 && ! momentary)
+        releaseAll();   // a latched chord stops (as on the Mac); one under your finger turns into its note
+    eng.setChordsOn (on);
 }
 
 int ChordsTool::usedBoxes() const
@@ -766,6 +786,7 @@ juce::var ChordsTool::toVar() const
     o->setProperty ("colour", colour);
     o->setProperty ("style", style);
     o->setProperty ("hold", hold);
+    o->setProperty ("chordsOn", chordsOn);
     o->setProperty ("bass", bass);
     juce::Array<juce::var> steps;
     for (int s : progression)
@@ -803,6 +824,7 @@ void ChordsTool::fromVar (const juce::var& v)
     colour = juce::jlimit (0, kChordColours - 1, (int) v.getProperty ("colour", colour));
     style = juce::jlimit (0, 3, (int) v.getProperty ("style", style));
     hold = (bool) v.getProperty ("hold", hold);
+    chordsOn = (bool) v.getProperty ("chordsOn", true);
     bass = (bool) v.getProperty ("bass", bass);
     if (auto* a = v.getProperty ("progression", {}).getArray())
         for (int i = 0; i < kProgressionMax && i < a->size(); ++i)
@@ -1012,6 +1034,55 @@ juce::String chordsSelfCheck (juce::String& report)
         if (back.liveShift() != tool.liveShift() || back.liveOnBar)
             problems.add ("the live key didn't survive the song's save and load");
         tool.releaseAll();
+    }
+
+    // CHORDS ON / OFF: off, a pad plays its chord's lowest note (to the vocoder too), a pad held changes under the
+    // finger, a latched one lets go, HEAR still plays the whole chord, the progression keeps its chords, and it's saved
+    {
+        BeatsEngine clock;
+        ChordsTool tool (clock);
+        tool.setKey ({ 9, true });
+        tool.colour = (int) ChordColour::plain;
+        tool.hold = false;
+        tool.apply();
+        auto& e = tool.engine();
+        std::vector<float> l (256), r (256);
+        auto run = [&] { for (int i = 0; i < 4; ++i) e.renderAt (l.data(), r.data(), 256, false, 0.0, 120.0); };
+        tool.padDown (0, false);   // Am, held
+        run();
+        const auto chord = e.lastVocoderNotes();
+        tool.setChordsOn (false);
+        run();
+        const auto single = e.lastVocoderNotes();
+        tool.padUp (0);
+        report << "chords off: Am held " << pcs (chord) << " -> " << pcs (single) << "\n";
+        if (chord.size() < 3 || single.size() != 1 || single[0] != chord[0])
+            problems.add ("CHORDS OFF didn't turn a held Am into its A (" + pcs (single) + ")");
+        tool.audition (3);
+        run();
+        if (e.lastVocoderNotes().size() < 3)
+            problems.add ("HEAR with chords off didn't play the whole chord");
+        tool.releaseAll();
+        tool.hold = true;
+        tool.setChordsOn (true);
+        tool.padDown (4, false);   // latched
+        tool.setChordsOn (false);
+        if (tool.heldPad() != -1)
+            problems.add ("CHORDS OFF didn't let a latched chord go");
+        ChordsTool back (clock);
+        back.fromVar (tool.toVar());
+        if (back.chordsOn)
+            problems.add ("CHORDS OFF didn't survive the song's save and load");
+        tool.progression = { 0, -1, -1, -1, -1, -1, -1, -1 };
+        tool.progressionOn = true;
+        tool.apply();
+        for (int i = 0; i < 4; ++i)
+            e.renderAt (l.data(), r.data(), 256, true, 0.1 + i * 0.01, 120.0);
+        if (e.lastVocoderNotes().size() < 3)
+            problems.add ("the progression stopped playing chords with CHORDS OFF");
+        tool.reset();
+        if (! tool.chordsOn)
+            problems.add ("a new song didn't start with the chords on");
     }
     return problems.joinIntoString ("; ");
 }
