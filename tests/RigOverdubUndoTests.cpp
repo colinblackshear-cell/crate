@@ -2118,6 +2118,50 @@ struct RigOverdubUndoRestoreTests : juce::UnitTest
             }
             RigLooper::copySliceForTests = 0;
         }
+
+        beginTest ("21b. A save's copy asked for during a restoration, and the audio stops before it ends: the copy is the loop at one block");
+        {
+            // The copy is posted while the loop is being put back, then no block comes: the copier
+            // finishes it off the audio thread. It must still be the loop as it sounds (restored),
+            // never the pages not put back yet.
+            RigLooper::copySliceForTests = 4 * RigLooper::kCopyPageSamples;   // the restoration takes many blocks
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            putLoop (d, 0, odu::markedLoop (5 * 48000, 213));   // a bigger room: undone by restoration
+            d.blocks (3);
+            const auto before = d.looper.soundingLoopForTests (0);
+            d.looper.pressRecord (0);
+            d.blocks (200);   // about 50 pages written, the capture complete
+            d.looper.pressRecord (0);
+            d.block();
+            d.looper.undo (0);
+            d.block();
+            expect (d.looper.isUndoRestoring(), "restoring");
+            const int version = d.looper.getLayer (0).version.load();
+            int v = -1;
+            juce::AudioBuffer<float> copy;
+            std::thread saver ([&] { copy = d.looper.copyLayerAudio (0, &v); });
+            juce::Thread::sleep (100);   // the copy is posted (well within the stall limit)
+            d.blocks (2);   // the audio thread sees it, with the restoration still running
+            expect (d.looper.isUndoRestoring(), "still restoring when the audio stops");
+            saver.join();   // no block for longer than the stall limit: the copier finishes it
+            int firstDiff = -1;
+            if (copy.getNumSamples() == before.getNumSamples())
+                for (int ch = 0; ch < 2 && firstDiff < 0; ++ch)
+                    for (int i = 0; i < before.getNumSamples(); ++i)
+                        if (! juce::exactlyEqual (copy.getSample (ch, i), before.getSample (ch, i)))
+                        {
+                            firstDiff = i;
+                            break;
+                        }
+            logMessage ("  copy of " + juce::String (copy.getNumSamples()) + " samples, version " + juce::String (v) + " (loop's " + juce::String (version)
+                        + "), first sample unlike the loop: " + juce::String (firstDiff));
+            expect (same (copy, before), "the copy is the loop as it sounds, every page put back");
+            expectEquals (v, version, "of the version the loop has");
+            settle (d);
+            expect (same (d.looper.copyLayerAudio (0), before), "and the loop is as it was");
+            RigLooper::copySliceForTests = 0;
+        }
     }
 };
 
