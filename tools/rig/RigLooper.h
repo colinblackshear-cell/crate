@@ -321,6 +321,7 @@ public:
     //==========================================================================
     // Audio thread.
     void prepare (double sampleRate, int maxBlock = 4096);
+    double getSampleRate() const { return sampleRate; }
     // Before prepare: the effects each layer plays through (null for none). Not owned.
     void setEffects (int layer, StripFx* fx) { effects[(size_t) layer] = fx; }
     // The song timeline's level for a layer over the next block, from `from` to `to` (1 when

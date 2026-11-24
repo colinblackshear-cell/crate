@@ -6,6 +6,7 @@
 #include "PocketBoards.h"
 #include "PocketLoopFx.h"
 #include "PocketAudio.h"
+#include "core/Warp.h"
 #include "PocketSong.h"
 
 #include <array>
@@ -64,6 +65,16 @@ struct NotePart;   // PocketLoopTools.h: the notes a layer was printed from
 
 // One layer's recorded sound. The audio thread writes `data` while the layer records or overdubs (and reads
 // only `data`, `length` and `lengthBeats`); the rest is the message thread's.
+// LOOP LAB's WARP on a layer: the recording as it was and the plan it plays warped by (core/Warp.h). A take that
+// carries one is rendered from it again at every new tempo (so warps don't pile up), and the lab reads its markers,
+// hits and settings from it. An edit that isn't a warp (TRIM, FIT, DUB...) makes a take without one.
+struct WarpSource
+{
+    std::vector<float> original;
+    double originalBeats = 0;
+    crate::Warp::Plan plan;
+};
+
 struct LoopTake
 {
     std::vector<float> data;               // capacity; the loop is the first `length` samples
@@ -78,6 +89,7 @@ struct LoopTake
     // The audio before it was stretched to follow a tempo change (null = `data` is it): every new tempo is
     // stretched from this, so changes don't pile up.
     std::shared_ptr<const std::vector<float>> origin;
+    std::shared_ptr<const WarpSource> warp;  // LOOP LAB's warp it was rendered with, or null
     int contentSamples() const { return content > 0 ? juce::jmin (content, length.load()) : length.load(); }
 };
 using SharedTake = std::shared_ptr<LoopTake>;

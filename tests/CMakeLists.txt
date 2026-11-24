@@ -17,6 +17,8 @@ target_sources(CrateTests PRIVATE
     RigDirtyTests.cpp
     RigDirtyScenarioTests.cpp
     LoopShapeTests.cpp
+    WarpTests.cpp
+    RigLoopLabTests.cpp
     SoundBendingTests.cpp
     ShowMovesTests.cpp
     RigSceneTests.cpp

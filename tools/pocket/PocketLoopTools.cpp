@@ -405,6 +405,89 @@ Edited quantizeTake (const LoopTake& t, const LayerFxState& fx, const LoopQuanti
     return e;
 }
 
+namespace
+{
+SharedTake renderWarp (const LoopTake& t, std::shared_ptr<const WarpSource> src, double bpm)
+{
+    bpm = juce::jlimit (40.0, 240.0, bpm);
+    const int target = juce::jmax (2, (int) std::llround (src->plan.targetBeats * 60.0 / bpm * t.sampleRate));
+    juce::AudioBuffer<float> in (1, juce::jmax (1, (int) src->original.size()));
+    in.clear();
+    std::copy (src->original.begin(), src->original.end(), in.getWritePointer (0));
+    const auto out = crate::Warp::render (in, src->plan, target, t.sampleRate);
+    SharedTake m = like (t, target);
+    m->lengthBeats = src->plan.targetBeats;
+    if (out.getNumSamples() > 0)
+        std::copy (out.getReadPointer (0), out.getReadPointer (0) + juce::jmin (target, out.getNumSamples()), m->data.begin());
+    m->warp = std::move (src);
+    return m;
+}
+}
+
+WarpSource warpSourceOf (const LoopTake& t)
+{
+    if (t.warp != nullptr)
+        return *t.warp;
+    WarpSource w;
+    const int len = t.length.load();
+    if (t.origin != nullptr && t.part == nullptr)
+        w.original = *t.origin;
+    else
+        w.original.assign (t.data.begin(), t.data.begin() + juce::jlimit (0, (int) t.data.size(), len));
+    w.originalBeats = t.lengthBeats.load();
+    w.plan.sourceBeats = w.plan.targetBeats = w.originalBeats;
+    return w;
+}
+
+Edited warpTake (const LoopTake& t, const LayerFxState& fx, const crate::Warp::Plan& plan, double bpm)
+{
+    Edited e;
+    auto src = std::make_shared<WarpSource> (warpSourceOf (t));
+    if (src->original.size() < 2 || src->originalBeats <= 0.0)
+        return e.error = "Nothing to warp", e;
+    src->plan = plan;
+    src->plan.sourceBeats = src->originalBeats;
+    if (src->plan.targetBeats <= 0.0)
+        src->plan.targetBeats = src->originalBeats;
+    crate::Warp::tidy (src->plan);
+    if (src->plan.targetBeats * 60.0 / juce::jlimit (40.0, 240.0, bpm) > 600.0)
+        return e.error = "That would pass 10 minutes.", e;
+    e.take = renderWarp (t, std::move (src), bpm);
+    e.fx = fx;   // the moves are per pass: they stretch with it
+    return e;
+}
+
+SharedTake originalTake (const LoopTake& t, double bpm)
+{
+    auto src = std::make_shared<WarpSource> (warpSourceOf (t));
+    if (src->original.size() < 2 || src->originalBeats <= 0.0)
+        return nullptr;
+    src->plan = {};
+    src->plan.sourceBeats = src->plan.targetBeats = src->originalBeats;
+    return renderWarp (t, std::move (src), bpm);
+}
+
+std::vector<double> warpHits (const WarpSource& w, double sampleRate, float sensitivity)
+{
+    juce::ignoreUnused (sampleRate);
+    if (w.original.size() < 2 || w.originalBeats <= 0.0)
+        return {};
+    juce::AudioBuffer<float> in (1, (int) w.original.size());
+    std::copy (w.original.begin(), w.original.end(), in.getWritePointer (0));
+    return crate::Warp::findHits (in, w.originalBeats, sensitivity);
+}
+
+double warpSoundsLike (const WarpSource& w, const std::vector<double>& hits, double sampleRate, double songBpm)
+{
+    if (w.originalBeats <= 0.0 || sampleRate <= 0.0)
+        return 0.0;
+    const double seconds = (double) w.original.size() / sampleRate;
+    std::vector<double> s;
+    for (double h : hits)
+        s.push_back (h / w.originalBeats * seconds);
+    return crate::Warp::soundsLikeBpm (s, songBpm);
+}
+
 SharedTake tempoTake (const LoopTake& t, double bpm)
 {
     const int len = t.length.load();
@@ -415,6 +498,8 @@ SharedTake tempoTake (const LoopTake& t, double bpm)
     const int target = (int) std::llround (beats * 60.0 / bpm * t.sampleRate);
     if (std::abs (target - len) <= 1)
         return nullptr;
+    if (t.warp != nullptr)
+        return renderWarp (t, t.warp, bpm);   // from the recording, by its plan: same pitch, same warp
     SharedTake m = like (t, target);
     m->lengthBeats = beats;
     m->part = t.part;
