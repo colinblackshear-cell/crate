@@ -133,6 +133,9 @@ struct Drive
     bool timing = false;
     Times wall, cpu;
     int late = 0;   // blocks that took longer than they play for
+    // While `timing`: blocks in which the audio thread took a page fault (the system's work,
+    // counted in its time), and late blocks that had one. (Linux; 0 elsewhere.)
+    int faultBlocks = 0, lateWithFault = 0;
 
     Drive (double sampleRate, int maximumBlock, double bpm = 120.0)
         : rate (sampleRate), maxBlock (maximumBlock), in (2, maximumBlock), out (2, maximumBlock)
@@ -158,14 +161,20 @@ struct Drive
         sources[RigLooper::input] = &inView;
         const double w0 = juce::Time::getMillisecondCounterHiRes();
         const double c0 = timing ? threadCpuMicros() : 0.0;
+        const long f0 = timing ? threadPageFaults() : 0;
         looper.process (clock, sources, outView);
         if (timing)
         {
             const double us = (juce::Time::getMillisecondCounterHiRes() - w0) * 1000.0;
+            const bool faulted = threadPageFaults() > f0;
             wall.add (us);
             cpu.add (threadCpuMicros() - c0);
+            faultBlocks += faulted ? 1 : 0;
             if (us > 1.0e6 * n / rate)
+            {
                 ++late;
+                lateWithFault += faulted ? 1 : 0;
+            }
         }
         if (after)
             after (clock, inView, outView, n);
@@ -201,6 +210,7 @@ struct Drive
         wall = {};
         cpu = {};
         late = 0;
+        faultBlocks = lateWithFault = 0;
     }
 };
 

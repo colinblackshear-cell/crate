@@ -75,6 +75,7 @@ struct Result
     int block = 0;
     odu::Times wall, cpu;
     int late = 0;
+    int faultBlocks = -1, lateWithFault = -1;   // -1: not measured (the device part, or not Linux)
     juce::int64 blocks = 0, missing = 0;
     juce::int64 mandatoryBytes = 0, discretionaryBytes = 0, wholeBytes = 0;
     int maxMandatoryPages = 0, maxDiscretionaryPages = 0;
@@ -90,7 +91,9 @@ juce::String row (const Result& r)
     return juce::String (r.rate / 1000.0, 1).paddedLeft (' ', 5) + " " + juce::String (r.block).paddedLeft (' ', 4) + "  "
            + r.kase.paddedRight (' ', 30) + f (r.wall.median()).paddedLeft (' ', 8) + f (r.wall.p99()).paddedLeft (' ', 9)
            + f (r.wall.most()).paddedLeft (' ', 10) + f (r.cpu.median()).paddedLeft (' ', 8) + f (r.cpu.p99()).paddedLeft (' ', 9)
-           + f (r.cpu.most()).paddedLeft (' ', 10) + juce::String (r.late).paddedLeft (' ', 6) + juce::String (r.missing).paddedLeft (' ', 6)
+           + f (r.cpu.most()).paddedLeft (' ', 10) + juce::String (r.late).paddedLeft (' ', 6)
+           + (r.lateWithFault < 0 ? juce::String ("-") : juce::String (r.lateWithFault)).paddedLeft (' ', 6)
+           + (r.faultBlocks < 0 ? juce::String ("-") : juce::String (r.faultBlocks)).paddedLeft (' ', 6) + juce::String (r.missing).paddedLeft (' ', 6)
            + juce::String (r.mandatoryBytes / 1024).paddedLeft (' ', 11) + juce::String (r.discretionaryBytes / 1024).paddedLeft (' ', 11)
            + juce::String (r.wholeBytes / 1024).paddedLeft (' ', 11) + juce::String (r.maxMandatoryPages).paddedLeft (' ', 7)
            + juce::String (r.maxDiscretionaryPages).paddedLeft (' ', 7) + juce::String (r.roomsMost).paddedLeft (' ', 4)
@@ -103,7 +106,8 @@ juce::String header()
     return juce::String ("kHz").paddedLeft (' ', 5) + " " + juce::String ("buf").paddedLeft (' ', 4) + "  " + juce::String ("case").paddedRight (' ', 30)
            + juce::String ("wall med").paddedLeft (' ', 8) + juce::String ("p99").paddedLeft (' ', 9) + juce::String ("max").paddedLeft (' ', 10)
            + juce::String ("cpu med").paddedLeft (' ', 8) + juce::String ("p99").paddedLeft (' ', 9) + juce::String ("max").paddedLeft (' ', 10)
-           + juce::String ("late").paddedLeft (' ', 6) + juce::String ("miss").paddedLeft (' ', 6) + juce::String ("mand KB").paddedLeft (' ', 11)
+           + juce::String ("late").paddedLeft (' ', 6) + juce::String ("lt+f").paddedLeft (' ', 6)
+           + juce::String ("flt").paddedLeft (' ', 6) + juce::String ("miss").paddedLeft (' ', 6) + juce::String ("mand KB").paddedLeft (' ', 11)
            + juce::String ("disc KB").paddedLeft (' ', 11) + juce::String ("whole KB").paddedLeft (' ', 11) + juce::String ("mxMd").paddedLeft (' ', 7)
            + juce::String ("mxDsc").paddedLeft (' ', 7) + juce::String ("rms").paddedLeft (' ', 4) + juce::String ("pkMB").paddedLeft (' ', 7) + "  undo path";
 }
@@ -173,6 +177,10 @@ struct SyntheticDriver : Driver
         r.wall = d->wall;
         r.cpu = d->cpu;
         r.late = d->late;
+#if JUCE_LINUX
+        r.faultBlocks = d->faultBlocks;
+        r.lateWithFault = d->lateWithFault;
+#endif
         d->resetTiming();
     }
 };
@@ -461,7 +469,8 @@ int runOverdubUndoBench (int argc, char** argv)
         << juce::SystemStats::getOperatingSystemName() << ", " << juce::SystemStats::getCpuModel() << ", "
         << juce::SystemStats::getNumCpus() << " cores\n"
         << "Undo made " << (RigLooper::kIncrementalUndo ? "a slice at a time (new)" : "by whole copies (old)") << "\n"
-        << "Times in microseconds a block. late: blocks longer than they play for. miss: loop blocks not played (a layer's lock busy).\n"
+        << "Times in microseconds a block. late: blocks longer than they play for (wall clock);\n"
+        << "lt+f: late blocks in which the audio thread took a page fault (the system's work); flt: blocks with a page fault. miss: loop blocks not played (a layer's lock busy).\n"
         << "mand/disc KB: copied because it had to be / in order. whole KB: whole-loop copies. mxMd/mxDsc: most pages in one block.\n"
         << "rms: undo-room-sized buffers alive at once (most). pkMB: peak resident memory during the case.\n";
     if (part == "synthetic" || part == "all")
