@@ -336,6 +336,123 @@ struct DroneTests : juce::UnitTest
             expectWithinAbsoluteError (other.params.getRawParameterValue ("droneJawari")->load(), 0.25f, 1.0e-4f);
         }
 
+        beginTest ("miracle tones: exactly their Hz, about as loud as the strings, Tone only rests the strings, and off fades out");
+        {
+            DroneProcessor d;
+            d.prepareToPlay (48000.0, 480);
+            d.pickTone (5);   // 528 Hz
+            expect (d.isOn() && d.isToneOn(), "picking a tone plays it and turns the drone on");
+            expectWithinAbsoluteError (d.getToneHz(), 528.0, 1.0e-9);
+            setParam (d, "droneToneOnly", 1.0f);
+            const int plucksBefore = d.getPluckCount (0) + d.getPluckCount (1) + d.getPluckCount (2) + d.getPluckCount (3);
+            auto out = render (d, 4.0);
+            const int plucks = d.getPluckCount (0) + d.getPluckCount (1) + d.getPluckCount (2) + d.getPluckCount (3) - plucksBefore;
+            expectEquals (plucks, 0, "Tone only: the strings rest");
+            const float on528 = at (out, 528.0, 1.5, 4.0), near = at (out, 523.25, 1.5, 4.0), off = at (out, 500.0, 1.5, 4.0);
+            expect (on528 > 10.0f * near && on528 > 50.0f * off, "the tone is at 528 Hz, not C (523.25): " + juce::String (on528) + " / " + juce::String (near));
+            const float level = rmsDb (out, 1.5, 4.0);
+            expect (level > -36.0f && level < -18.0f, "about as loud as the drone's presets: " + juce::String (level, 1) + " dB");
+            expect (out.getMagnitude (0, out.getNumSamples()) < 0.99f);
+
+            // Swell 0 is steady; the default breathes (its level moves over a few seconds).
+            setParam (d, "droneToneSwell", 0.0f);
+            auto steady = render (d, 3.0);
+            expectWithinAbsoluteError (rmsDb (steady, 1.0, 2.0), rmsDb (steady, 2.0, 3.0), 0.3f, "Swell 0: steady");
+
+            setParam (d, "droneStrings", 0.0f);   // (with no tone the strings would play again: quiet them to hear the tone go)
+            d.pickTone (5);   // the same tone again: off
+            expect (! d.isToneOn() && d.isOn(), "picking the playing tone again stops it (the drone stays on)");
+            auto tail = render (d, 3.0);
+            expect (rmsDb (tail, 2.0, 3.0) < -90.0f, "off: the tone fades out");
+            expect (! d.isToneSounding());
+        }
+
+        beginTest ("miracle tones: binaural puts the tone in the left ear and the tone plus 6 Hz in the right");
+        {
+            DroneProcessor d;
+            d.prepareToPlay (48000.0, 480);
+            setParam (d, "droneToneOnly", 1.0f);
+            setParam (d, "droneToneSwell", 0.0f);
+            setParam (d, "droneToneBeat", 2.0f);   // 6 Hz
+            d.pickTone (2);                         // 396 Hz
+            auto out = render (d, 6.0);
+            juce::AudioBuffer<float> left (2, out.getNumSamples()), right (2, out.getNumSamples());
+            for (int c = 0; c < 2; ++c)
+            {
+                left.copyFrom (c, 0, out, 0, 0, out.getNumSamples());
+                right.copyFrom (c, 0, out, 1, 0, out.getNumSamples());
+            }
+            expect (at (left, 396.0, 2.0, 6.0) > 10.0f * at (left, 402.0, 2.0, 6.0), "left: 396");
+            expect (at (right, 402.0, 2.0, 6.0) > 10.0f * at (right, 396.0, 2.0, 6.0), "right: 402");
+            setParam (d, "droneToneBeat", 0.0f);
+            out = render (d, 4.0);
+            expectWithinAbsoluteError (out.getRMSLevel (0, 96000, 96000), out.getRMSLevel (1, 96000, 96000), 1.0e-4f, "binaural off: both ears the same");
+        }
+
+        beginTest ("miracle tones: Tune drone to it puts the drone's Sa on the tone (octaves down); Over the drone keeps its note");
+        {
+            DroneProcessor d;
+            d.prepareToPlay (48000.0, 480);
+            setParam (d, "droneRoot", 2.0f);   // D
+            d.pickTone (5);                     // 528 Hz: C, 16 cents sharp
+            expectEquals (d.stringNotes()[1], juce::String ("D2"), "over the drone: the strings stay on D");
+            setParam (d, "droneToneFit", 1.0f);
+            expectEquals (d.stringNotes()[1], juce::String ("C2"), "tuned: the strings move to the tone's C");
+            expectWithinAbsoluteError (crate::drone::toneDroneSa (528.0, 0), 132.0, 1.0e-9);
+            expectWithinAbsoluteError (crate::drone::toneDroneSa (136.1, 0), 136.1, 1.0e-9);
+            expectWithinAbsoluteError (crate::drone::toneDroneSa (963.0, -1), 963.0 / 8.0, 1.0e-9);
+            expectEquals (crate::drone::nearestNoteText (528.0), juce::String ("C +16 cents"));
+            expectEquals (crate::drone::nearestNoteText (432.0), juce::String ("A -32 cents"));
+            // The strings really sound on 132 Hz (Sa), not D.
+            setParam (d, "droneSync", 0.0f);
+            setParam (d, "droneToneLevel", 0.0f);
+            auto out = render (d, 6.0);
+            expect (at (out, 132.0, 1.0, 6.0) > 3.0f * at (out, 146.83, 1.0, 6.0), "Sa at 132 Hz");
+            d.pickTone (5);
+            expectEquals (d.stringNotes()[1], juce::String ("D2"), "the tone off: the drone's own note is back");
+            expectEquals (d.params.getParameter ("droneRoot")->getCurrentValueAsText(), juce::String ("D"));
+        }
+
+        beginTest ("miracle tones: your own Hz, every tile's frequency, and all of it saved with the drone");
+        {
+            DroneProcessor d;
+            d.setOwnToneHz (111.0);
+            expect (d.isToneOn() && d.getTone() == crate::drone::kOwnTone);
+            expectWithinAbsoluteError (d.getToneHz(), 111.0, 0.01);
+            d.setOwnToneHz (5000.0);
+            expectWithinAbsoluteError (d.getToneHz(), 2000.0, 0.01, "your own stays in 20-2000 Hz");
+            const double expected[] = { 174, 285, 396, 417, 432, 528, 639, 741, 852, 963, 136.1 };
+            for (int i = 0; i < 11; ++i)
+                expectWithinAbsoluteError (crate::drone::toneHzFor (i, 0.0), expected[i], 1.0e-9);
+            d.pickTone (7);
+            setParam (d, "droneToneFit", 1.0f);
+            setParam (d, "droneToneSound", 2.0f);
+            setParam (d, "droneToneBeat", 3.0f);
+            setParam (d, "droneToneLevel", 0.4f);
+            setParam (d, "droneToneOnly", 1.0f);
+            juce::MemoryBlock state;
+            d.getStateInformation (state);
+            DroneProcessor other;
+            other.setStateInformation (state.getData(), (int) state.getSize());
+            expect (other.isToneOn() && other.getTone() == 7);
+            for (auto* id : { "droneToneFit", "droneToneSound", "droneToneBeat", "droneToneLevel", "droneToneOnly", "droneToneHz" })
+                expectWithinAbsoluteError (other.params.getRawParameterValue (id)->load(), d.params.getRawParameterValue (id)->load(), 1.0e-4f, id);
+            // Every sound plays, and none is much louder than Pure.
+            DroneProcessor s;
+            s.prepareToPlay (48000.0, 480);
+            setParam (s, "droneToneOnly", 1.0f);
+            setParam (s, "droneToneSwell", 0.0f);
+            s.pickTone (4);
+            float levels[3];
+            for (int sound = 0; sound < 3; ++sound)
+            {
+                setParam (s, "droneToneSound", (float) sound);
+                levels[sound] = rmsDb (render (s, 3.0), 1.5, 3.0);
+            }
+            for (int sound = 1; sound < 3; ++sound)
+                expect (std::abs (levels[sound] - levels[0]) < 6.0f, "sound " + juce::String (sound) + ": " + juce::String (levels[sound], 1) + " vs " + juce::String (levels[0], 1));
+        }
+
         if (auto path = juce::SystemStats::getEnvironmentVariable ("CRATE_DRONE_WAV", {}); path.isNotEmpty())
         {
             DroneProcessor d;

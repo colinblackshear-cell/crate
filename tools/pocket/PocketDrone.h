@@ -37,6 +37,18 @@ public:
     void toggleStep (int step, int string);
     void clearSteps();
     int currentStep() const { return engine.currentStep.load(); }
+    // MIRACLE TONES (as the Mac's): the tone picked (0-11, 11 = your own Hz, ownHz), whether it plays, FIT (0 over the
+    // drone, 1 the drone tuned to it), SOUND (0 pure, 1 warm, 2 bowl), BINAURAL (0 off, 1-3: 2, 6, 10 Hz), LEVEL, SWELL,
+    // TONE ONLY (the strings rest).
+    std::atomic<bool> toneOn { false }, toneOnly { false };
+    std::atomic<int> tone { 5 }, toneFit { 0 }, toneSound { 0 }, toneBeat { 0 };
+    std::atomic<float> ownHz { 111.0f }, toneLevel { 0.6f }, toneSwell { 0.3f };
+    double toneHz() const { return crate::drone::toneHzFor (tone.load(), ownHz.load()); }
+    // Picking the tone that's playing turns it off; another plays it (and turns the drone on). Returns true if it plays.
+    bool pickTone (int index);
+    void setOwnToneHz (double hz);   // plays it, as YOUR OWN
+    bool toneSounding() const { return engine.isToneSounding(); }
+    juce::String stringNoteNow (int string) const;   // as stringNote, tuned to the tone when FIT tunes the drone to it
     // Its volume, as the Mac's fader: 0.8 is 0 dB, the top +6 dB.
     std::atomic<float> level { 0.8f };
     // The drone's note follows the song's KEY (on until you pick a note yourself).

@@ -151,6 +151,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout DroneProcessor::createLayout
     number ("droneBody", "Body", { 0.0f, 1.0f }, 0.5f, percent);
     number ("droneDetune", "Detune", { 0.0f, 1.0f }, 0.0f, percent);
     number ("droneSpace", "Space", { 0.0f, 1.0f }, 0.0f, percent);
+    // Miracle tones (added later: shows from before get these defaults, the tone off).
+    StringArray toneNames;
+    for (const auto& tone : drone::tones())
+        toneNames.add (drone::toneHzText (tone.hz) + " Hz " + tone.name);
+    toneNames.add ("Your own");
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "droneToneOn", 1 }, "Tone on", false));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneTone", 1 }, "Miracle tone", toneNames, 5));
+    number ("droneToneHz", "Your own Hz", { (float) drone::kOwnToneMin, (float) drone::kOwnToneMax, 0.0f, 0.3f }, 111.0f,
+            [] (float v, int) { return drone::toneHzText (v) + " Hz"; });
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneToneFit", 1 }, "Tone fit", StringArray { "Over the drone", "Tune drone to it" }, 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneToneSound", 1 }, "Tone sound", StringArray { "Pure", "Warm", "Bowl" }, 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "droneToneBeat", 1 }, "Binaural", StringArray { "Off", "2 Hz", "6 Hz", "10 Hz" }, 0));
+    number ("droneToneLevel", "Tone level", { 0.0f, 1.0f }, 0.6f, percent);
+    number ("droneToneSwell", "Tone swell", { 0.0f, 1.0f }, 0.3f, percent);
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "droneToneOnly", 1 }, "Tone only", false));
     return layout;
 }
 
@@ -158,6 +173,30 @@ DroneProcessor::DroneProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       params (*this, nullptr, "DroneState", createLayout())
 {
+}
+
+int DroneProcessor::getTone() const { return juce::jlimit (0, drone::kNumTones - 1, juce::roundToInt (get (params, "droneTone"))); }
+double DroneProcessor::getToneHz() const { return drone::toneHzFor (getTone(), get (params, "droneToneHz")); }
+bool DroneProcessor::isToneOn() const { return get (params, "droneToneOn") > 0.5f; }
+
+void DroneProcessor::pickTone (int index)
+{
+    index = juce::jlimit (0, drone::kNumTones - 1, index);
+    // The tone that's playing again: off. Another: it plays (and the drone comes on, so you hear it).
+    const bool same = isToneOn() && index == getTone();
+    set (params, "droneTone", (float) index);
+    set (params, "droneToneOn", same ? 0.0f : 1.0f);
+    if (! same && ! isOn())
+        set (params, "droneOn", 1.0f);
+}
+
+void DroneProcessor::setOwnToneHz (double hz)
+{
+    set (params, "droneToneHz", (float) juce::jlimit (drone::kOwnToneMin, drone::kOwnToneMax, hz));
+    set (params, "droneTone", (float) drone::kOwnTone);
+    set (params, "droneToneOn", 1.0f);
+    if (! isOn())
+        set (params, "droneOn", 1.0f);
 }
 
 int DroneProcessor::getFeed() const { return juce::jlimit (0, (int) numFeeds - 1, juce::roundToInt (get (params, "droneFeed"))); }
@@ -195,6 +234,14 @@ drone::Settings DroneProcessor::readSettings() const
     s.body = get (params, "droneBody");
     s.detune = get (params, "droneDetune");
     s.space = get (params, "droneSpace");
+    s.toneOn = get (params, "droneToneOn") > 0.5f;
+    s.toneHz = getToneHz();
+    s.toneFit = juce::roundToInt (get (params, "droneToneFit"));
+    s.toneSound = juce::roundToInt (get (params, "droneToneSound"));
+    s.toneBeat = drone::toneBeatHz (juce::roundToInt (get (params, "droneToneBeat")));
+    s.toneLevel = get (params, "droneToneLevel");
+    s.toneSwell = get (params, "droneToneSwell");
+    s.toneOnly = get (params, "droneToneOnly") > 0.5f;
     return s;
 }
 
@@ -204,7 +251,8 @@ juce::StringArray DroneProcessor::stringNotes() const
     juce::StringArray notes;
     for (int i = 0; i < drone::kStrings; ++i)
     {
-        const double hz = drone::rootHz (s.root, s.octave, 0.0f) * drone::stringRatio (i, s.first);
+        const double sa = s.toneOn && s.toneFit == 1 ? drone::droneSa (s) : drone::rootHz (s.root, s.octave, 0.0f);   // (tuned to the tone, or the note)
+        const double hz = sa * drone::stringRatio (i, s.first);
         const int note = juce::roundToInt (69.0 + 12.0 * std::log2 (hz / 440.0));
         notes.add (juce::MidiMessage::getMidiNoteName (note, true, true, 3));
     }

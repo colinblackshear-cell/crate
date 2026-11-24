@@ -17,6 +17,8 @@
 //   Resonate: strings that ring to what a track plays into them (they work with the drone off too).
 //   Pattern (under them): the order the strings go round in, or steps you draw; Swing and Human.
 //   Tone: the instrument (tanpura, bowed, swarmandal, electric, bell), Bright, Body, Detune and Space.
+//   Miracle tones (a tab beside Pattern and tone): a held tone at an exact frequency (the Solfeggio tones,
+//            432, Om or your own), how it fits the drone, its sound, binaural beats, Level, Swell, Tone only.
 //
 // Every control is one of the drone's settings, so knob Learn, macros and automation see it as they
 // see any tool's.
@@ -50,8 +52,21 @@ public:
     // swing and feel. Tone: the instrument the strings are, and its sound.
     juce::OwnedArray<juce::TextButton> orderButtons, stepCountButtons, stepRateButtons, voiceButtons;
     juce::TextButton clearStepsButton { "Clear" };
-    // A short window: the strings (0) or Pattern and Tone (1), a tab for each.
-    juce::TextButton stringsTab { "Strings and tuning" }, patternTab { "Pattern and tone" };
+    // Miracle tones: a tile for each tone (the last: your own Hz), how it fits, its sound, binaural, Tone only.
+    struct ToneTile : public juce::Button
+    {
+        ToneTile() : juce::Button ("Tone") {}
+        juce::String hz, name;
+        void paintButton (juce::Graphics&, bool over, bool down) override;
+    };
+    juce::OwnedArray<ToneTile> toneTiles;
+    juce::OwnedArray<juce::TextButton> fitButtons, toneSoundButtons, beatButtons;
+    juce::TextButton toneOnlyButton { "Tone only" };
+    void pressTone (int index);
+    void askOwnHz();
+    // The pages: the strings (0), Pattern and Tone (1), Miracle tones (2). A short window shows one at a
+    // time, a tab for each; a tall one shows the strings over Pattern and tone or Miracle tones (its two tabs).
+    juce::TextButton stringsTab { "Strings and tuning" }, patternTab { "Pattern and tone" }, miracleTab { "Miracle tones" };
     void showPage (int);
     int getPage() const { return page; }
     bool isCompact() const { return compact; }
@@ -75,10 +90,12 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> followAttachment;
     juce::Rectangle<int> stringsWell, tuningWell, playingWell, resonateWell, stringsArea, meterArea, captionArea;
     juce::Rectangle<int> patternWell, toneWell, orderLabel, stepsLabel, gridArea, gridHint, voiceLabel;
+    juce::Rectangle<int> miracleWell, readoutArea, fitLabel, toneSoundLabel, beatLabel, fitLine, toneNote;
     int gridLabelW = 40, shownStep = -1, page = 0;
     bool compact = false;
     std::vector<juce::Component*> mainControls();
     std::vector<juce::Component*> moreControls();
+    std::vector<juce::Component*> miracleControls();
     juce::Rectangle<int> noteLabel, octaveLabel, firstLabel, pluckLabel, feedLabel;
     std::array<int, crate::drone::kStrings> seenPlucks {};
     std::array<float, crate::drone::kStrings> flash {}, shown {};

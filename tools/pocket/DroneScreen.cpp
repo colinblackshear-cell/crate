@@ -8,7 +8,11 @@ const juce::Colour kDrone { 0xffd8578e }, kString { 0xfff1e7d1 }, kBridge { 0xff
 const char* const kFirstNames[4] = { "PA", "MA", "NI", "SA" };
 const char* const kSyncNames[4] = { "OWN TIME", "BEAT", "2 BEATS", "BAR" };
 const char* const kOctNames[3] = { "LOW", "MID", "HIGH" };
-const char* const kKnobNames[DroneScreen::numKnobs] = { "PACE", "JAWARI", "RING", "REEDS", "VOLUME", "RESONATE", "SWING", "HUMAN", "BRIGHT", "BODY", "DETUNE", "SPACE" };
+const char* const kKnobNames[DroneScreen::numKnobs] = { "PACE", "JAWARI", "RING", "REEDS", "VOLUME", "RESONATE", "SWING", "HUMAN", "BRIGHT", "BODY", "DETUNE", "SPACE",
+                                                        "LEVEL", "SWELL" };
+const char* const kPageNames[3] = { "STRINGS", "PATTERN", "MIRACLE" };
+const char* const kFitNames[2] = { "OVER THE DRONE", "TUNE DRONE TO IT" };
+const char* const kBeatNames[4] = { "OFF", "2 Hz", "6 Hz", "10 Hz" };
 const char* const kOrderNames[crate::drone::numOrders] = { "CLASSIC", "REVERSE", "WANDER", "PAIRS", "ROLL" };
 const char* const kVoiceNames[crate::drone::numVoices] = { "TANPURA", "BOWED", "SWARMANDAL", "ELECTRIC", "BELL" };
 const char* const kStepCountNames[3] = { "OFF", "8", "16" };
@@ -48,18 +52,23 @@ void DroneScreen::layout()
     const bool roomy = h > 560.0f, compact = h < 480.0f;   // compact: a small phone (an SE), everything a little shorter
     const float rowH = roomy ? 42.0f : compact ? 34.0f : 38.0f, gap = roomy ? 8.0f : compact ? 4.0f : 5.0f, labelW = 58.0f;
 
-    // ON, Drone · C, SOUND
+    // ON and SOUND, then the pages: STRINGS, PATTERN, MIRACLE
     float y = 6.0f;
     {
-        const float onW = 64.0f, soundW = juce::jlimit (120.0f, 170.0f, iw * 0.42f);
+        const float onW = 64.0f;
         addHit ({ x0, y, onW, rowH }, onId);
-        addHit ({ x0 + iw - soundW, y, soundW, rowH }, soundId);
-        titleR = { x0 + onW + 8.0f, y, iw - onW - soundW - 16.0f, rowH };
-        addHit (titleR, pageId);
+        addHit ({ x0 + onW + 8.0f, y, iw - onW - 8.0f, rowH }, soundId);
+        y += rowH + gap;
+        const float pw = (iw - 10.0f) / 3.0f;
+        for (int i = 0; i < 3; ++i)
+            addHit ({ x0 + (float) i * (pw + 5.0f), y, pw, rowH - 4.0f }, pageBase + i);
+        titleR = { x0, y, iw, rowH - 4.0f };
     }
-    y += rowH + gap;
+    y += rowH - 4.0f + gap;
     if (page == 1)
         return layoutPattern (y);
+    if (page == 2)
+        return layoutMiracle (y);
 
     // the strings: the knobs and the sing well take what they need, the strings the rest
     const float knobH = roomy ? 78.0f : compact ? 56.0f : 66.0f, singH = roomy ? 112.0f : compact ? 80.0f : 96.0f;
@@ -182,9 +191,52 @@ void DroneScreen::layoutPattern (float y)
     }
 }
 
+// MIRACLE TONES: the tiles (4 across), the tone (its Hz, name, meaning, the nearest note), FIT, SOUND and BINAURAL,
+// then LEVEL, SWELL and TONE ONLY, and the note that the meanings are tradition.
+void DroneScreen::layoutMiracle (float y)
+{
+    const float w = (float) getWidth(), h = (float) getHeight();
+    const float x0 = 16.0f, iw = w - 32.0f;
+    const bool roomy = h > 560.0f, compact = h < 480.0f;
+    const float rowH = roomy ? 40.0f : compact ? 32.0f : 36.0f, gap = roomy ? 6.0f : compact ? 3.0f : 5.0f, labelW = 66.0f;
+    auto addHit = [this] (juce::Rectangle<float> r, int id) { hits.push_back ({ r, id }); };
+    const float readoutH = compact ? 50.0f : 64.0f, knobH = roomy ? 70.0f : compact ? 52.0f : 62.0f, noteH = compact ? 24.0f : 30.0f;
+    const float fixedBelow = gap + readoutH + gap + (rowH + gap) * 3.0f + knobH + gap + noteH;
+    const int cols = 4, rows = (crate::drone::kNumTones + cols - 1) / cols;
+    const float tileH = juce::jlimit (34.0f, 58.0f, (h - y - fixedBelow - 4.0f - 5.0f * (float) (rows - 1)) / (float) rows);
+    const float tw = (iw - 5.0f * (float) (cols - 1)) / (float) cols;
+    for (int i = 0; i < crate::drone::kNumTones; ++i)
+        addHit ({ x0 + (float) (i % cols) * (tw + 5.0f), y + (float) (i / cols) * (tileH + 5.0f), tw, tileH }, toneBase + i);
+    y += (float) rows * (tileH + 5.0f) - 5.0f + gap;
+    readoutR = { x0, y, iw, readoutH };
+    y += readoutH + gap + 2.0f;
+    auto chips = [&] (juce::Rectangle<float>& label, int base, int count)
+    {
+        label = { x0, y, labelW, rowH };
+        const float g = 5.0f, cw = (iw - labelW - g * (float) (count - 1)) / (float) count;
+        for (int i = 0; i < count; ++i)
+            addHit ({ x0 + labelW + (float) i * (cw + g), y, cw, rowH }, base + i);
+        y += rowH + gap;
+    };
+    chips (fitLabelR, fitBase, 2);
+    chips (soundLabelR, toneSoundBase, 3);
+    chips (beatLabelR, beatBase, crate::drone::kNumToneBeats);
+    {
+        const float kw = iw * 0.27f;
+        knobR[(size_t) toneLevelKnob] = { x0, y, kw, knobH };
+        knobR[(size_t) toneSwellKnob] = { x0 + kw, y, kw, knobH };
+        addHit (knobR[(size_t) toneLevelKnob], knobBase + toneLevelKnob);
+        addHit (knobR[(size_t) toneSwellKnob], knobBase + toneSwellKnob);
+        const float ow = juce::jmin (150.0f, iw - kw * 2.0f - 12.0f);
+        addHit ({ x0 + iw - ow, y + (knobH - juce::jmin (knobH, 52.0f)) * 0.5f, ow, juce::jmin (knobH, 52.0f) }, toneOnlyId);
+    }
+    y += knobH + gap;
+    toneNoteR = { x0, y, iw, juce::jmax (0.0f, juce::jmin (noteH, h - y - 2.0f)) };
+}
+
 void DroneScreen::showPage (int which)
 {
-    page = juce::jlimit (0, 1, which);
+    page = juce::jlimit (0, 2, which);
     pressed = 0;
     dragKnob = -1;
     layout();
@@ -224,6 +276,8 @@ float DroneScreen::knobValue (int k) const
         case bodyKnob: return drone.body.load();
         case detuneKnob: return drone.detune.load();
         case spaceKnob: return drone.space.load();
+        case toneLevelKnob: return drone.toneLevel.load();
+        case toneSwellKnob: return drone.toneSwell.load();
         default: return 0.0f;
     }
 }
@@ -245,6 +299,8 @@ void DroneScreen::setKnob (int k, float v)
         case bodyKnob: drone.body = v; break;
         case detuneKnob: drone.detune = v; break;
         case spaceKnob: drone.space = v; break;
+        case toneLevelKnob: drone.toneLevel = v; break;
+        case toneSwellKnob: drone.toneSwell = v; break;
         default: break;
     }
     repaint();
@@ -326,6 +382,8 @@ void DroneScreen::mouseDoubleClick (const juce::MouseEvent& e)
         case bodyKnob: drone.body = 0.5f; break;
         case detuneKnob: drone.detune = 0.0f; break;
         case spaceKnob: drone.space = 0.0f; break;
+        case toneLevelKnob: drone.toneLevel = 0.6f; break;
+        case toneSwellKnob: drone.toneSwell = 0.3f; break;
         default: break;
     }
     changed();
@@ -351,8 +409,45 @@ void DroneScreen::press (int id)
             say ("STEPS on: the strings pluck on the squares you light.");
         return changed();
     }
-    if (id == pageId)
-        return showPage (page == 0 ? 1 : 0);
+    if (id >= pageBase && id < pageBase + 3)
+        return showPage (id - pageBase);
+    if (id >= toneBase && id < toneBase + crate::drone::kNumTones)
+    {
+        const int index = id - toneBase;
+        if (index == crate::drone::kOwnTone && ! (drone.toneOn.load() && drone.tone.load() == index))
+            return askOwnHz();
+        if (drone.pickTone (index))
+            say (crate::drone::toneHzText (drone.toneHz()) + " Hz is playing. Tap it again to stop.");
+        else
+            say ("The tone is off.");
+        return changed();
+    }
+    if (id >= fitBase && id < fitBase + 2)
+    {
+        drone.toneFit = id - fitBase;
+        say (id == fitBase ? juce::String ("The tone plays over the drone; the drone stays on its note.")
+                           : "The drone is tuned to the tone: " + crate::drone::nearestNoteText (crate::drone::toneDroneSa (drone.toneHz(), drone.octave.load())) + ".");
+        return changed();
+    }
+    if (id >= toneSoundBase && id < toneSoundBase + 3)
+    {
+        drone.toneSound = id - toneSoundBase;
+        return changed();
+    }
+    if (id >= beatBase && id < beatBase + crate::drone::kNumToneBeats)
+    {
+        drone.toneBeat = id - beatBase;
+        if (id != beatBase)
+            say (juce::String ("BINAURAL ") + kBeatNames[id - beatBase] + ": " + crate::drone::toneBeatName (id - beatBase)
+                 + " Headphones only. A recorded layer is mono, so it keeps a soft pulse instead.");
+        return changed();
+    }
+    if (id == toneOnlyId)
+    {
+        drone.toneOnly = ! drone.toneOnly.load();
+        say (drone.toneOnly.load() ? "TONE ONLY: the strings rest. REC records just the tone." : "The strings play with the tone again.");
+        return changed();
+    }
     if (id >= orderBase && id < orderBase + crate::drone::numOrders)
     {
         drone.order = id - orderBase;
@@ -427,6 +522,35 @@ void DroneScreen::press (int id)
             askMic();
         return repaint();
     }
+}
+
+void DroneScreen::askOwnHz()
+{
+    auto* w = new juce::AlertWindow ("Your own tone", "A frequency from 20 to 2000 Hz.", juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("hz", crate::drone::toneHzText (drone.ownHz.load()));
+    if (auto* editor = w->getTextEditor ("hz"))
+    {
+        editor->setInputRestrictions (7, "0123456789.");
+        editor->setKeyboardType (juce::TextInputTarget::decimalKeyboard);
+    }
+    w->addButton ("Play it", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<DroneScreen> (this), w] (int result)
+    {
+        if (safe == nullptr || result != 1)
+            return;
+        const double hz = w->getTextEditorContents ("hz").getDoubleValue();
+        if (hz < crate::drone::kOwnToneMin || hz > crate::drone::kOwnToneMax)
+        {
+            if (safe->toast)
+                safe->toast ("Type a frequency from 20 to 2000 Hz.");
+            return;
+        }
+        safe->drone.setOwnToneHz (hz);
+        if (safe->toast)
+            safe->toast (crate::drone::toneHzText (hz) + " Hz is playing (your own). Tap it again to stop.");
+        safe->changed();
+    }), true);
 }
 
 void DroneScreen::showSoundMenu()
@@ -512,6 +636,8 @@ void DroneScreen::timerCallback()
         shown[(size_t) s] += (juce::jlimit (0.0f, 1.0f, drone.ringing (s)) - shown[(size_t) s]) * 0.5f;
     }
     meter = juce::jmax (juce::jlimit (0.0f, 1.0f, drone.resonating()), meter * 0.85f);
+    if (page == 2)
+        return repaint (readoutR.toNearestInt());
     if (page == 1)
     {
         if (const int step = drone.currentStep(); step != shownStep)
@@ -615,19 +741,105 @@ void DroneScreen::paintPattern (juce::Graphics& g)
     }
 }
 
+void DroneScreen::paintMiracle (juce::Graphics& g)
+{
+    const bool toneOn = drone.toneOn.load();
+    const int tone = drone.tone.load();
+    for (int i = 0; i < crate::drone::kNumTones; ++i)
+    {
+        auto r = hitRect (toneBase + i);
+        const bool lit = toneOn && i == tone, down = pressed == toneBase + i;
+        g.setColour (lit ? kDrone : juce::Colour (0xfff7f2e8));
+        g.fillRoundedRectangle (r.translated (0.0f, down ? 2.0f : 0.0f), 10.0f);
+        g.setColour (lit ? kDrone.darker (0.4f) : juce::Colour (0xffcfc5b2));
+        g.fillRoundedRectangle (r.withTop (r.getBottom() - 3.0f).translated (0.0f, down ? 0.0f : 0.0f), 2.0f);
+        const bool own = i == crate::drone::kOwnTone;
+        const juce::String hz = own ? crate::drone::toneHzText (drone.ownHz.load()) : crate::drone::toneHzText (crate::drone::tones()[(size_t) i].hz);
+        const juce::String name = own ? juce::String ("YOUR OWN") : juce::String (crate::drone::tones()[(size_t) i].name);
+        auto text = r.reduced (3.0f, 2.0f);
+        g.setColour (lit ? juce::Colours::white : col::ink);
+        g.setFont (lcdFont (juce::jmin (22.0f, text.getHeight() * 0.5f)));
+        g.drawFittedText (hz, text.removeFromTop (text.getHeight() * 0.55f).toNearestInt(), juce::Justification::centredBottom, 1, 0.8f);
+        g.setFont (condensedBold (juce::jmin (12.0f, text.getHeight() * 0.8f)));
+        g.drawFittedText (name, text.toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
+    }
+
+    // the tone: its Hz and name, what it's said to mean (or how to start), the nearest note and the fit (or binaural)
+    drawWell (g, readoutR, 12.0f);
+    {
+        auto r = readoutR.reduced (12.0f, 6.0f);
+        const double hz = drone.toneHz();
+        const float lineH = r.getHeight() / 3.0f;
+        auto top = r.removeFromTop (lineH + 4.0f);
+        const auto hzText = crate::drone::toneHzText (hz) + " Hz";
+        g.setFont (lcdFont (juce::jmin (24.0f, top.getHeight())));
+        g.setColour (juce::Colour (0xfff08bb4).withAlpha (toneOn ? 1.0f : 0.5f));
+        const float hzW = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), hzText) + 10.0f;
+        g.drawText (hzText, top.removeFromLeft (hzW), juce::Justification::centredLeft);
+        g.setColour (kString.withAlpha (toneOn ? 1.0f : 0.55f));
+        g.setFont (condensedBold (15.0f));
+        const juce::String name = tone < (int) crate::drone::tones().size() ? juce::String (crate::drone::tones()[(size_t) tone].name) : juce::String ("YOUR OWN");
+        g.drawFittedText (name, top.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+        const juce::String meaning = ! toneOn ? juce::String ("Off. Tap a tone to play it.")
+                                     : tone < (int) crate::drone::tones().size() ? juce::String (crate::drone::tones()[(size_t) tone].meaning)
+                                                                                 : juce::String ("Your own frequency.");
+        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setFont (small (12.5f));
+        g.drawFittedText (meaning, r.removeFromTop (lineH).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+        const int beat = drone.toneBeat.load();
+        juce::String info;
+        if (beat > 0)
+            info << "L " << crate::drone::toneHzText (hz) << " / R " << crate::drone::toneHzText (hz + crate::drone::toneBeatHz (beat)) << " Hz: "
+                 << crate::drone::toneBeatName (beat);
+        else
+            info << "NEAREST " << crate::drone::nearestNoteText (hz).toUpperCase() << U8("  \xc2\xb7  ")
+                 << (drone.toneFit.load() == 0 ? "DRONE STAYS ON " + DroneTool::noteName (drone.root.load())
+                                                : "DRONE ON " + crate::drone::nearestNoteText (crate::drone::toneDroneSa (hz, drone.octave.load())).toUpperCase());
+        g.setColour (col::lcdAmber);
+        g.setFont (spaced (lcdFont (13.0f), 0.03f));
+        g.drawFittedText (info, r.toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+    }
+
+    for (auto [r, t] : { std::pair { fitLabelR, "FIT" }, std::pair { soundLabelR, "SOUND" }, std::pair { beatLabelR, "BINAURAL" } })
+    {
+        g.setColour (col::inkDim);
+        g.setFont (spaced (condensedBold (13.0f), 0.08f));
+        g.drawFittedText (t, r.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+    }
+    const int fit = drone.toneFit.load(), sound = drone.toneSound.load(), beat = drone.toneBeat.load();
+    for (int i = 0; i < 2; ++i)
+        drawChip (g, hitRect (fitBase + i), kFitNames[i], fit == i, pressed == fitBase + i, 12.0f);
+    for (int i = 0; i < 3; ++i)
+        drawChip (g, hitRect (toneSoundBase + i), crate::drone::toneSoundName (i), sound == i, pressed == toneSoundBase + i, 13.0f);
+    for (int i = 0; i < crate::drone::kNumToneBeats; ++i)
+        drawChip (g, hitRect (beatBase + i), kBeatNames[i], beat == i, pressed == beatBase + i, 13.0f);
+    drawKnobAt (g, toneLevelKnob);
+    drawKnobAt (g, toneSwellKnob);
+    drawChip (g, hitRect (toneOnlyId), drone.toneOnly.load() ? "TONE ONLY: ON" : "TONE ONLY", drone.toneOnly.load(), pressed == toneOnlyId, 13.0f, kDrone);
+    if (! toneNoteR.isEmpty())
+    {
+        g.setColour (col::inkDim);
+        g.setFont (small (11.5f));
+        g.drawFittedText ("Names and meanings come from Solfeggio and sound-healing tradition: beliefs, not proven science. The tones are exact.",
+                          toneNoteR.toNearestInt(), juce::Justification::topLeft, 2, 0.8f);
+    }
+}
+
 void DroneScreen::paint (juce::Graphics& g)
 {
     const bool on = drone.on.load();
 
-    // the page chip: to PATTERN and TONE, or back to the STRINGS
-    drawChip (g, titleR, page == 0 ? U8("PATTERN \xc2\xb7 TONE \xe2\x80\xba") : U8("\xe2\x80\xb9 STRINGS"), page == 1, pressed == pageId, 13.0f);
-    if (page == 1)
+    // the pages (MIRACLE with a dot while a tone plays), and ON and SOUND over every page
+    for (int i = 0; i < 3; ++i)
+        drawChip (g, hitRect (pageBase + i), i == 2 && drone.toneOn.load() ? U8("MIRACLE \xc2\xb7 ON") : juce::String (kPageNames[i]), page == i,
+                  pressed == pageBase + i, 13.0f);
+    if (page != 0)
     {
         for (auto& hit : hits)
             if (hit.id == onId || hit.id == soundId)
                 drawChip (g, hit.r, hit.id == onId ? (on ? "ON" : "OFF") : "SOUND: " + drone.presetName().toUpperCase(), hit.id == onId && on,
                           pressed == hit.id, hit.id == soundId ? 13.0f : 14.0f, hit.id == onId ? col::green : juce::Colour());
-        return paintPattern (g);
+        return page == 1 ? paintPattern (g) : paintMiracle (g);
     }
     for (auto [r, t] : { std::pair { noteLabel, "NOTE" }, std::pair { firstLabel, "FIRST" }, std::pair { pluckLabel, "PLUCK" } })
     {
@@ -654,7 +866,7 @@ void DroneScreen::paint (juce::Graphics& g)
         g.drawFittedText (name, label.removeFromLeft (44.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         g.setColour (col::lcdAmber.withAlpha (on || ringing > 0.05f ? 1.0f : 0.6f));
         g.setFont (lcdFont (juce::jmin (17.0f, lane.getHeight() * 0.62f)));
-        g.drawFittedText (drone.stringNote (s), label.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+        g.drawFittedText (drone.stringNoteNow (s), label.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
 
         const float x0 = lane.getX() + 86.0f, x1 = lane.getRight() - 10.0f, cy = lane.getCentreY();
         g.setColour (kBridge.withAlpha (0.8f));

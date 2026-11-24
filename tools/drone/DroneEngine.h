@@ -63,6 +63,20 @@ struct Settings
     float body = 0.5f;       // the low harmonics: thin ... big gourd (0.5: as the voice is)
     float detune = 0.0f;     // the strings drift apart and beat against each other
     float space = 0.0f;      // its own reverb
+
+    // Miracle tones: a held tone at an exact frequency (the Solfeggio tones, 432, Om, or your own), heard while
+    // the drone is on. Fit: 0 over the drone (the drone stays on its note), 1 the drone tuned to the tone (its Sa
+    // becomes the tone, octaves down). Sound: 0 pure (a sine), 1 warm (with a soft octave under it), 2 bowl (a
+    // singing bowl's partials). Beat: binaural, the right ear this many Hz higher (0 off). Swell: how slowly and
+    // deeply it breathes. Only: the strings and reeds rest, so it plays just the tone.
+    bool toneOn = false;
+    double toneHz = 528.0;
+    int toneFit = 0;
+    int toneSound = 0;
+    float toneBeat = 0.0f;
+    float toneLevel = 0.6f;
+    float toneSwell = 0.3f;
+    bool toneOnly = false;
 };
 
 enum Order { orderClassic, orderReverse, orderWander, orderPairs, orderRoll, numOrders };
@@ -137,10 +151,97 @@ inline const char* firstName (int first)
     return names[juce::jlimit (0, 3, first)];
 }
 
+// The miracle tones, the same on the Mac and the phone. Their names and meanings are tradition and belief
+// (Solfeggio, sound healing), shown as that; the frequencies themselves are exact. The last choice is your own Hz.
+struct Tone
+{
+    double hz;
+    const char* name;
+    const char* meaning;
+};
+
+constexpr int kNumTones = 12;   // the eleven below and Your own
+constexpr int kOwnTone = 11;
+inline const std::array<Tone, 11>& tones()
+{
+    static const std::array<Tone, 11> list { {
+        { 174.0, "FOUNDATION", "Grounding and ease, in sound-healing tradition." },
+        { 285.0, "RESTORE", "Renewal of the body, in sound-healing tradition." },
+        { 396.0, "UT - RELEASE", "Letting go of guilt and fear (Solfeggio UT)." },
+        { 417.0, "RE - CHANGE", "Undoing what is stuck, making way for change (RE)." },
+        { 432.0, "EARTH A", "The A of 'natural' A = 432 tuning, said to feel warmer." },
+        { 528.0, "MI - MIRACLE", "Transformation and love. The one called the miracle tone (MI)." },
+        { 639.0, "FA - CONNECT", "Relationships and harmony between people (FA)." },
+        { 741.0, "SOL - AWAKEN", "Intuition and finding your voice (SOL)." },
+        { 852.0, "LA - SPIRIT", "Returning to spiritual order (LA)." },
+        { 963.0, "SI - CROWN", "Oneness and light, the crown (SI)." },
+        { 136.1, "OM", "The Earth-year tone, used to tune gongs and bowls for Om." },
+    } };
+    return list;
+}
+
+constexpr double kOwnToneMin = 20.0, kOwnToneMax = 2000.0;
+constexpr int kNumToneBeats = 4;
+inline float toneBeatHz (int choice)
+{
+    static const float beats[] = { 0.0f, 2.0f, 6.0f, 10.0f };
+    return beats[juce::jlimit (0, kNumToneBeats - 1, choice)];
+}
+inline const char* toneBeatName (int choice)
+{
+    static const char* names[] = { "Off: both ears hear the same tone.", "Delta, deep rest.", "Theta, dreamy and meditative.", "Alpha, calm and awake." };
+    return names[juce::jlimit (0, kNumToneBeats - 1, choice)];
+}
+inline const char* toneSoundName (int sound)
+{
+    static const char* names[] = { "PURE", "WARM", "BOWL" };
+    return names[juce::jlimit (0, 2, sound)];
+}
+
+// The tone `index` plays (Your own: `ownHz`).
+inline double toneHzFor (int index, double ownHz)
+{
+    if (index >= 0 && index < (int) tones().size())
+        return tones()[(size_t) index].hz;
+    return juce::jlimit (kOwnToneMin, kOwnToneMax, ownHz);
+}
+inline juce::String toneHzText (double hz)
+{
+    return std::abs (hz - std::round (hz)) < 0.05 ? juce::String (juce::roundToInt (hz)) : juce::String (hz, 1);
+}
+// The nearest note and how far off it is: "C +16 cents".
+inline juce::String nearestNoteText (double hz)
+{
+    static const char* names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    const double midi = 69.0 + 12.0 * std::log2 (juce::jmax (1.0, hz) / 440.0);
+    const int note = (int) std::lround (midi);
+    const int cents = (int) std::lround ((midi - note) * 100.0);
+    return juce::String (names[((note % 12) + 12) % 12]) + " " + (cents >= 0 ? "+" : "-") + juce::String (std::abs (cents)) + " cents";
+}
+
 // The middle strings' note (Sa), in Hz.
 inline double rootHz (int root, int octave, float fineCents)
 {
     return 130.8127826502993 * std::pow (2.0, (juce::jlimit (0, 11, root) + fineCents / 100.0) / 12.0 + juce::jlimit (-1, 1, octave));
+}
+
+// Fit "Tune drone to it": the drone's Sa is the tone, folded down (or up) by octaves into the octave the
+// drone plays in (528 Hz in the middle octave: 132 Hz).
+inline double toneDroneSa (double toneHz, int octave)
+{
+    const double lo = rootHz (0, octave, 0.0f);
+    double hz = juce::jmax (1.0, toneHz);
+    while (hz >= lo * 2.0) hz *= 0.5;
+    while (hz < lo) hz *= 2.0;
+    return hz;
+}
+
+// The Sa the strings play now (the tone's, when they're tuned to it).
+inline double droneSa (const Settings& s)
+{
+    if (s.toneOn && s.toneFit == 1 && s.toneHz > 0)
+        return toneDroneSa (s.toneHz, s.octave);
+    return rootHz (s.root, s.octave, s.fineCents);
 }
 
 // Each string against the middle Sa (just intonation, as a tanpura is tuned by ear).
@@ -190,6 +291,10 @@ public:
         reverb.reset();
         reverbTail = 0;
         reverbSpace = -1.0f;
+        toneGain = 0;
+        toneHzNow = 0;
+        toneSwellPhase = 0;
+        tonePhases = {};
         reedGain = resonateGain = 0;
         reedTime = 0;
         wasOn = false;
@@ -208,7 +313,8 @@ public:
     // Adds to left and right. `inL`/`inR` (may be null) are what's played into the strings.
     void process (float* left, float* right, const float* inL, const float* inR, int numSamples, const Settings& s, const Clock& clock)
     {
-        const double sa = rootHz (s.root, s.octave, s.fineCents);
+        const double sa = droneSa (s);
+        silentStrings = s.toneOn && s.toneOnly;
         if (s.on && ! wasOn)
         {
             untilPluck = 0;
@@ -267,10 +373,11 @@ public:
         }
         const int byHand = pendingPluck.exchange (-1);
 
-        const float reedTarget = s.on ? juce::jlimit (0.0f, 1.0f, s.reeds) : 0.0f;
+        const float reedTarget = s.on && ! silentStrings ? juce::jlimit (0.0f, 1.0f, s.reeds) : 0.0f;
         const float resTarget = juce::jlimit (0.0f, 1.0f, s.resonate);
         const float stringLevel = juce::jlimit (0.0f, 1.5f, s.strings);
         tuneCombs (sa, s.first, resTarget);
+        prepareTone (s);
 
         int done = 0;
         if (byHand >= 0)
@@ -362,6 +469,9 @@ public:
                         r += out * c.gainR;
                     }
                 }
+                // The miracle tone.
+                if (toneSounding)
+                    renderTone (l, r);
                 // (Combs can hold a little DC.)
                 dcL += (l - dcL) * 0.0006f;
                 dcR += (r - dcR) * 0.0006f;
@@ -405,7 +515,9 @@ public:
     std::atomic<int> currentStep { -1 };
 
     // Still making sound (after Off, the strings ring out).
-    bool isSounding() const { return anySounding || reverbTail > 0; }
+    bool isSounding() const { return anySounding || reverbTail > 0 || toneSounding; }
+    // The tone is playing (for the screen).
+    bool isToneSounding() const { return toneSounding; }
 
 private:
     struct Partial
@@ -519,6 +631,8 @@ private:
 
     void startPluck (int string, double sa, const Settings& s, float velocity)
     {
+        if (silentStrings)
+            return;   // (Tone only: the strings rest)
         const int first = s.first;
         string = juce::jlimit (0, kStrings - 1, string);
         // Its last pluck fades away under this one; this one takes the other slot.
@@ -751,6 +865,80 @@ private:
         resonating.store (juce::jlimit (0.0f, 1.0f, combLevel * 6.0f));
         anySounding = any || combsSounding;
     }
+
+    // The miracle tone. Its partials: frequency ratio to the tone and level (a bowl's pairs sit a hair apart and beat).
+    static constexpr int kTonePartials = 8;
+    struct TonePartial { double ratio; float amp; };
+
+    void prepareTone (const Settings& s)
+    {
+        const bool want = s.on && s.toneOn && s.toneHz > 0;
+        const double hz = juce::jlimit (8.0, 4000.0, s.toneHz);
+        const int sound = juce::jlimit (0, 2, s.toneSound);
+        // A new tone or sound: fade the old one out quickly, then start the new one from silence (no click).
+        const bool changed = std::abs (hz - toneHzNow) > 1.0e-6 || sound != toneSoundNow;
+        if (changed && toneGain < 1.0e-3f)
+        {
+            toneHzNow = hz;
+            toneSoundNow = sound;
+            tonePhases = {};
+            static const TonePartial pure[] = { { 1.0, 1.0f } };
+            static const TonePartial warm[] = { { 0.5, 0.45f }, { 1.0, 1.0f }, { 2.0, 0.16f }, { 3.0, 0.05f } };
+            static const TonePartial bowl[] = { { 1.0, 0.5f }, { 1.0016, 0.5f }, { 2.76, 0.25f }, { 2.7652, 0.25f },
+                                                { 5.40, 0.12f }, { 5.4108, 0.12f }, { 8.93, 0.05f }, { 8.948, 0.05f } };
+            const TonePartial* list = sound == 2 ? bowl : sound == 1 ? warm : pure;
+            toneCount = sound == 2 ? 8 : sound == 1 ? 4 : 1;
+            float power = 0;   // (each sound as loud as a pure sine: the same power)
+            for (int k = 0; k < toneCount; ++k)
+                power += list[k].amp * list[k].amp;
+            const float norm = 1.0f / std::sqrt (power);
+            for (int k = 0; k < toneCount; ++k)
+                toneParts[(size_t) k] = { list[k].ratio, list[k].amp * norm };
+        }
+        toneTarget = want && ! changed ? juce::jlimit (0.0f, 1.0f, s.toneLevel) : 0.0f;
+        toneCoef = changed ? (float) (1.0 - std::exp (-1.0 / (0.012 * sampleRate)))    // (out quickly, for the next)
+                           : (float) (1.0 - std::exp (-1.0 / ((toneTarget > 0 ? 0.35 : 0.2) * sampleRate)));   // (in and out gently)
+        toneBeatNow = juce::jlimit (0.0f, 40.0f, s.toneBeat);
+        const float swell = juce::jlimit (0.0f, 1.0f, s.toneSwell);
+        toneSwellDepth = 0.6f * swell;
+        toneSwellRate = 0.22 - 0.16 * swell;   // deeper breathes slower
+        if (toneTarget <= 0 && toneGain < 1.0e-4f)
+            toneGain = 0;   // (faded out: about -90 dB)
+        toneSounding = toneTarget > 0 || toneGain > 0;
+    }
+
+    void renderTone (float& l, float& r)
+    {
+        toneGain += (toneTarget - toneGain) * toneCoef;
+        toneSwellPhase += toneSwellRate / sampleRate;
+        if (toneSwellPhase >= 1.0)
+            toneSwellPhase -= 1.0;
+        const float breathe = 1.0f - toneSwellDepth * 0.5f * (1.0f - (float) std::cos (juce::MathConstants<double>::twoPi * toneSwellPhase));
+        const double incL = toneHzNow / sampleRate, incR = (toneHzNow + toneBeatNow) / sampleRate;
+        float sl = 0, sr = 0;
+        for (int k = 0; k < toneCount; ++k)
+        {
+            const auto& p = toneParts[(size_t) k];
+            auto& ph = tonePhases[(size_t) k];
+            ph[0] += incL * p.ratio;
+            ph[1] += incR * p.ratio;
+            ph[0] -= std::floor (ph[0]);
+            ph[1] -= std::floor (ph[1]);
+            sl += p.amp * (float) std::sin (juce::MathConstants<double>::twoPi * ph[0]);
+            sr += p.amp * (float) std::sin (juce::MathConstants<double>::twoPi * ph[1]);
+        }
+        const float g = kToneOut * toneGain * breathe;
+        l += sl * g;
+        r += sr * g;
+    }
+
+    static constexpr float kToneOut = 0.4f;   // (level 60%: about as loud as the strings' presets)
+    std::array<TonePartial, kTonePartials> toneParts {};
+    std::array<std::array<double, 2>, kTonePartials> tonePhases {};
+    int toneCount = 1, toneSoundNow = -1;
+    double toneHzNow = 0, toneSwellPhase = 0, toneSwellRate = 0.2;
+    float toneGain = 0, toneTarget = 0, toneCoef = 0.001f, toneBeatNow = 0, toneSwellDepth = 0;
+    bool toneSounding = false, silentStrings = false;
 
     double sampleRate = 48000.0;
     std::array<Slot, kStrings * 2> slots;
