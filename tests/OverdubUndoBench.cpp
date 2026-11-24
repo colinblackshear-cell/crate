@@ -127,11 +127,12 @@ struct Loops
     }
 };
 
-enum class Kase { start, immediate, partial, completeSwap, completeRestore };
+enum class Kase { idle, start, immediate, partial, completeSwap, completeRestore };
 const char* kaseName (Kase k)
 {
     switch (k)
     {
+        case Kase::idle: return "playing, nothing pressed";
         case Kase::start: return "overdub start";
         case Kase::immediate: return "immediate undo";
         case Kase::partial: return "undo, capture half done";
@@ -304,6 +305,10 @@ Result runCase (Driver& drv, const Loops& loops, Kase kase, bool withSave, const
     r.block = drv.block;
     switch (kase)
     {
+        case Kase::idle:   // the floor: what the machine does to blocks with no overdub or undo
+            drv.run (window, true);
+            r.undoOffered = true;
+            break;
         case Kase::start:
             looper.pressRecord (layer);
             drv.run (window, true);
@@ -350,7 +355,7 @@ Result runCase (Driver& drv, const Loops& loops, Kase kase, bool withSave, const
     r.restorations = c.restorations;
     r.roomsMost = c.roomBuffersMost;
     r.peakMB = peakMemoryMB();
-    if (kase != Kase::start)
+    if (kase != Kase::start && kase != Kase::idle)
     {
         drv.run (window, false);   // anything left to do
         r.exact = odu::same (looper.copyLayerAudio (layer), loops.audio[(size_t) layer]) || ! r.undoOffered;
@@ -362,7 +367,7 @@ Result runCase (Driver& drv, const Loops& loops, Kase kase, bool withSave, const
 
 void runAll (Driver& drv, const Loops& loops, const juce::String& part, std::ostream& out)
 {
-    for (const auto kase : { Kase::start, Kase::immediate, Kase::partial, Kase::completeSwap, Kase::completeRestore })
+    for (const auto kase : { Kase::idle, Kase::start, Kase::immediate, Kase::partial, Kase::completeSwap, Kase::completeRestore })
         for (const bool save : { false, true })
         {
             const auto r = runCase (drv, loops, kase, save, part);
