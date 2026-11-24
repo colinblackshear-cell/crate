@@ -6,6 +6,7 @@
 #include "PocketBoards.h"
 #include "PocketLoopFx.h"
 #include "PocketAudio.h"
+#include "PocketSong.h"
 
 #include <array>
 #include <atomic>
@@ -99,6 +100,11 @@ public:
     void setInstrument (int slot, Instrument* i) { if (juce::isPositiveAndBelow (slot, kInstruments)) instruments[(size_t) slot] = i; }
     // The DRONE tool: heard, and the DRONE source. Not owned. Set before the sound starts.
     void setDrone (DroneVoice* d) { drone = d; }
+    // The SONG tool: while its song plays, each layer plays only inside its blocks (with their fades, level
+    // and slip). Not owned. Set before the sound starts.
+    void setSong (PocketSong* s) { song = s; }
+    // The song's REC LIVE count-in: the click counts until this beat (-1: none).
+    void setSongCountIn (double untilBeat) { songCountIn = untilBeat; }
     // The count-in, in bars (0, 1 or 2), for a recording that starts the clock. The click plays through it.
     void setCountInBars (int bars) { countInBars = juce::jlimit (0, 2, bars); }
 
@@ -267,6 +273,8 @@ private:
     PocketAudio::Renderer* chordSource = nullptr;
     std::array<Instrument*, kInstruments> instruments {};
     DroneVoice* drone = nullptr;
+    PocketSong* song = nullptr;
+    std::atomic<double> songCountIn { -1.0 };
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;
     std::array<Layer, kLoopLayers> layers;

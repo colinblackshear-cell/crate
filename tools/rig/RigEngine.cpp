@@ -1094,7 +1094,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         for (int l = 0; l < RigLooper::kLayers; ++l)
             if (looper.getState (l) == RigLooper::State::armed && looper.getLayer (l).countIn.load() > 0)
                 until = juce::jmax (until, looper.getLayer (l).startsAt.load());
-        transport.countInUntil = until;
+        transport.countInUntil = juce::jmax (until, songCountInUntil.load());
     }
     {
         // A take for the song (Rec into), from the same sources.
@@ -1139,7 +1139,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     // The safety limiter (and NaN guard), before the mix is recorded.
     masterLimiter.process (mix.getWritePointer (0), mix.getWritePointer (1), n);
 
-    recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
+    recorder.process (recClock, { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock, &droneBlock }, n);
     capture.process (recClock, { &rawInput, &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, &loopsBlock, &mix, &drumsBlock }, n);
 
     const float clickGain = masterGain.getTargetValue();
@@ -1306,7 +1306,7 @@ juce::File RigEngine::recordingsFolder()
 
 bool RigEngine::startRecording (const juce::File& folder)
 {
-    return recorder.start (folder, { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops", "Mix", "Drum machine" },
+    return recorder.start (folder, { "MPC", "Vocoder", "Bass", "Synth", "Input", "Sampler", "Loops", "Mix", "Drum machine", "Drone" },
                            { "MPC pads", "Sampler", "Vocoder", "Bass", "Synth", "Drum machine" }, sampleRate > 0 ? sampleRate : 44100.0);
 }
 
@@ -1865,6 +1865,8 @@ juce::ValueTree RigEngine::saveShow() const
         show.appendChild (rignotes::toTree (noteClips), nullptr);
     show.setProperty ("songMode", scenes.songMode, nullptr);
     show.appendChild (timeline.toTree(), nullptr);
+    if (! liveSong.getTakes().empty())
+        show.appendChild (liveSong.toTree(), nullptr);
     for (const auto& scene : scenes.getScenes())
         show.appendChild (scene.toTree(), nullptr);
 
@@ -1945,6 +1947,7 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     scenes.clear();
     scenes.songMode = (bool) show.getProperty ("songMode", false);
     timeline.fromTree (show.getChildWithName (RigTimeline::kTreeType));
+    liveSong.fromTree (show.getChildWithName (RigLiveSong::kTreeType));
     takes.clear();
     loadedTakeSets.clear();
     loadedAudioRevision = show.getProperty (rigshow::kRevisionAttribute).toString();
@@ -2456,7 +2459,7 @@ void RigEngine::arrange (int n)
             transport.jumpTo (jump);
             controlsMoved = true;
         }
-        else if (timeline.stopAtEnd.load() && ! timeline.cycle.load()
+        else if (timeline.stopAtEnd.load() && ! timeline.cycle.load() && timeline.gated.load() == 0
                  && transport.getBlockPosition() >= (timeline.liveEnd() + 1.0) * bpb)
         {
             transport.stop();   // a bar after the end, so echoes ring out
@@ -2484,12 +2487,19 @@ void RigEngine::arrange (int n)
             continue;
         }
         looper.setArrangeGain (info.index, from, to);
-        // A block starts its loop from the top on the block's first beat.
-        const double start = timeline.liveBlockStart (lane, beat1 / bpb);
-        if (start >= 0 && std::abs (start * bpb - arrangeRestart[(size_t) info.index]) > 1.0e-6)
+        // A block starts its loop from the top on the block's first beat (less its slip: a
+        // slipped block comes in part way through the loop).
+        if (timeline.liveBlockStart (lane, beat1 / bpb) >= 0)
         {
-            looper.restartAt (info.index, start * bpb);
-            arrangeRestart[(size_t) info.index] = start * bpb;
+            double origin = timeline.liveBlockOrigin (lane, beat1 / bpb) * bpb;
+            if (const double length = looper.getLayer (info.index).lengthBeats.load(); length > 0 && origin < 0)
+                origin += std::ceil (-origin / length) * length;
+            origin = juce::jmax (0.0, origin);
+            if (std::abs (origin - arrangeRestart[(size_t) info.index]) > 1.0e-6)
+            {
+                looper.restartAt (info.index, origin);
+                arrangeRestart[(size_t) info.index] = origin;
+            }
         }
     }
 }
@@ -2871,6 +2881,7 @@ void RigEngine::tickScenes()
             launchSection (juce::jlimit (0, (int) list.size() - 1, now + n - b));
         }
     }
+    liveSong.tick();
     tickSong();
     const int early = scenes.tick (transport.getPositionInBeats(), transport.isPlaying(), transport.getBeatsPerBar());
     if (! juce::isPositiveAndBelow (early, (int) scenes.getScenes().size()))

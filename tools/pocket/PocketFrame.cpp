@@ -33,6 +33,7 @@ const char* toolName (Tool t)
         case Tool::vocoder: return "VOCODER";
         case Tool::drone: return "DRONE";
         case Tool::effects: return "EFFECTS";
+        case Tool::song: return "SONG";
     }
     return "";
 }
@@ -50,6 +51,7 @@ juce::Colour toolColour (Tool t)
         case Tool::vocoder: return juce::Colour (0xff82cf6a);
         case Tool::drone: return juce::Colour (0xffd8578e);   // the Mac's Drone: kumkum rose
         case Tool::effects: return juce::Colour (0xffe8c27a);
+        case Tool::song: return juce::Colour (0xff8fb84a);   // the Mac's Song screen: leaf green
     }
     return col::ink;
 }
@@ -131,6 +133,14 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
                 g.drawLine (x, c.y - 12, x, c.y + 6, 1.4f);
             }
             g.drawLine (c.x - 6, c.y - 12, c.x + 6, c.y - 12, 2.3f);
+            break;
+        }
+        case Tool::song:   // blocks laid along lanes: an arrangement
+        {
+            g.drawRoundedRectangle (c.x - 12, c.y - 10, 13, 5.5f, 1.5f, 2.0f);
+            g.drawRoundedRectangle (c.x - 5, c.y - 2.75f, 17, 5.5f, 1.5f, 2.0f);
+            g.drawRoundedRectangle (c.x - 12, c.y + 4.5f, 8, 5.5f, 1.5f, 2.0f);
+            g.drawRoundedRectangle (c.x + 1, c.y + 4.5f, 11, 5.5f, 1.5f, 2.0f);
             break;
         }
         case Tool::effects:   // two pedal knobs, linked

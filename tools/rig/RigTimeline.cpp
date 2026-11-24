@@ -49,6 +49,7 @@ void RigTimeline::changed()
         b.fadeIn = juce::jlimit (0.0, b.length, b.fadeIn);
         b.fadeOut = juce::jlimit (0.0, b.length - b.fadeIn, b.fadeOut);
         b.level = juce::jlimit (0.0f, 1.0f, b.level);
+        b.offset = juce::jmax (0.0, b.offset);
     }
     std::stable_sort (blocks.begin(), blocks.end(), [] (const Block& a, const Block& b) { return a.start < b.start; });
     std::stable_sort (markers.begin(), markers.end(), [] (const Marker& a, const Marker& b) { return a.bar < b.bar; });
@@ -143,6 +144,21 @@ double RigTimeline::blockStartAt (const Block* list, int count, int lane, double
     return start;
 }
 
+double RigTimeline::blockOriginAt (const Block* list, int count, int lane, double bar)
+{
+    double start = -1, origin = -1.0e9;
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& b = list[i];
+        if (b.lane == lane && bar >= b.start - kEpsilon && bar < b.end() - kEpsilon && b.start >= start)
+        {
+            start = b.start;
+            origin = b.start - b.offset;
+        }
+    }
+    return origin;
+}
+
 //==============================================================================
 juce::ValueTree RigTimeline::toTree() const
 {
@@ -164,6 +180,8 @@ juce::ValueTree RigTimeline::toTree() const
             node.setProperty ("clip", b.clip, nullptr);
         if (b.level < 1.0f)
             node.setProperty ("level", b.level, nullptr);
+        if (b.offset > kEpsilon)
+            node.setProperty ("offset", b.offset, nullptr);
         tree.appendChild (node, nullptr);
     }
     for (const auto& m : markers)
@@ -203,6 +221,7 @@ void RigTimeline::fromTree (const juce::ValueTree& tree)
                 b.fadeOut = node.getProperty ("fadeOut", 0.0);
                 b.clip = node.getProperty ("clip", -1);
                 b.level = (float) (double) node.getProperty ("level", 1.0);
+                b.offset = node.getProperty ("offset", 0.0);
                 blocks.push_back (b);
             }
             else if (node.hasType ("Marker"))

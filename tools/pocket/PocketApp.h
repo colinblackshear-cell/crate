@@ -26,6 +26,7 @@
 #include "SynthScreen.h"
 #include "ChordsScreen.h"
 #include "DroneScreen.h"
+#include "SongScreen.h"
 #include "ChordEditSheet.h"
 #include "DrumKitSheet.h"
 #include "PocketKey.h"
@@ -307,6 +308,7 @@ private:
     juce::String runNavigationChecks (juce::String& report, const juce::File& folder);
     juce::String runSamplerChecks (juce::String& report);
     juce::String runSongDeleteChecks (juce::String& report, const juce::File& folder);   // PocketAppNav.cpp
+    juce::String runSongChecks (juce::String& report, const juce::File& folder);        // PocketAppNav.cpp: the SONG tool
     juce::String runOwnChordChecks (juce::String& report, const juce::File& folder);     // PocketAppNav.cpp: EDIT CHORD in the app   // PocketAppSampler.cpp: a trimmed sound is what the pad plays
 
     struct PocketLook : juce::LookAndFeel_V4 { PocketLook(); juce::Font getPopupMenuFont() override; juce::Font getTextButtonFont (juce::TextButton&, int) override; };
@@ -326,6 +328,19 @@ private:
     ChordsScreen chordsScreen;
     pocket::DroneTool droneTool;   // the DRONE tool, inside the renderer
     DroneScreen droneScreen;
+    std::unique_ptr<pocket::PocketSong> song;   // the SONG tool's arrangement of the layers (inside the renderer)
+    std::unique_ptr<SongScreen> songScreen;
+    void setupSong();
+    void songTickNow();
+    void stopClock();
+    juce::Array<juce::File> bounceSong (const SongScreen::Bounce&, juce::String& said);   // PocketAppSong.cpp
+    void shareBounce (const juce::Array<juce::File>&);
+    void bounceToMac();
+    juce::Array<juce::File> lastBounce;
+    juce::ScopedMessageBox bounceSharing;
+    juce::TimedCallback songTick { [this] { songTickNow(); } };
+    int savedSongEdits = -1;
+    juce::uint32 songSavedAt = 0;
     std::unique_ptr<EffectsScreen> effects;
     PocketAudio audio;
     EffectsSheet sheet;
