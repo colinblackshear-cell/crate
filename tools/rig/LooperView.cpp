@@ -1063,6 +1063,15 @@ void LooperView::updateTop()
     overdub.setButtonText (dubbing ? "Stop dub" : "Overdub");
     undoButton.setEnabled ((selected >= 0 && looper.canUndo (selected) && looper.getState (selected) == RigLooper::State::playing)
                            || engine.canUndoClearAllLoops());
+    // A loop whose overdubs can't have an undo says so ahead, on the button's tip.
+    {
+        const auto limit = selected >= 0 ? looper.undoLimit (selected) : RigLooper::NoUndo::none;
+        const auto tip = limit == RigLooper::NoUndo::tooLong ? juce::String ("Overdubs on this loop can't be undone: loops over 10 minutes have no undo.")
+                         : limit == RigLooper::NoUndo::squeezed ? juce::String ("Overdubs on this loop can't be undone: the sound is squeezed too far to keep an undo copy.")
+                                                                  : juce::String ("Takes back the last overdub on the layer you picked last, or brings back what Clear all cleared.");
+        if (undoButton.getTooltip() != tip)
+            undoButton.setTooltip (tip);
+    }
     clearButton.setEnabled (selected >= 0 && looper.getState (selected) != RigLooper::State::empty);
 
     const auto status = statusText() + "/" + juce::String (engine.getTransport().getBpm()) + "/" + juce::String ((int) engine.getTransport().isPlaying());

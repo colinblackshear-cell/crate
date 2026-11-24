@@ -1369,3 +1369,133 @@ struct RigCopyBudgetTests : juce::UnitTest
 };
 
 static RigCopyBudgetTests rigCopyBudgetTests;
+
+//==============================================================================
+// The capture: decided at the press, never withdrawn, and the window told why when there's none.
+struct RigOverdubUndoCaptureTests : juce::UnitTest
+{
+    RigOverdubUndoCaptureTests() : juce::UnitTest ("Rig overdub undo capture", "Rig") {}
+
+    void runTest() override
+    {
+        beginTest ("8. A sound squeezed just over the guarantee's limit: no undo, the reason set, and the overdub still exact");
+        {
+            Drive d (kRate, kBlock);
+            const int n = 768000 * 2;
+            const auto loop = odu::markedLoop (n, 80);
+            d.looper.setLayerAudio (0, loop, 2.0 * 0.999);   // a little more than 768,000 samples a beat
+            d.looper.getLayer (0).source = RigLooper::input;
+            d.input = [] (juce::int64 at, int) { return (float) (at % 50) / 4096.0f; };
+            odu::DubModel model;
+            model.loop = loop;
+            model.lengthBeats = 2.0 * 0.999;
+            d.after = [&] (const RigLooper::Clock& clock, const juce::AudioBuffer<float>& in, const juce::AudioBuffer<float>&, int bn)
+            {
+                if (d.looper.getState (0) == State::overdubbing)
+                    model.block (clock, kRate, 0, in, bn);
+            };
+            d.looper.maintain();
+            d.block();
+            expect (d.looper.undoLimit (0) == RigLooper::NoUndo::squeezed, "known before the press");
+            d.looper.pressRecord (0);
+            d.blocks (300);
+            d.looper.pressRecord (0);
+            d.block();
+            expect (! d.looper.canUndo (0), "no undo");
+            expect (d.looper.peekNoUndo (0) == RigLooper::NoUndo::squeezed);
+            expect (d.looper.takeNoUndo (0) == RigLooper::NoUndo::squeezed, "said once");
+            expect (d.looper.takeNoUndo (0) == RigLooper::NoUndo::none, "and only once");
+            expectEquals (odu::firstDifference (d.looper.copyLayerAudio (0), model.loop), -1, "the overdub is exact");
+        }
+
+        beginTest ("12b. Messages: each reason once at the press, no Undo offered, and the temporary one clears when the room is ready");
+        {
+            constexpr double rate = 8000.0;   // (10 minutes is small here)
+            Drive d (rate, kBlock);
+            dubInput (d);
+            putLoop (d, 0, odu::markedLoop ((int) (rate * RigLooper::kMaxUndoSeconds) + 1, 81));
+            d.block();
+            expect (d.looper.undoLimit (0) == RigLooper::NoUndo::tooLong, "known before the press");
+            d.looper.pressRecord (0);
+            d.block();
+            expect (! d.looper.canUndo (0));
+            expect (d.looper.takeNoUndo (0) == RigLooper::NoUndo::tooLong, "over 10 minutes");
+            expect (d.looper.takeNoUndo (0) == RigLooper::NoUndo::none);
+            d.looper.pressRecord (0);
+            d.block();
+            expect (d.looper.takeNoUndo (0) == RigLooper::NoUndo::none, "stopping it says nothing");
+
+            // The room not ready (here: every mark used, so new marks are made off the audio thread).
+            putLoop (d, 1, odu::markedLoop (20000, 82));
+            d.block();
+            d.looper.setUndoGenerationForTests ((1u << 30) - 1);
+            d.looper.pressRecord (1);
+            d.block();
+            expect (! d.looper.canUndo (1));
+            expect (d.looper.takeNoUndo (1) == RigLooper::NoUndo::roomNotReady, "not ready");
+            expect (RigLooper::noUndoMessage (RigLooper::NoUndo::roomNotReady).contains ("next one"), "worded as temporary");
+            d.looper.pressRecord (1);
+            d.block();
+            d.looper.maintain();   // new marks
+            d.blocks (2);
+            const auto before = d.looper.soundingLoopForTests (1);
+            d.looper.pressRecord (1);
+            d.blocks (20);
+            expect (d.looper.canUndo (1), "the next overdub has its undo");
+            expect (d.looper.peekNoUndo (1) == RigLooper::NoUndo::none && d.looper.takeNoUndo (1) == RigLooper::NoUndo::none, "and the reason is gone");
+            d.looper.pressRecord (1);
+            d.block();
+            d.looper.undo (1);
+            d.block();
+            d.seconds (1.0);
+            expect (same (d.looper.copyLayerAudio (1), before), "exact");
+        }
+
+        beginTest ("Undo is never withdrawn during an eligible overdub, under budget pressure");
+        {
+            // The fastest loop that passes, a save on another overdubbing loop, a slowed budget, and
+            // the room growing: undo stays offered from the press to the end of every overdub.
+            RigLooper::copySliceForTests = 2 * RigLooper::kCopyPageSamples;
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            d.looper.setLayerAudio (0, odu::markedLoop (768000, 83), 768000 / 768000.0);   // at the limit
+            d.looper.getLayer (0).source = RigLooper::input;
+            putLoop (d, 1, odu::markedLoop (300 * 1024, 84));
+            d.block();
+            int withdrawn = 0, overdubBlocks = 0;
+            std::atomic<bool> saving { true };
+            std::thread saver ([&] { while (saving) d.looper.copyLayerAudio (1); });
+            for (int round = 0; round < 6; ++round)
+            {
+                d.looper.pressRecord (1);   // the other loop overdubs while it's saved
+                d.block();
+                d.looper.pressRecord (0);
+                d.block();
+                expect (d.looper.canUndo (0));
+                for (int k = 0; k < 200 + 100 * round; ++k)
+                {
+                    d.block();
+                    ++overdubBlocks;
+                    withdrawn += d.looper.canUndo (0) ? 0 : 1;
+                    if (k == 50)
+                    {
+                        putLoop (d, 2 + round, odu::markedLoop ((40 + 10 * round) * 48000, 85 + round));
+                        d.looper.maintain();
+                    }
+                }
+                d.looper.pressRecord (0);
+                d.looper.pressRecord (1);
+                d.block();
+                withdrawn += d.looper.canUndo (0) ? 0 : 1;
+                d.blocks (50);
+            }
+            saving = false;
+            saver.join();
+            RigLooper::copySliceForTests = 0;
+            logMessage ("  " + juce::String (overdubBlocks) + " overdub blocks checked");
+            expectEquals (withdrawn, 0);
+        }
+    }
+};
+
+static RigOverdubUndoCaptureTests rigOverdubUndoCaptureTests;

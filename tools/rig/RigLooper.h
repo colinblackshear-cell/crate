@@ -93,6 +93,7 @@ public:
     private:
         friend class RigLooper;
         std::atomic<int> presses { 0 }, clears { 0 }, undos { 0 };
+        std::atomic<int> noUndo { 0 }, noUndoNews { 0 };   // NoUndo: the last overdub's, and unsaid
         std::atomic<double> restartBeat { -1.0 };
         // Every loop counts its bars on one shared timeline, so their playheads move together.
         // A loop recorded while others played is turned round by this many beats (see
@@ -214,6 +215,18 @@ public:
     }
     // Whether undo would take back an overdub on this layer (the last one only).
     bool canUndo (int layer) const { return undoLayer.load() == layer; }
+    // Why an overdub has no undo, decided as it starts: the loop is over kMaxUndoSeconds; it plays
+    // so fast (a long sound fitted to few beats) that keeping an undo copy could overrun the
+    // audio's budget; or the undo room wasn't ready yet (it will be for the next one).
+    enum class NoUndo { none, tooLong, squeezed, roomNotReady };
+    // The reason for this layer's last overdub (none if it has an undo), and once for each
+    // overdub that has none, for the window to say (takeNoUndo resets it). Any thread.
+    NoUndo peekNoUndo (int layer) const { return (NoUndo) layers[(size_t) layer].noUndo.load(); }
+    NoUndo takeNoUndo (int layer) { return (NoUndo) layers[(size_t) layer].noUndoNews.exchange (0); }
+    // Message thread: whether an overdub of this layer's loop as it is would have no undo whatever
+    // happens (too long, or squeezed), for the Undo button to say ahead.
+    NoUndo undoLimit (int layer) const;
+    static juce::String noUndoMessage (NoUndo);
 
     // Message thread: puts a sound on a layer, `beats` long, playing from beat 0. Returns the
     // layer's version that names this sound (-1 if it did nothing).
@@ -303,6 +316,8 @@ public:
     juce::AudioBuffer<float> soundingLoopForTests (int layer) const;
     // Whether undo is made a slice at a time (false: a whole copy in the block of the press).
     static constexpr bool kIncrementalUndo = false;
+    // Tests only, with no audio running: the capture generation (to try the last ones).
+    void setUndoGenerationForTests (juce::uint32 g) { cap.generation = g; }
     // Tests only: called once while the audio thread copies (`underLock` false), and while a
     // copy under the lock holds it (true); always copy under the lock (as before); and the copy
     // budget as samples a block instead of kCopyPagesPerSecond, to make copying slow.
@@ -476,7 +491,31 @@ private:
     bool adoptTried = false;                   // audio thread: this block
     std::atomic<int> undoLayer { -1 };
     std::atomic<int> swapSerials { 0 };   // queueLayerAudio's serials
-    int undoLength = 0;
+    // The undo's capture (audio thread): a generation numbers it, so a page's mark from an older
+    // capture means nothing and a new capture costs nothing. A page is captured (copied from the
+    // loop into the room) in order, a slice a block, or just before the overdub first writes it;
+    // the pages written are marked so. While it's valid, a page captured holds in the room what
+    // the loop held at the press, and a page not captured still holds it in the loop.
+    struct Capture
+    {
+        juce::uint32 generation = 0;   // kMaxGeneration at most (marks: generation << 2 | written 2 | captured 1)
+        int layer = -1;                // the layer it's of (-1: none)
+        int length = 0, pages = 0;
+        int cursor = 0;                // the next page in order
+        bool complete = false;
+        int written = 0;               // pages the overdub has written
+        int firstWritten = -1, lastMarked = -1;
+    };
+    static constexpr juce::uint32 kMaxGeneration = (1u << 30) - 1;
+    Capture cap;
+    std::atomic<bool> marksWorn { false };   // every generation used: new marks wanted
+    int maxBlockSize = 4096;
+    NoUndo startCapture (Layer&, int index);   // at a press: NoUndo::none if it has an undo
+    bool passesGuarantee (const Layer&) const;
+    void markBeforeWrite (Layer&, int sample);
+    void continueCapture (Layer&);
+    void copyRoomPage (Layer&, int page, bool intoRoom);
+    void cancelUndo (int index);   // any thread, under the layer's lock: its undo is gone
     // The undo loop's waveform (audio thread only): kept as an overdub starts, put back by undo.
     std::unique_ptr<float[]> undoPeaks { new float[kPeakBins]() };
     int undoPeakShift = 0, undoPeakCovered = 0;
