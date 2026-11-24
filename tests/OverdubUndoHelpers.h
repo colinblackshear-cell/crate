@@ -16,6 +16,8 @@
 
 #if JUCE_LINUX
  #include <sys/resource.h>
+#elif JUCE_MAC
+ #include <mach/mach.h>
 #endif
 
 namespace odu
@@ -100,6 +102,29 @@ inline long threadPageFaults()
     rusage u {};
     getrusage (RUSAGE_THREAD, &u);
     return u.ru_minflt + u.ru_majflt;
+#else
+    return -1;
+#endif
+}
+
+// The part of this thread's CPU time spent in the system (page faults, the memory compressor,
+// ...), in microseconds; -1 where it can't be read. A report only: it says whether a long
+// block's CPU time was the engine's work or the system's.
+inline double threadSystemMicros()
+{
+#if JUCE_LINUX
+    rusage u {};
+    getrusage (RUSAGE_THREAD, &u);
+    return u.ru_stime.tv_sec * 1.0e6 + (double) u.ru_stime.tv_usec;
+#elif JUCE_MAC
+    thread_basic_info_data_t info {};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    const mach_port_t self = mach_thread_self();
+    const auto ok = thread_info (self, THREAD_BASIC_INFO, (thread_info_t) &info, &count);
+    mach_port_deallocate (mach_task_self(), self);
+    if (ok != KERN_SUCCESS)
+        return -1;
+    return info.system_time.seconds * 1.0e6 + (double) info.system_time.microseconds;
 #else
     return -1;
 #endif
@@ -246,7 +271,11 @@ struct DubModel
         const double lb = juce::jmax (1.0e-6, lengthBeats);
         for (int i = 0; i < n; ++i)
         {
-            const double beat = clock.beat + i * beatsPerSample;
+            // Written exactly as RigLooper::process writes it, ternary included: where the
+            // compiler may fuse a multiply and an add (arm64, or x86 with FMA), it fuses
+            // `beat + i * step` but not `beat + (playing ? i * step : 0)`, and the one rounding
+            // that differs moves a sample's write position across a whole sample now and then.
+            const double beat = clock.beat + (clock.playing ? i * beatsPerSample : 0.0);
             double p = std::fmod (beat - startBeat, lb);
             if (p < 0)
                 p += lb;
