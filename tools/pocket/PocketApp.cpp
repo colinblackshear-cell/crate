@@ -3639,7 +3639,17 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         droneTool.space = 0.4f;
         droneScreen.showPage (1);
         savePng (folder.getChildFile ("17c-drone-pattern.png"));
+        // its third page: MIRACLE TONES, 528 playing
+        droneTool.pickTone (5);
+        droneScreen.showPage (2);
+        savePng (folder.getChildFile ("17d-drone-miracle.png"));
+        droneTool.toneFit = 1;
+        droneTool.toneBeat = 2;
+        droneTool.toneOnly = true;
+        droneScreen.repaint();
+        savePng (folder.getChildFile ("17e-drone-miracle-tuned.png"));
         droneScreen.showPage (0);
+        savePng (folder.getChildFile ("17f-drone-strings-on-tone.png"));
         droneTool.reset();
         droneTool.setSongKey (songKey.root);
         droneScreen.toolChanged();
@@ -4515,6 +4525,31 @@ juce::String PocketApp::runRecChecks (juce::String& report)
         togglePlay();
         pump (4096);
 
+        // MIRACLE TONES: TONE ONLY on 528, REC lands just the tone on the next layer, like any tool
+        {
+            droneTool.reset();
+            droneTool.pickTone (5);
+            droneTool.toneOnly = true;
+            pump (8192);
+            recPressed();
+            if (! waitPlaying (1, 6))
+                problems.add ("REC on a MIRACLE TONE: no take landed on layer 2");
+            else
+            {
+                const float peak = takePeak (1);
+                report << "drone, 528 Hz miracle tone (TONE ONLY) recorded: layer peak " << juce::String (peak, 4) << "\n";
+                if (peak < 0.01f)
+                    problems.add ("REC on a MIRACLE TONE: the layer is silent (peak " + juce::String (peak, 4) + ")");
+                if (droneTool.on.load())
+                    problems.add ("REC on a MIRACLE TONE: the live drone kept playing over its layer");
+            }
+            togglePlay();
+            pump (4096);
+            droneTool.reset();
+            droneTool.followKey = false;
+            droneTool.root = 9;
+        }
+
         droneTool.level = 0.5f;
         droneTool.first = 1;
         droneTool.voice = 3;
@@ -4522,6 +4557,11 @@ juce::String PocketApp::runRecChecks (juce::String& report)
         droneTool.space = 0.35f;
         droneTool.setStepCount (1);
         droneTool.toggleStep (1, 2);
+        droneTool.pickTone (8);
+        droneTool.toneFit = 1;
+        droneTool.toneBeat = 3;
+        droneTool.toneSound = 2;
+        droneTool.ownHz = 222.0f;
         saveSong();
         droneTool.reset();
         loadSong();
@@ -4530,6 +4570,9 @@ juce::String PocketApp::runRecChecks (juce::String& report)
         if (droneTool.voice.load() != 3 || droneTool.order.load() != 2 || std::abs (droneTool.space.load() - 0.35f) > 1.0e-4f
             || droneTool.stepCount.load() != 1 || droneTool.steps[0].load() != 0x1 || droneTool.steps[1].load() != 0x4)
             problems.add ("DRONE: its pattern and tone didn't come back with the song");
+        if (! droneTool.toneOn.load() || droneTool.tone.load() != 8 || droneTool.toneFit.load() != 1 || droneTool.toneBeat.load() != 3
+            || droneTool.toneSound.load() != 2 || std::abs (droneTool.ownHz.load() - 222.0f) > 0.01f)
+            problems.add ("DRONE: its MIRACLE TONE didn't come back with the song");
 
         // STEPS: drawn squares pluck their strings on their steps, in time with the clock (8 steps of an 1/8: 4 beats round)
         {

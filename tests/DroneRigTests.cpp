@@ -417,14 +417,60 @@ struct DroneRigTests : juce::UnitTest
                 expect (screen->knobFor (k) != nullptr && screen->knobFor (k)->isVisible(), k);
             screen->stepCountButtons[0]->onClick();
 
-            // A short window: a tab for the strings and one for Pattern and Tone, everything fitting on each.
+            // Miracle tones: its tab swaps Pattern and tone for the tones under the strings; a tile plays its tone (and
+            // the drone), again stops it; Your own asks for a frequency; Fit, Sound, Binaural and Tone only set the drone.
+            screen->miracleTab.onClick();
+            expectEquals (screen->getPage(), 2);
+            expect (screen->toneTiles[5]->isVisible() && ! screen->voiceButtons[0]->isVisible() && screen->onButton.isVisible());
+            for (auto* c : screen->getChildren())
+                if (c->isVisible())
+                    expect (screen->getLocalBounds().contains (c->getBounds()) && c->getWidth() > 20 && c->getHeight() > 20,
+                            "1600x1000 Miracle tones: " + c->getName() + " " + c->getBounds().toString());
+            for (int i = 0; i < screen->toneTiles.size(); ++i)
+                for (int j = i + 1; j < screen->toneTiles.size(); ++j)
+                    expect (! screen->toneTiles[i]->getBounds().intersects (screen->toneTiles[j]->getBounds()));
+            setParam (engine.getDrone().params, "droneOn", 0.0f);
+            screen->toneTiles[5]->onClick();
+            expect (engine.getDrone().isToneOn() && engine.getDrone().getTone() == 5 && engine.getDrone().isOn(), "a tile plays its tone and the drone");
+            expect (screen->toneTiles[5]->getToggleState() && ! screen->toneTiles[4]->getToggleState());
+            expect (screen->miracleTab.getButtonText().startsWith ("Miracle tones") && screen->miracleTab.getButtonText() != "Miracle tones", "the tab shows a tone plays");
+            screen->toneTiles[2]->onClick();
+            expect (engine.getDrone().isToneOn() && engine.getDrone().getTone() == 2, "another tile: that tone");
+            screen->fitButtons[1]->onClick();
+            expectEquals (param (engine.getDrone().params, "droneToneFit"), 1.0f);
+            screen->toneSoundButtons[2]->onClick();
+            expectEquals (param (engine.getDrone().params, "droneToneSound"), 2.0f);
+            screen->beatButtons[2]->onClick();
+            expectEquals (param (engine.getDrone().params, "droneToneBeat"), 2.0f);
+            screen->toneOnlyButton.onClick();
+            expectEquals (param (engine.getDrone().params, "droneToneOnly"), 1.0f);
+            expect (screen->toneOnlyButton.getToggleState() && screen->fitButtons[1]->getToggleState() && screen->beatButtons[2]->getToggleState());
+            for (auto* k : { "droneToneLevel", "droneToneSwell" })
+                expect (screen->knobFor (k) != nullptr && screen->knobFor (k)->isVisible(), k);
+            render (engine, 0.5);
+            expect (engine.getDrone().isToneSounding(), "the tone sounds in the Rig");
+            screen->toneTiles[2]->onClick();
+            expect (! engine.getDrone().isToneOn(), "the playing tile again: off");
+            // (Your own, while off, asks for the Hz in a window, which a test can't open: typed, it plays.)
+            engine.getDrone().setOwnToneHz (111.0);
+            screen->tick();
+            expect (screen->toneTiles[crate::drone::kOwnTone]->getToggleState() && screen->toneTiles[crate::drone::kOwnTone]->hz == "111");
+            screen->toneTiles[crate::drone::kOwnTone]->onClick();
+            expect (! engine.getDrone().isToneOn());
+            for (auto* id : { "droneToneFit", "droneToneSound", "droneToneBeat", "droneToneOnly" })
+                setParam (engine.getDrone().params, id, 0.0f);
+            screen->patternTab.onClick();
+            expect (screen->voiceButtons[0]->isVisible() && ! screen->toneTiles[0]->isVisible());
+
+            // A short window: a tab for the strings, one for Pattern and Tone and one for Miracle tones, everything fitting on each.
             view.setSize (1000, 700);
-            expect (screen->isCompact() && screen->patternTab.isVisible());
-            for (int page : { 1, 0 })
+            expect (screen->isCompact() && screen->patternTab.isVisible() && screen->miracleTab.isVisible());
+            for (int page : { 2, 1, 0 })
             {
                 screen->showPage (page);
                 expect (screen->voiceButtons[0]->isVisible() == (page == 1));
                 expect (screen->onButton.isVisible() == (page == 0));
+                expect (screen->toneTiles[0]->isVisible() == (page == 2));
                 for (auto* c : screen->getChildren())
                     if (c->isVisible())
                         expect (screen->getLocalBounds().contains (c->getBounds()) && c->getWidth() > 20 && c->getHeight() > 20,
@@ -467,6 +513,14 @@ struct DroneRigTests : juce::UnitTest
                 snapshot (view, path + "-drone-small.png");
                 screen->showPage (1);
                 snapshot (view, path + "-drone-small-pattern.png");
+                engine.getDrone().pickTone (5);
+                screen->showPage (2);
+                snapshot (view, path + "-drone-small-miracle.png");
+                view.setSize (1600, 1000);
+                screen->tick();
+                snapshot (view, path + "-drone-miracle.png");
+                engine.getDrone().pickTone (5);
+                view.setSize (1000, 700);
                 screen->showPage (0);
             }
 
