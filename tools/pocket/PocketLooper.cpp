@@ -585,6 +585,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     for (auto& l : layers)
         if (l.st == LoopState::waiting && l.fresh && l.withCountIn > 0)
             countEnd = juce::jmax (countEnd, l.armBeat >= 0 ? l.armBeat : l.withCountIn * 4.0);
+    countEnd = juce::jmax (countEnd, songCountIn.load());
     beats.setCountInClick (countEnd);
     std::fill (clickBuf.begin(), clickBuf.begin() + n, 0.0f);
     // The drum machine and the pads: summed as before, unless one of their boards is in use, then each on its own
@@ -605,6 +606,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     const bool running = beats.clockRunning();
     const double blockBeat = beats.clockBeat();
     const double bps = beats.getBpm() / (60.0 * sampleRate);
+    if (song != nullptr)
+        song->update();
     boardClock.bpm = beats.getBpm();
     boardClock.ppq = blockBeat;
     boardClock.playing = running;
@@ -973,14 +976,25 @@ void LoopsEngine::playLayer (Layer& l, int index, double blockBeat, double bps, 
     const double rf = l.regionFrom.load(), rt = juce::jmin (lenBeats, l.regionTo.load());
     const bool region = rt > rf + 1.0e-6 && rf >= 0.0;
     const double loopFrom = region ? rf : 0.0, loopBeats = region ? rt - rf : lenBeats;
-    double phase = std::fmod (blockBeat - l.startBeat - loopFrom, loopBeats);
+    // The song: inside a block the loop's top is where the block puts it (its slip), and it sounds at the
+    // block's level and fades; outside its blocks a layer in the song is quiet.
+    double loopTop = l.startBeat;
+    float songGain = 1.0f;
+    if (song != nullptr && song->running() && ! region)
+    {
+        const double bar = song->barAt (blockBeat);
+        songGain = song->gain (index, bar);
+        if (const double o = song->originBeat (index, bar); o > -1.0e8)
+            loopTop = o;
+    }
+    double phase = std::fmod (blockBeat - loopTop - loopFrom, loopBeats);
     if (phase < 0)
         phase += loopBeats;
     phase += loopFrom;
     double pos = phase * perBeat;
     const double loopStart = loopFrom * perBeat, loopEnd = juce::jmin ((double) len, (loopFrom + loopBeats) * perBeat);
     const double step = bps * perBeat;
-    const float target = l.mute.load() ? 0.0f : kLayerLevel;
+    const float target = l.mute.load() ? 0.0f : kLayerLevel * songGain;
     const float coef = 1.0f - std::exp (-1.0f / (0.005f * (float) sampleRate));
     float g = l.gain;
 

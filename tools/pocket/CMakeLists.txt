@@ -64,6 +64,7 @@ target_sources(KaleidoboxPocket PRIVATE
     EffectsSheet.cpp
     LoopsScreen.cpp
     PocketLooper.cpp
+    PocketSong.cpp
     RecordScreen.cpp
     SamplerScreen.cpp
     SoundsScreen.cpp
@@ -75,6 +76,7 @@ target_sources(KaleidoboxPocket PRIVATE
     ChordEditSheet.cpp
     PocketDrone.cpp
     DroneScreen.cpp
+    SongScreen.cpp
     VocoderScreen.cpp
     PocketLinkClient.cpp
     LinkScreens.cpp
@@ -83,6 +85,7 @@ target_sources(KaleidoboxPocket PRIVATE
     EffectsScreen.cpp
     PocketAppEffects.cpp
     PocketAppNav.cpp
+    PocketAppSong.cpp
     PocketAppSampler.cpp
     ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
     ${VOCODER_SOURCES})
@@ -113,6 +116,9 @@ target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/synth/SynthEngine.cpp)
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/StripFx.cpp ${TOOLS}/rig/Pedalboard.cpp)
 # CHORDS > EDIT CHORD names the chord you build with the Mac chord builder's own namer (RigChords::nameOf: no plugins, no routing)
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/RigChords.cpp)
+# SONG > BOUNCE writes MP3 with the Mac's encoder hookup
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/Mp3Writer.cpp)
+target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS}/rig)
 target_compile_definitions(KaleidoboxPocket PRIVATE CRATE_STRIPFX_NO_PLUGINS=1)
 
 # The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools
@@ -153,6 +159,7 @@ endif()
 target_link_libraries(KaleidoboxPocket
     PRIVATE
         crate_core
+        crate_shine
         pocket_fonts
     PUBLIC
         juce::juce_recommended_config_flags

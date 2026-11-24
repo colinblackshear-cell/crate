@@ -1,5 +1,7 @@
 #pragma once
 
+#include "RigBounce.h"
+
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
@@ -106,6 +108,24 @@ public:
     // or the first). Says so when the track isn't in the song yet.
     void showLane (int lane);
 
+    // Rec live (the song, played): starts a new take, or with one going, stops and keeps it.
+    // Punch: plays it again over one section only. The pads bring tracks in and out.
+    void pressRecLive();
+    bool recLiveFrom (int section);   // punch over that section
+    void pressLivePad (int lane);
+    void showTakesMenu();
+    bool isLivePanelShown() const;
+
+    // Bounce + stems (the Bounce button's panel). startBounce writes the loops at once; with Everything it plays
+    // the song once and recordingSaved() (RigView calls it when the recorder has saved a take) finishes it.
+    void showBouncePanel();
+    bool startBounce (const RigBounce::Options&);
+    bool bounceRunning() const { return bouncing; }
+    bool recordingSaved();   // true when the take was the bounce's (then it said so itself)
+    const juce::File& lastBounceFolder() const { return bounceFolder; }
+    std::function<juce::String()> getShowName;
+    bool revealAfterBounce = true;   // opens the folder in the Finder (the tests turn it off)
+
     // The lanes the board shows, top to bottom.
     std::vector<int> shownLanes() const;
     bool showingAllLanes = false;
@@ -116,6 +136,12 @@ private:
     class Board;
     class Names;
     class Inspector;
+    class LivePads;
+    RigBounce::Options bounceOptions;
+    RigBounce::Options bounceRunningOptions;
+    bool bouncing = false;
+    juce::File bounceFolder;
+    juce::StringArray bounceFiles;
     void timerCallback() override;
     void mouseUp (const juce::MouseEvent&) override;
     void say (const juce::String& s) { if (onSay) onSay (s); }
@@ -132,12 +158,15 @@ private:
 
     RigEngine& engine;
     rigpanels::PanelButton addButton { "+ Section" }, jamButton { "Jam" }, songButton { "Song" }, playButton { "From start" },
-        loopButton { "Loop section" }, barsButton { "Bars view" }, recButton { "Rec song" }, exportButton { "Export" },
+        loopButton { "Loop section" }, barsButton { "Bars view" }, recButton { "Rec song" }, exportButton { "Bounce" },
         moreButton { juce::String::fromUTF8 ("\xe2\x8b\xaf") }, deleteButton { "Delete" }, undoButton { "Undo" }, bigAdd { "+ First section: what's playing now" },
-        bigEmpty { "+ Empty section" };
+        bigEmpty { "+ Empty section" }, liveButton { "Rec live" }, takesButton { "Takes" };
     std::unique_ptr<Board> board;
     std::unique_ptr<Names> names;
     std::unique_ptr<Inspector> inspector;
+    std::unique_ptr<LivePads> livePads;
+    bool wasLive = false;
+    int lastTakes = -1, lastTake = -2, keptTake = -2;
     std::unique_ptr<TimelineView> bars;
     juce::Viewport viewport;
     juce::Rectangle<int> titleArea, stepsArea, boardArea, moreLanesArea, emptyArea, addLayerArea;

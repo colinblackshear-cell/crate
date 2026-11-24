@@ -105,6 +105,17 @@ public:
     std::atomic<int> strum { 0 };               // index into strumTimes()
     std::atomic<int> lowKey { 36 };             // Low keys: the first of the 16 (C1 on a Launchkey 61)
     std::atomic<int> shapePad { 0 };            // Every key plays this pad's shape (the pad being edited)
+    // Chords on / off: off, what you play plays plain single notes instead of chords, on the same
+    // instrument. The keys that played chords (Low keys, Every key, the key map) play their own
+    // note; a pad (on the screen or the Launchkey's pads) plays its chord's lowest note. The
+    // progression keeps playing its chords underneath. A chord you hold when it flips plays on
+    // until you let go (no stuck notes); a chord Hold latched stops. Saved with the show.
+    // Any thread (the screen, or a learned keyboard button on the audio thread).
+    std::atomic<bool> chordsOn { true };
+    void setChordsOn (bool on) { chordsOn = on; }
+    void toggleChords() { chordsOn = ! chordsOn.load(); }
+    bool areChordsOn() const { return chordsOn.load(); }
+
     // Where a press went: the instrument (a RigRouting::Dest) the chords play now.
     int resolveTarget (int keysTo) const;
 
@@ -286,10 +297,10 @@ private:
     std::array<std::array<std::atomic<int>, kMaxNotes>, kPads> live;
 
     // Presses from the screen, for the audio thread: pad + 1 (negative: release), velocity.
-    struct Press { int pad = 0; float velocity = 0; };
+    struct Press { int pad = 0; float velocity = 0; bool full = false; };   // full: the whole chord even with chords off (hearing one you build)
     juce::AbstractFifo pressFifo { 256 };
     std::array<Press, 256> pressQueue {};
-    void queue (int pad, float velocity);
+    void queue (int pad, float velocity, bool full = false);
     std::array<std::atomic<bool>, kPads> down {};   // message thread's view (pressed, not released)
 
     // Audio thread: what each source is playing. A source is a pad pressed on the screen, a
@@ -298,8 +309,9 @@ private:
     {
         int dest = -1, count = 0;
         std::array<int, kMaxNotes> notes {};
-        int source = -1;   // pad (0-15), 100 + key note (every key / triggers), 300 progression
+        int source = -1;   // pad (0-15), 100 + key note (every key / triggers), 300 progression, 400 + key (map), 600 + key (plain)
         float velocity = 0.8f;
+        bool fixed = false;   // a plain note: the live key doesn't move it (it's the key you pressed)
     };
     static constexpr int kVoices = 32;
     std::array<Voice, kVoices> voices;
@@ -316,9 +328,10 @@ private:
     int lastSoundingVoice = -1;
 
     void startVoice (int source, int pad, int transpose, float velocity, int dest, int at,
-                     std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples);
+                     std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples, bool lowestOnly = false);
     void startNotes (int source, const int* notes, int count, float velocity, int dest, int at,
-                     std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples);
+                     std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to, int strumSamples, bool fixed = false);
+    bool wasPlain = false;   // audio thread: chords were off last block
     void stopVoice (int source, int at, std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to);
     void noteOn (int dest, int note, float velocity, int at, std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to);
     void noteOff (int dest, int note, int at, std::array<juce::MidiBuffer*, RigRouting::kNumDests>& to);

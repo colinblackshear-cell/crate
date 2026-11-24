@@ -203,7 +203,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         mouseDrag (fake (*this, { 240.0f, (float) insets.getTop() + 22.0f }));
         mouseDrag (fake (*this, { 180.0f, (float) insets.getTop() + 22.0f }));
         mouseUp (fake (*this, { 180.0f, (float) insets.getTop() + 22.0f }));
-        expect (tool == Tool::drums, "Header swipe: a swipe left on LOOPS didn't go to DRUMS");
+        expect (tool == Tool::song, "Header swipe: a swipe left on LOOPS didn't go to SONG");
         mouseDown (fake (*this, { 120.0f, (float) insets.getTop() + 20.0f }));
         mouseDrag (fake (*this, { 200.0f, (float) insets.getTop() + 22.0f }));
         mouseUp (fake (*this, { 200.0f, (float) insets.getTop() + 22.0f }));

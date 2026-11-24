@@ -11,6 +11,8 @@ namespace Theme = crate::Theme;
 namespace
 {
 constexpr int kNamesWidth = 150, kRuler = 46, kPad = 6;
+// The effect moves (automation lanes) under the tracks: a row each, up to kMaxAutoRows.
+constexpr int kAutoHead = 16, kAutoH = 22, kMaxAutoRows = 8;
 constexpr double kMinBars = 64;
 
 juce::Colour loopColour (int i)
@@ -93,7 +95,16 @@ class TimelineView::Lanes : public juce::Component
 public:
     explicit Lanes (TimelineView& o) : owner (o) {}
 
-    int laneHeight() const { return juce::jlimit (20, 44, (getHeight() - kRuler) / RigTimeline::kLanes); }
+    int autoRows() const { return juce::jmin (kMaxAutoRows, owner.engine.getAutomation().getNumLanes()); }
+    int autoSpace() const { return autoRows() > 0 ? kAutoHead + autoRows() * kAutoH : 0; }
+    int laneHeight() const { return juce::jlimit (16, 44, (getHeight() - kRuler - autoSpace()) / RigTimeline::kLanes); }
+    int autoTop() const { return kRuler + laneHeight() * RigTimeline::kLanes + kAutoHead; }
+    // The automation row under `y`, or -1.
+    int autoRowAt (int y) const
+    {
+        const int top = autoTop();
+        return autoRows() > 0 && y >= top && y < top + autoRows() * kAutoH ? (y - top) / kAutoH : -1;
+    }
     float xFor (double bar) const { return kPad + (float) bar * owner.pxPerBar; }
     double barFor (float x) const { return juce::jmax (0.0, (double) ((x - kPad) / owner.pxPerBar)); }
     int bpb() const { return juce::jmax (1, owner.engine.getTransport().getBeatsPerBar()); }
@@ -181,6 +192,42 @@ public:
         for (int i = 0; i < (int) blocks.size(); ++i)
             drawBlock (g, blocks[(size_t) i], i == owner.selected);
 
+        // Effect moves: each automation lane's line along the song (a Loop lane repeats).
+        if (const int rows = autoRows(); rows > 0)
+        {
+            const auto autoLanes = engine.getAutomation().getLanes();
+            const int top = autoTop();
+            g.setColour (Theme::outline);
+            g.drawHorizontalLine (top - kAutoHead, 0.0f, (float) getWidth());
+            for (int i = 0; i < rows && i < (int) autoLanes.size(); ++i)
+            {
+                const auto& lane = autoLanes[(size_t) i];
+                const auto row = juce::Rectangle<float> (0.0f, (float) (top + i * kAutoH), (float) getWidth(), (float) kAutoH);
+                g.setColour (i % 2 == 0 ? Theme::panel.brighter (0.05f) : Theme::panel.brighter (0.02f));
+                g.fillRect (row);
+                const auto colour = RigColours::song.withAlpha (lane.on ? 0.95f : 0.3f);
+                juce::Path path;
+                bool drawing = false;
+                for (int px = 0; px < getWidth(); px += 2)
+                {
+                    const double pos = lane.positionAt (barFor ((float) px) * beats);
+                    if (pos < 0)
+                    {
+                        drawing = false;
+                        continue;
+                    }
+                    const float y = row.getBottom() - 3.0f - lane.valueAt (pos) * (row.getHeight() - 6.0f);
+                    if (! drawing)
+                        path.startNewSubPath ((float) px, y);
+                    else
+                        path.lineTo ((float) px, y);
+                    drawing = true;
+                }
+                g.setColour (colour);
+                g.strokePath (path, juce::PathStrokeType (1.6f));
+            }
+        }
+
         // Where Play starts, the jump that's coming, and where it's playing.
         {
             const float x = xFor (owner.startBar);
@@ -199,7 +246,7 @@ public:
         {
             const float x = xFor (transport.getPositionInBeats() / beats);
             g.setColour (timeline.on.load() ? juce::Colours::white : Theme::textDim);
-            g.fillRect (x - 1.0f, 0.0f, 2.0f, (float) lanesBottom);
+            g.fillRect (x - 1.0f, 0.0f, 2.0f, (float) getHeight());
         }
 
         if (blocks.empty())
@@ -233,14 +280,15 @@ public:
                 const float mid = r.getCentreY(), half = r.getHeight() * 0.42f;
                 for (int px = 0; px < (int) r.getWidth(); ++px)
                 {
-                    const double inLoop = std::fmod (px / owner.pxPerBar, loopBars) / loopBars;
+                    const double inLoop = std::fmod (px / owner.pxPerBar + b.offset, loopBars) / loopBars;
                     const float v = peaks.empty() ? 0.0f : peaks[(size_t) juce::jlimit (0, (int) peaks.size() - 1, (int) (inLoop * (double) peaks.size()))];
                     g.drawVerticalLine ((int) r.getX() + px, mid - v * half, mid + v * half);
                 }
                 // Where it repeats.
                 g.setColour (Theme::background.withAlpha (0.5f));
-                for (double at = loopBars; at < b.length - 1.0e-6; at += loopBars)
-                    g.drawVerticalLine ((int) xFor (b.start + at), r.getY() + 2, r.getBottom() - 2);
+                for (double at = loopBars - std::fmod (b.offset, loopBars); at < b.length - 1.0e-6; at += loopBars)
+                    if (at > 1.0e-6)
+                        g.drawVerticalLine ((int) xFor (b.start + at), r.getY() + 2, r.getBottom() - 2);
             }
         }
 
@@ -262,6 +310,13 @@ public:
         if (b.fadeOut > 0)
             fade (xFor (b.end() - b.fadeOut), r.getRight(), false);
 
+        if (b.level < 0.999f)
+        {
+            // Its level, as a line across it (the top is full).
+            g.setColour (Theme::text.withAlpha (0.8f));
+            const float y = r.getBottom() - (r.getHeight() - 4.0f) * b.level - 2.0f;
+            g.drawHorizontalLine ((int) y, r.getX() + 2, r.getRight() - 2);
+        }
         g.setColour (picked ? juce::Colours::white : colour.brighter (0.3f));
         g.drawRoundedRectangle (r, 4.0f, picked ? 2.0f : 1.0f);
         g.setColour (Theme::text);
@@ -296,7 +351,46 @@ public:
     }
 
     //==========================================================================
-    enum class Drag { none, move, left, right, fadeIn, fadeOut, draw, ruler, cycle };
+    enum class Drag { none, move, left, right, fadeIn, fadeOut, draw, ruler, cycle, slip, level, automation };
+
+    // Draws on an effect move with the mouse: a line from the last point to here.
+    void drawAuto (const juce::MouseEvent& e)
+    {
+        auto& automation = owner.engine.getAutomation();
+        const auto list = automation.getLanes();
+        if (! juce::isPositiveAndBelow (autoRow, (int) list.size()))
+            return;
+        const auto& lane = list[(size_t) autoRow];
+        const double pos = lane.positionAt (barFor ((float) e.x) * bpb());
+        if (pos < 0)
+            return;   // (a Once lane: outside where it plays)
+        const float top = (float) (autoTop() + autoRow * kAutoH);
+        const float value = juce::jlimit (0.0f, 1.0f, 1.0f - ((float) e.y - top - 3.0f) / (kAutoH - 6.0f));
+        const auto from = autoLast.first >= 0 && std::abs (autoLast.first - pos) < lane.lengthBeats * 0.5 ? autoLast : std::pair<double, float> { pos, value };
+        automation.drawLine (autoRow, from.first, from.second, pos, value, autoFirst);
+        autoFirst = false;
+        autoLast = { pos, value };
+        repaint();
+    }
+
+    void autoMenu (int row)
+    {
+        auto& automation = owner.engine.getAutomation();
+        const auto list = automation.getLanes();
+        if (! juce::isPositiveAndBelow (row, (int) list.size()))
+            return;
+        const auto lane = list[(size_t) row];
+        juce::PopupMenu menu;
+        menu.addSectionHeader (automation.laneName (row));
+        menu.addItem ("On", true, lane.on, [this, row, on = lane.on] { owner.engine.getAutomation().setLaneOn (row, ! on); repaint(); });
+        menu.addItem ("Loop (round and round)", true, lane.loop, [this, row] { owner.engine.getAutomation().setLaneLoop (row, true); repaint(); });
+        menu.addItem ("Once (along the song)", true, ! lane.loop, [this, row] { owner.engine.getAutomation().setLaneLoop (row, false); repaint(); });
+        menu.addItem ("Clear its moves", [this, row] { owner.engine.getAutomation().clearLane (row); repaint(); });
+        menu.addItem ("Undo", automation.canUndo(), false, [this] { owner.engine.getAutomation().undo(); repaint(); });
+        menu.addSeparator();
+        menu.addItem ("More in the Automation panel (Cmd+Shift+A)...", owner.onOpenAutomation != nullptr, false, [this] { if (owner.onOpenAutomation) owner.onOpenAutomation(); });
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+    }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -317,6 +411,22 @@ public:
             return;
         }
 
+        if (const int row = autoRowAt (e.y); row >= 0)
+        {
+            if (e.mods.isPopupMenu())
+            {
+                autoMenu (row);
+                return;
+            }
+            drag = Drag::automation;
+            autoRow = row;
+            autoFirst = true;
+            autoLast = { -1.0, 0.0f };
+            drawAuto (e);
+            return;
+        }
+        if (autoRows() > 0 && e.y >= autoTop() - kAutoHead)
+            return;
         const int lane = laneAt (e.y);
         auto& blocks = timeline.getBlocks();
         int hit = -1;
@@ -363,13 +473,28 @@ public:
             drag = Drag::right;
         else if (e.position.x < r.getX() + 7)
             drag = Drag::left;
+        else if (e.mods.isCommandDown() && RigTimeline::lanes()[(size_t) b.lane].isLoop)
+            drag = Drag::slip;    // Cmd-drag: the loop slides inside its block
+        else if (e.mods.isShiftDown())
+            drag = Drag::level;   // Shift-drag up and down: its level
         else
             drag = Drag::move;
         owner.pushUndo();
+        if (drag == Drag::move && e.mods.isAltDown() && (int) blocks.size() < RigTimeline::kMaxBlocks)
+        {
+            // Alt-drag: a copy stays where it was, and you drag the other one.
+            blocks.push_back (b);
+            owner.say ("Copying: drop it where it goes.");
+        }
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        if (drag == Drag::automation)
+        {
+            drawAuto (e);
+            return;
+        }
         auto& timeline = owner.timeline;
         const double bar = barFor ((float) e.x);
         if (drag == Drag::ruler || drag == Drag::cycle)
@@ -403,6 +528,8 @@ public:
                 const double start = juce::jlimit (0.0, original.end() - s, snapped (bar));
                 b.length = original.end() - start;
                 b.start = start;
+                // The sound stays where it was: trimming the start doesn't move the loop.
+                b.offset = TimelineView::wrapBars (original.offset + (start - original.start), owner.loopBars (b.lane));
                 break;
             }
             case Drag::fadeIn:
@@ -411,9 +538,20 @@ public:
             case Drag::fadeOut:
                 b.fadeOut = juce::jlimit (0.0, b.length - b.fadeIn, std::round ((b.end() - bar) * bpb()) / bpb());
                 break;
+            case Drag::slip:
+            {
+                const double length = owner.loopBars (b.lane);
+                const double moved = std::round ((bar - downBar) * bpb()) / bpb();   // by beats
+                b.offset = TimelineView::wrapBars (original.offset - moved, length);
+                break;
+            }
+            case Drag::level:
+                b.level = juce::jlimit (0.0f, 1.0f, original.level - (float) e.getDistanceFromDragStartY() / 120.0f);
+                break;
             case Drag::none:
             case Drag::ruler:
             case Drag::cycle:
+            case Drag::automation:
                 break;
         }
         timeline.changed();   // (heard while it plays)
@@ -433,7 +571,7 @@ public:
             }
             owner.setStartBar (bar);
         }
-        else if (drag != Drag::none && drag != Drag::cycle)
+        else if (drag != Drag::none && drag != Drag::cycle && drag != Drag::automation)
         {
             owner.edited();
         }
@@ -563,7 +701,18 @@ public:
                                + ", " + barsText (b.length));
         menu.addSubMenu ("Fade in", fadeIn);
         menu.addSubMenu ("Fade out", fadeOut);
-        menu.addItem ("Copy after it (Cmd+D)", [this] { owner.duplicateSelected(); });
+        const double at = snapped (downBar);
+        menu.addItem ("Split at bar " + juce::String (at + 1.0, std::abs (at - std::round (at)) < 0.01 ? 0 : 2) + " (S at the playhead)",
+                      at > b.start + 1.0e-6 && at < b.end() - 1.0e-6, false, [this, at] { owner.splitSelected (at); });
+        juce::PopupMenu level;
+        for (const float v : { 1.0f, 0.75f, 0.5f, 0.25f })
+            level.addItem (juce::String (juce::roundToInt (v * 100)) + "%", true, std::abs (b.level - v) < 0.01f, [this, index, v] { owner.setLevel (index, v); });
+        menu.addSubMenu ("Level (or Shift-drag it)", level);
+        if (RigTimeline::lanes()[(size_t) b.lane].isLoop)
+            menu.addItem (b.offset > 1.0e-6 ? "Start the loop from its top (it's slipped " + barsText (b.offset) + ")"
+                                            : juce::String ("Slip: Cmd-drag the block to slide its loop inside it"),
+                          b.offset > 1.0e-6, false, [this, index] { owner.slip (index, 0.0); });
+        menu.addItem ("Copy after it (Cmd+D, or Alt-drag)", [this] { owner.duplicateSelected(); });
         menu.addItem ("Delete (Delete key)", [this] { owner.deleteSelected(); });
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
     }
@@ -591,6 +740,9 @@ private:
     Drag drag = Drag::none;
     double downBar = 0;
     RigTimeline::Block original;
+    int autoRow = -1;
+    bool autoFirst = true;
+    std::pair<double, float> autoLast { -1.0, 0.0f };
     struct Peaks
     {
         int version = -1, count = 0;
@@ -625,6 +777,28 @@ void TimelineView::Names::paint (juce::Graphics& g)
         g.setColour (Theme::textDim);
         g.setFont (juce::FontOptions (11.0f));
         g.drawText (what, area, juce::Justification::centredRight);
+    }
+    if (const int rows = owner.lanes->autoRows(); rows > 0)
+    {
+        const int top = owner.lanes->autoTop();
+        g.setColour (Theme::textDim);
+        g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+        g.drawText ("EFFECT MOVES (draw on them)", 0, top - kAutoHead, getWidth() - 6, kAutoHead, juce::Justification::centredLeft);
+        auto& automation = engine.getAutomation();
+        for (int i = 0; i < rows; ++i)
+        {
+            g.setColour (RigColours::song);
+            g.fillRoundedRectangle (0.0f, (float) (top + i * kAutoH + 4), 5.0f, (float) kAutoH - 8, 2.0f);
+            g.setColour (Theme::text);
+            g.setFont (juce::FontOptions (11.0f));
+            g.drawFittedText (automation.laneName (i), 13, top + i * kAutoH, getWidth() - 19, kAutoH, juce::Justification::centredLeft, 1, 0.8f);
+        }
+        if (automation.getNumLanes() > rows)
+        {
+            g.setColour (Theme::textDim);
+            g.drawText ("+ " + juce::String (automation.getNumLanes() - rows) + " more in Automation", 0, top + rows * kAutoH, getWidth(), 14,
+                        juce::Justification::centredLeft);
+        }
     }
 }
 
@@ -744,13 +918,20 @@ void TimelineView::tick()
     }
     if (playing)
         seenPlaying = true;
+    if (recordingSong && playing && recordUntilBeat >= 0 && transport.getPositionInBeats() >= recordUntilBeat)
+        transport.stop();   // a bounce: its end (and tail) reached
     if (recordingSong && seenPlaying && ! playing)
     {
         recordingSong = false;
+        const bool bounce = recordUntilBeat >= 0;
+        if (bounce)
+            timeline.stopAtEnd = stopAtEndBefore;
+        recordUntilBeat = -1;
         if (engine.getRecorder().getState() != RigRecorder::State::idle)
         {
             engine.stopRecording();
-            say ("Recorded the song. Every tool is its own WAV in Music > Crate > Rig > Recordings.");
+            if (! bounce)
+                say ("Recorded the song. Every tool is its own WAV in Music > Crate > Rig > Recordings.");
         }
     }
     wasPlaying = playing;
@@ -1053,6 +1234,30 @@ void TimelineView::recordSong()
     say ("Recording the song from bar 1. It stops by itself at the end (or press Stop). Sing along!");
 }
 
+bool TimelineView::recordSongRange (const juce::File& folder, double fromBar, double untilBeat, juce::String* why)
+{
+    const auto fail = [why] (const juce::String& text) { if (why != nullptr) *why = text; return false; };
+    if (recordingSong)
+        return fail ("The song is already being recorded.");
+    if (timeline.isEmpty())
+        return fail ("Put the song on the timeline first.");
+    if (engine.getRecorder().getState() != RigRecorder::State::idle)
+        return fail ("The set is already recording (Rec, top bar). Stop that first.");
+    engine.getTransport().stop();
+    if (! engine.startRecording (folder))
+        return fail ("Couldn't start recording in " + folder.getFullPathName() + ".");
+    timeline.cycle = false;
+    stopAtEndBefore = timeline.stopAtEnd.load();
+    timeline.stopAtEnd = false;   // it stops after the tail itself
+    startBar = juce::jmax (0.0, fromBar);
+    recordingSong = true;
+    seenPlaying = false;
+    recordUntilBeat = untilBeat;
+    engine.playTimeline (startBar);
+    onButton.setToggleState (true, juce::dontSendNotification);
+    return true;
+}
+
 void TimelineView::exportForLogic()
 {
     const auto result = RigExport::exportForLogic (engine, RigExport::defaultFolder());
@@ -1067,8 +1272,83 @@ void TimelineView::exportForLogic()
 }
 
 //==============================================================================
+double TimelineView::wrapBars (double x, double length)
+{
+    if (length <= 1.0e-9)
+        return 0.0;
+    double r = std::fmod (x, length);
+    if (r < 0)
+        r += length;
+    return length - r < 1.0e-6 ? 0.0 : r;
+}
+
+double TimelineView::loopBars (int lane) const
+{
+    if (! juce::isPositiveAndBelow (lane, RigTimeline::kLanes) || ! RigTimeline::lanes()[(size_t) lane].isLoop)
+        return 0.0;
+    return engine.getLooper().getLayer (RigTimeline::lanes()[(size_t) lane].index).lengthBeats.load()
+           / juce::jmax (1, engine.getTransport().getBeatsPerBar());
+}
+
+bool TimelineView::splitSelected (double bar)
+{
+    auto& blocks = timeline.getBlocks();
+    if (! juce::isPositiveAndBelow (selected, (int) blocks.size()) || (int) blocks.size() >= RigTimeline::kMaxBlocks)
+        return false;
+    const auto b = blocks[(size_t) selected];
+    if (bar <= b.start + 1.0e-6 || bar >= b.end() - 1.0e-6)
+        return false;
+    pushUndo();
+    auto first = b, second = b;
+    first.length = bar - b.start;
+    first.fadeOut = 0;
+    second.start = bar;
+    second.length = b.end() - bar;
+    second.fadeIn = 0;
+    // The second half carries on where the loop was.
+    second.offset = wrapBars (b.offset + (bar - b.start), loopBars (b.lane));
+    blocks[(size_t) selected] = first;
+    blocks.push_back (second);
+    timeline.changed();
+    for (int i = 0; i < (int) blocks.size(); ++i)
+        if (blocks[(size_t) i].lane == second.lane && std::abs (blocks[(size_t) i].start - second.start) < 1.0e-9)
+            selected = i;
+    edited();
+    say ("Split at bar " + juce::String (bar + 1.0, 2).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") + ".");
+    return true;
+}
+
+void TimelineView::setLevel (int block, float level)
+{
+    auto& blocks = timeline.getBlocks();
+    if (! juce::isPositiveAndBelow (block, (int) blocks.size()))
+        return;
+    pushUndo();
+    blocks[(size_t) block].level = juce::jlimit (0.0f, 1.0f, level);
+    edited();
+}
+
+void TimelineView::slip (int block, double offset)
+{
+    auto& blocks = timeline.getBlocks();
+    if (! juce::isPositiveAndBelow (block, (int) blocks.size()))
+        return;
+    pushUndo();
+    blocks[(size_t) block].offset = wrapBars (offset, loopBars (blocks[(size_t) block].lane));
+    edited();
+}
+
 bool TimelineView::keyPressed (const juce::KeyPress& key)
 {
+    if (key.getKeyCode() == 'S' || key.getKeyCode() == 's')
+    {
+        if (! key.getModifiers().isAnyModifierKeyDown())
+        {
+            const auto& t = engine.getTransport();
+            if (t.isPlaying() || t.getPositionInBeats() > 0)
+                return splitSelected (std::round (t.getPositionInBeats() / juce::jmax (1, t.getBeatsPerBar()) * 4.0) / 4.0);
+        }
+    }
     if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
     {
         deleteSelected();

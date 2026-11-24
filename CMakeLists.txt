@@ -35,6 +35,31 @@ else()
     FetchContent_MakeAvailable(signalsmith-stretch)
 endif()
 
+# MP3 out for Bounce + stems (Mac and phone): the Shine encoder (LGPL 2; github.com/toots/shine), built as
+# its own small library. Linking crate_shine turns MP3 on in tools/rig/Mp3Writer.cpp (CRATE_HAS_SHINE).
+FetchContent_Declare(shine
+    GIT_REPOSITORY https://github.com/toots/shine.git
+    GIT_TAG 7612c31e21e1fae2241ed86bc59c68d7b8f64e13
+    SOURCE_SUBDIR not-a-folder)
+FetchContent_MakeAvailable(shine)
+add_library(crate_shine STATIC
+    ${shine_SOURCE_DIR}/src/lib/bitstream.c
+    ${shine_SOURCE_DIR}/src/lib/huffman.c
+    ${shine_SOURCE_DIR}/src/lib/l3bitstream.c
+    ${shine_SOURCE_DIR}/src/lib/l3loop.c
+    ${shine_SOURCE_DIR}/src/lib/l3mdct.c
+    ${shine_SOURCE_DIR}/src/lib/l3subband.c
+    ${shine_SOURCE_DIR}/src/lib/layer3.c
+    ${shine_SOURCE_DIR}/src/lib/reservoir.c
+    ${shine_SOURCE_DIR}/src/lib/tables.c
+    ${shine_SOURCE_DIR}/src/lib/precomputed_tables.c)
+target_include_directories(crate_shine PUBLIC ${shine_SOURCE_DIR}/src/lib)
+target_compile_definitions(crate_shine INTERFACE CRATE_HAS_SHINE=1)
+set_target_properties(crate_shine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(NOT MSVC)
+    target_compile_options(crate_shine PRIVATE -w)
+endif()
+
 # The vocoder lives in its own repo (colinblackshear-cell/vocoder); the Rig builds its code in.
 # Only its sources are used, not its own build. Bump the commit to pick up vocoder changes.
 if(CRATE_VOCODER_DIR)

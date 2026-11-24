@@ -6,6 +6,7 @@ namespace
 {
 const juce::Colour kChords { 0xffb9a3dc }, kPadDark { 0xff4a4037 }, kPadText { 0xfff1e7d1 }, kBoxDark { 0xff2b2520 };
 const char* const kStyleNames[4] = { "HOLD", "STRUM", "ARP", "STABS" };
+constexpr float kChipH = 40.0f, kChipRow = kChipH + 6.0f;   // CHORDS ON / OFF over the pads
 const char* const kPlaysNames[3] = { "SYNTH", "MY PAD SOUND", "VOCODER NOTES" };
 }
 
@@ -96,7 +97,7 @@ void ChordsScreen::layout()
     if (tool.liveOpen)
     {
         // LIVE KEY: a title with what plays, the twelve keys as a keyboard, then OCT - / OCT + / BACK / ON BAR
-        const float room = h - 8.0f - y - 22.0f - 150.0f;   // leave the pads at least 150
+        const float room = h - 8.0f - y - kChipRow - 150.0f;   // leave the pads at least 150
         const float bedH = juce::jlimit (96.0f, 150.0f, room - 6.0f - 30.0f - 8.0f - rowH - 12.0f);
         liveWell = { x0, y, iw, 6.0f + 30.0f + 8.0f + bedH + 8.0f + rowH + 10.0f };
         liveTitle = { x0 + 12.0f, y + 6.0f, iw * 0.4f, 30.0f };
@@ -119,10 +120,10 @@ void ChordsScreen::layout()
             addHit ({ x0 + 10.0f + (float) n++ * (cw + 6.0f), cy, cw, rowH }, id);
         y = liveWell.getBottom() + gap;
 
-        const float roomPads = h - 8.0f - y - 22.0f;
+        const float roomPads = h - 8.0f - y - kChipRow;
         const float wellH = juce::jmax (120.0f, roomPads);
         padWell = { x0, h - 8.0f - wellH, iw, wellH };
-        statusR = { x0, y, iw, juce::jmax (18.0f, padWell.getY() - y - 4.0f) };
+        placeChordsChip (y);
         auto pw = padWell.reduced (8.0f);
         const float pcw = pw.getWidth() / 4.0f, pch = pw.getHeight() / 2.0f;
         for (int i = 0; i < kChordPads; ++i)
@@ -189,10 +190,10 @@ void ChordsScreen::layout()
     y += rowH + 4.0f;
 
     // the pads, low; what's going on just above them
-    const float room = h - 8.0f - y - 22.0f;
+    const float room = h - 8.0f - y - kChipRow;
     const float wellH = juce::jlimit (120.0f, 220.0f, room);
     padWell = { x0, h - 8.0f - wellH, iw, wellH };
-    statusR = { x0, y, iw, juce::jmax (18.0f, padWell.getY() - y - 4.0f) };
+    placeChordsChip (y);
     auto pw = padWell.reduced (8.0f);
     const float cw = pw.getWidth() / 4.0f, ch = pw.getHeight() / 2.0f;
     for (int i = 0; i < kChordPads; ++i)
@@ -200,6 +201,17 @@ void ChordsScreen::layout()
         padR[(size_t) i] = { pw.getX() + (float) (i % 4) * cw + 3.0f, pw.getY() + (float) (i / 4) * ch + 3.0f, cw - 6.0f, ch - 6.0f };
         addHit (padR[(size_t) i], padBase + i);
     }
+}
+
+void ChordsScreen::placeChordsChip (float y)
+{
+    // CHORDS ON / OFF on the left, right over the pads it changes (in both layouts, so it's there while you
+    // play LIVE KEY too); what's going on beside it.
+    const float x0 = 16.0f, iw = (float) getWidth() - 32.0f, chipW = juce::jlimit (112.0f, 150.0f, iw * 0.34f);
+    const float rowH = juce::jmax (kChipH, padWell.getY() - y - 4.0f);
+    const auto chip = juce::Rectangle<float> (x0, y + (rowH - kChipH) * 0.5f, chipW, kChipH);
+    hits.push_back ({ chip, chordsOnId });
+    statusR = { x0 + chipW + 10.0f, y, iw - chipW - 10.0f, rowH };
 }
 
 int ChordsScreen::idAt (juce::Point<float> p) const
@@ -336,8 +348,18 @@ void ChordsScreen::pressLiveKey (int pc)
     }
 }
 
+void ChordsScreen::pressChordsOn()
+{
+    tool.setChordsOn (! tool.chordsOn);
+    if (toast)
+        toast (tool.chordsOn ? "Chords on: each pad plays its chord." : "Chords off: each pad plays one note, its chord's lowest.");
+    changed();
+}
+
 void ChordsScreen::press (int id)
 {
+    if (id == chordsOnId)
+        return pressChordsOn();
     if (id == liveId)
     {
         tool.liveOpen = ! tool.liveOpen;
@@ -531,6 +553,8 @@ void ChordsScreen::showSoundMenu()
 
 juce::String ChordsScreen::statusText() const
 {
+    if (! tool.chordsOn && tool.editingBox < 0)
+        return "Chords off: each pad plays one note, its chord's lowest. Tap CHORDS OFF for the chords again.";
     if (tool.liveOpen)
         return tool.liveOctave() != 0 || tool.liveShift() != 0
                    ? "Your chords, moved to a new key. BACK returns to " + SongKey::pitchName (tool.key.root) + ". LIVE shows the chord settings again."
@@ -657,6 +681,7 @@ void ChordsScreen::paint (juce::Graphics& g)
         else if (id == liveOctUpId) text = "OCT +";
         else if (id == liveHomeId) { text = "BACK"; lit = false; }
         else if (id == liveBarId) { text = "ON BAR"; lit = tool.liveOnBar; }
+        else if (id == chordsOnId) { text = tool.chordsOn ? "CHORDS ON" : "CHORDS OFF"; lit = tool.chordsOn; litColour = kChords; }
         else if (id == soundId) text = soundLabel();
         else if (id >= colourBase && id < colourBase + kChordColours) { text = chordColourName (id - colourBase); lit = tool.colour == id - colourBase; }
         else if (id == holdId) { text = "HOLD"; lit = tool.hold; }
@@ -705,7 +730,16 @@ void ChordsScreen::paint (juce::Graphics& g)
         }
         g.setColour (lit ? col::ink : kPadText);
         g.setFont (condensedBold (p.getHeight() > 70.0f ? 20.0f : 17.0f));
-        g.drawFittedText (tool.livePadName (i), p.translated (0, down).withTrimmedBottom (p.getHeight() * 0.42f).reduced (3, 0).toNearestInt(), juce::Justification::centredBottom, 1, 0.6f);
+        // Chords off: the note the pad plays big, its chord small under it.
+        juce::String big = tool.livePadName (i), under = tool.padNumeral (i);
+        if (! tool.chordsOn)
+        {
+            const auto notes = tool.padNotes (i);
+            if (! notes.isEmpty())
+                big = SongKey::pitchName (((notes[0] + tool.engine().playingShift()) % 12 + 12) % 12);
+            under = tool.livePadName (i);
+        }
+        g.drawFittedText (big, p.translated (0, down).withTrimmedBottom (p.getHeight() * 0.42f).reduced (3, 0).toNearestInt(), juce::Justification::centredBottom, 1, 0.6f);
         if (tool.isOwn (i))
         {
             // your own chord: a lilac corner dot (amber on the lit pad)
@@ -714,6 +748,6 @@ void ChordsScreen::paint (juce::Graphics& g)
         }
         g.setColour (tool.isOwn (i) ? (lit ? juce::Colour (0xff3a2a55) : kChords) : lit ? juce::Colour (0xff3a2a55) : juce::Colour (0xffa89a86));
         g.setFont (lcdFont (15.0f));
-        g.drawFittedText (tool.padNumeral (i), p.translated (0, down).withTrimmedTop (p.getHeight() * 0.6f).reduced (3, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.7f);
+        g.drawFittedText (under, p.translated (0, down).withTrimmedTop (p.getHeight() * 0.6f).reduced (3, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.7f);
     }
 }

@@ -186,39 +186,75 @@ int RigExport::timelineBars (RigEngine& engine)
 
 juce::AudioBuffer<float> RigExport::renderTimelineStem (RigEngine& engine, int layer, double bpm, double rate, bool withEffects)
 {
+    return renderTimelineRange (engine, layer, bpm, rate, withEffects, 0.0, (double) timelineBars (engine), 0.0);
+}
+
+juce::AudioBuffer<float> RigExport::renderTimelineRange (RigEngine& engine, int layer, double bpm, double rate, bool withEffects,
+                                                         double fromBar, double toBar, double tailSeconds)
+{
     const auto& timeline = engine.getTimeline();
     const auto audio = engine.getLooper().copyLayerAudio (layer);
     const double beats = engine.getLooper().getLayer (layer).lengthBeats.load();
     const int lane = RigTimeline::laneForLoop (layer);
-    if (timeline.isEmpty() || audio.getNumSamples() == 0 || beats <= 0)
+    if (timeline.isEmpty() || audio.getNumSamples() == 0 || beats <= 0 || toBar <= fromBar)
         return {};
     const int bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
     const double samplesPerBeat = rate * 60.0 / bpm;
-    const int total = (int) std::round (timelineBars (engine) * bpb * samplesPerBeat);
+    const int body = (int) std::round ((toBar - fromBar) * bpb * samplesPerBeat);
+    const int total = body + juce::jmax (0, (int) std::round (tailSeconds * rate));
     juce::AudioBuffer<float> out (2, juce::jmax (1, total));
     out.clear();
     const float level = withEffects ? engine.getLooper().getLayer (layer).level.load() : 1.0f;
     const auto& blocks = timeline.getBlocks();
     const bool used = timeline.laneUsed (lane);
-    // Like the Rig: the loop starts from its top at each block, and moves smoothly to a new
-    // level (a few milliseconds where a block starts or stops without a fade, so it can't click).
+    // Like the Rig: inside a block the loop's top is where the block puts it (its slip), and it
+    // moves smoothly to a new level (a few milliseconds where a block starts or stops without a
+    // fade, so it can't click).
     const float slew = 1.0f / 96.0f;
     float gain = 0;
-    for (int i = 0; i < total; ++i)
+    for (int i = 0; i < body; ++i)
     {
-        const double beat = i / samplesPerBeat;
+        const double beat = fromBar * bpb + i / samplesPerBeat;
         const double bar = beat / bpb;
         const float target = RigTimeline::gainAt (blocks.data(), (int) blocks.size(), lane, bar, used);
         gain = target > gain ? juce::jmin (target, gain + slew) : juce::jmax (target, gain - slew);
         if (gain <= 0.0f)
             continue;
-        const double start = RigTimeline::blockStartAt (blocks.data(), (int) blocks.size(), lane, bar);
-        const double from = start >= 0 ? start * bpb : 0.0;
+        const double origin = RigTimeline::blockOriginAt (blocks.data(), (int) blocks.size(), lane, bar);
+        const double from = origin > -1.0e8 ? origin * bpb : 0.0;
         for (int ch = 0; ch < 2; ++ch)
             out.setSample (ch, i, sampleAt (audio, beats, ch, beat - from) * level * gain);
     }
     if (withEffects)
         applyEffects (engine, layer, bpm, rate, out, nullptr);
+    return out;
+}
+
+juce::AudioBuffer<float> RigExport::renderLoopPass (RigEngine& engine, int layer, double bpm, double rate, bool withEffects, double bars,
+                                                    double tailSeconds)
+{
+    const auto one = renderLoop (engine, layer, bpm, rate, false);
+    if (one.getNumSamples() == 0)
+        return {};
+    const int bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
+    const double samplesPerBeat = rate * 60.0 / bpm;
+    const int body = (int) std::round (bars * bpb * samplesPerBeat);
+    const int total = body + juce::jmax (0, (int) std::round (tailSeconds * rate));
+    juce::AudioBuffer<float> out (2, juce::jmax (1, total));
+    out.clear();
+    const float level = withEffects ? engine.getLooper().getLayer (layer).level.load() : 1.0f;
+    for (int i = 0; i < body; ++i)
+        for (int ch = 0; ch < 2; ++ch)
+            out.setSample (ch, i, one.getSample (juce::jmin (ch, one.getNumChannels() - 1), i % one.getNumSamples()) * level);
+    if (withEffects)
+    {
+        // warmed up with a pass, so its echoes carry round into bar 1 as they do when it plays
+        juce::AudioBuffer<float> warm (2, one.getNumSamples());
+        for (int ch = 0; ch < 2; ++ch)
+            warm.copyFrom (ch, 0, one, juce::jmin (ch, one.getNumChannels() - 1), 0, one.getNumSamples());
+        warm.applyGain (level);
+        applyEffects (engine, layer, bpm, rate, out, &warm);
+    }
     return out;
 }
 

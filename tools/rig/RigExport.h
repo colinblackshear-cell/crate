@@ -44,6 +44,12 @@ int songBars (RigEngine&);
 // A loop laid out over the timeline: playing in its lane's blocks, with their fades.
 juce::AudioBuffer<float> renderTimelineStem (RigEngine&, int layer, double bpm, double sampleRate, bool withEffects);
 int timelineBars (RigEngine&);
+// The same over bars [fromBar, toBar) only (a section), with `tailSeconds` more for its effects to ring out.
+juce::AudioBuffer<float> renderTimelineRange (RigEngine&, int layer, double bpm, double sampleRate, bool withEffects,
+                                              double fromBar, double toBar, double tailSeconds);
+// The loop going round for `bars` bars from its top (the loops as they play now), with a tail.
+juce::AudioBuffer<float> renderLoopPass (RigEngine&, int layer, double bpm, double sampleRate, bool withEffects, double bars,
+                                         double tailSeconds);
 // The CC each automation lane is written on (the CCs MIDI leaves free: 102-119, then 20-31,
 // 85-90, 3, 9, 14, 15), or -1 past the last.
 int ccForLane (int lane);

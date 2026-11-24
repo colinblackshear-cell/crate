@@ -104,7 +104,13 @@ public:
         }
         else
         {
-            const auto name = chords.livePadName (index);
+            auto name = chords.livePadName (index);
+            if (! chords.areChordsOn())
+            {
+                // Chords off: the one note it plays, and the chord it's from.
+                const int note = chords.getPad (index).notes[0] + chords.getPlayingShift();
+                name = RigChords::noteName (juce::jlimit (0, 127, note)) + " (" + name + ")";
+            }
             vintage::lcdText (g, name, text, name.length() > 7 ? 19.0f : 24.0f, juce::Justification::centred,
                               playing || down ? vintage::colours::lcdGreen : vintage::colours::lcdAmber);
         }
@@ -188,7 +194,7 @@ public:
         auto onMap = [&] (int k)
         {
             const auto kind = chords.getMapEntry (k).kind;
-            return mapped && (split <= 0 || k >= split) && kind != RigChords::MapEntry::pass && kind != RigChords::MapEntry::silent
+            return mapped && chords.areChordsOn() && (split <= 0 || k >= split) && kind != RigChords::MapEntry::pass && kind != RigChords::MapEntry::silent
                    && chords.mapChordName (k).isNotEmpty();
         };
         const int low = chords.lowKey.load();
@@ -551,6 +557,14 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
     for (auto* c : { &target, &trigger, &strum, &key, &scale, &type, &length })
         addAndMakeVisible (c);
 
+    chordsOnButton.setTooltip ("Chords on / off. Off, your keys play plain single notes on the same instrument (a pad plays its "
+                               "chord's lowest note); the progression keeps its chords. Right-click to put it on a button of your keyboard.");
+    chordsOnButton.onClick = [this] { pressChordsOn(); };
+    chordsOnButton.onMenu = [this] { showChordsOnMenu(); };
+    chordsOnButton.getProperties().set ("fontSize", 15.0f);
+    vintage::setLit (chordsOnButton, Lit::play);
+    addAndMakeVisible (chordsOnButton);
+
     holdButton.setClickingTogglesState (false);
     holdButton.setTooltip ("Hold: a chord keeps playing after you let go, until you play the next (or the same one again).");
     holdButton.onClick = [this] { pressHold(); };
@@ -830,6 +844,23 @@ void ChordsView::updateControls()
     }
     length.setSelectedId (chords.stepLength.load() + 1, juce::dontSendNotification);
     holdButton.setToggleState (chords.hold.load(), juce::dontSendNotification);
+    {
+        const bool on = chords.areChordsOn();
+        const bool teaching = engine.getRouting().getLearning() == RigRouting::chordsOnOff;
+        chordsOnButton.setToggleState (on, juce::dontSendNotification);
+        const auto text = teaching ? juce::String ("Press it...") : on ? juce::String ("Chords on") : juce::String ("Chords off");
+        if (chordsOnButton.getButtonText() != text)
+            chordsOnButton.setButtonText (text);
+        if (on != shownChordsOn)
+        {
+            // Flipped from the keyboard's button: say so, and the pads show what they play.
+            shownChordsOn = on;
+            status = on ? "Chords on: your keys and pads play chords." : "Chords off: your keys play plain single notes (pads: the chord's lowest note).";
+            for (auto* p : padButtons)
+                p->repaint();
+            repaint (statusArea);
+        }
+    }
     catchButton.setToggleState (chords.isCatching(), juce::dontSendNotification);
     catchButton.setButtonText (chords.isCatching() ? "Play it..." : "Catch");
     playButton.setToggleState (chords.progressionOn.load(), juce::dontSendNotification);
@@ -1020,6 +1051,38 @@ void ChordsView::setTrigger (int t)
             break;
     }
     refresh();
+}
+
+void ChordsView::pressChordsOn()
+{
+    chords.toggleChords();
+    say (chords.areChordsOn() ? "Chords on: your keys and pads play chords."
+                              : "Chords off: your keys play plain single notes (pads: the chord's lowest note).");
+    refresh();
+}
+
+void ChordsView::showChordsOnMenu()
+{
+    auto& routing = engine.getRouting();
+    const int cc = routing.getAssignment (RigRouting::chordsOnOff).second;
+    juce::PopupMenu m;
+    if (routing.getLearning() == RigRouting::chordsOnOff)
+        m.addItem ("Stop learning", [this] { engine.getRouting().cancelLearn(); say ("Stopped learning."); refresh(); });
+    else
+        m.addItem ("Learn: put Chords on/off on a keyboard button...", [this]
+                   {
+                       learningLive = -1;
+                       engine.getRouting().learn (RigRouting::chordsOnOff);
+                       say ("Press the button on your keyboard for Chords on/off.");
+                       refresh();
+                   });
+    m.addItem ("Forget its button" + (cc >= 0 ? " (CC " + juce::String (cc) + ")" : juce::String()), cc >= 0, false, [this]
+               {
+                   engine.getRouting().forget (RigRouting::chordsOnOff);
+                   say ("Chords on/off's button forgotten.");
+                   refresh();
+               });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&chordsOnButton));
 }
 
 void ChordsView::pressHold()
@@ -1756,6 +1819,8 @@ void ChordsView::resized()
     {
         auto top = r.removeFromTop (34);
         titleArea = top.removeFromLeft (104);
+        chordsOnButton.setBounds (top.removeFromLeft (118).reduced (0, 1));
+        top.removeFromLeft (12);
         // What's left shared out: where they play gets the most room.
         const int spare = juce::jmax (0, top.getWidth() - (48 + 6 + 8 + 44 + 6 + 10 + 64 + 8));
         labelAreas[0] = top.removeFromLeft (48);

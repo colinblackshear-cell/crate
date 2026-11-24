@@ -50,6 +50,7 @@ public:
         liveOctaveDown, liveOctaveUp, liveKeyHome, // buttons: its octave, and back to its own key
         noteRepeatHold,                            // a button HELD: repeat is on while it's down (CC 64 up: the sustain pedal)
         noteRepeatRate,                            // a button: each press steps to the next repeat rate
+        chordsOnOff,                               // a button: the chord builder's chords on / plain notes
         numControls
     };
     static juce::String controlName (int control);
