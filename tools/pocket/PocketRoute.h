@@ -26,8 +26,8 @@ int routeLatencySamples (double sampleRate);
 
 const char* routeName (Route);
 
-// Which mic records. Picked again after every route change: a wired headset's own mic when it has one
-// (EarPods, a USB-C headset, or a USB interface's line in), otherwise the phone's built-in mic. A
+// Which mic records. Picked again after every route change: a 3.5 mm headset's own mic (or a line in)
+// when it has one, otherwise the phone's built-in mic. USB-C headphones always use the phone's mic. A
 // Bluetooth mic is never picked: on AirPods it would drop the whole sound to phone-call quality, so
 // the beat stays in full quality in your ears and the phone's mic records you. Returns true when it
 // changed the input. Message thread; does nothing on a computer.

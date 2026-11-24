@@ -47,7 +47,7 @@ public:
 
     // The mic after a route change (headphones in or out, AirPods). Message thread.
     //   inputDead:     the mic is allowed but the device opened with no live input channel
-    //   silentSeconds: how long the live input has given exact zeros (a real mic never does)
+    //   silentSeconds: how long the live input has given silence (below -80 dB)
     //   reopenInput:   closes and reopens the device with the mic on; never while a take records
     bool inputDead() const;
     double silentSeconds() const { return (double) silentRun.load() / sampleRate; }

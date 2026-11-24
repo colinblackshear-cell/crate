@@ -152,7 +152,7 @@ void PocketAudio::audioDeviceIOCallbackWithContext (const float* const* in, int 
             p = juce::jmax (p, std::abs (in[0][i]));
         if (p > peak.load())
             peak = p;
-        if (p == 0.0f)
+        if (p < 1.0e-4f)   // below -80 dB: silence or a dead input's hiss, never a real mic in a room
             silentRun += n;
         else
             silentRun = 0;

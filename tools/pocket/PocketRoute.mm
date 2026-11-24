@@ -16,10 +16,11 @@ std::function<void()>* routeChanged = nullptr;   // lives for the app's life
 id routeObserver = nil;                           // the notification centre holds it until removed
 std::string silentMic;                            // UID of a headset mic heard giving only silence
 
+// A USB-C "mic" is left out on purpose: USB-C headphones and USB-C-to-jack adapters often report one
+// that sends silence or hiss, and iOS picks it the moment they're plugged in. The phone's mic records.
 bool isWiredMic (NSString* t)
 {
     return [t isEqualToString: AVAudioSessionPortHeadsetMic]
-        || [t isEqualToString: AVAudioSessionPortUSBAudio]
         || [t isEqualToString: AVAudioSessionPortLineIn];
 }
 
