@@ -54,14 +54,24 @@ jobs:
 
       # Programs and sounds saved by an MPC2000XL, from the vMPC2000XL emulator's demo kits.
       # The MPC format tests read and rewrite each one byte for byte.
+      # On Colin's Mac they're downloaded once and kept; a download is tried up to 3 times.
       - name: Get real MPC files for the tests
         run: |
-          mkdir fixtures && cd fixtures
-          git init -q
-          git remote add origin https://github.com/izzyreal/mpc.git
-          git sparse-checkout set resources/demodata
-          git fetch -q --depth 1 --filter=blob:none origin 615418ff54c104a5f37cc31880ecf1dd6d76c0c7
-          git checkout -q FETCH_HEAD
+          get() {
+            rm -rf "$1" && mkdir -p "$1" && cd "$1"
+            git init -q
+            git remote add origin https://github.com/izzyreal/mpc.git
+            git sparse-checkout set resources/demodata
+            git fetch -q --depth 1 --filter=blob:none origin 615418ff54c104a5f37cc31880ecf1dd6d76c0c7
+            git checkout -q FETCH_HEAD
+            touch .complete
+          }
+          dest="$GITHUB_WORKSPACE/fixtures"
+          if [ "$RUNNER_ENVIRONMENT" = "self-hosted" ]; then dest="$HOME/kaleidobox-ci/mpc-fixtures"; fi
+          if [ ! -e "$dest/.complete" ]; then
+            for try in 1 2 3; do (get "$dest") && break; [ "$try" = 3 ] && exit 1; sleep 15; done
+          fi
+          if [ "$dest" != "$GITHUB_WORKSPACE/fixtures" ]; then rm -rf fixtures && ln -s "$dest" fixtures; fi
 
       - name: Configure
         run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="$ARCHS"
