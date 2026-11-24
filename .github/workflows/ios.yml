@@ -11,11 +11,46 @@ on:
       - '.github/workflows/ios.yml'
   workflow_dispatch:
 
+# A new push to a pull request stops that pull request's older iPhone build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Colin's own Mac (the "kaleidobox-mac" runner) when it is online, otherwise GitHub's macos-15.
+  # Pull requests from forks always use GitHub's Mac. (Same check as in build.yml.)
+  pick-mac:
+    runs-on: ubuntu-24.04
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.KB_RUNNER_STATUS_TOKEN }}
+          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          runner='"macos-15"'
+          if [ "$TRUSTED" = "true" ] && [ -n "$GH_TOKEN" ]; then
+            online=$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" \
+              --jq '[.runners[] | select(.status == "online") | select(any(.labels[]; .name == "kaleidobox-mac"))] | length' || echo 0)
+            if [ "${online:-0}" -gt 0 ]; then runner='["self-hosted","kaleidobox-mac"]'; fi
+          fi
+          echo "Building on: $runner"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+
   ios:
-    runs-on: macos-15
+    needs: pick-mac
+    runs-on: ${{ fromJSON(needs.pick-mac.outputs.runner) }}
     steps:
       - uses: actions/checkout@v4
+
+      # On Colin's Mac the build folder lives outside the checkout, so each build only
+      # recompiles what changed.
+      - name: Keep the build folder between runs (Colin's Mac)
+        if: runner.environment == 'self-hosted'
+        run: |
+          mkdir -p "$HOME/kaleidobox-ci/ios-build"
+          rm -rf build-ios && ln -s "$HOME/kaleidobox-ci/ios-build" build-ios
 
       # Two global classes with one name in the phone app break the one-definition rule
       # (the DRUMS grid once ran the MPC grid's code and froze the phone).

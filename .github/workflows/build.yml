@@ -6,11 +6,51 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push to a pull request stops that pull request's older build, so stale builds don't hold
+# up the queue. On main, a newer push replaces a build that is still waiting to start.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Picks the Mac to build on: Colin's own Mac (the "kaleidobox-mac" runner) when it is online,
+  # otherwise GitHub's macos-15. Pull requests from forks always use GitHub's Mac.
+  pick-mac:
+    runs-on: ubuntu-24.04
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.KB_RUNNER_STATUS_TOKEN }}
+          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          runner='"macos-15"'
+          if [ "$TRUSTED" = "true" ] && [ -n "$GH_TOKEN" ]; then
+            online=$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" \
+              --jq '[.runners[] | select(.status == "online") | select(any(.labels[]; .name == "kaleidobox-mac"))] | length' || echo 0)
+            if [ "${online:-0}" -gt 0 ]; then runner='["self-hosted","kaleidobox-mac"]'; fi
+          fi
+          echo "Building on: $runner"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+
   mac:
-    runs-on: macos-15
+    needs: pick-mac
+    runs-on: ${{ fromJSON(needs.pick-mac.outputs.runner) }}
+    env:
+      # Pull requests build for Apple Silicon only (about half the time). Main and hand runs
+      # build the universal (Apple Silicon + Intel) plugins.
+      ARCHS: ${{ github.event_name == 'pull_request' && 'arm64' || 'arm64;x86_64' }}
     steps:
       - uses: actions/checkout@v4
+
+      # On Colin's Mac the build folder lives outside the checkout, so each build only
+      # recompiles what changed.
+      - name: Keep the build folder between runs (Colin's Mac)
+        if: runner.environment == 'self-hosted'
+        run: |
+          mkdir -p "$HOME/kaleidobox-ci/mac-build"
+          rm -rf build && ln -s "$HOME/kaleidobox-ci/mac-build" build
 
       # Programs and sounds saved by an MPC2000XL, from the vMPC2000XL emulator's demo kits.
       # The MPC format tests read and rewrite each one byte for byte.
@@ -24,13 +64,29 @@ jobs:
           git checkout -q FETCH_HEAD
 
       - name: Configure
-        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="$ARCHS"
 
       - name: Build
         run: cmake --build build --config Release -- -quiet
 
+      # On Colin's Mac the tests get a throwaway home folder, so they never touch his real
+      # ~/Music/Crate or settings.
       - name: Run tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = "self-hosted" ]; then
+            real_home="$HOME"
+            sandbox="$RUNNER_TEMP/test-home"
+            rm -rf "$sandbox" && mkdir -p "$sandbox/Music" "$sandbox/Documents" "$sandbox/Library/Application Support"
+            touch "$RUNNER_TEMP/tests-started"
+            HOME="$sandbox" CFFIXED_USER_HOME="$sandbox" ctest --test-dir build -C Release --output-on-failure
+            changed=$(find "$real_home/Music/Crate" -newer "$RUNNER_TEMP/tests-started" 2>/dev/null | head -20)
+            if [ -n "$changed" ]; then
+              echo "::warning::Files in ~/Music/Crate changed while the tests ran (check they were not the tests):"
+              echo "$changed"
+            fi
+          else
+            ctest --test-dir build -C Release --output-on-failure
+          fi
         env:
           MPC_FIXTURES: ${{ github.workspace }}/fixtures/resources/demodata
 
@@ -67,6 +123,23 @@ jobs:
           cd "$GITHUB_WORKSPACE/build/tools/rig/KaleidoboxInputPlugin_artefacts/Release"
           codesign --force --deep -s - "AU/Kaleidobox Input.component"
 
+      # On Colin's Mac, set aside any copies of these plugins in his own Plug-Ins folder first;
+      # the step after the check puts them back (even if the check fails).
+      - name: Set aside your own plugin copies (Colin's Mac)
+        if: runner.environment == 'self-hosted'
+        run: |
+          comps="$HOME/Library/Audio/Plug-Ins/Components"
+          stash="$HOME/kaleidobox-ci/au-stash"
+          mkdir -p "$comps" "$stash"
+          # .active means a check is under way (or one was cut off): his copies are already in the stash.
+          if [ ! -e "$stash/.active" ]; then
+            for n in "Sample Editor" "Sample Editor Instrument" "MPC Bank Builder" "Kaleidobox" "Kaleidobox Input" \
+                     "Kaleidobox MPC" "Kaleidobox Bass" "Kaleidobox Synth" "Kaleidobox Drums" "Kaleidobox Vocoder"; do
+              if [ -e "$comps/$n.component" ]; then mv "$comps/$n.component" "$stash/"; fi
+            done
+            touch "$stash/.active"
+          fi
+
       - name: Validate the Audio Unit (what Logic checks)
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
@@ -98,6 +171,20 @@ jobs:
           auval -v aumu CSyn Cblk
           auval -v aumu CDrm Cblk
           auval -v aumf CRgV Cblk
+
+      - name: Put your own plugin copies back (Colin's Mac)
+        if: always() && runner.environment == 'self-hosted'
+        run: |
+          comps="$HOME/Library/Audio/Plug-Ins/Components"
+          stash="$HOME/kaleidobox-ci/au-stash"
+          [ -e "$stash/.active" ] || exit 0
+          for n in "Sample Editor" "Sample Editor Instrument" "MPC Bank Builder" "Kaleidobox" "Kaleidobox Input" \
+                   "Kaleidobox MPC" "Kaleidobox Bass" "Kaleidobox Synth" "Kaleidobox Drums" "Kaleidobox Vocoder"; do
+            rm -rf "$comps/$n.component"
+            if [ -e "$stash/$n.component" ]; then mv "$stash/$n.component" "$comps/"; fi
+          done
+          rm -f "$stash/.active"
+          killall -9 AudioComponentRegistrar || true
 
       - name: Package
         run: |
