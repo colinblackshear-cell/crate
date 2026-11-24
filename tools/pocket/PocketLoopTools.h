@@ -87,6 +87,15 @@ Edited fitTake (const LoopTake&, const LayerFxState&, double fromBeat, double to
 Edited quantizeTake (const LoopTake&, const LayerFxState&, const LoopQuantize&, double bpm);
 // The take at a new tempo (stretched from its origin, or rendered again from its notes). Null when it's already there.
 SharedTake tempoTake (const LoopTake&, double bpm);
+// LOOP LAB's WARP. warpSourceOf: the take's warp, or a fresh one (its recording, a straight plan) when it has none.
+// warpTake renders the take's recording by `plan` at the tempo: the new take carries the plan (one UNDO step each).
+// originalTake: the recording as it was at the tempo (ORIGINAL), carrying a straight plan.
+WarpSource warpSourceOf (const LoopTake&);
+Edited warpTake (const LoopTake&, const LayerFxState&, const crate::Warp::Plan&, double bpm);
+SharedTake originalTake (const LoopTake&, double bpm);
+// The hits in the recording (in its beats), and the tempo they sound like (0 = can't tell).
+std::vector<double> warpHits (const WarpSource&, double sampleRate, float sensitivity);
+double warpSoundsLike (const WarpSource&, const std::vector<double>& hits, double sampleRate, double songBpm);
 // The tempo a take plays at its own pitch.
 double nativeBpm (const LoopTake&);
 

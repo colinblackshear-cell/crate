@@ -274,8 +274,8 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         auto run = [&] (int item, const juce::String& what)
         {
             loopsScreen.holdLayer (0);
-            if (! holdCard.isOpen() || holdCard.itemCount() != 7)
-                return problems.add ("Hold menu on a layer: " + what + ": the menu didn't open with its 7 rows");
+            if (! holdCard.isOpen() || holdCard.itemCount() != 8)
+                return problems.add ("Hold menu on a layer: " + what + ": the menu didn't open with its 8 rows");
             holdCard.choose (item);
             if (holdCard.isOpen())
                 problems.add ("Hold menu on a layer: " + what + ": the menu stayed open after a pick");
@@ -285,9 +285,9 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect (loopsScreen.selectedLayer() == 0, "Hold menu on a layer: the layer isn't picked, so its panel doesn't show it");
         const auto spec = holdCard.current();
         holdCard.close();
-        expect (spec.items.size() == 7 && spec.items[0].text.startsWith ("IN / OUT") && spec.items[1].text == "FIT" && spec.items[2].text == "EFFECTS"
-                    && spec.items[3].text == "DUB OVER IT" && spec.items[4].text.startsWith ("OPEN") && spec.items[5].text == "SEND TO MAC"
-                    && spec.items[6].text == "CLEAR" && spec.items[6].danger, "Hold menu on a layer: the rows are not the agreed ones");
+        expect (spec.items.size() == 8 && spec.items[0].text.startsWith ("IN / OUT") && spec.items[1].text == "FIT" && spec.items[2].text == "EFFECTS"
+                    && spec.items[3].text == "WARP" && spec.items[4].text == "DUB OVER IT" && spec.items[5].text.startsWith ("OPEN") && spec.items[6].text == "SEND TO MAC"
+                    && spec.items[7].text == "CLEAR" && spec.items[7].danger, "Hold menu on a layer: the rows are not the agreed ones");
         run (0, "IN / OUT");
         expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::shapePage, "Hold menu on a layer: IN / OUT didn't open the editor");
         loopsScreen.closeEditor();
@@ -297,21 +297,24 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         run (2, "EFFECTS");
         expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::effectsPage, "Hold menu on a layer: EFFECTS didn't open the effects page");
         loopsScreen.closeEditor();
-        run (4, "OPEN");
+        run (3, "WARP");
+        expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::warpPage, "Hold menu on a layer: WARP didn't open the Warp page");
+        loopsScreen.closeEditor();
+        run (5, "OPEN");
         expect (page == Page::tool && tool == Tool::drums, "Hold menu on a layer: OPEN DRUMS didn't open DRUMS");
         showTool (Tool::loops, false);
-        run (5, "SEND TO MAC");
+        run (6, "SEND TO MAC");
         expect (sendOpen, "Hold menu on a layer: SEND TO MAC didn't open the Send to Mac sheet");
         closeSendSheet();
-        run (3, "DUB OVER IT");
+        run (4, "DUB OVER IT");
         pump (2);
         expect (L.state (0) == LoopState::overdubWait || L.state (0) == LoopState::overdubbing, "Hold menu on a layer: DUB OVER IT didn't start a dub");
         loopsScreen.holdLayer (0);
-        expect (holdCard.current().items[3].text == "STOP DUB", "Hold menu on a layer: the dub row doesn't turn into STOP DUB");
-        holdCard.choose (3);
+        expect (holdCard.current().items[4].text == "STOP DUB", "Hold menu on a layer: the dub row doesn't turn into STOP DUB");
+        holdCard.choose (4);
         pump (500);
         expect (L.state (0) == LoopState::playing, "Hold menu on a layer: STOP DUB didn't end the dub");
-        run (6, "CLEAR");
+        run (7, "CLEAR");
         pump (4);
         expect (L.state (0) == LoopState::empty, "Hold menu on a layer: CLEAR didn't clear the layer");
         loopsScreen.undo();
@@ -320,7 +323,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         // an empty layer has no menu
         loopsScreen.holdLayer (5);
         expect (! holdCard.isOpen(), "Hold menu: an empty layer opened a menu");
-        report << "hold menu on a layer: IN / OUT, FIT (QUANTIZE on note layers), EFFECTS, DUB OVER IT (then STOP DUB), OPEN, SEND TO MAC and CLEAR each run the panel's action; "
+        report << "hold menu on a layer: IN / OUT, FIT (QUANTIZE on note layers), EFFECTS, WARP, DUB OVER IT (then STOP DUB), OPEN, SEND TO MAC and CLEAR each run the panel's action; "
                   "CLEAR then UNDO brings the layer back\n";
         settle();
     }

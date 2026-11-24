@@ -3469,6 +3469,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("03e-loop-editor-shape-notes.png"));
     loopsScreen.showEditorDemo (2);
     savePng (folder.getChildFile ("03f-loop-editor-effects.png"));
+    loopsScreen.showEditorDemo (3);
+    savePng (folder.getChildFile ("03g-loop-editor-warp.png"));
     loopsScreen.leave();
 
     // DRUMS: the drum machine with a beat in it (a new song's grid is empty: this one is filled for the picture)
@@ -4956,6 +4958,75 @@ juce::String PocketApp::runLoopEditChecks (juce::String& report)
         if (! allThere || t == nullptr || std::abs (t->lengthBeats.load() - 16.0) > 1.0e-9 || std::abs (hz - 440.0) > 4.4)
             problems.add ("after a BPM change the layers didn't follow at their own pitch");
         beats.setBpm (bpm);
+    }
+
+    // WARP: tone bursts a little off the beat on layer 5, the editor's Warp page driven by its test hooks
+    {
+        auto bad = [&problems] (bool ok, const juce::String& what) { if (! ok) problems.add ("WARP: " + what); };
+        const int n4 = (int) std::llround (4.0 * spb);
+        auto take = LoopsEngine::makeTake (n4, sr);
+        for (double at : { 0.0, 1.12, 2.08, 2.93 })
+        {
+            const int start = (int) (at * spb);
+            for (int i = 0; i < 4000 && start + i < n4; ++i)
+                take->data[(size_t) (start + i)] = 0.6f * std::exp (-(float) i / 1200.0f) * std::sin (0.047f * (float) i);
+        }
+        take->length = n4;
+        take->lengthBeats = 4.0;
+        take->tool = (int) LayerTool::mic;
+        L.setLayer (4, take, false);
+        pump (4096);
+        loopsScreen.openEditor (4, LoopEditSheet::warpPage);
+        auto& ed = loopsScreen.editorSheet();
+        bad (ed.isVisible() && ed.page() == LoopEditSheet::warpPage && ed.hitCount() >= 3, "the editor opened on the Warp page with its hits (" + juce::String (ed.hitCount()) + ")");
+
+        ed.pressWarpSnap();
+        pump (2048);
+        auto t = L.takeOf (4);
+        const bool snapped = t != nullptr && t->warp != nullptr && ! t->warp->plan.markers.empty() && ! ed.warpPlan().markers.empty();
+        bad (snapped, "SNAP gave the take markers and a warp");
+
+        ed.pressStyle (crate::Warp::Style::beats);
+        pump (2048);
+        t = L.takeOf (4);
+        bad (t != nullptr && t->warp != nullptr && t->warp->plan.settings.style == crate::Warp::Style::beats && ed.warpPlan().settings.style == crate::Warp::Style::beats, "BEATS style");
+        loopsScreen.undo();
+        pump (2048);
+        t = L.takeOf (4);
+        bad (t != nullptr && t->warp != nullptr && t->warp->plan.settings.style == crate::Warp::Style::voice && ed.warpPlan().settings.style == crate::Warp::Style::voice, "UNDO back to VOICE");
+
+        ed.pressOriginal();
+        const bool orig = loopsScreen.playingOriginal (4);
+        ed.pressOriginal();
+        const bool back = ! loopsScreen.playingOriginal (4);
+        bad (orig && back, "ORIGINAL on and off again");
+
+        const int printed = ed.pressPrint();
+        bad (printed >= 0 && printed != 4 && L.takeOf (printed) != nullptr, "PRINT filled another layer");
+
+        ed.pressFitBars (2);
+        pump (2048);
+        t = L.takeOf (4);
+        bad (t != nullptr && std::abs (t->lengthBeats.load() - 8.0) < 1.0e-9, "FIT 2 BARS gave 8 beats");
+
+        beats.setBpm (120.0);
+        for (int g = 0; g < 24; ++g)
+        {
+            loopsScreen.followTempo();
+            pump (1024);
+        }
+        t = L.takeOf (4);
+        const int want = (int) std::llround (8.0 * 60.0 / 120.0 * sr);
+        bad (t != nullptr && t->warp != nullptr && std::abs (t->warp->plan.targetBeats - 8.0) < 1.0e-9 && t->length.load() == want,
+             "after a tempo change the warp stays at 8 beats (length " + juce::String (t != nullptr ? t->length.load() : 0) + ", expected " + juce::String (want) + ")");
+        report << "WARP: " << ed.hitCount() << " hits, snapped " << (snapped ? "yes" : "NO") << ", original " << (orig && back ? "ok" : "NO") << ", printed onto layer "
+               << printed + 1 << ", after 120 BPM " << (t != nullptr ? t->length.load() : 0) << " samples (expected " << want << ")\n";
+        beats.setBpm (bpm);
+        for (int g = 0; g < 24; ++g)
+        {
+            loopsScreen.followTempo();
+            pump (1024);
+        }
     }
 
     loopsScreen.setSyncJobs (false);

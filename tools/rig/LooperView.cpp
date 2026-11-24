@@ -199,7 +199,7 @@ public:
 
         fx.setTooltip ("This loop's own effects: filter, drive, crush, delay, reverb and beat repeat. Lit when any are on.");
         fx.onClick = [this] { owner.showFx (index); };
-        wave.onDoubleClick = [this] { owner.editLoop (index); };
+        wave.onDoubleClick = [this] { owner.openLab (index); };
         wave.setInterceptsMouseClicks (true, false);
         more.setTooltip ("Edit the loop's start and end, undo an overdub, clear it, import a loop or a song, save it as a WAV, "
                          "or put Record and Mute on your keyboard.");
@@ -415,6 +415,8 @@ private:
         menu.addSeparator();
         menu.addItem ("Import a loop, stretched to Kaleidobox's tempo...", [this] { importFile (false); });
         menu.addItem ("Import a song or loop, and set Kaleidobox's tempo to it...", [this] { importFile (true); });
+        menu.addItem ("Open in Loop Lab: warp, tempo, pitch...", engine.getLooper().getState (index) == RigLooper::State::playing, false,
+                      [this] { owner.openLab (index); });
         menu.addItem ("Edit where it starts and ends...", engine.getLooper().getState (index) == RigLooper::State::playing, false,
                       [this] { owner.editLoop (index); });
         menu.addItem ("Save this loop as a WAV...", engine.getLooper().getState (index) == RigLooper::State::playing, false, [this] { exportFile(); });
@@ -1174,24 +1176,33 @@ void LooperView::showFx (int layer)
     resized();
 }
 
-void LooperView::editLoop (int layer)
+void LooperView::editLoop (int layer) { openLabOn (layer, LoopLab::inOutPage); }
+
+void LooperView::openLab (int layer) { openLabOn (layer, LoopLab::lastPageUsed()); }
+
+void LooperView::openLabOn (int layer, LoopLab::Page labPage)
 {
     if (songGrid != nullptr)
         showSongGrid (false);
     if (timeline != nullptr)
         showTimeline (false);
     if (editor != nullptr && editor->getLayer() == layer)
+    {
+        if (editor->getPage() != labPage)
+            editor->showPage (labPage);
         return;
+    }
     closeEditor();
     if (engine.getLooper().getState (layer) != RigLooper::State::playing)
         return;
     if (juce::isPositiveAndBelow (layer, RigLooper::kLayers) && layer / kRowsPerPage != page)
-        showPage (layer / kRowsPerPage);   // its row stays in view over the editor
-    auto e = std::make_unique<LoopEditor> (engine, layer);
+        showPage (layer / kRowsPerPage);   // its row stays in view over the lab
+    auto e = std::make_unique<LoopLab> (engine, layer, labPage);
     if (! e->isValid())
         return;
     e->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LooperView> (this)]
                                                            { if (safe != nullptr) safe->closeEditor(); }); };
+    e->onSay = [this] (const juce::String& text) { say (text); };
     editor = std::move (e);
     addAndMakeVisible (*editor);
     resized();
@@ -1243,7 +1254,7 @@ void LooperView::paint (juce::Graphics& g)
     h.removeFromRight (wGap);
     heading ("Effect slot", h.removeFromRight (wFx));
     h.removeFromRight (wGap);
-    heading (juce::String::fromUTF8 ("Waveform \xc2\xb7 double-click to trim start / end"), h);
+    heading (juce::String::fromUTF8 ("Waveform \xc2\xb7 double-click to open Loop Lab"), h);
 }
 
 void LooperView::resized()
@@ -1362,7 +1373,7 @@ void LooperView::resized()
             bounds = bounds.withTrimmedBottom (136);
         const auto* row = rows[editor->getLayer()];
         const int below = row->getBottom() + 6;
-        const int height = juce::jmin (bounds.getHeight(), 370);
+        const int height = juce::jmin (bounds.getHeight(), editor->getPage() == LoopLab::warpPage ? 440 : 410);
         if (bounds.getBottom() - below >= height)
             bounds = bounds.withTop (below).withHeight (height);
         else

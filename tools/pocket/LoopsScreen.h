@@ -9,6 +9,8 @@
 #include "PocketSettings.h"
 #include "PocketTheme.h"
 
+#include <optional>
+
 // The LOOPS tool: where a take comes from (mic, drums, vocoder, mix), a bar ruler with the playhead, and eight
 // layers, each showing the tool that made it (its icon and colour), its wave (or its notes) and M. Tap a layer and
 // the panel under the rows works on it: IN / OUT, QUANTIZE (layers made from notes) or FIT (audio), EFFECTS, DUB,
@@ -93,6 +95,15 @@ public:
     void setSyncJobs (bool s) { syncJobs = s; }
     bool working() const { return jobLayer >= 0; }
     void followTempo();                     // stretches layers that aren't at the song's tempo (the timer does this)
+
+    // LOOP LAB's WARP (the editor's Warp page). warpLayer renders the layer's recording by `plan` on the worker: one
+    // UNDO step. One asked for while the last renders waits and runs after it (only the newest one waits).
+    void warpLayer (int layer, const crate::Warp::Plan&);
+    // ORIGINAL: the recording as it was (true), or the warped loop again (false). No UNDO step.
+    void setOriginal (int layer, bool original);
+    bool playingOriginal (int layer) const;
+    // PRINT: the loop as it plays now onto the next empty layer, same start (one UNDO step). -1 when none is empty.
+    int printLayer (int layer);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -179,6 +190,8 @@ private:
     bool jobUndo = false;
     const pocket::LoopTake* jobWas = nullptr;
     double shownBpm = 0.0;
+    std::optional<std::pair<int, crate::Warp::Plan>> pendingWarp;
+    std::array<pocket::SharedTake, pocket::kLoopLayers> abWarped, abOriginal;   // ORIGINAL's two takes
     juce::uint32 bpmChangedAt = 0;
 
     struct Saved { const pocket::LoopTake* take = nullptr; int version = -1; bool present = false, mute = false; juce::uint32 fx = 0, board = 0; };
