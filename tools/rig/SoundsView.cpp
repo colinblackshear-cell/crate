@@ -18,7 +18,7 @@ SoundsView::SoundsView (RigEngine& e, juce::File bankHome)
     bank.addChangeListener (this);
 
     addAndMakeVisible (search);
-    search.setTextToShowWhenEmpty ("Search: \"dusty kick\", \"vocal chop\", \"Fmin\"...", Theme::textDim);
+    search.setTextToShowWhenEmpty ("Search: \"dusty kick\", \"vocal chop\", \"Fmin\", \"92bpm\"...", Theme::textDim);
     search.onTextChange = [this] { filter(); };
     search.onReturnKey = [this] { list.grabKeyboardFocus(); };
 
@@ -40,7 +40,17 @@ SoundsView::SoundsView (RigEngine& e, juce::File bankHome)
     length.setSelectedId (1, juce::dontSendNotification);
     length.onChange = [this] { filter(); };
 
-    for (auto* b : { &nearTempo, &hearButton })
+    addAndMakeVisible (bpmBox);
+    bpmBox.setTextToShowWhenEmpty ("BPM", Theme::textDim);
+    bpmBox.setTooltip ("Type a tempo: 92, or a range like 90-100. Closest tempo first.");
+    bpmBox.onTextChange = [this]
+    {
+        if (bpmBox.getText().isNotEmpty())
+            nearTempo.setToggleState (false, juce::dontSendNotification);
+        filter();
+    };
+
+    for (auto* b : { &nearTempo, &hearButton, &halfDouble })
     {
         addAndMakeVisible (b);
         b->setClickingTogglesState (true);
@@ -48,7 +58,15 @@ SoundsView::SoundsView (RigEngine& e, juce::File bankHome)
         b->setColour (juce::TextButton::textColourOnId, Theme::background);
     }
     nearTempo.setTooltip ("Only loops close to Kaleidobox's tempo (or half or double it), so they stretch without sounding odd.");
-    nearTempo.onClick = [this] { filter(); };
+    nearTempo.onClick = [this]
+    {
+        if (nearTempo.getToggleState())
+            bpmBox.setText ({}, false);
+        filter();
+    };
+    halfDouble.setToggleState (false, juce::dontSendNotification);
+    halfDouble.setTooltip ("Also find loops at half or double the tempo you typed (46 or 184 for 92): they play in time too.");
+    halfDouble.onClick = [this] { filter(); };
     hearButton.setToggleState (true, juce::dontSendNotification);
     hearButton.setTooltip ("Plays each sound when you pick it (also with the arrow keys).");
 
@@ -101,6 +119,14 @@ void SoundsView::filter()
     q.kind = kind;
     q.length = length.getSelectedId() == 2 ? SoundBank::Length::loops : length.getSelectedId() == 3 ? SoundBank::Length::oneShots : SoundBank::Length::any;
     q.nearBpm = nearTempo.getToggleState() ? engine.getTransport().getBpm() : 0.0;
+    q.tempo = crate::Tempo::parse (bpmBox.getText(), halfDouble.getToggleState());
+    // What the status shows: the typed tempo, or one written into the search ("92bpm").
+    shownTempo = q.tempo;
+    if (! shownTempo.isActive())
+    {
+        auto words = q.text;
+        shownTempo = crate::Tempo::takeFromSearch (words, halfDouble.getToggleState());
+    }
     shown = bank.search (q);
     list.updateContent();
     list.repaint();
@@ -116,6 +142,8 @@ void SoundsView::timerCallback()
         text = "No folders yet: press Folders... to add yours";
     if ((int) shown.size() < bank.size() && ! bank.isScanning())
         text = juce::String ((int) shown.size()) + (shown.size() >= 2000 ? "+" : "") + " of " + text;
+    if (shownTempo.isActive())
+        text += " at " + shownTempo.describe();
     status.setText (text, juce::dontSendNotification);
 }
 
@@ -130,9 +158,9 @@ void SoundsView::paintListBoxItem (int row, juce::Graphics& g, int width, int he
     g.setColour (Theme::textDim);
     g.setFont (juce::FontOptions (12.0f));
     g.drawText (s.where, r.removeFromRight (juce::jmin (420, width / 3)), juce::Justification::centredRight, true);
-    juce::String details = juce::String (s.seconds, s.seconds < 10 ? 1 : 0) + " s";
+    juce::String details = (s.seconds < 10 ? juce::String (s.seconds, 1) : juce::String (juce::roundToInt (s.seconds))) + " s";
     if (s.bpm > 0)
-        details = juce::String (juce::roundToInt (s.bpm)) + " BPM  " + details;
+        details = juce::String (s.bpmGuessed ? "~" : "") + juce::String (juce::roundToInt (s.bpm)) + " BPM  " + details;
     if (s.key.isNotEmpty())
         details = s.key + "  " + details;
     g.drawText (details, r.removeFromRight (180), juce::Justification::centredRight);
@@ -174,6 +202,39 @@ void SoundsView::selectRow (int row)
 void SoundsView::listBoxItemDoubleClicked (int, const juce::MouseEvent&)
 {
     sendToMpc();
+}
+
+void SoundsView::listBoxItemClicked (int row, const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu() || ! juce::isPositiveAndBelow (row, (int) shown.size()))
+        return;
+    list.selectRow (row);
+    const auto s = shown[(size_t) row];
+    juce::PopupMenu menu;
+    if (s.bpm > 0)
+        menu.addItem (1, "Find sounds at " + juce::String (juce::roundToInt (s.bpm)) + " BPM");
+    menu.addItem (2, "Show in Finder");
+    menu.showMenuAsync (juce::PopupMenu::Options(),
+                        [this, s, safe = juce::Component::SafePointer<SoundsView> (this)] (int result)
+                        {
+                            if (safe == nullptr)
+                                return;
+                            if (result == 1)
+                            {
+                                nearTempo.setToggleState (false, juce::dontSendNotification);
+                                bpmBox.setText (juce::String (juce::roundToInt (s.bpm)), true);
+                            }
+                            else if (result == 2)
+                                s.file.revealToUser();
+                        });
+}
+
+void SoundsView::setBpmText (const juce::String& text)
+{
+    bpmBox.setText (text, false);
+    if (text.isNotEmpty())
+        nearTempo.setToggleState (false, juce::dontSendNotification);
+    filter();
 }
 
 bool SoundsView::keyPressed (const juce::KeyPress& key)
@@ -289,8 +350,9 @@ void SoundsView::resized()
         search.setBounds (top);
         area.removeFromTop (6);
         top = area.removeFromTop (30);
-        const int w = (top.getWidth() - 18) / 4;
-        for (auto* c : std::initializer_list<juce::Component*> { &length, &nearTempo, &hearButton, &folders })
+        const auto controls = std::initializer_list<juce::Component*> { &length, &bpmBox, &halfDouble, &nearTempo, &hearButton, &folders };
+        const int w = (top.getWidth() - 6 * ((int) controls.size() - 1)) / (int) controls.size();
+        for (auto* c : controls)
         {
             c->setBounds (top.removeFromLeft (w));
             top.removeFromLeft (6);
@@ -303,6 +365,10 @@ void SoundsView::resized()
         hearButton.setBounds (top.removeFromRight (110));
         top.removeFromRight (6);
         nearTempo.setBounds (top.removeFromRight (100));
+        top.removeFromRight (6);
+        halfDouble.setBounds (top.removeFromRight (100));
+        top.removeFromRight (6);
+        bpmBox.setBounds (top.removeFromRight (80));
         top.removeFromRight (6);
         length.setBounds (top.removeFromRight (160));
         top.removeFromRight (10);

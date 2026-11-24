@@ -145,6 +145,7 @@ private:
     void setHearMyself (bool) override;
     void micOff() override;
     void micUseChanged() override { applyMic(); }
+    double songBpm() override { return beats.drums().bpm; }
 
     //==========================================================================
     // Pages and tools

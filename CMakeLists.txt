@@ -97,6 +97,7 @@ target_sources(crate_core INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/core/SoundFx.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/SoundLibrary.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/SoundBank.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/TempoFilter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/SoundSet.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/ui/EffectsPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/ui/LibraryList.cpp

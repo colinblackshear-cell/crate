@@ -28,6 +28,8 @@ struct SoundItem
     juce::String id, name, tag, file;
     juce::Time date;
     double seconds = 0;
+    double bpm = 0;             // 0 = not known
+    bool bpmGuessed = false;    // worked out from the length, not written on the sound
     FxKnobs fx;
     std::vector<int> markers;   // chop markers, in samples
 };

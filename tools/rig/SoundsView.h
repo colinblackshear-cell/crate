@@ -4,6 +4,7 @@
 
 #include "RigEngine.h"
 #include "core/SoundBank.h"
+#include "core/TempoFilter.h"
 #include "core/ui/Theme.h"
 
 // The Sounds tab: every sample in your folders and Splice, sorted into kinds (kicks, snares,
@@ -34,12 +35,16 @@ public:
     void selectRow (int row);
     int getNumShown() const { return (int) shown.size(); }
     void filter();
+    // For tests: type a tempo into the BPM box, and read what's shown.
+    void setBpmText (const juce::String& text);
+    const SoundBank::Sound* shownAt (int row) const { return juce::isPositiveAndBelow (row, (int) shown.size()) ? &shown[(size_t) row] : nullptr; }
 
 private:
     int getNumRows() override { return (int) shown.size(); }
     void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
     void selectedRowsChanged (int lastRowSelected) override;
     void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override { filter(); }
     void timerCallback() override;
     void showFolders();
@@ -54,10 +59,11 @@ private:
     std::vector<SoundBank::Sound> shown;
     int kind = -1;
 
-    juce::TextEditor search;
+    juce::TextEditor search, bpmBox;
+    crate::Tempo::Filter shownTempo;   // the tempo the list is filtered to (typed, or written in the search)
     juce::OwnedArray<juce::TextButton> kindButtons;   // All, then each kind
     juce::ComboBox length;
-    juce::TextButton nearTempo { "Near tempo" }, folders { "Folders..." }, hearButton { "Hear on click" };
+    juce::TextButton nearTempo { "Near tempo" }, folders { "Folders..." }, hearButton { "Hear on click" }, halfDouble { "Half/double" };
     juce::ListBox list { "Sounds", this };
     juce::TextButton play { "Play" }, stop { "Stop" }, toMpc { "Onto MPC pad" }, toSampler { "Into Sampler" }, toLoop { "Onto a loop layer" };
     juce::Label status;
