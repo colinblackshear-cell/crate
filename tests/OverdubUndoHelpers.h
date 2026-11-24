@@ -20,6 +20,14 @@
 
 namespace odu
 {
+// Under the sanitizers every block is many times slower and every new shadow page is a fault:
+// tests there check memory and threads, and only report times and faults.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+constexpr bool sanitized = true;
+#else
+constexpr bool sanitized = false;
+#endif
+
 // A tone that repeats every `period` samples (a whole number of cycles in it), `samples` long.
 inline juce::AudioBuffer<float> toneLoop (int samples, int bin, int period = 256, float level = 0.1f)
 {

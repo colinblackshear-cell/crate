@@ -892,7 +892,8 @@ struct RigOverdubUndoGapTests : juce::UnitTest
             expectEquals ((int) (c.skippedLayerBlocks - skipped0), 0, "no layer's block skipped");
             if (RigLooper::kIncrementalUndo)
             {
-                expectEquals (rig.late.load(), 0, "no block's work took longer than it plays for");
+                if (! odu::sanitized)
+                    expectEquals (rig.late.load(), 0, "no block's work took longer than it plays for");
                 expectEquals ((int) c.bytes[RigLooper::wholeLoop], 0, "no whole-loop copy");
             }
         }
@@ -1070,7 +1071,7 @@ struct RigOverdubUndoWorkTests : juce::UnitTest
             });
             audio.join();
             logMessage ("  " + juce::String ((int) faults) + " page faults on the audio thread");
-            if (RigLooper::kIncrementalUndo && faults >= 0)
+            if (RigLooper::kIncrementalUndo && faults >= 0 && ! odu::sanitized)
                 expectEquals ((int) faults, 0);
         }
 

@@ -1,5 +1,11 @@
 #include "RigDirtyTestHelpers.h"
 
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+static constexpr bool sanitized = true;
+#else
+static constexpr bool sanitized = false;
+#endif
+
 // Overdub and undo with the dirty model on (the overdub/undo design's test 20): a clean show,
 // an overdub, then its undo, by swap and by restoration. The loop's version rises once at the
 // undo (and never while the capture or the restoration runs alone), a hash of an older version
@@ -48,30 +54,7 @@ public:
         r.beats (2);
         expect (settle (*e).state == DirtyState::clean, "clean before the overdub");
 
-        r.input = true;
-        looper.pressRecord (layer);
-        r.beats (2);
-        looper.pressRecord (layer);
-        r.input = false;
-        r.block();
-        // Let the capture finish (it's discretionary: a few blocks for these lengths). The
-        // capture alone never changes the version.
-        const int stopped = looper.getLayer (layer).version.load();
-        r.beats (1);
-        expectEquals (looper.getLayer (layer).version.load(), stopped, "the capture alone never changes the version");
-        expect (looper.isUndoCaptureCompleteForTests(), "the capture finished");
-        expect (looper.canUndo (layer), "the overdub has its undo");
-
-        // The hash of the overdubbed loop is asked for, and copied (the engine plays on, its
-        // timers held so the result waits); then the undo, before the model takes the result.
-        e->getDirty().resetStats();
-        int posted = 0;
-        for (int i = 0; i < 2000 && posted == 0; ++i)
-        {
-            r.block();
-            posted = e->getDirty().getStats().hashJobsPosted;
-        }
-        expect (posted > 0, "the overdubbed loop's hash was asked for");
+        // The engine played without its timers (so the dirty model asks for no hash yet).
         const auto playOnly = [&] (int blocks)
         {
             juce::AudioBuffer<float> in (2, kBlock), out (2, kBlock);
@@ -79,10 +62,36 @@ public:
             for (int i = 0; i < blocks; ++i)
                 e->process (in.getArrayOfReadPointers(), 2, out.getArrayOfWritePointers(), 2, kBlock);
         };
+
+        r.input = true;
+        looper.pressRecord (layer);
+        r.beats (2);
+        e->getDirty().resetStats();
+        looper.pressRecord (layer);
+        r.input = false;
+        playOnly (1);
+        // Let the capture finish (it's discretionary: a few blocks for these lengths). The
+        // capture alone never changes the version.
+        const int stopped = looper.getLayer (layer).version.load();
+        playOnly (50);
+        expectEquals (looper.getLayer (layer).version.load(), stopped, "the capture alone never changes the version");
+        expect (looper.isUndoCaptureCompleteForTests(), "the capture finished");
+        expect (looper.canUndo (layer), "the overdub has its undo");
+
+        // The hash of the overdubbed loop is asked for, and copied (the engine plays on, its
+        // timers held so the result waits); then the undo, before the model takes the result.
+        expectEquals (e->getDirty().getStats().hashJobsPosted, 0, "no hash asked for yet");
+        int posted = 0;
+        for (int i = 0; i < 2000 && posted == 0; ++i)
+        {
+            r.block();
+            posted = e->getDirty().getStats().hashJobsPosted;
+        }
+        expect (posted > 0, "the overdubbed loop's hash was asked for");
         for (int i = 0; i < 200 && e->getDirty().getStats().jobsStarted == 0; ++i)
             juce::Thread::sleep (2);
-        playOnly (40);                // the copy is made a slice a block
-        juce::Thread::sleep (300);    // and hashed
+        playOnly (100);   // the copy is made a slice a block
+        juce::Thread::sleep (sanitized ? 5000 : 1000);   // and hashed
         const auto counters0 = looper.getCopyCounters();
         const int before = looper.getLayer (layer).version.load();
         looper.undo (layer);
