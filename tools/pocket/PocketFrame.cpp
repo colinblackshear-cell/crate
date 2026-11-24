@@ -189,9 +189,9 @@ void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
 //==============================================================================
 juce::Rectangle<float> ThumbBar::buttonRect (int b) const
 {
-    // the mockup's proportions: BPM, CLICK, the big REC, PLAY, UNDO
-    const float x0 = 12.0f, total = (float) getWidth() - 24.0f;
-    const float weights[count] = { 62, 62, 76, 74, 62 }, gap = 7.0f;
+    // the mockup's proportions: BPM, CLICK, the big REC, PLAY, UNDO, and VISUALS at the end
+    const float x0 = 10.0f, total = (float) getWidth() - 20.0f;
+    const float weights[count] = { 62, 60, 76, 70, 64, 50 }, gap = 6.0f;
     float sum = 0;
     for (auto w : weights)
         sum += w;
@@ -294,6 +294,26 @@ void ThumbBar::paint (juce::Graphics& g)
     auto undoR = buttonRect (undo);
     drawRaised (g, undoR, Look::cream, pressed == undo, 12.0f);
     label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", "LAST TAKE", col::ink, 18.0f);
+
+    // VISUALS: a little kaleidoscope of the tools' colours; amber while the light show is on.
+    {
+        auto r = buttonRect (visuals);
+        drawRaised (g, r, s.visuals ? Look::amber : Look::cream, pressed == visuals, 12.0f);
+        auto body = r.withTrimmedBottom (3).translated (0, pressed == visuals ? 2.0f : 0.0f);
+        const auto c = body.getCentre().translated (0, -6.0f);
+        const Tool petals[6] { Tool::drums, Tool::pads, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone };
+        for (int i = 0; i < 6; ++i)
+        {
+            const float a = juce::MathConstants<float>::twoPi * (float) i / 6.0f;
+            const auto p = c.translated (std::cos (a) * 7.0f, std::sin (a) * 7.0f);
+            g.setColour (toolColour (petals[i]));
+            g.fillEllipse (p.x - 4.0f, p.y - 4.0f, 8.0f, 8.0f);
+        }
+        g.setColour (col::ink);
+        g.fillEllipse (c.x - 2.5f, c.y - 2.5f, 5.0f, 5.0f);
+        g.setFont (spaced (condensedBold (11.0f), 0.06f));
+        g.drawText ("VISUALS", body.withTrimmedTop (body.getHeight() * 0.62f), juce::Justification::centredTop);
+    }
 }
 
 //==============================================================================

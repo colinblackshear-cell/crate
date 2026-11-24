@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "core/Audio.h"
+#include "core/visuals/VisualTap.h"
 
 // The phone's sound card: records the mic straight to a WAV file, plays a stretch of a sound, and
 // measures the input level for the meter.
@@ -43,6 +44,9 @@ public:
     // latency, in samples, for the takes' latency compensation. Ignored when <= 0. Message thread.
     void updateLatency (int samples);
     bool hasOutputDevice() const { return running; }
+
+    // Kaleidobox Visuals' ears: a copy of what plays out (only while the picture is open).
+    crate::visuals::VisualTap visualTap;
 
     // Playback of `audio` from sample `start` up to `end`.
     void play (crate::SharedAudio audio, int start, int end);

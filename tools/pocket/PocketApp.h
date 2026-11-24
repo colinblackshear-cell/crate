@@ -31,6 +31,7 @@
 #include "PocketKey.h"
 #include "PocketIntro.h"
 #include "PocketLesson.h"
+#include "core/visuals/VisualsView.h"
 
 // The whole phone app, tool first: a slim header (the menu icon and the song, the bar and where the next take goes,
 // the Mac link), the tool on screen, the thumb bar (BPM, CLICK, REC, PLAY, UNDO) and the tool row (LOOPS,
@@ -185,6 +186,9 @@ private:
     //==========================================================================
     // Recording: one REC for every tool
     void thumbPressed (int button);
+    // Kaleidobox Visuals: the light show over the screen (the thumb bar's VISUALS), above the thumb bar.
+    void showVisuals (bool);
+    bool visualsShown() const { return visualsView != nullptr; }
     void recPressed();
     bool recBusy() const;
     void stopRec();
@@ -328,6 +332,8 @@ private:
     DroneScreen droneScreen;
     std::unique_ptr<EffectsScreen> effects;
     PocketAudio audio;
+    crate::visuals::VisualState visualState;
+    std::unique_ptr<crate::visuals::VisualsView> visualsView;   // after the sound card: it listens to its tap
     EffectsSheet sheet;
     PadSheet padSheet;
     TempoSheet tempoSheet;
