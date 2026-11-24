@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <memory>
 
 // The Rig's looper: sixteen layers of sound recorded live, in time with the Rig's clock.
 //
@@ -51,6 +52,10 @@ public:
     static constexpr int kCopyPageShift = 10, kCopyPageSamples = 1 << kCopyPageShift;
     static constexpr int kCopySpeed = 1024, kCopyMinSlice = 1 << 15, kCopyMaxSlice = 1 << 20, kCopyRounds = 3;
     static constexpr juce::uint32 kStallFloorMs = 1000, kStallCapMs = 5000;
+    // The waveform each layer keeps for the window (see readPeaks): kPeakBins loudness bins, each
+    // the loudest sample of 2^shift samples of the loop. A loop takes from half to all of them, so
+    // at least 8192 for any loop: about one a pixel for the Timeline's widest (64 bars, zoomed in).
+    static constexpr int kPeakBins = 16384;
 
     enum class State { empty, armed, recording, playing, overdubbing };
     // line: the Input strip (a guitar, keytar... on your interface, through its effects). New
@@ -140,6 +145,23 @@ public:
             int next = 0, credit = 0;   // credit: samples of copying owed, short of a page
         };
         Snapshot snap;
+
+        // The loop's waveform, for the window: made once, never moved, so readPeaks can read it
+        // at any time without the lock (only atomics). One writer at a time, always holding `lock`
+        // (the audio thread as it records and overdubs, or whoever puts a new sound in). `seq` is
+        // odd while the whole table is being rewritten, so a reader can tell it changed under it.
+        struct PeakTable
+        {
+            PeakTable();
+            std::unique_ptr<std::atomic<float>[]> bins;   // kPeakBins
+            std::atomic<int> shift { 0 };                 // each bin is 2^shift samples
+            std::atomic<int> covered { 0 };               // samples of the loop it holds
+            std::atomic<juce::uint32> seq { 0 };
+        };
+        PeakTable peaks;
+        // The waveform of swapAudio, made by queueLayerAudio, put in with it (under `lock`).
+        std::unique_ptr<float[]> swapPeaks { new float[(size_t) kPeakBins]() };
+        int swapPeakShift = 0, swapPeakCovered = 0;
     };
 
     // Ways a playing loop can be bent, live: backwards, at half speed (an octave down, like a
@@ -245,8 +267,15 @@ public:
     static inline std::atomic<bool> copyUnderLockForTests { false };
     static inline std::atomic<int> copySliceForTests { 0 };
     // Message thread: the loop's loudness in `count` slices, for drawing it (also while it
-    // records). Reads without locking: the audio thread only ever changes the samples.
+    // records): each the loudest sample in that slice (up to 1), to the nearest bin of the
+    // layer's waveform. Reads only that waveform, never the loop, so it needs no lock.
     std::vector<float> readPeaks (int layer, int count) const;
+    // Tests only: the most bins of the waveforms any one layer's block has touched since the
+    // last call (it starts again from 0). Never more than kMaxPeakOpsPerBlock.
+    int takePeakOpsForTests() { return statPeakOps.exchange (0); }
+    // A block's waveform work on a layer, however long the loop: a bin per sample it writes, and
+    // at most a few whole-table steps (a clear, an undo, an overdub starting, a swap, a fold).
+    static constexpr int kMaxPeakOpsPerBlock = 4096 + 8 * kPeakBins;
     // Message thread: empties a layer now, dropping any presses not yet handled (loading a show).
     void reset (int layer);
     // Message thread: gives an empty layer room to record again after holding a long file.
@@ -319,7 +348,7 @@ public:
                   juce::AudioBuffer<float>& out);
 
 private:
-    void handleRequests (Layer&, int index, const Clock&, bool& wantsPlay);
+    void handleRequests (Layer&, int index, const Clock&, bool& wantsPlay, int& peakOps);
 
     // The copy (copyLayerAudio). Snapshot states:
     enum SnapState { snapIdle, snapPosted, snapActive, snapDone, snapAborted, snapMismatch, snapNothing };
@@ -345,12 +374,19 @@ private:
     bool audioRunningElsewhere() const;
     juce::uint32 stallLimitMs() const;
 
-    void finishRecording (Layer&);
+    // The waveform (Layer::peaks); each returns the bins it touched. scanPeaks (any thread, on a
+    // buffer it owns) works out the table for a whole sound, and returns its shift.
+    static int scanPeaks (const juce::AudioBuffer<float>&, int length, float* bins);
+    static int installPeaks (Layer&, const float* bins, int shift, int covered);   // under the lock
+    static int clearPeaks (Layer&);                                                 // under the lock
+    static int coverPeaks (Layer&, int length);   // audio thread: makes the table hold `length` samples
+
+    int finishRecording (Layer&);   // returns the waveform bins it touched
     // Where a layer's bar 1 is on the shared timeline.
     static double syncAnchor (const Layer& l) { return l.startBeat - l.syncShift.load (std::memory_order_relaxed); }
     // Message thread (maintain): turns round a loop that's waiting to be put on the shared bars.
     void applySyncShift (int index);
-    void applySwap (Layer&, int index);   // under the layer's lock
+    int applySwap (Layer&, int index);   // under the layer's lock; returns the waveform bins it touched
     // Where a bend plays from (beats into the loop), given where straight would be.
     static double bentPosition (const Layer::BendAt&, double straightPos, double beat, double lengthBeats, int beatsPerBar);
 
@@ -362,6 +398,10 @@ private:
     std::atomic<int> undoLayer { -1 };
     std::atomic<int> swapSerials { 0 };   // queueLayerAudio's serials
     int undoLength = 0;
+    // The undo loop's waveform (audio thread only): kept as an overdub starts, put back by undo.
+    std::unique_ptr<float[]> undoPeaks { new float[kPeakBins]() };
+    int undoPeakShift = 0, undoPeakCovered = 0;
+    std::atomic<int> statPeakOps { 0 };
     std::array<StripFx*, kLayers> effects {};
     std::atomic<int> liveDelay { 0 };
     std::array<float, kLayers> arrangeFrom = filled (1.0f), arrangeTo = filled (1.0f);

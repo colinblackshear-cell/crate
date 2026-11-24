@@ -6,6 +6,111 @@
 namespace
 {
 constexpr int kFade = 96;   // samples of fade at each end of a new loop, so it doesn't click
+
+static_assert (std::atomic<float>::is_always_lock_free && std::atomic<int>::is_always_lock_free
+                   && std::atomic<juce::uint32>::is_always_lock_free,
+               "the waveform is read by the window without a lock");
+
+// The smallest shift whose bins hold `length` samples.
+int peakShiftFor (int length)
+{
+    int shift = 0;
+    while (((juce::int64) RigLooper::kPeakBins << shift) < (juce::int64) length)
+        ++shift;
+    return shift;
+}
+
+// A whole-table rewrite of the waveform: odd while it's under way (a seqlock).
+void beginRewrite (std::atomic<juce::uint32>& seq)
+{
+    seq.store (seq.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence (std::memory_order_release);
+}
+void endRewrite (std::atomic<juce::uint32>& seq)
+{
+    seq.store (seq.load (std::memory_order_relaxed) + 1, std::memory_order_release);
+}
+
+// Raises a bin to `v` (only ever written by the one holding the layer's lock).
+void raise (std::atomic<float>& bin, float v)
+{
+    if (v > bin.load (std::memory_order_relaxed))
+        bin.store (v, std::memory_order_relaxed);
+}
+}
+
+RigLooper::Layer::PeakTable::PeakTable() : bins (new std::atomic<float>[(size_t) kPeakBins])
+{
+    for (int i = 0; i < kPeakBins; ++i)
+        bins[(size_t) i].store (0.0f, std::memory_order_relaxed);
+}
+
+int RigLooper::scanPeaks (const juce::AudioBuffer<float>& audio, int length, float* bins)
+{
+    std::fill (bins, bins + kPeakBins, 0.0f);
+    length = juce::jmin (length, audio.getNumSamples());
+    if (length <= 0 || audio.getNumChannels() == 0)
+        return 0;
+    const int shift = peakShiftFor (length);
+    const float* l = audio.getReadPointer (0);
+    const float* r = audio.getReadPointer (juce::jmin (1, audio.getNumChannels() - 1));
+    for (int i = 0; i < length; ++i)
+    {
+        float& b = bins[i >> shift];
+        b = juce::jmax (b, std::abs (l[i]), std::abs (r[i]));
+    }
+    return shift;
+}
+
+int RigLooper::installPeaks (Layer& layer, const float* bins, int shift, int covered)
+{
+    auto& t = layer.peaks;
+    beginRewrite (t.seq);
+    for (int i = 0; i < kPeakBins; ++i)
+        t.bins[(size_t) i].store (bins[i], std::memory_order_relaxed);
+    t.shift.store (shift, std::memory_order_relaxed);
+    t.covered.store (covered, std::memory_order_relaxed);
+    endRewrite (t.seq);
+    return kPeakBins;
+}
+
+int RigLooper::clearPeaks (Layer& layer)
+{
+    auto& t = layer.peaks;
+    beginRewrite (t.seq);
+    for (int i = 0; i < kPeakBins; ++i)
+        t.bins[(size_t) i].store (0.0f, std::memory_order_relaxed);
+    t.shift.store (0, std::memory_order_relaxed);
+    t.covered.store (0, std::memory_order_relaxed);
+    endRewrite (t.seq);
+    return kPeakBins;
+}
+
+int RigLooper::coverPeaks (Layer& layer, int length)
+{
+    // As a recording outgrows the table, each bin takes in the next 2^k (k doublings at once):
+    // one pass over the table, however long the loop is.
+    auto& t = layer.peaks;
+    const int shift = t.shift.load (std::memory_order_relaxed);
+    const int wanted = juce::jmax (shift, peakShiftFor (length));
+    beginRewrite (t.seq);
+    if (wanted > shift)
+    {
+        const int by = 1 << (wanted - shift), keep = kPeakBins / by;
+        for (int i = 0; i < keep; ++i)
+        {
+            float m = 0;
+            for (int j = 0; j < by; ++j)
+                m = juce::jmax (m, t.bins[(size_t) (i * by + j)].load (std::memory_order_relaxed));
+            t.bins[(size_t) i].store (m, std::memory_order_relaxed);
+        }
+        for (int i = keep; i < kPeakBins; ++i)
+            t.bins[(size_t) i].store (0.0f, std::memory_order_relaxed);
+        t.shift.store (wanted, std::memory_order_relaxed);
+    }
+    t.covered.store (length, std::memory_order_relaxed);
+    endRewrite (t.seq);
+    return wanted > shift ? kPeakBins : 1;
 }
 
 juce::String RigLooper::sourceName (int s)
@@ -71,6 +176,9 @@ int RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double 
         audio.setSize (2, audio.getNumSamples(), true);
         audio.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
     }
+    // Its waveform, worked out here (the sound is still ours), so the lock is only held to put it in.
+    std::vector<float> peaks ((size_t) kPeakBins);
+    const int peakShift = scanPeaks (audio, audio.getNumSamples(), peaks.data());
     int version = 0;
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
@@ -78,6 +186,7 @@ int RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double 
         std::swap (layer.audio, audio);
         layer.length = layer.audio.getNumSamples();
         layer.publishedLength.store (layer.length, std::memory_order_relaxed);
+        installPeaks (layer, peaks.data(), peakShift, layer.length);
         layer.startBeat = 0;
         layer.stopBeat = -1;
         layer.syncShift = 0.0;
@@ -105,9 +214,15 @@ int RigLooper::queueLayerAudio (int index, juce::AudioBuffer<float> audio, doubl
         audio = {};
         beats = 0;
     }
+    // Its waveform goes with it, worked out here (outside the lock).
+    std::vector<float> peaks ((size_t) kPeakBins);
+    const int peakShift = scanPeaks (audio, audio.getNumSamples(), peaks.data());
     int serial = 0;
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
+        std::copy (peaks.begin(), peaks.end(), layer.swapPeaks.get());
+        layer.swapPeakShift = peakShift;
+        layer.swapPeakCovered = audio.getNumSamples();
         std::swap (layer.swapAudio, audio);
         layer.swapBeats = beats;
         layer.swapBeat = beat;
@@ -132,17 +247,18 @@ void RigLooper::cancelSwap (int index)
     std::swap (layer.swapAudio, old);
 }
 
-void RigLooper::applySwap (Layer& layer, int index)
+int RigLooper::applySwap (Layer& layer, int index)
 {
-    // Only moves buffers, so it's fine on the audio thread.
+    // Only moves buffers (and copies the waveform that came with it), so it's fine on the audio thread.
     // A take that's recording (or about to) is never thrown away by a loop bank or song part
     // coming in: the switch skips this layer, and the window says so.
     if (const auto st = (State) layer.state.load(); st == State::recording || st == State::armed)
     {
         layer.swapPending = false;   // the sound it would have put here is freed by maintain()
         layer.ending = (int) Ending::kept;
-        return;
+        return 0;
     }
+    int peakOps = 0;
     abortSnapshot (layer);
     layer.syncShift = 0.0;   // the new sound plays from its own top at swapBeat
     if (layer.swapBeats > 0 && layer.swapAudio.getNumSamples() > 0)
@@ -150,6 +266,7 @@ void RigLooper::applySwap (Layer& layer, int index)
         std::swap (layer.audio, layer.swapAudio);
         layer.length = layer.audio.getNumSamples();
         layer.publishedLength.store (layer.length, std::memory_order_relaxed);
+        peakOps = installPeaks (layer, layer.swapPeaks.get(), layer.swapPeakShift, layer.length);
         layer.lengthBeats = layer.swapBeats;
         layer.startBeat = juce::jmax (0.0, layer.swapBeat);
         layer.stopBeat = -1;
@@ -160,6 +277,7 @@ void RigLooper::applySwap (Layer& layer, int index)
         layer.state = (int) State::empty;
         layer.length = 0;
         layer.publishedLength.store (layer.length, std::memory_order_relaxed);
+        peakOps = clearPeaks (layer);
         layer.lengthBeats = 0;
         layer.position = 0;
     }
@@ -175,6 +293,7 @@ void RigLooper::applySwap (Layer& layer, int index)
     const int version = ++layer.version;
     // Which queued swap this was, and the version it left: the layer now holds exactly that sound.
     layer.swapApplied.store (((juce::int64) layer.swapSerial << 32) | (juce::uint32) version, std::memory_order_release);
+    return peakOps;
 }
 
 bool RigLooper::replaceLayerAudio (int index, juce::AudioBuffer<float> audio)
@@ -185,12 +304,15 @@ bool RigLooper::replaceLayerAudio (int index, juce::AudioBuffer<float> audio)
         audio.setSize (2, audio.getNumSamples(), true);
         audio.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
     }
+    std::vector<float> peaks ((size_t) kPeakBins);   // (outside the lock)
+    const int peakShift = scanPeaks (audio, audio.getNumSamples(), peaks.data());
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
         if ((State) layer.state.load() != State::playing || layer.length <= 0 || audio.getNumSamples() != layer.length)
             return false;
         abortSnapshot (layer);
         std::swap (layer.audio, audio);
+        installPeaks (layer, peaks.data(), peakShift, layer.length);
         if (undoLayer == index)
             undoLayer = -1;
         ++layer.version;
@@ -432,20 +554,31 @@ std::vector<float> RigLooper::readPeaks (int index, int count) const
     std::vector<float> peaks ((size_t) juce::jmax (1, count), 0.0f);
     const auto& layer = layers[(size_t) index];
     const auto state = (State) layer.state.load();
-    const int n = juce::jmin (layer.audio.getNumSamples(), state == State::recording ? layer.writeIndex : layer.length);
-    if (n <= 0 || state == State::empty || state == State::armed)
+    if (state == State::empty || state == State::armed)
         return peaks;
-    const float* l = layer.audio.getReadPointer (0);
-    const float* r = layer.audio.getReadPointer (1);
-    const int step = juce::jmax (1, n / (count * 32));
-    for (size_t p = 0; p < peaks.size(); ++p)
+    // Only the waveform, never the loop: it never moves, and all of it is atomics. If it was
+    // rewritten while it was read (a new sound, a clear, a recording doubling it), it's read
+    // again, a few times at most (then this is a mix of the two, drawn until the next look).
+    const auto& t = layer.peaks;
+    const auto slices = (juce::int64) peaks.size();
+    for (int attempt = 0; attempt < 3; ++attempt)
     {
-        const int from = (int) ((double) p / peaks.size() * n);
-        const int to = juce::jmin (n, (int) ((double) (p + 1) / peaks.size() * n));
-        float m = 0;
-        for (int i = from; i < to; i += step)
-            m = juce::jmax (m, std::abs (l[i]), std::abs (r[i]));
-        peaks[p] = juce::jmin (1.0f, m);
+        const auto seq = t.seq.load (std::memory_order_acquire);
+        // While it records, what's recorded so far; else the loop's length.
+        const int n = t.covered.load (std::memory_order_relaxed);
+        const int shift = juce::jlimit (0, 30, t.shift.load (std::memory_order_relaxed));
+        for (juce::int64 p = 0; p < slices; ++p)
+        {
+            const int from = (int) (p * n / slices), to = (int) ((p + 1) * n / slices);
+            float m = 0;
+            if (to > from)
+                for (int b = from >> shift, last = juce::jmin (kPeakBins - 1, (to - 1) >> shift); b <= last; ++b)
+                    m = juce::jmax (m, t.bins[(size_t) b].load (std::memory_order_relaxed));
+            peaks[(size_t) p] = juce::jmin (1.0f, m);
+        }
+        std::atomic_thread_fence (std::memory_order_acquire);
+        if ((seq & 1) == 0 && t.seq.load (std::memory_order_relaxed) == seq)
+            break;
     }
     return peaks;
 }
@@ -462,6 +595,7 @@ void RigLooper::reset (int index)
         layer.state = (int) State::empty;
         layer.length = 0;
         layer.publishedLength.store (layer.length, std::memory_order_relaxed);
+        clearPeaks (layer);
         layer.lengthBeats = 0;
         layer.position = 0;
         layer.bend = straight;
@@ -701,6 +835,8 @@ void RigLooper::applySyncShift (int index)
             auto* d = turned.getWritePointer (ch);
             std::rotate (d, d + (len - by), d + len);
         }
+    std::vector<float> peaks ((size_t) kPeakBins);   // the turned sound's waveform (outside the lock)
+    const int peakShift = scanPeaks (turned, len, peaks.data());
     {
         const juce::SpinLock::ScopedLockType sl (layer.lock);
         // Only if nothing touched it meanwhile (an overdub, a clear, a new sound): else next time.
@@ -709,6 +845,7 @@ void RigLooper::applySyncShift (int index)
             return;
         abortSnapshot (layer);
         std::swap (layer.audio, turned);
+        installPeaks (layer, peaks.data(), peakShift, len);
         layer.startBeat -= shift;
         layer.syncShift = 0.0;
         if (undoLayer == index)
@@ -718,7 +855,7 @@ void RigLooper::applySyncShift (int index)
     // The unturned sound is freed here, outside the lock.
 }
 
-void RigLooper::finishRecording (Layer& layer)
+int RigLooper::finishRecording (Layer& layer)
 {
     abortSnapshot (layer);   // (none can be running while it records; for certain)
     layer.length = juce::jmax (1, layer.writeIndex);
@@ -737,6 +874,11 @@ void RigLooper::finishRecording (Layer& layer)
         layer.audio.applyGainRamp (ch, 0, fade, 0.0f, 1.0f);
         layer.audio.applyGainRamp (ch, layer.length - fade, fade, 1.0f, 0.0f);
     }
+    // The waveform was made as it recorded, and isn't scanned again (that would take as long as
+    // the loop): it is the loop as played, before the turn by the live delay and the fades. So it
+    // can sit the live delay (a few ms: a pixel or two of a 1-bar loop) late, and the first and
+    // last kFade samples can draw a little louder than they now are.
+    const int peakOps = coverPeaks (layer, layer.length);
     // Onto the shared bars: its bar 1 goes where the other loops' bar 1 is (the longest one
     // playing), so their playheads move together. It sounds exactly as before: maintain() turns
     // the sound round by the same amount as it moves the loop's start.
@@ -775,9 +917,10 @@ void RigLooper::finishRecording (Layer& layer)
     layer.syncShift = shift;
     layer.state = (int) State::playing;
     ++layer.version;
+    return peakOps;
 }
 
-void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, bool& wantsPlay)
+void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, bool& wantsPlay, int& peakOps)
 {
     const int bpb = juce::jmax (1, clock.beatsPerBar);
 
@@ -790,6 +933,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
         layer.state = (int) State::empty;
         layer.length = 0;
         layer.publishedLength.store (layer.length, std::memory_order_relaxed);
+        peakOps += clearPeaks (layer);
         layer.lengthBeats = 0;
         layer.position = 0;
         layer.syncShift = 0.0;
@@ -807,6 +951,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
             abortSnapshot (layer);
             for (int ch = 0; ch < 2; ++ch)
                 layer.audio.copyFrom (ch, 0, undoAudio, ch, 0, undoLength);
+            peakOps += installPeaks (layer, undoPeaks.get(), undoPeakShift, undoPeakCovered);   // its waveform too
             layer.state = (int) State::playing;
             ++layer.version;
         }
@@ -867,6 +1012,11 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 {
                     for (int ch = 0; ch < 2; ++ch)
                         undoAudio.copyFrom (ch, 0, layer.audio, ch, 0, layer.length);
+                    for (int b = 0; b < kPeakBins; ++b)
+                        undoPeaks[(size_t) b] = layer.peaks.bins[(size_t) b].load (std::memory_order_relaxed);
+                    undoPeakShift = layer.peaks.shift.load (std::memory_order_relaxed);
+                    undoPeakCovered = layer.peaks.covered.load (std::memory_order_relaxed);
+                    peakOps += kPeakBins;
                     undoLayer = index;
                     undoLength = layer.length;
                 }
@@ -980,7 +1130,8 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 layer.bendFade = 0;
             }
         }
-        handleRequests (layer, index, clock, wantsPlay);
+        int peakOps = 0;   // the waveform's work this block (bounded: see kMaxPeakOpsPerBlock)
+        handleRequests (layer, index, clock, wantsPlay, peakOps);
         // The moment a copy asked for is of: here, after this block's requests.
         if (layer.snap.state.load (std::memory_order_acquire) == snapPosted)
             startSnapshot (layer);
@@ -1008,7 +1159,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             const double beat = clock.beat + (clock.playing ? i * beatsPerSample : 0.0);
             if (layer.swapPending.load (std::memory_order_relaxed) && (! clock.playing || beat >= layer.swapBeat - 1.0e-9))
             {
-                applySwap (layer, index);
+                peakOps += applySwap (layer, index);
                 audioL = layer.audio.getWritePointer (0);
                 audioR = layer.audio.getWritePointer (1);
                 capacity = layer.audio.getNumSamples();
@@ -1026,6 +1177,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 layer.state = (int) (state = State::recording);
                 layer.startsAt = -1.0;
                 layer.writeIndex = 0;
+                peakOps += clearPeaks (layer);
             }
 
             if (state == State::recording)
@@ -1051,23 +1203,31 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                                     layer.audio.clear (ch, layer.writeIndex, to - layer.writeIndex);
                             layer.writeIndex = to;
                             layer.stopBeat = layer.startBeat + keep * bpb;
-                            finishRecording (layer);
+                            peakOps += finishRecording (layer);
                             layer.ending = (int) Ending::clockStopped;
                             break;
                         }
                     }
                     layer.state = (int) State::empty;
+                    peakOps += clearPeaks (layer);
                     break;
                 }
                 if (layer.stopBeat >= 0 && beat >= layer.stopBeat - 1.0e-9)
                 {
-                    finishRecording (layer);
+                    peakOps += finishRecording (layer);
                     state = State::playing;
                 }
                 else if (layer.writeIndex < capacity)
                 {
-                    audioL[layer.writeIndex] = srcL != nullptr ? srcL[i] : 0.0f;
-                    audioR[layer.writeIndex] = srcR != nullptr ? srcR[i] : 0.0f;
+                    const float l = srcL != nullptr ? srcL[i] : 0.0f, r = srcR != nullptr ? srcR[i] : 0.0f;
+                    audioL[layer.writeIndex] = l;
+                    audioR[layer.writeIndex] = r;
+                    // Its waveform as it goes; past the table's end, the table doubles first.
+                    if (((juce::int64) kPeakBins << layer.peaks.shift.load (std::memory_order_relaxed)) <= layer.writeIndex)
+                        peakOps += coverPeaks (layer, layer.writeIndex + 1);
+                    raise (layer.peaks.bins[(size_t) (layer.writeIndex >> layer.peaks.shift.load (std::memory_order_relaxed))],
+                           juce::jmax (std::abs (l), std::abs (r)));
+                    ++peakOps;
                     ++layer.writeIndex;
                     changed = true;
                     continue;
@@ -1080,11 +1240,12 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                     if (bars < 1)
                     {
                         layer.state = (int) State::empty;
+                        peakOps += clearPeaks (layer);
                         break;
                     }
                     layer.stopBeat = layer.startBeat + bars * bpb;
                     layer.writeIndex = juce::jmin (capacity, (int) std::round (bars * bpb * spb));
-                    finishRecording (layer);
+                    peakOps += finishRecording (layer);
                     layer.ending = (int) Ending::full;
                     state = State::playing;
                 }
@@ -1152,12 +1313,21 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                         audioL[w] += srcL[i];
                     if (srcR != nullptr)
                         audioR[w] += srcR[i];
+                    // The waveform only ever rises here (an overdub that cancels a sound out
+                    // leaves it drawn as loud as it was, until the sound is put in again).
+                    raise (layer.peaks.bins[(size_t) juce::jmin (kPeakBins - 1, w >> layer.peaks.shift.load (std::memory_order_relaxed))],
+                           juce::jmax (std::abs (audioL[w]), std::abs (audioR[w])));
+                    ++peakOps;
                     changed = true;
                 }
             }
         }
 
         layer.recorded = layer.writeIndex;
+        if ((State) layer.state.load (std::memory_order_relaxed) == State::recording)
+            layer.peaks.covered.store (layer.writeIndex, std::memory_order_relaxed);   // (only grows)
+        if (peakOps > statPeakOps.load (std::memory_order_relaxed))
+            statPeakOps.store (peakOps, std::memory_order_relaxed);
         if (layer.snap.active)
             continueSnapshot (layer, n);
 
