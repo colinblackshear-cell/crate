@@ -288,6 +288,14 @@ public:
     void resetCopyCounters();
     // Undo-room-sized buffers alive now (the room, a spare waiting, one being made or freed).
     int roomBuffersNow() const { return roomBuffers.load(); }
+    // The undo room's usable length in samples (as the audio thread last published it), and
+    // whether a bigger one is waiting to be taken. Any thread.
+    int undoRoomSamples() const { return roomUsableSamples.load(); }
+    bool isSpareRoomReady() const { return spareReady.load(); }
+    // Message thread (or one loading a show): makes the undo room ready for a loop `samples`
+    // long ahead of need, as a spare the audio thread takes over. maintain() does this for
+    // what's playing and recording; putting in a sound does it for that sound first.
+    void prepareUndoRoom (int samples) { prepareRoom (samples); }
     // Tests only: the loop as it sounds now (exactly what a copy would be), read under the lock
     // without changing anything (a copy may finish work first).
     juce::AudioBuffer<float> soundingLoopForTests (int layer) const;
@@ -430,8 +438,39 @@ private:
     double sampleRate = 44100.0;
     bool wasPlaying = false;              // audio thread: the clock, last block
     std::array<Layer, kLayers> layers;
-    juce::SpinLock undoLock;              // the undo room, while maintain() makes it bigger
-    juce::AudioBuffer<float> undoAudio;
+    // The undo room: one buffer for all the layers, as long as the longest loop (up to
+    // kMaxUndoSeconds), and a mark for each of its pages. Only the audio thread changes which
+    // buffer it is, or touches it, while audio runs (a copier holding the undo layer's lock may
+    // too, when the audio has stopped). A bigger one is made, and written through so its memory
+    // is really there, on the message thread, and handed over in the spare slot: the audio
+    // thread takes it at a block with no undo held (or at a press that needs it) by exchanging
+    // the two, and leaves the old one there for the message thread to free. `undoLock` is held
+    // only to move the spare slot's buffers.
+    struct Room
+    {
+        juce::AudioBuffer<float> audio;
+        std::unique_ptr<juce::uint32[]> stamps;   // a mark a page
+        int stampPages = 0;
+        int usable() const { return audio.getNumChannels() < 2 ? 0 : juce::jmin (audio.getNumSamples(), stampPages << kCopyPageShift); }
+    };
+    static void swapRooms (Room& a, Room& b)
+    {
+        std::swap (a.audio, b.audio);
+        std::swap (a.stamps, b.stamps);
+        std::swap (a.stampPages, b.stampPages);
+    }
+    Room room, spare;                          // spare: under undoLock
+    std::atomic<bool> spareReady { false };    // the spare is a new room to take (else one to free)
+    std::atomic<int> roomUsableSamples { 0 }; // the room's usable length, published by the audio thread
+    juce::SpinLock undoLock;
+    juce::CriticalSection roomMaking;          // the threads that make and free rooms, one at a time
+    // Off the audio thread: frees a room the audio thread has let go of, and makes one at least
+    // `samples` long (up to kMaxUndoSeconds) if the room isn't, unless the slot is taken.
+    void prepareRoom (int samples);
+    static void fillRoom (Room&, int samples);   // off the audio thread: a new room, written through
+    // Audio thread: takes the spare room if there is one (one try of undoLock a block).
+    bool adoptSpare();
+    bool adoptTried = false;                   // audio thread: this block
     std::atomic<int> undoLayer { -1 };
     std::atomic<int> swapSerials { 0 };   // queueLayerAudio's serials
     int undoLength = 0;

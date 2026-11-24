@@ -1090,3 +1090,175 @@ struct RigOverdubUndoWorkTests : juce::UnitTest
 };
 
 static RigOverdubUndoWorkTests rigOverdubUndoWorkTests;
+
+//==============================================================================
+// The undo room: made ready ahead of need off the audio thread, handed over without a copy,
+// never cancelling an undo, and never more than two room-sized buffers at once.
+struct RigOverdubUndoRoomTests : juce::UnitTest
+{
+    RigOverdubUndoRoomTests() : juce::UnitTest ("Rig overdub undo room", "Rig") {}
+
+    void runTest() override
+    {
+        beginTest ("A bigger room handed over doesn't cancel an undo; it's taken when no undo is held");
+        {
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            putLoop (d, 0, odu::markedLoop (100 * 1024, 50));
+            d.blocks (2);
+            const auto before = d.looper.soundingLoopForTests (0);
+            d.looper.pressRecord (0);
+            d.blocks (30);
+            d.looper.pressRecord (0);
+            d.block();
+            expect (d.looper.canUndo (0));
+            const int room0 = d.looper.undoRoomSamples();
+            // A longer loop on another layer: a bigger room is made, and waits.
+            putLoop (d, 1, odu::markedLoop (room0 + 50 * 1024, 51));
+            d.looper.maintain();
+            expect (d.looper.isSpareRoomReady(), "a bigger room is ready");
+            const auto c0 = d.looper.getCopyCounters();
+            d.blocks (20);
+            expect (d.looper.canUndo (0), "the undo is kept");
+            expectEquals (d.looper.undoRoomSamples(), room0, "and its room with it");
+            expect (d.looper.isSpareRoomReady(), "the bigger room still waits");
+            d.looper.undo (0);
+            d.block();
+            expect (same (d.looper.soundingLoopForTests (0), before), "the undo is exact");
+            d.seconds (1.0);
+            const auto c1 = d.looper.getCopyCounters();
+            expect (! d.looper.isSpareRoomReady(), "then the bigger room is taken");
+            expectGreaterOrEqual (d.looper.undoRoomSamples(), room0 + 50 * 1024);
+            expectEquals (c1.adoptions - c0.adoptions, 1);
+            d.looper.maintain();   // frees the old room
+            expectEquals (d.looper.roomBuffersNow(), 1);
+        }
+
+        beginTest ("Taking a room over copies nothing and allocates nothing");
+        {
+            Drive d (kRate, kBlock);
+            putLoop (d, 0, odu::markedLoop (40 * 48000, 52));   // 40 s: a bigger room than 32 s
+            expect (d.looper.isSpareRoomReady(), "made ready as the sound went in");
+            d.looper.resetCopyCounters();
+            oduAlloc::allocations = 0;
+            oduAlloc::frees = 0;
+            oduAlloc::countHere = true;
+            d.block();
+            oduAlloc::countHere = false;
+            const auto c = d.looper.getCopyCounters();
+            juce::int64 pages = 0;
+            for (auto p : c.pages)
+                pages += p;
+            expectEquals (c.adoptions, 1, "taken in the first block");
+            expectEquals ((int) pages, 0, "no page copied");
+            expectEquals (oduAlloc::allocations.load() + oduAlloc::frees.load(), 0, "nothing allocated or freed");
+            expectGreaterOrEqual (d.looper.undoRoomSamples(), 40 * 48000);
+        }
+
+        beginTest ("A press that needs the bigger room takes it, and the other loop's undo goes as it would");
+        {
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            putLoop (d, 0, odu::markedLoop (100 * 1024, 53));
+            d.blocks (2);
+            d.looper.pressRecord (0);
+            d.blocks (10);
+            expect (d.looper.canUndo (0));
+            putLoop (d, 1, odu::markedLoop (60 * 48000, 54));   // 1 minute
+            d.blocks (5);
+            expect (d.looper.isSpareRoomReady(), "waits: an undo is held");
+            const auto before = d.looper.soundingLoopForTests (1);
+            d.looper.pressRecord (1);
+            d.block();
+            expect (d.looper.canUndo (1) && ! d.looper.canUndo (0), "the long loop's overdub has the undo");
+            d.blocks (100);
+            d.looper.pressRecord (1);
+            d.block();
+            d.looper.undo (1);
+            d.block();
+            d.seconds (3.0);
+            expect (same (d.looper.copyLayerAudio (1), before), "exact");
+        }
+
+        beginTest ("12c. The room is ready before the first possible press: an import, a queued bank swap, a show load, a recording");
+        {
+            Drive d (kRate, kBlock);
+            putLoop (d, 0, odu::markedLoop (3 * 60 * 48000, 55));   // an import, 3 minutes
+            d.block();
+            expectGreaterOrEqual (d.looper.undoRoomSamples(), 3 * 60 * 48000, "import");
+            const int n = 4 * 60 * 48000;
+            d.looper.queueLayerAudio (1, odu::markedLoop (n, 56), n / 24000.0, d.clock.beat + 8.0, 0.8f, false);
+            d.block();
+            expectGreaterOrEqual (d.looper.undoRoomSamples(), n, "a bank swap queued for later: ready before it comes in");
+            for (int l = 2; l < 6; ++l)   // a show load: each sound in turn
+            {
+                d.looper.reset (l);
+                putLoop (d, l, odu::markedLoop ((5 + l) * 60 * 48000 / 2, 57 + l));
+            }
+            d.block();
+            expectGreaterOrEqual (d.looper.undoRoomSamples(), 7 * 60 * 48000 / 2, "a show load");
+            d.looper.maintain();
+            expectLessOrEqual (d.looper.getCopyCounters().roomBuffersMost, 2);
+        }
+        {
+            // A take recorded for 40 s: the room grows with it as maintain gives it more.
+            Drive d (kRate, kBlock);
+            d.input = [] (juce::int64 at, int) { return (float) (at % 100) / 1000.0f; };
+            d.looper.getLayer (0).source = RigLooper::input;
+            d.looper.pressRecord (0);
+            for (int k = 0; d.fed < 40 * 48000; ++k)
+            {
+                d.block();
+                if (k % 20 == 0)
+                    d.looper.maintain();
+            }
+            d.looper.pressRecord (0);
+            expect (d.until ([&] { return d.looper.getState (0) == State::playing; }, 2000), "the take closed");
+            const int length = d.looper.copyLayerAudio (0).getNumSamples();
+            expectGreaterOrEqual (d.looper.undoRoomSamples(), length, "a recording: ready as it closes");
+            d.looper.pressRecord (0);
+            d.block();
+            expect (d.looper.canUndo (0), "its first overdub has an undo");
+        }
+
+        beginTest ("Safeguard 7: never more than two room-sized buffers, through growth, hand-over and freeing");
+        {
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            d.looper.resetCopyCounters();
+            int most = d.looper.roomBuffersNow();
+            putLoop (d, 0, odu::markedLoop (100 * 1024, 60));
+            d.blocks (2);
+            for (int k = 0; k < 12; ++k)
+            {
+                // Overdub something, then a longer loop arrives while its undo is held.
+                d.looper.pressRecord (k % 3);
+                d.blocks (5);
+                most = juce::jmax (most, d.looper.roomBuffersNow());
+                putLoop (d, 3 + k % 4, odu::markedLoop ((40 + 8 * k) * 48000, 61 + k));
+                most = juce::jmax (most, d.looper.roomBuffersNow());
+                d.looper.maintain();
+                most = juce::jmax (most, d.looper.roomBuffersNow());
+                d.blocks (5);
+                d.looper.pressRecord (k % 3);
+                d.blocks (2);
+                if (k % 2 == 0)
+                {
+                    d.looper.undo (k % 3);
+                    d.blocks (10);
+                }
+                d.looper.maintain();
+                most = juce::jmax (most, d.looper.roomBuffersNow());
+                if (k % 3 == 0)
+                    putLoop (d, k % 3, odu::markedLoop ((20 + k) * 1024, 90 + k));
+            }
+            const auto c = d.looper.getCopyCounters();
+            logMessage ("  most at once: " + juce::String (c.roomBuffersMost) + " (seen " + juce::String (most) + "), "
+                        + juce::String (c.adoptions) + " hand-overs");
+            expectLessOrEqual (c.roomBuffersMost, 2);
+            expectGreaterThan (c.adoptions, 3);
+        }
+    }
+};
+
+static RigOverdubUndoRoomTests rigOverdubUndoRoomTests;
