@@ -94,6 +94,9 @@ public:
         friend class RigLooper;
         std::atomic<int> presses { 0 }, clears { 0 }, undos { 0 };
         std::atomic<int> noUndo { 0 }, noUndoNews { 0 };   // NoUndo: the last overdub's, and unsaid
+        // Audio thread: presses held back while an undo's restoration ran, and the version the
+        // loop had then (they're dropped if it changes).
+        int deferred = 0, deferredVersion = -1;
         std::atomic<double> restartBeat { -1.0 };
         // Every loop counts its bars on one shared timeline, so their playheads move together.
         // A loop recorded while others played is turned round by this many beats (see
@@ -315,7 +318,11 @@ public:
     // without changing anything (a copy may finish work first).
     juce::AudioBuffer<float> soundingLoopForTests (int layer) const;
     // Whether undo is made a slice at a time (false: a whole copy in the block of the press).
-    static constexpr bool kIncrementalUndo = false;
+    static constexpr bool kIncrementalUndo = true;
+    // Whether an undo's pages are still being put back (any thread), for tests and the window.
+    bool isUndoRestoring() const { return restoring.load(); }
+    // Whether the undo's capture is done (tests: no audio running).
+    bool isUndoCaptureCompleteForTests() const { return cap.layer >= 0 && cap.complete; }
     // Tests only, with no audio running: the capture generation (to try the last ones).
     void setUndoGenerationForTests (juce::uint32 g) { cap.generation = g; }
     // Tests only: called once while the audio thread copies (`underLock` false), and while a
@@ -477,7 +484,7 @@ private:
         std::swap (a.stamps, b.stamps);
         std::swap (a.stampPages, b.stampPages);
     }
-    Room room, spare;                          // spare: under undoLock
+    Room undoRoom, spare;                        // spare: under undoLock
     std::atomic<bool> spareReady { false };    // the spare is a new room to take (else one to free)
     std::atomic<int> roomUsableSamples { 0 }; // the room's usable length, published by the audio thread
     juce::SpinLock undoLock;
@@ -516,6 +523,21 @@ private:
     void continueCapture (Layer&);
     void copyRoomPage (Layer&, int page, bool intoRoom);
     void cancelUndo (int index);   // any thread, under the layer's lock: its undo is gone
+    // An undo before its capture was complete (or where the buffers can't change places): the
+    // pages the overdub wrote are stale until put back from the room. Changed only under the
+    // restoring layer's lock (by the audio thread, or a copier when the audio has stopped).
+    struct Restore
+    {
+        int layer = -1, stale = 0, cursor = 0, pages = 0, looked = 0;
+        juce::uint32 generation = 0;
+    };
+    Restore restore;
+    std::atomic<bool> restoring { false };
+    std::atomic<int> restoreLayer { -1 };
+    bool restorePage (Layer&, int page);   // under the lock: puts back a stale page
+    void restoreBeforeRead (Layer&, int sample);
+    void continueRestoration (Layer&);
+    void finishRestorationUnderLock (Layer&, int index);
     // The undo loop's waveform (audio thread only): kept as an overdub starts, put back by undo.
     std::unique_ptr<float[]> undoPeaks { new float[kPeakBins]() };
     int undoPeakShift = 0, undoPeakCovered = 0;

@@ -14,6 +14,7 @@ target_sources(CrateTests PRIVATE
     RigLoopSyncTests.cpp
     RigLoopCopyTests.cpp
     RigOverdubUndoTests.cpp
+    RigOverdubUndoShowTests.cpp
     OverdubUndoBench.cpp
     RigDirtyTests.cpp
     RigDirtyScenarioTests.cpp

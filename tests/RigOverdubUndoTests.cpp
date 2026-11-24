@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <map>
+#include <mutex>
 #include <thread>
 
 // Overdub and undo: what you hear and what is kept is exactly as before (group A), no loop ever
@@ -772,8 +773,11 @@ struct LiveRig
     std::atomic<double> beat { 0 };
     juce::AudioBuffer<float> dc { 2, kBlock };
     std::atomic<bool> running { false }, warm { false }, measuring { false };
-    std::atomic<int> blocks { 0 }, late { 0 }, missing { 0 };
-    std::atomic<double> worstMs { 0 };
+    // late: blocks whose work (the audio thread's CPU time) took longer than they play for;
+    // lateWall: by the clock on the wall, which also counts the thread being put aside by the
+    // system (this test's thread isn't a real-time one).
+    std::atomic<int> blocks { 0 }, late { 0 }, lateWall { 0 }, missing { 0 };
+    std::atomic<double> worstMs { 0 }, worstCpuMs { 0 };
     std::array<float, 4> reference {};
     std::thread thread;
     static constexpr double kBpm = kRate * 60.0 / 32768.0;   // whole blocks a beat
@@ -814,15 +818,20 @@ struct LiveRig
             std::array<const juce::AudioBuffer<float>*, RigLooper::numSources> sources {};
             sources[RigLooper::input] = &dc;
             const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            const auto c0 = odu::threadCpuMicros();
             looper.process (clock, sources, out);
+            const auto cpu = (odu::threadCpuMicros() - c0) / 1000.0;
             const auto took = juce::Time::getMillisecondCounterHiRes() - t0;
             beat = clock.beat + kBlock / 32768.0;
             if (measuring)
             {
                 ++blocks;
-                late += took > period ? 1 : 0;
+                late += cpu > period ? 1 : 0;
+                lateWall += took > period ? 1 : 0;
                 if (took > worstMs.load())
                     worstMs = took;
+                if (cpu > worstCpuMs.load())
+                    worstCpuMs = cpu;
             }
             for (int t = 0; t < 4; ++t)
             {
@@ -871,13 +880,14 @@ struct RigOverdubUndoGapTests : juce::UnitTest
             rig.measuring = false;
             const auto c = rig.looper.getCopyCounters();
             logMessage ("  " + juce::String (rig.blocks.load()) + " blocks, " + juce::String (rig.missing.load()) + " with a loop missing, "
-                        + juce::String (rig.late.load()) + " late, longest " + juce::String (rig.worstMs.load(), 2) + " ms; layer blocks skipped "
+                        + juce::String (rig.late.load()) + " late by their work (longest " + juce::String (rig.worstCpuMs.load(), 2) + " ms CPU), "
+                        + juce::String (rig.lateWall.load()) + " by the wall clock (longest " + juce::String (rig.worstMs.load(), 2) + " ms); layer blocks skipped "
                         + juce::String (c.skippedLayerBlocks - skipped0) + "; whole-loop copies " + juce::String (c.bytes[RigLooper::wholeLoop] / 1048576) + " MB");
             expectEquals (rig.missing.load(), 0);
             expectEquals ((int) (c.skippedLayerBlocks - skipped0), 0, "no layer's block skipped");
             if (RigLooper::kIncrementalUndo)
             {
-                expectEquals (rig.late.load(), 0, "no late block");
+                expectEquals (rig.late.load(), 0, "no block's work took longer than it plays for");
                 expectEquals ((int) c.bytes[RigLooper::wholeLoop], 0, "no whole-loop copy");
             }
         }
@@ -1499,3 +1509,574 @@ struct RigOverdubUndoCaptureTests : juce::UnitTest
 };
 
 static RigOverdubUndoCaptureTests rigOverdubUndoCaptureTests;
+
+//==============================================================================
+// Undo by swap and by restoration, and what happens around a restoration.
+struct RigOverdubUndoRestoreTests : juce::UnitTest
+{
+    RigOverdubUndoRestoreTests() : juce::UnitTest ("Rig overdub undo restore", "Rig") {}
+
+    std::vector<int> capacities (RigLooper& l)
+    {
+        std::vector<int> c;
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+            c.push_back (l.getCapacity (i));
+        return c;
+    }
+    // roomLeftSeconds as the capacities say it should be.
+    bool roomLeftAccurate (RigLooper& l, double rate)
+    {
+        for (int i = 0; i < RigLooper::kLayers; ++i)
+        {
+            juce::int64 others = 0;
+            for (int j = 0; j < RigLooper::kLayers; ++j)
+                if (j != i)
+                    others += l.getCapacity (j);
+            const double want = juce::jmax (0.0, juce::jmin (RigLooper::kMaxRecordSeconds, RigLooper::kTotalRecordSeconds - (double) others / rate));
+            if (std::abs (l.roomLeftSeconds (i) - want) > 1.0e-9)
+                return false;
+        }
+        return true;
+    }
+    // Runs until no undo work is left.
+    void settle (Drive& d)
+    {
+        d.until ([&] { return ! d.looper.isUndoRestoring(); }, 200000);
+        d.blocks (2);
+    }
+
+    void runTest() override
+    {
+        beginTest ("Both ways of undoing are exact: by swap (the room's buffer the loop's size) and by restoration (a bigger room)");
+        {
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            // (The room is never under 32 s, so a loop's buffer is the room's size only from there.)
+            putLoop (d, 0, odu::markedLoop (40 * 48000, 100));   // the longest: the room is its size
+            putLoop (d, 1, odu::markedLoop (35 * 48000, 101));   // the room is bigger than its buffer
+            d.blocks (3);
+            for (int layer : { 0, 1 })
+            {
+                const auto before = d.looper.soundingLoopForTests (layer);
+                const auto peaks = d.looper.readPeaks (layer, 2000);
+                const int version0 = d.looper.getLayer (layer).version.load();
+                const double beats0 = d.looper.getLayer (layer).lengthBeats.load();
+                d.looper.resetCopyCounters();
+                d.looper.pressRecord (layer);
+                d.seconds (1.5);   // the capture completes
+                expect (d.looper.isUndoCaptureCompleteForTests());
+                d.looper.pressRecord (layer);
+                d.block();
+                const int capBefore = d.looper.getCapacity (layer);
+                const int versionDubbed = d.looper.getLayer (layer).version.load();
+                d.looper.undo (layer);
+                d.block();
+                const auto c = d.looper.getCopyCounters();
+                const juce::String way = layer == 0 ? "swap" : "restoration";
+                expectEquals (c.swaps, layer == 0 ? 1 : 0, way);
+                expectEquals (c.restorations, layer == 0 ? 0 : 1, way);
+                expect (same (d.looper.soundingLoopForTests (layer), before), way + ": the loop as it was, at once");
+                expect (d.looper.readPeaks (layer, 2000) == peaks, way + ": its waveform as it was");
+                expectEquals (d.looper.getLayer (layer).version.load(), versionDubbed + 1, way + ": the version goes up once");
+                expectGreaterThan (versionDubbed, version0);
+                expectEquals (d.looper.getLayer (layer).lengthBeats.load(), beats0, way + ": its length in beats");
+                expectLessOrEqual (d.looper.getCapacity (layer), capBefore, way + ": its buffer never bigger");
+                settle (d);
+                expect (same (d.looper.copyLayerAudio (layer), before), way + ": and once it's all done");
+                expectEquals (d.looper.getLayer (layer).version.load(), versionDubbed + 1, way + ": the restoration doesn't move the version");
+                // The next overdub, on any layer, still has its undo.
+                const auto again = d.looper.soundingLoopForTests (1 - layer);
+                d.looper.pressRecord (1 - layer);
+                d.blocks (40);
+                expect (d.looper.canUndo (1 - layer), way + ": the next overdub has an undo");
+                d.looper.pressRecord (1 - layer);
+                d.block();
+                d.looper.undo (1 - layer);
+                d.block();
+                settle (d);
+                expect (same (d.looper.copyLayerAudio (1 - layer), again));
+            }
+        }
+
+        beginTest ("A swap keeps the loop's place in the bar, its length and the room's size for the next undo");
+        {
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            putLoop (d, 0, odu::markedLoop (34 * 48000, 102));
+            d.blocks (50);
+            const int room0 = d.looper.undoRoomSamples();
+            d.looper.pressRecord (0);
+            d.seconds (1.0);
+            d.looper.pressRecord (0);
+            d.block();
+            const double position = d.looper.getLayer (0).position.load();
+            d.looper.undo (0);
+            d.block();
+            expectEquals (d.looper.getCopyCounters().swaps, 1);
+            expectWithinAbsoluteError (d.looper.getLayer (0).position.load(), position + kBlock / (34.0 * 48000), 1.0e-9, "still in its place");
+            expectEquals (d.looper.copyLayerAudio (0).getNumSamples(), 34 * 48000, "its length");
+            expectGreaterOrEqual (d.looper.undoRoomSamples(), juce::jmin (room0, 34 * 48000), "a room for the next undo");
+        }
+
+        beginTest ("A completed capture where the overdub wrote every page, undone by restoration");
+        for (const int with : { 0, 1, 2, 3 })   // alone, a save, a bank switch, deferred presses (and one cancelled)
+        {
+            RigLooper::copySliceForTests = with == 0 ? 0 : 3 * RigLooper::kCopyPageSamples;   // slow, so it lasts
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            putLoop (d, 0, odu::markedLoop (700 * 1024, 103));   // the room is this long
+            const int n = 100 * 1024 + 17;
+            putLoop (d, 1, odu::markedLoop (n, 104));
+            putLoop (d, 2, odu::markedLoop (50 * 1024, 105));
+            d.blocks (3);
+            const auto before = d.looper.soundingLoopForTests (1);
+            d.looper.pressRecord (1);
+            d.seconds (2.0 * n / kRate + 0.1);   // twice round: every page written
+            d.looper.pressRecord (1);
+            d.block();
+            d.looper.undo (1);
+            d.block();
+            expect (with == 0 || d.looper.isUndoRestoring(), "restoring");
+            expect (same (d.looper.soundingLoopForTests (1), before), "sounds as it was at once");
+            juce::String what = with == 0 ? "alone" : with == 1 ? "with a save" : with == 2 ? "with a bank switch" : "with deferred presses";
+            if (with == 1)
+            {
+                // A save asked for during the restoration: the loop as it was, at the undo's version.
+                int version = -1;
+                juce::AudioBuffer<float> copy;
+                std::atomic<bool> done { false };
+                std::thread saver ([&] { copy = d.looper.copyLayerAudio (1, &version); done = true; });
+                d.until ([&] { return done.load(); }, 100000);
+                saver.join();
+                expect (same (copy, before), what + ": the save is the loop as it was");
+                expectEquals (version, d.looper.getLayer (1).version.load());
+            }
+            if (with == 2)
+            {
+                // Another loop's bank swap comes in at the next beat while this one restores.
+                const auto next = odu::markedLoop (60 * 1024, 106);
+                d.looper.queueLayerAudio (2, next, 60 * 1024 / 24000.0, d.clock.beat + 0.25, 0.8f, false);
+                d.seconds (0.5);
+                expect (same (d.looper.copyLayerAudio (2), next), what + ": the other loop swapped in");
+                // And a swap of the restoring loop itself ends the restoration.
+                d.looper.queueLayerAudio (1, before, n / 24000.0, -1.0, 0.8f, false);
+                expect (! d.looper.isUndoRestoring(), what + ": a swap of this loop ends it");
+            }
+            if (with == 3)
+            {
+                d.looper.pressRecord (1);   // deferred: on this loop
+                d.looper.pressRecord (2);   // and on another
+                d.looper.pressRecord (2);   // on then off, in order
+                d.block();
+                expect (d.looper.getState (1) == State::playing && d.looper.getState (2) == State::playing, what + ": held back");
+                d.looper.clear (2);         // cancels the other loop's presses
+                d.block();
+                settle (d);
+                expect (d.looper.getState (1) == State::overdubbing, what + ": applied once it's done");
+                expect (d.looper.getState (2) == State::empty, what + ": the cleared loop's presses dropped (not armed)");
+                expect (d.looper.canUndo (1), what + ": the held-back overdub has its undo");
+                d.looper.pressRecord (1);
+                d.block();
+            }
+            settle (d);
+            if (with != 2)
+            {
+                if (with == 3)
+                {
+                    d.looper.undo (1);
+                    d.block();
+                    settle (d);
+                }
+                expect (same (d.looper.copyLayerAudio (1), before), what + ": exact once it's done");
+            }
+            RigLooper::copySliceForTests = 0;
+        }
+
+        beginTest ("Amendment A: overdub and undo on loops of many lengths, again and again: no layer's buffer grows, two rooms at most");
+        {
+            Drive d (kRate, kBlock);
+            dubInput (d);
+            const int lengths[] = { 5000, 40 * 1024 + 3, 150 * 1024, 300 * 1024 + 99, 40 * 48000, 1024, 77777, 36 * 48000 };
+            std::vector<juce::AudioBuffer<float>> originals;
+            for (int l = 0; l < 8; ++l)
+            {
+                originals.push_back (odu::markedLoop (lengths[l], 110 + l));
+                putLoop (d, l, originals.back());
+            }
+            d.blocks (3);
+            d.looper.resetCopyCounters();
+            auto caps = capacities (d.looper);
+            int grew = 0, wrong = 0;
+            for (int round = 0; round < 3; ++round)
+                for (int l = 0; l < 8; ++l)
+                {
+                    d.looper.pressRecord (l);
+                    d.blocks (round == 1 ? 3 : 200);   // undo during the capture, and after it
+                    d.looper.pressRecord (l);
+                    d.block();
+                    d.looper.undo (l);
+                    d.block();
+                    wrong += same (d.looper.soundingLoopForTests (l), originals[(size_t) l]) ? 0 : 1;
+                    settle (d);
+                    d.looper.maintain();
+                    const auto now = capacities (d.looper);
+                    for (int i = 0; i < RigLooper::kLayers; ++i)
+                        grew += now[(size_t) i] > caps[(size_t) i] ? 1 : 0;
+                    caps = now;
+                }
+            const auto c = d.looper.getCopyCounters();
+            logMessage ("  " + juce::String (c.swaps) + " by swap, " + juce::String (c.restorations) + " by restoration; rooms at once "
+                        + juce::String (c.roomBuffersMost));
+            for (int l = 0; l < 8; ++l)
+                wrong += same (d.looper.copyLayerAudio (l), originals[(size_t) l]) ? 0 : 1;
+            expectEquals (grew, 0, "no layer's buffer ever grew");
+            expectEquals (wrong, 0, "every undo exact");
+            expectLessOrEqual (c.roomBuffersMost, 2);
+            expectGreaterThan (c.swaps, 0);
+            expectGreaterThan (c.restorations, 0);
+        }
+
+        beginTest ("All 16 layers with an oversized undo room: buffers never grow, and the room left stays right");
+        {
+            constexpr double rate = 16000.0;
+            Drive d (rate, kBlock);
+            dubInput (d);
+            d.looper.prepareUndoRoom ((int) (rate * RigLooper::kMaxUndoSeconds));   // 10 minutes of room
+            d.block();
+            expectEquals (d.looper.undoRoomSamples(), (int) (rate * RigLooper::kMaxUndoSeconds), "an oversized room");
+            std::vector<juce::AudioBuffer<float>> originals;
+            for (int l = 0; l < RigLooper::kLayers; ++l)
+            {
+                originals.push_back (odu::markedLoop (3000 + 9000 * l, 130 + l));
+                d.looper.setLayerAudio (l, originals.back(), originals.back().getNumSamples() / (rate * 0.5));
+                d.looper.getLayer (l).source = RigLooper::input;
+            }
+            d.blocks (3);
+            const auto caps0 = capacities (d.looper);
+            int grew = 0, inaccurate = 0, wrong = 0;
+            d.looper.resetCopyCounters();
+            for (int round = 0; round < 3; ++round)
+                for (int l = 0; l < RigLooper::kLayers; ++l)
+                {
+                    d.looper.pressRecord (l);
+                    d.blocks (round == 0 ? 2 : 60);
+                    d.looper.pressRecord (l);
+                    d.block();
+                    d.looper.undo (l);
+                    d.block();
+                    settle (d);
+                    d.looper.maintain();
+                    const auto now = capacities (d.looper);
+                    for (int i = 0; i < RigLooper::kLayers; ++i)
+                        grew += now[(size_t) i] > caps0[(size_t) i] ? 1 : 0;
+                    inaccurate += roomLeftAccurate (d.looper, rate) ? 0 : 1;
+                    wrong += same (d.looper.copyLayerAudio (l), originals[(size_t) l]) ? 0 : 1;
+                }
+            const auto c = d.looper.getCopyCounters();
+            logMessage ("  " + juce::String (c.swaps) + " by swap, " + juce::String (c.restorations) + " by restoration");
+            expectEquals (grew, 0);
+            expectEquals (inaccurate, 0);
+            expectEquals (wrong, 0);
+            expectEquals (c.swaps, 0, "the room is bigger than every loop's buffer: never swapped");
+            expectLessOrEqual (c.roomBuffersMost, 2);
+        }
+
+        beginTest ("10, 12a. Restore before read: with bends switched during a long restoration, every sample is the original's");
+        for (const int block : { 16, 256 })
+        {
+            RigLooper::copySliceForTests = RigLooper::kCopyPageSamples / 4;   // a page every 4 blocks
+            Twin t (kRate, block);
+            dubInput (t.a);
+            dubInput (t.b);
+            t.loop (0, odu::markedLoop (900 * 1024, 140));   // (a bigger room: restoration)
+            t.loop (1, odu::markedLoop (200 * 1024, 141));
+            t.blocks (3);
+            t.a.looper.pressRecord (1);
+            t.blocks (block == 16 ? 30000 : 2000);
+            t.a.looper.pressRecord (1);
+            t.block();
+            t.a.looper.undo (1);
+            t.comparing = true;
+            juce::Random r (7);
+            int changes = 0;
+            for (int k = 0; k < (block == 16 ? 40000 : 4000) && (t.a.looper.isUndoRestoring() || k < 10); ++k)
+            {
+                if (k % 7 == 0)
+                {
+                    t.a.looper.setBend (1, r.nextInt (RigLooper::numBends));   // (each change fades over 8 ms: several at once)
+                    ++changes;
+                }
+                t.block();
+            }
+            const bool stillRestoring = t.a.looper.isUndoRestoring();
+            expectEquals (t.firstDiffBlock, -1, juce::String (block) + "-sample blocks, " + juce::String (changes) + " bend changes");
+            // The audio stops partway: a copier takes over and gets the loop as it was.
+            const auto original = t.b.looper.copyLayerAudio (1);
+            juce::AudioBuffer<float> copy;
+            std::thread copier ([&] { copy = t.a.looper.copyLayerAudio (1); });
+            copier.join();
+            expect (same (copy, original), "a copier taking over gets the original" + juce::String (stillRestoring ? " (mid-restoration)" : ""));
+            RigLooper::copySliceForTests = 0;
+        }
+
+        beginTest ("11. Deferred presses: once, in order, on their own layer; dropped after clear, new sound, bank swap, show load");
+        {
+            const juce::StringArray cancels { "", "clear", "new sound", "bank swap", "show load" };
+            for (const auto& cancel : cancels)
+            {
+                RigLooper::copySliceForTests = RigLooper::kCopyPageSamples;
+                Drive d (kRate, kBlock);
+                dubInput (d);
+                putLoop (d, 0, odu::markedLoop (600 * 1024, 150));
+                putLoop (d, 1, odu::markedLoop (200 * 1024, 151));
+                putLoop (d, 2, odu::markedLoop (100 * 1024, 152));
+                d.blocks (3);
+                d.looper.pressRecord (1);
+                d.blocks (300);
+                d.looper.undo (1);
+                d.block();
+                expect (d.looper.isUndoRestoring());
+                d.looper.pressRecord (2);
+                d.block();
+                expect (d.looper.getState (2) == State::playing, "held back while it restores");
+                if (cancel == "clear")
+                    d.looper.clear (2);
+                else if (cancel == "new sound")
+                    d.looper.setLayerAudio (2, odu::markedLoop (100 * 1024, 153), 100 * 1024 / 24000.0);
+                else if (cancel == "bank swap")
+                    d.looper.queueLayerAudio (2, odu::markedLoop (100 * 1024, 154), 100 * 1024 / 24000.0, -1.0, 0.8f, false);
+                else if (cancel == "show load")
+                    d.looper.reset (2);
+                // A press on an empty layer isn't held back: it arms at once (the next bar line).
+                d.looper.pressRecord (5);
+                d.block();
+                expect (d.looper.getState (5) == State::armed, "an empty layer's press is never held back");
+                d.looper.pressRecord (5);
+                d.block();
+                int appliedAt = -1;
+                for (int k = 0; k < 20000 && appliedAt < 0; ++k)
+                {
+                    const bool was = d.looper.isUndoRestoring();
+                    d.block();
+                    if (was && ! d.looper.isUndoRestoring())
+                        appliedAt = k;
+                }
+                d.block();
+                if (cancel.isEmpty())
+                {
+                    expect (d.looper.getState (2) == State::overdubbing, "applied once the restoration is done");
+                    expect (d.looper.canUndo (2), "with its undo");
+                    expect (d.looper.getState (1) == State::playing, "on the layer it was made on only");
+                    d.looper.pressRecord (2);
+                    d.block();
+                    expect (d.looper.getState (2) == State::playing, "once");
+                }
+                else
+                    expect (d.looper.getState (2) != State::overdubbing && d.looper.getState (2) != State::armed, cancel + ": dropped");
+                RigLooper::copySliceForTests = 0;
+            }
+        }
+
+        beginTest ("16, safeguard 5. The mandatory bound at its worst: 16 samples at 192 kHz, the fastest loop that passes, a wrap, a bend fade, a save on another overdub");
+        {
+            constexpr double rate = 192000.0;
+            Drive d (rate, 16);
+            dubInput (d);
+            // r_worst = 16 is the most (G) allows at 192 kHz: 8 times natural speed at 120 BPM (just under).
+            const int n = 2000 * 1024 + 5;
+            const double spb = rate * 60.0 / 120.0;
+            d.looper.setLayerAudio (0, odu::markedLoop (n, 160), n / (7.99 * spb));
+            d.looper.setLayerAudio (1, odu::markedLoop (n + 1000, 161), (n + 1000) / (7.99 * spb));
+            d.looper.setLayerAudio (2, odu::markedLoop (900 * 1024, 162), 900 * 1024 / spb);   // (the room is bigger: restoration)
+            for (int l = 0; l < 3; ++l)
+                d.looper.getLayer (l).source = RigLooper::input;
+            d.blocks (3);
+            d.blocks (8000);            // half way round: ahead of the capture in order, so pages are captured before writes
+            d.looper.pressRecord (1);   // overdubbed while it's saved
+            d.block();
+            d.looper.pressRecord (0);   // the undo's overdub (the last one pressed)
+            d.block();
+            expect (d.looper.canUndo (0));
+            d.looper.resetCopyCounters();
+            std::atomic<bool> saving { true };
+            std::thread saver ([&] { while (saving) d.looper.copyLayerAudio (1); });
+            for (int k = 0; k < 12000; ++k)
+            {
+                if (k % 300 == 0)
+                    d.looper.setBend (0, (k / 300) % 2 == 0 ? RigLooper::twice : RigLooper::reverse);
+                d.block();
+            }
+            const auto capturing = d.looper.getCopyCounters();
+            d.looper.pressRecord (0);
+            d.block();
+            d.looper.undo (0);
+            d.looper.resetCopyCounters();
+            for (int k = 0; k < 12000; ++k)
+            {
+                if (k % 300 == 0)
+                    d.looper.setBend (0, (k / 300) % 3);
+                d.block();
+            }
+            const auto restoring = d.looper.getCopyCounters();
+            saving = false;
+            saver.join();
+            // Short block: x = 16 * 8 / 1024 under a third of a page, so M_w <= 2, M_r <= 6, M_s <= 2.
+            logMessage ("  capturing: most mandatory " + juce::String (capturing.maxMandatory) + " pages a block (undo "
+                        + juce::String (capturing.maxPages[RigLooper::undoBeforeWrite]) + ", save " + juce::String (capturing.maxPages[RigLooper::saveBeforeWrite])
+                        + "); restoring: most " + juce::String (restoring.maxMandatory) + " (before read " + juce::String (restoring.maxPages[RigLooper::undoBeforeRead])
+                        + ", save " + juce::String (restoring.maxPages[RigLooper::saveBeforeWrite]) + "); bound 8 pages (64 KB)");
+            expectLessOrEqual (capturing.maxPages[RigLooper::undoBeforeWrite], 2);
+            expectLessOrEqual (capturing.maxPages[RigLooper::saveBeforeWrite], 2);
+            expectLessOrEqual (restoring.maxPages[RigLooper::undoBeforeRead], 6);
+            expectLessOrEqual (capturing.maxMandatory, 8);
+            expectLessOrEqual (restoring.maxMandatory, 8);
+            expectLessOrEqual ((int) (capturing.maxBytes[RigLooper::undoBeforeWrite] + capturing.maxBytes[RigLooper::saveBeforeWrite]), 65536);
+            expectEquals ((int) (capturing.overBudgetBlocks + restoring.overBudgetBlocks), 0);
+            expectEquals ((int) (capturing.overMandatoryBlocks + restoring.overMandatoryBlocks), 0);
+            expectGreaterThan ((int) capturing.pages[RigLooper::undoBeforeWrite], 0, "it did copy before writes");
+        }
+
+        beginTest ("21. Concurrent saves: copies made during a capture, across an undo, during a restoration, and called off for budget each equal the loop at one block");
+        {
+            // Each block's sounding loop is hashed under its version (a version names one sound);
+            // a saver copies all the while, and each copy must be the sound its version names.
+            const auto hash = [] (const juce::AudioBuffer<float>& b)
+            {
+                juce::uint64 h = 1469598103934665603ull ^ (juce::uint64) b.getNumSamples();
+                for (int ch = 0; ch < b.getNumChannels() && b.getNumSamples() > 0; ++ch)
+                {
+                    const auto* p = reinterpret_cast<const juce::uint32*> (b.getReadPointer (ch));
+                    for (int i = 0; i < b.getNumSamples(); ++i)
+                        h = (h ^ p[i]) * 1099511628211ull;
+                }
+                return h;
+            };
+            struct Copy { int version; juce::uint64 hash; };
+            const auto run = [&] (const juce::String& what, Drive& d, int layer, const std::function<void (const std::function<void (int)>&)>& script)
+            {
+                std::map<int, juce::uint64> sounds;
+                int contradictions = 0;
+                const auto note = [&]
+                {
+                    const int v = d.looper.getLayer (layer).version.load();
+                    const auto h = hash (d.looper.soundingLoopForTests (layer));
+                    if (auto it = sounds.find (v); it == sounds.end())
+                        sounds[v] = h;
+                    else if (it->second != h)
+                        ++contradictions;
+                };
+                const auto blocks = [&] (int k)
+                {
+                    for (int i = 0; i < k; ++i)
+                    {
+                        d.block();
+                        note();
+                    }
+                };
+                note();
+                std::mutex m;
+                std::vector<Copy> copies;
+                std::atomic<bool> saving { true };
+                const auto stats0 = d.looper.getCopyStats();
+                std::thread saver ([&]
+                {
+                    while (saving)
+                    {
+                        int v = -1;
+                        const auto c = d.looper.copyLayerAudio (layer, &v);
+                        if (v >= 0)
+                        {
+                            const std::lock_guard<std::mutex> g (m);
+                            copies.push_back ({ v, hash (c) });
+                        }
+                    }
+                });
+                script (blocks);
+                saving = false;
+                saver.join();
+                const auto stats1 = d.looper.getCopyStats();
+                int wrong = 0, unknown = 0;
+                for (const auto& c : copies)
+                {
+                    if (auto it = sounds.find (c.version); it == sounds.end())
+                        ++unknown;
+                    else if (it->second != c.hash)
+                        ++wrong;
+                }
+                logMessage ("  " + what + ": " + juce::String ((int) copies.size()) + " copies, " + juce::String (wrong) + " not their version's sound, "
+                            + juce::String (unknown) + " of a version no block had; retries " + juce::String (stats1.retries - stats0.retries));
+                expectEquals (contradictions, 0, what + ": a version names one sound");
+                expectGreaterThan ((int) copies.size(), 0, what + ": copies were made");
+                expectEquals (wrong, 0, what + ": each copy is the loop at one block");
+                expectEquals (unknown, 0, what);
+                return stats1.retries - stats0.retries;
+            };
+            RigLooper::copySliceForTests = 4 * RigLooper::kCopyPageSamples;   // captures and restorations take many blocks
+            {
+                Drive d (kRate, kBlock);
+                dubInput (d);
+                putLoop (d, 0, odu::markedLoop (5 * 48000, 210));
+                d.blocks (3);
+                run ("during a capture, then across its undo, then during the restoration", d, 0, [&] (const std::function<void (int)>& blocks)
+                {
+                    for (int round = 0; round < 4; ++round)
+                    {
+                        d.looper.pressRecord (0);
+                        blocks (30);
+                        expect (! d.looper.isUndoCaptureCompleteForTests(), "the capture is still running");
+                        d.looper.undo (0);   // the undo interrupts the capture (and the copies)
+                        blocks (1);
+                        blocks (10);
+                        d.looper.pressRecord (0);
+                        blocks (200);         // a second overdub, its capture complete and more written
+                        d.looper.pressRecord (0);
+                        blocks (1);
+                        d.looper.undo (0);
+                        blocks (1);
+                        expect (d.looper.isUndoRestoring(), "restoring");
+                        for (int k = 0; k < 2000 && d.looper.isUndoRestoring(); ++k)
+                            blocks (1);
+                        blocks (5);
+                    }
+                });
+            }
+            {
+                // A loop overdubbed faster than the guarantee allows: its copies are called off and
+                // tried again; another loop's undo is untouched throughout.
+                Drive d (kRate, kBlock);
+                dubInput (d);
+                putLoop (d, 0, odu::markedLoop (40 * 48000, 211));
+                const int n = 768000 * 2;
+                d.looper.setLayerAudio (1, odu::markedLoop (n, 212), 2.0 * 0.999);
+                d.looper.getLayer (1).source = RigLooper::input;
+                d.blocks (3);
+                const auto original = d.looper.soundingLoopForTests (0);
+                d.looper.pressRecord (0);
+                d.seconds (1.0);
+                d.looper.pressRecord (0);
+                d.block();
+                expect (d.looper.canUndo (0), "loop 1 holds the undo");
+                int lost = 0;
+                const auto retries = run ("a squeezed loop overdubbing, its copies called off", d, 1, [&] (const std::function<void (int)>& blocks)
+                {
+                    d.looper.pressRecord (1);
+                    for (int k = 0; k < 300; ++k)
+                    {
+                        blocks (1);
+                        lost += d.looper.canUndo (0) ? 0 : 1;
+                    }
+                    d.looper.pressRecord (1);
+                    blocks (3);
+                });
+                expectGreaterThan (retries, 0, "the copies of the squeezed overdub were called off and tried again");
+                expectEquals (lost, 0, "loop 1's undo stays throughout");
+                d.looper.undo (0);
+                settle (d);
+                expect (same (d.looper.copyLayerAudio (0), original), "and loop 1's undo is exact");
+            }
+            RigLooper::copySliceForTests = 0;
+        }
+    }
+};
+
+static RigOverdubUndoRestoreTests rigOverdubUndoRestoreTests;
