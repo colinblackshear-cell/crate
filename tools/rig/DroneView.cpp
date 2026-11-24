@@ -48,6 +48,8 @@ const KnobSpec knobSpecs[] = {
     { "droneBody", "Body", "How much of the strings' low fundamental you hear: thinner down, fuller up." },
     { "droneDetune", "Detune", "Each string a few cents apart from the next, for a wide, chorused, slightly out-of-tune bed." },
     { "droneSpace", "Space", "A big room around the strings: up for a long, washed-out reverb." },
+    { "droneToneLevel", "Level", "How loud the miracle tone is." },
+    { "droneToneSwell", "Swell", "The tone breathes in and out: 0 steady; up, slower and deeper." },
 };
 
 const char* const orderTips[] = { "The classic tanpura order: the first string, Sa, Sa, then low Sa, round and round.",
@@ -64,6 +66,16 @@ const char* const stepCountNames[] = { "Off", "8", "16" };
 const char* const stepRateNames[] = { "1/4", "1/8", "1/16" };
 
 constexpr size_t kFirstPatternKnob = 8;   // knobSpecs from Swing on are Pattern's and Tone's
+constexpr size_t kFirstToneKnob = 14;     // and from Level on, Miracle tones'
+
+const char* const kToneNote = "Names and meanings come from Solfeggio and sound-healing tradition: beliefs, not proven science. The tones are exact.";
+const char* const fitNames[] = { "Over the drone", "Tune drone to it" };
+const char* const fitTips[] = { "The tone plays at exactly its frequency; the drone and the song stay in their key.",
+                                "The drone's note (Sa) becomes the tone, octaves down, so the strings and the tone ring as one. "
+                                "Back on Over the drone, the drone's own note returns." };
+const char* const toneSoundTips[] = { "Pure: a sine wave, the tone alone.", "Warm: the tone with a soft octave under it.",
+                                      "Bowl: a singing bowl's ringing partials, slowly beating." };
+const char* const beatNames[] = { "Off", "2 Hz", "6 Hz", "10 Hz" };
 
 const char* const firstNames[] = { "Pa", "Ma", "Ni", "Sa" };
 const char* const firstTips[] = { "The first string plays Pa, the fifth over Sa: the classic drone.",
@@ -231,14 +243,86 @@ DroneView::DroneView (RigEngine& e) : engine (e)
         addAndMakeVisible (b);
     }
 
-    for (auto* tab : { &stringsTab, &patternTab })
+    for (int i = 0; i < crate::drone::kNumTones; ++i)
+    {
+        auto* tile = toneTiles.add (new ToneTile());
+        tile->setClickingTogglesState (false);
+        if (i < (int) crate::drone::tones().size())
+        {
+            const auto& tone = crate::drone::tones()[(size_t) i];
+            tile->hz = crate::drone::toneHzText (tone.hz);
+            tile->name = tone.name;
+            tile->setTooltip (tile->hz + " Hz: " + tone.meaning + " Click to play it; again to stop.");
+        }
+        else
+        {
+            tile->name = "YOUR OWN";
+            tile->setTooltip ("Any frequency you like (20 to 2000 Hz): click to type it in. Playing: click to stop.");
+        }
+        tile->onClick = [this, i] { pressTone (i); };
+        addAndMakeVisible (tile);
+    }
+    for (int i = 0; i < 2; ++i)
+    {
+        auto* b = fitButtons.add (new juce::TextButton (fitNames[i]));
+        wellButton (*b, Lit::current, 14.0f);
+        b->setTooltip (fitTips[i]);
+        b->onClick = [this, i]
+        {
+            setChoice ("droneToneFit", i);
+            say (i == 0 ? juce::String ("The tone plays over the drone; the drone stays on its note.")
+                        : "The drone is tuned to the tone: " + crate::drone::nearestNoteText (crate::drone::toneDroneSa (engine.getDrone().getToneHz(), 0)) + ".");
+            update();
+            repaint (miracleWell);
+        };
+        addAndMakeVisible (b);
+    }
+    for (int i = 0; i < 3; ++i)
+    {
+        const char* names[] = { "Pure", "Warm", "Bowl" };
+        auto* b = toneSoundButtons.add (new juce::TextButton (names[i]));
+        wellButton (*b, Lit::current, 14.0f);
+        b->setTooltip (toneSoundTips[i]);
+        b->onClick = [this, i] { setChoice ("droneToneSound", i); update(); };
+        addAndMakeVisible (b);
+    }
+    for (int i = 0; i < crate::drone::kNumToneBeats; ++i)
+    {
+        auto* b = beatButtons.add (new juce::TextButton (beatNames[i]));
+        wellButton (*b, Lit::current, 14.0f);
+        b->setTooltip (i == 0 ? juce::String ("Binaural off: both ears hear the same tone.")
+                              : juce::String ("Binaural: the left ear hears the tone, the right ear ") + beatNames[i] + " higher. With headphones you hear a slow "
+                                "pulse (" + crate::drone::toneBeatName (i) + "). On speakers it's only a soft wobble.");
+        b->onClick = [this, i]
+        {
+            setChoice ("droneToneBeat", i);
+            if (i > 0)
+                say (juce::String ("Binaural ") + beatNames[i] + ": " + crate::drone::toneBeatName (i) + " Headphones only.");
+            update();
+            repaint (miracleWell);
+        };
+        addAndMakeVisible (b);
+    }
+    wellButton (toneOnlyButton, Lit::current, 14.0f);
+    toneOnlyButton.setTooltip ("Tone only: the strings and reeds rest, so you hear (and record) just the tone.");
+    toneOnlyButton.onClick = [this]
+    {
+        const bool only = choice ("droneToneOnly") == 0;
+        setChoice ("droneToneOnly", only ? 1 : 0);
+        say (only ? juce::String ("Tone only: the strings rest. REC records just the tone.") : juce::String ("The strings play with the tone again."));
+        update();
+    };
+    addAndMakeVisible (toneOnlyButton);
+
+    for (auto* tab : { &stringsTab, &patternTab, &miracleTab })
     {
         wellButton (*tab, Lit::current, 14.0f);
-        tab->onClick = [this, tab] { showPage (tab == &patternTab ? 1 : 0); };
+        tab->onClick = [this, tab] { showPage (tab == &miracleTab ? 2 : tab == &patternTab ? 1 : 0); };
         addChildComponent (tab);
     }
     stringsTab.setTooltip ("The strings, their tuning, how they play, and singing into them.");
     patternTab.setTooltip ("Pattern (the order the strings go in, or your own steps) and Tone (the instrument they are).");
+    miracleTab.setTooltip ("Miracle tones: a held tone at an exact frequency (Solfeggio, 432, Om or your own), over the drone or tuning it.");
 
     for (const auto& spec : knobSpecs)
     {
@@ -372,9 +456,64 @@ void DroneView::pressString (int string)
     repaint (stringsWell);
 }
 
+void DroneView::pressTone (int index)
+{
+    auto& d = engine.getDrone();
+    if (index == crate::drone::kOwnTone && ! (d.isToneOn() && d.getTone() == index))
+        return askOwnHz();
+    d.pickTone (index);
+    if (d.isToneOn())
+        say (crate::drone::toneHzText (d.getToneHz()) + " Hz is playing" + (index < (int) crate::drone::tones().size()
+                                                                                  ? juce::String (" (") + crate::drone::tones()[(size_t) index].name + ")" : juce::String())
+             + ". Click it again to stop.");
+    else
+        say ("The tone is off.");
+    update();
+    repaint (miracleWell);
+}
+
+void DroneView::askOwnHz()
+{
+    auto* window = new juce::AlertWindow ("Your own tone", "A frequency from 20 to 2000 Hz:", juce::MessageBoxIconType::NoIcon, this);
+    window->addTextEditor ("hz", crate::drone::toneHzText (getParam (engine.getDrone().params, "droneToneHz")));
+    window->addButton ("Play it", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    window->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<DroneView> (this), window] (int result)
+    {
+        const double hz = window->getTextEditorContents ("hz").retainCharacters ("0123456789.").getDoubleValue();
+        if (safe == nullptr || result != 1)
+            return;
+        if (hz < crate::drone::kOwnToneMin || hz > crate::drone::kOwnToneMax)
+            return safe->say ("Type a frequency from 20 to 2000 Hz.");
+        safe->engine.getDrone().setOwnToneHz (hz);
+        safe->say (crate::drone::toneHzText (hz) + " Hz is playing (your own). Click it again to stop.");
+        safe->update();
+        safe->repaint (safe->miracleWell);
+    }), true);
+}
+
+void DroneView::ToneTile::paintButton (juce::Graphics& g, bool over, bool down)
+{
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    const bool lit = getToggleState();
+    g.setColour (lit ? RigColours::drone : juce::Colour (over ? 0xff463e37 : 0xff3a332d));
+    g.fillRoundedRectangle (r.translated (0.0f, down ? 1.0f : 0.0f), 6.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
+    g.fillRoundedRectangle (r.withTop (r.getBottom() - 3.0f), 2.0f);
+    const auto ink = lit ? juce::Colours::white : juce::Colour (0xfff1e7d1);
+    g.setColour (ink);
+    auto text = r.reduced (3.0f, 2.0f);
+    const float big = juce::jmin (20.0f, text.getHeight() * 0.48f);
+    g.setFont (vintage::cond (big, Weight::extra, 0.04f));
+    g.drawFittedText (hz.isEmpty() ? juce::String ("+ Hz") : hz, text.removeFromTop (text.getHeight() * 0.56f).toNearestInt(), juce::Justification::centredBottom, 1, 0.8f);
+    g.setColour (ink.withAlpha (0.85f));
+    g.setFont (vintage::cond (juce::jmin (12.0f, text.getHeight() * 0.85f), Weight::bold, 0.04f));
+    g.drawFittedText (name, text.toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
+}
+
 void DroneView::showPage (int which)
 {
-    page = juce::jlimit (0, 1, which);
+    page = juce::jlimit (0, 2, which);
     resized();
     update();
     repaint();
@@ -398,7 +537,20 @@ std::vector<juce::Component*> DroneView::moreControls()
     for (auto* group : { &orderButtons, &stepCountButtons, &stepRateButtons, &voiceButtons })
         for (auto* b : *group)
             list.push_back (b);
-    for (size_t i = kFirstPatternKnob; i < knobs.size(); ++i)
+    for (size_t i = kFirstPatternKnob; i < kFirstToneKnob; ++i)
+        list.push_back (knobs[i].get());
+    return list;
+}
+
+std::vector<juce::Component*> DroneView::miracleControls()
+{
+    std::vector<juce::Component*> list { &toneOnlyButton };
+    for (auto* tile : toneTiles)
+        list.push_back (tile);
+    for (auto* group : { &fitButtons, &toneSoundButtons, &beatButtons })
+        for (auto* b : *group)
+            list.push_back (b);
+    for (size_t i = kFirstToneKnob; i < knobs.size(); ++i)
         list.push_back (knobs[i].get());
     return list;
 }
@@ -500,6 +652,33 @@ void DroneView::update()
                                                   + ", so it plucks with the beat instead: pick Own time to use Pace.");
     }
 
+    // Miracle tones.
+    const bool toneOn = d.isToneOn();
+    const int tone = d.getTone();
+    for (int i = 0; i < toneTiles.size(); ++i)
+        light (*toneTiles[i], toneOn && i == tone);
+    if (auto* own = toneTiles[crate::drone::kOwnTone]; own != nullptr)
+    {
+        const auto text = crate::drone::toneHzText (getParam (d.params, "droneToneHz"));
+        if (own->hz != text)
+        {
+            own->hz = text;
+            own->repaint();
+        }
+    }
+    const int fit = choice ("droneToneFit"), toneSound = choice ("droneToneSound"), beat = choice ("droneToneBeat");
+    for (int i = 0; i < fitButtons.size(); ++i)
+        light (*fitButtons[i], i == fit);
+    for (int i = 0; i < toneSoundButtons.size(); ++i)
+        light (*toneSoundButtons[i], i == toneSound);
+    for (int i = 0; i < beatButtons.size(); ++i)
+        light (*beatButtons[i], i == beat);
+    light (toneOnlyButton, choice ("droneToneOnly") == 1);
+    // (A tab says the tone is playing, when you're on another page.)
+    const auto miracleText = toneOn ? juce::String::fromUTF8 ("Miracle tones \xc2\xb7 on") : juce::String ("Miracle tones");
+    if (miracleTab.getButtonText() != miracleText)
+        miracleTab.setButtonText (miracleText);
+
     const int key = juce::jlimit (0, 11, engine.getChords().fillKey);
     chordsKeyButton.setTooltip ("Sets the drone's note to the chord builder's key (" + DroneProcessor::rootNames()[key] + " now).");
     // The volume follows the Mixer's fader (and a learned knob) unless you're turning it here.
@@ -544,6 +723,11 @@ void DroneView::tick()
     update();
     repaint (stringsWell);
     repaint (meterArea.expanded (2));
+    if (! readoutArea.isEmpty())
+    {
+        repaint (readoutArea);
+        repaint (fitLine);
+    }
     if (const int step = d.getCurrentStep(); step != shownStep)
     {
         shownStep = step;
@@ -558,7 +742,7 @@ void DroneView::paint (juce::Graphics& g)
     const auto colour = RigColours::drone;
     vintage::drawFace (g, getLocalBounds());
 
-    for (auto well : { stringsWell, tuningWell, playingWell, resonateWell, patternWell, toneWell })
+    for (auto well : { stringsWell, tuningWell, playingWell, resonateWell, patternWell, toneWell, miracleWell })
         if (! well.isEmpty())
             vintage::drawWell (g, well.toFloat());
 
@@ -662,12 +846,68 @@ void DroneView::paint (juce::Graphics& g)
     title (resonateWell, "Sing into the strings", {});
     title (patternWell, "Pattern", "the order the strings go in, or your own steps");
     title (toneWell, "Tone", "what the strings are");
+    title (miracleWell, "Miracle tones", "click a tone to play it");
     const std::pair<juce::Rectangle<int>, const char*> labels[] = { { noteLabel, "Note (Sa)" }, { octaveLabel, "Octave" }, { firstLabel, "First string" },
                                                                     { pluckLabel, "Pluck" }, { feedLabel, "Rings to" }, { orderLabel, "Order" },
-                                                                    { stepsLabel, "Steps" }, { voiceLabel, "Instrument" } };
+                                                                    { stepsLabel, "Steps" }, { voiceLabel, "Instrument" }, { fitLabel, "Fit" },
+                                                                    { toneSoundLabel, "Sound" }, { beatLabel, "Binaural" } };
     for (const auto& [area, text] : labels)
         if (! area.isEmpty())
             vintage::engraved (g, text, area, juce::Justification::bottomLeft, 12.0f, true);
+
+    // Miracle tones: the tone (its Hz, name, what it's said to mean, the nearest note), how it fits, the note.
+    if (! readoutArea.isEmpty())
+    {
+        const int index = d.getTone();
+        const double hz = d.getToneHz();
+        const bool toneOn = d.isToneOn();
+        auto box = readoutArea.toFloat();
+        g.setColour (juce::Colour (0xff2a2420));
+        g.fillRoundedRectangle (box, 8.0f);
+        auto r = readoutArea.reduced (12, 6);
+        auto top = r.removeFromTop (juce::jmin (32, r.getHeight() / 2));
+        g.setFont (vintage::cond (26.0f, Weight::extra, 0.04f));
+        g.setColour (colour.brighter (0.35f).withAlpha (toneOn ? 1.0f : 0.5f));
+        const auto hzText = crate::drone::toneHzText (hz) + " Hz";
+        const int hzW = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), hzText) + 12;
+        g.drawText (hzText, top.removeFromLeft (hzW), juce::Justification::centredLeft, false);
+        const juce::String name = index < (int) crate::drone::tones().size() ? juce::String (crate::drone::tones()[(size_t) index].name) : juce::String ("YOUR OWN");
+        auto nearW = juce::jmin (150, top.getWidth() / 2);
+        auto near = top.removeFromRight (nearW);
+        g.setColour (p.wellInk.withAlpha (toneOn ? 1.0f : 0.55f));
+        g.setFont (vintage::cond (18.0f, Weight::extra, 0.06f));
+        g.drawFittedText (name, top, juce::Justification::centredLeft, 1, 0.7f);
+        g.setColour (juce::Colour (0xfff2a93b));
+        g.setFont (vintage::cond (13.0f, Weight::bold, 0.06f));
+        g.drawFittedText ("NEAREST " + crate::drone::nearestNoteText (hz).toUpperCase(), near, juce::Justification::centredRight, 1, 0.7f);
+        g.setColour (p.wellInk2);
+        g.setFont (vintage::barlow (14.0f));
+        const juce::String meaning = ! toneOn ? juce::String ("Off. Click a tone to play it, under the strings or on its own (Tone only).")
+                                     : index < (int) crate::drone::tones().size() ? juce::String (crate::drone::tones()[(size_t) index].meaning)
+                                                                                  : juce::String ("Your own frequency: click its tile again to stop, then once more to type a new one.");
+        g.drawFittedText (meaning, r, juce::Justification::centredLeft, 2, 0.8f);
+    }
+    if (! fitLine.isEmpty())
+    {
+        const double hz = d.getToneHz();
+        const int beat = choice ("droneToneBeat");
+        juce::String text = choice ("droneToneFit") == 0
+                                ? "Over the drone: the tone plays at exactly " + crate::drone::toneHzText (hz) + " Hz; the drone stays on its note."
+                                : "Tuned: the drone plays on the tone, " + crate::drone::nearestNoteText (crate::drone::toneDroneSa (hz, choice ("droneOctave") - 1))
+                                      + ". The other tools stay at A = 440.";
+        if (beat > 0)
+            text << " Binaural: left " << crate::drone::toneHzText (hz) << ", right " << crate::drone::toneHzText (hz + crate::drone::toneBeatHz (beat))
+                 << " Hz (headphones).";
+        g.setColour (p.wellInk2);
+        g.setFont (vintage::barlow (13.0f));
+        g.drawFittedText (text, fitLine, juce::Justification::topLeft, 2, 0.8f);
+    }
+    if (! toneNote.isEmpty())
+    {
+        g.setColour (p.wellInk2.withAlpha (0.8f));
+        g.setFont (vintage::barlow (12.0f));
+        g.drawFittedText (kToneNote, toneNote, juce::Justification::topLeft, 2, 0.8f);
+    }
 
     // The steps: a row for each string, a square for each step (lit: it plucks there), the step playing outlined.
     if (! gridArea.isEmpty())
@@ -738,22 +978,30 @@ void DroneView::resized()
     // and Tone along the bottom.
     compact = getHeight() < 640;
     stringsTab.setVisible (compact);
-    patternTab.setVisible (compact);
+    patternTab.setVisible (true);
+    miracleTab.setVisible (true);
     if (compact)
     {
         auto tabs = area.removeFromTop (32);
-        stringsTab.setBounds (tabs.removeFromLeft (200));
+        const int tw = juce::jmin (200, (tabs.getWidth() - 12) / 3);
+        stringsTab.setBounds (tabs.removeFromLeft (tw));
         tabs.removeFromLeft (6);
-        patternTab.setBounds (tabs.removeFromLeft (200));
+        patternTab.setBounds (tabs.removeFromLeft (tw));
+        tabs.removeFromLeft (6);
+        miracleTab.setBounds (tabs.removeFromLeft (tw));
         area.removeFromTop (10);
-        stringsTab.setToggleState (page == 0, juce::dontSendNotification);
-        patternTab.setToggleState (page == 1, juce::dontSendNotification);
     }
-    const bool showMain = ! compact || page == 0, showMore = ! compact || page == 1;
+    stringsTab.setToggleState (page == 0, juce::dontSendNotification);
+    patternTab.setToggleState (compact ? page == 1 : page != 2, juce::dontSendNotification);
+    miracleTab.setToggleState (page == 2, juce::dontSendNotification);
+    // (A tall window: the strings always, and Pattern and tone or Miracle tones under them.)
+    const bool showMain = ! compact || page == 0, showMore = compact ? page == 1 : page != 2, showMiracle = page == 2;
     for (auto* c : mainControls())
         c->setVisible (showMain && c != &micButton);
     for (auto* c : moreControls())
         c->setVisible (showMore);
+    for (auto* c : miracleControls())
+        c->setVisible (showMiracle);
     if (auto* fine = knobFor ("droneFine"))
     {
         fine->setVisible (compact ? showMore : showMain);
@@ -765,11 +1013,24 @@ void DroneView::resized()
     }
     stringsWell = tuningWell = playingWell = resonateWell = stringsArea = meterArea = captionArea = {};
     patternWell = toneWell = gridArea = gridHint = {};
+    miracleWell = readoutArea = fitLabel = toneSoundLabel = beatLabel = fitLine = toneNote = {};
     noteLabel = octaveLabel = firstLabel = pluckLabel = feedLabel = orderLabel = stepsLabel = voiceLabel = {};
+    juce::Rectangle<int> band;
+    if (! compact)
+    {
+        band = area.removeFromBottom (juce::jlimit (212, 240, getHeight() * 30 / 100));
+        auto tabs = area.removeFromBottom (32);
+        area.removeFromBottom (gap);
+        patternTab.setBounds (tabs.removeFromLeft (200).withTrimmedTop (4));
+        tabs.removeFromLeft (6);
+        miracleTab.setBounds (tabs.removeFromLeft (200).withTrimmedTop (4));
+    }
+    else if (! showMain)
+        band = area;
+    if (showMiracle)
+        miracleWell = band;
     if (showMore)
     {
-        auto band = compact ? area : area.removeFromBottom (juce::jlimit (212, 240, getHeight() * 30 / 100));
-        area.removeFromBottom (gap);
         if (compact && band.getWidth() < 1000)
         {
             patternWell = band.removeFromTop (juce::jmax (band.getHeight() / 2, band.getHeight() - gap - 128));   // (Tone: its buttons and a row of knobs)
@@ -1047,6 +1308,76 @@ void DroneView::resized()
                 k->setBounds (juce::Rectangle<int> (r.getX() + (int) i * kw, r.getY(), kw, flat ? juce::jmin (r.getHeight(), 48) : r.getHeight()).reduced (3, 0));
                 k->resized();
             }
+    }
+
+    // Miracle tones: the tiles (with the note on the names under them), then the tone, how it fits, its sound
+    // and binaural, and on the right Level, Swell and Tone only. A tall page (a short window's tab) puts the
+    // tiles across the top; the band under the strings puts them on the left.
+    if (showMiracle)
+    {
+        auto r = miracleWell.reduced (14, 12);
+        r.removeFromTop (24 + 8);
+        const bool stacked = r.getHeight() >= 300;
+        const int cols = 6;
+        juce::Rectangle<int> tiles;
+        if (stacked)
+        {
+            tiles = r.removeFromTop (juce::jmin (140, r.getHeight() / 3));
+            toneNote = r.removeFromTop (34).withTrimmedTop (6);
+            r.removeFromTop (6);
+        }
+        else
+        {
+            auto left = r.removeFromLeft (juce::jlimit (360, 600, r.getWidth() * 42 / 100));
+            r.removeFromLeft (16);
+            toneNote = left.removeFromBottom (30).withTrimmedTop (4);
+            tiles = left;
+        }
+        const int rows = (crate::drone::kNumTones + cols - 1) / cols;
+        const int tw = (tiles.getWidth() - 6 * (cols - 1)) / cols, th = (tiles.getHeight() - 6 * (rows - 1)) / rows;
+        for (int i = 0; i < toneTiles.size(); ++i)
+            toneTiles[i]->setBounds (tiles.getX() + (i % cols) * (tw + 6), tiles.getY() + (i / cols) * (th + 6), tw, th);
+
+        auto right = r.removeFromRight (juce::jlimit (110, 160, r.getWidth() / 5));
+        r.removeFromRight (14);
+        const int small = juce::jlimit (26, 32, row);
+        toneOnlyButton.setBounds (right.removeFromBottom (small));
+        right.removeFromBottom (6);
+        auto* level = knobFor ("droneToneLevel");
+        auto* swell = knobFor ("droneToneSwell");
+        const bool flat = right.getHeight() < 170;
+        const int kh = right.getHeight() / 2;
+        for (auto* k : { level, swell })
+            if (k != nullptr)
+            {
+                k->sideways = flat;
+                k->nameSize = narrow || flat ? 11.0f : 13.0f;
+                k->setBounds (right.removeFromTop (kh).reduced (0, 2));
+                k->resized();
+            }
+
+        readoutArea = r.removeFromTop (juce::jlimit (52, 76, r.getHeight() / 3));
+        r.removeFromTop (8);
+        const int labelW = 74;
+        auto choiceLine = [&] (juce::Rectangle<int>& label, juce::OwnedArray<juce::TextButton>& buttons)
+        {
+            auto line = r.removeFromTop (small);
+            label = line.removeFromLeft (labelW).withTrimmedBottom (6);
+            const int n = buttons.size();
+            const int w = juce::jmin (150, (line.getWidth() - 4 * (n - 1)) / n);
+            for (auto* b : buttons)
+            {
+                b->getProperties().set ("fontSize", narrow ? 11.0f : 14.0f);
+                b->setBounds (line.removeFromLeft (w));
+                line.removeFromLeft (4);
+            }
+            r.removeFromTop (5);
+        };
+        choiceLine (fitLabel, fitButtons);
+        choiceLine (toneSoundLabel, toneSoundButtons);
+        choiceLine (beatLabel, beatButtons);
+        if (r.getHeight() >= 16)
+            fitLine = r.withHeight (juce::jmin (r.getHeight(), 36));
     }
 
     // Resonate: what it does (under its title), its knob, what it rings to, how much it rings.

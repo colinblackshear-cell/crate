@@ -137,9 +137,46 @@ juce::String DroneTool::stringNote (int string) const
     return juce::MidiMessage::getMidiNoteName (note, true, true, 3);
 }
 
+bool DroneTool::pickTone (int index)
+{
+    index = juce::jlimit (0, crate::drone::kNumTones - 1, index);
+    const bool same = toneOn.load() && tone.load() == index;
+    tone = index;
+    toneOn = ! same;
+    if (! same)
+        on = true;
+    return ! same;
+}
+
+void DroneTool::setOwnToneHz (double hz)
+{
+    ownHz = (float) juce::jlimit (crate::drone::kOwnToneMin, crate::drone::kOwnToneMax, hz);
+    tone = crate::drone::kOwnTone;
+    toneOn = true;
+    on = true;
+}
+
+juce::String DroneTool::stringNoteNow (int string) const
+{
+    if (! (toneOn.load() && toneFit.load() == 1))
+        return stringNote (string);
+    const double hz = crate::drone::toneDroneSa (toneHz(), octave.load()) * crate::drone::stringRatio (string, first.load());
+    const int note = juce::roundToInt (69.0 + 12.0 * std::log2 (hz / 440.0));
+    return juce::MidiMessage::getMidiNoteName (note, true, true, 3);
+}
+
 void DroneTool::reset()
 {
     on = false;
+    toneOn = false;
+    toneOnly = false;
+    tone = 5;
+    toneFit = 0;
+    toneSound = 0;
+    toneBeat = 0;
+    ownHz = 111.0f;
+    toneLevel = 0.6f;
+    toneSwell = 0.3f;
     loadPreset (0);
     fine = 0.0f;
     resonate = 0.0f;
@@ -183,6 +220,15 @@ juce::var DroneTool::toVar() const
     o->setProperty ("body", body.load());
     o->setProperty ("detune", detune.load());
     o->setProperty ("space", space.load());
+    o->setProperty ("toneOn", toneOn.load());
+    o->setProperty ("tone", tone.load());
+    o->setProperty ("ownHz", ownHz.load());
+    o->setProperty ("toneFit", toneFit.load());
+    o->setProperty ("toneSound", toneSound.load());
+    o->setProperty ("toneBeat", toneBeat.load());
+    o->setProperty ("toneLevel", toneLevel.load());
+    o->setProperty ("toneSwell", toneSwell.load());
+    o->setProperty ("toneOnly", toneOnly.load());
     return juce::var (o);
 }
 
@@ -225,6 +271,16 @@ void DroneTool::fromVar (const juce::var& v, int songRoot)
     body = num ("body", 0.5f, 0.0f, 1.0f);
     detune = num ("detune", 0.0f, 0.0f, 1.0f);
     space = num ("space", 0.0f, 0.0f, 1.0f);
+    // (songs from before MIRACLE TONES: the tone off)
+    toneOn = (bool) v.getProperty ("toneOn", false);
+    tone = whole ("tone", 5, 0, crate::drone::kNumTones - 1);
+    ownHz = num ("ownHz", 111.0f, (float) crate::drone::kOwnToneMin, (float) crate::drone::kOwnToneMax);
+    toneFit = whole ("toneFit", 0, 0, 1);
+    toneSound = whole ("toneSound", 0, 0, 2);
+    toneBeat = whole ("toneBeat", 0, 0, crate::drone::kNumToneBeats - 1);
+    toneLevel = num ("toneLevel", 0.6f, 0.0f, 1.0f);
+    toneSwell = num ("toneSwell", 0.3f, 0.0f, 1.0f);
+    toneOnly = (bool) v.getProperty ("toneOnly", false);
 }
 
 crate::drone::Settings DroneTool::read() const
@@ -256,6 +312,14 @@ crate::drone::Settings DroneTool::read() const
     s.body = body.load();
     s.detune = detune.load();
     s.space = space.load();
+    s.toneOn = toneOn.load();
+    s.toneHz = toneHz();
+    s.toneFit = toneFit.load();
+    s.toneSound = toneSound.load();
+    s.toneBeat = crate::drone::toneBeatHz (toneBeat.load());
+    s.toneLevel = toneLevel.load();
+    s.toneSwell = toneSwell.load();
+    s.toneOnly = toneOnly.load();
     return s;
 }
 

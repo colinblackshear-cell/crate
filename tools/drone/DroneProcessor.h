@@ -31,6 +31,15 @@ public:
 
     static constexpr float kBedGain = crate::drone::kBedGain;
 
+    // Miracle tones: the tone picked (0-11, 11 = your own), its Hz, and whether it's playing. Picking the tone
+    // that's playing turns it off; picking another plays it (and turns the drone on).
+    int getTone() const;
+    double getToneHz() const;
+    bool isToneOn() const;
+    void pickTone (int index);
+    void setOwnToneHz (double hz);   // plays it, as Your own
+    bool isToneSounding() const { return engine.isToneSounding(); }
+
     // Steps: what each of the 16 steps plucks (bits 0-3: the strings, 0 a rest). Saved with the drone's
     // settings; read by the audio thread.
     int getStep (int step) const;

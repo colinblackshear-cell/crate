@@ -172,6 +172,13 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
     show.sub = juce::String::fromUTF8 ("Not saved yet \xc2\xb7 menu");
     show.setTooltip ("Your show: New song, Open, Save (Cmd+S), Save as, Export for Logic, and the Guide.");
     addAndMakeVisible (show);
+    visuals.text = "VISUALS";
+    visuals.sub = "OFF";
+    visuals.fontSize = 15.0f;
+    visuals.subSize = 10.0f;
+    visuals.setTooltip ("Kaleidobox Visuals: your sound as a light show. Show it in the window, full screen, or on a second screen "
+                        "or projector; pick a look, Drift, and the colours (every note can have its own). F8 turns it on and off.");
+    addAndMakeVisible (visuals);
 }
 
 void Header::update (const Shown& s)
@@ -193,6 +200,8 @@ void Header::resized()
     menu.setBounds (centreY (r.removeFromLeft (h), h));
     r.removeFromLeft (8);
     lampsArea = centreY (r.removeFromRight (128), 72);
+    r.removeFromRight (12);
+    visuals.setBounds (centreY (r.removeFromRight (104), juce::jmin (h, 50)));
     r.removeFromRight (12);
     const int full = getLocalBounds().getWidth();
     const int lcdWidth = juce::jlimit (360, 560, full / 3);

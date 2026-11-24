@@ -9,6 +9,8 @@
 // the first string, when it plucks, its knobs, and SING INTO THE STRINGS (how much they ring to your voice or a
 // tool, what they ring to, and whether the mic is on). PATTERN / TONE (the chip up top) turns to its second page:
 // the order the strings go in or steps you draw, SWING and HUMAN, the instrument, BRIGHT, BODY, DETUNE and SPACE.
+// MIRACLE (the third chip) is MIRACLE TONES: a held tone at an exact frequency (the Solfeggio tones, 432, Om or your
+// own), FIT (over the drone, or the drone tuned to it), SOUND, BINAURAL (headphones), LEVEL, SWELL and TONE ONLY.
 // The thumb bar's REC records the drone onto the next loop layer (PocketApp drives it).
 class DroneScreen : public juce::Component, private juce::Timer
 {
@@ -31,11 +33,13 @@ public:
     {
         none = 0, onId = 1, soundId, keyId, noteId, pageId, octBase = 10, firstBase = 20, syncBase = 30, knobBase = 40, feedId = 60, micId,
         stringBase = 70, orderBase = 80, stepCountBase = 90, stepRateBase = 93, clearId = 96, voiceBase = 100,
+        pageBase = 110,   // + 0 STRINGS, 1 PATTERN, 2 MIRACLE
+        toneBase = 120, fitBase = 140, toneSoundBase = 143, beatBase = 146, toneOnlyId = 150,
         cellBase = 200   // + step * 4 + string
     };
     enum Knob { paceKnob, jawariKnob, ringKnob, reedsKnob, volumeKnob, resonateKnob, swingKnob, humanKnob, brightKnob, bodyKnob, detuneKnob,
-                spaceKnob, numKnobs };
-    // Two pages, as the Mac's two tabs on a short window: the strings (0), and PATTERN and TONE (1).
+                spaceKnob, toneLevelKnob, toneSwellKnob, numKnobs };
+    // Three pages, as the Mac's three tabs on a short window: the strings (0), PATTERN and TONE (1), MIRACLE TONES (2).
     void showPage (int);
     int getPage() const { return page; }
     void press (int id);
@@ -66,12 +70,16 @@ private:
     void drawKnobAt (juce::Graphics&, int knob);
     void layoutPattern (float y);
     void paintPattern (juce::Graphics&);
+    void layoutMiracle (float y);
+    void paintMiracle (juce::Graphics&);
+    void askOwnHz();
     juce::String knobText (int knob) const;
     juce::String statusText() const;
 
     pocket::DroneTool& drone;
     std::vector<Hit> hits;
     juce::Rectangle<float> gridR, orderLabel, stepsLabel, toneLabel;
+    juce::Rectangle<float> readoutR, fitLabelR, soundLabelR, beatLabelR, toneNoteR;
     int page = 0, shownStep = -1;
     juce::Rectangle<float> titleR, stringsWell, noteLabel, firstLabel, pluckLabel, singWell, singTitle, meterR, statusR;
     std::array<juce::Rectangle<float>, crate::drone::kStrings> stringR;

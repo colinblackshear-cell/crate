@@ -2,6 +2,7 @@
 juce_add_console_app(CrateTests PRODUCT_NAME "CrateTests")
 target_sources(CrateTests PRIVATE
     CoreTests.cpp
+    VisualsTests.cpp
     DrumMachineTests.cpp
     DroneTests.cpp
     EditorTests.cpp

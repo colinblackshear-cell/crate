@@ -9,6 +9,7 @@
 #include "RigPanels.h"
 #include "RigNavigation.h"
 #include "ChordsView.h"
+#include "core/visuals/VisualsView.h"
 
 namespace crate::spark { struct Spark; }
 
@@ -161,6 +162,14 @@ public:
     bool isSoundsOpen() const { return soundsOpen; }
     // The chord builder, over the bottom of whichever view is showing (F7).
     void showChords (bool show);
+    // Kaleidobox Visuals, the light show: off, over the screen in this window (the top bar and the
+    // Rec dock stay), full screen, or full screen on another display (`display`: an index into
+    // juce::Desktop's displays) with no buttons on it, for a projector. F8 turns it on and off.
+    enum class VisualsPlace { off, window, fullScreen, display };
+    void showVisuals (VisualsPlace, int display = -1);
+    VisualsPlace visualsPlace() const { return visualsAt; }
+    void showVisualsMenu();
+    crate::visuals::VisualsView* visualsInWindow() const { return visualsView.get(); }
     bool isChordsOpen() const { return chordsOpen; }
     ChordsView& getChordsView() { return *chordsDrawer; }
     const rigpanels::TrackRail& getRail() const { return rail; }
@@ -349,6 +358,13 @@ private:
     bool soundsOpen = false;
     std::unique_ptr<ChordsView> chordsDrawer;
     bool chordsOpen = false;
+    crate::visuals::VisualState visualState;
+    std::unique_ptr<crate::visuals::VisualsView> visualsView;   // in this window
+    class VisualsWindow;
+    std::unique_ptr<VisualsWindow> visualsWindow;               // full screen, here or on another display
+    VisualsPlace visualsAt = VisualsPlace::off, visualsLast = VisualsPlace::window;
+    int visualsDisplay = -1;
+    void updateVisualsButton();
     juce::String viewOfPlace (const juce::String& place) const;
     int trackOfPlace (const juce::String& place) const;
     bool railShown() const;

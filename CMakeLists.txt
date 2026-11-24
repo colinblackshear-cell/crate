@@ -101,7 +101,11 @@ target_sources(crate_core INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/core/SoundSet.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/ui/EffectsPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/core/ui/LibraryList.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/core/ui/WaveView.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/ui/WaveView.cpp
+    # Kaleidobox Visuals (the light show, on the graphics chip): the same on the Mac and the phone.
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/visuals/VisualAnalysis.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/visuals/VisualsRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/visuals/VisualsView.cpp)
 target_compile_definitions(crate_core INTERFACE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -110,7 +114,8 @@ target_compile_definitions(crate_core INTERFACE
 target_link_libraries(crate_core INTERFACE
     signalsmith-stretch
     juce::juce_audio_utils
-    juce::juce_dsp)
+    juce::juce_dsp
+    juce::juce_opengl)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # iPhone: only the phone app, built from the engine sources. The desktop tools host AU/VST3

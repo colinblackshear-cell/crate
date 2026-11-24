@@ -49,6 +49,8 @@ public:
     PanelButton show { "Unsaved show" };
     // Shown in the LCD only while the song decides what plays: hands control back.
     PanelButton jam { "Jam" };
+    // Kaleidobox Visuals: the light show (its menu: where it shows, the looks, the colours). F8 turns it on and off.
+    PanelButton visuals { "Visuals" };
     std::function<void()> onMic;
     std::function<void()> onKeyboard;   // a click on the keyboard lamp: MIDI controllers (in the app)
     std::function<void()> onWordmark;   // a click on "Kaleidobox": the Guide
