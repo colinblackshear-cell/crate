@@ -4,6 +4,7 @@
 #include "RigExport.h"
 #include "RigLooper.h"
 
+#include <algorithm>
 #include <thread>
 
 // Copying a loop (saving a show, storing a loop bank, Trim, Export) while the loops play.
@@ -702,3 +703,481 @@ struct RigLoopCopyTests : juce::UnitTest
 };
 
 static RigLoopCopyTests rigLoopCopyTests;
+
+//==============================================================================
+// The waveform the window draws (readPeaks): right for every way a sound gets on a layer, and
+// safe to read at any moment while the audio thread records, overdubs, undoes, swaps and clears.
+namespace
+{
+// A bin of a loop `n` long: the fewest samples (2^shift) that fit it in RigLooper::kPeakBins.
+int peakBin (int n)
+{
+    int shift = 0;
+    while (((juce::int64) RigLooper::kPeakBins << shift) < n)
+        ++shift;
+    return 1 << shift;
+}
+
+// The loudest sample (either channel, up to 1) of `a` from `from` to `to`: round the loop of `n`
+// if `wrap`, else only what's inside it.
+float loudest (const juce::AudioBuffer<float>& a, int n, juce::int64 from, juce::int64 to, bool wrap)
+{
+    if (! wrap)
+    {
+        from = juce::jmax ((juce::int64) 0, from);
+        to = juce::jmin ((juce::int64) n, to);
+    }
+    const float* l = a.getReadPointer (0);
+    const float* r = a.getReadPointer (1);
+    float m = 0;
+    for (auto i = from; i < to; ++i)
+    {
+        const auto j = (size_t) (((i % n) + n) % n);
+        m = juce::jmax (m, std::abs (l[j]), std::abs (r[j]));
+    }
+    return juce::jmin (1.0f, m);
+}
+
+// How many of readPeaks' slices (of a loop `n` long) are not between the loudest sample of
+// `ref` in that slice (`offset` samples on) and the loudest in it widened by `slack` each side.
+int outside (const std::vector<float>& peaks, const juce::AudioBuffer<float>& ref, int n, int offset, int slack, bool wrap)
+{
+    int bad = 0;
+    const auto slices = (juce::int64) peaks.size();
+    for (juce::int64 p = 0; p < slices; ++p)
+    {
+        const auto from = p * n / slices, to = (p + 1) * n / slices;
+        const float v = peaks[(size_t) p];
+        if (to <= from)
+        {
+            bad += juce::exactlyEqual (v, 0.0f) ? 0 : 1;   // a slice with no samples in it (more slices than samples)
+            continue;
+        }
+        const float low = loudest (ref, n, from + offset, to + offset, wrap);
+        const float high = loudest (ref, n, from + offset - slack, to + offset + slack, wrap);
+        if (! std::isfinite (v) || v < low || v > high)
+            ++bad;
+    }
+    return bad;
+}
+
+// A test sound: a level that changes every 3000 samples, alternating in sign, and (with spikes)
+// a loud single sample every 7919 on the left and 5003 on the right: the loudest, which a scan
+// that looks at every Nth sample misses.
+juce::AudioBuffer<float> testSound (int n, int seed, bool spikes = true)
+{
+    juce::Random random (seed);
+    juce::AudioBuffer<float> b (2, n);
+    float level = 0;
+    auto* l = b.getWritePointer (0);
+    auto* r = b.getWritePointer (1);
+    for (int i = 0; i < n; ++i)
+    {
+        if (i % 3000 == 0)
+            level = 0.05f + 0.6f * random.nextFloat();
+        const float v = (i & 1) != 0 ? -level : level;
+        l[i] = spikes && i % 7919 == 1234 ? 0.9f : v;
+        r[i] = spikes && i % 5003 == 17 ? -0.8f : -0.5f * v;
+    }
+    return b;
+}
+
+// How many slices are quieter than the loudest sample of `ref` in them.
+int under (const std::vector<float>& peaks, const juce::AudioBuffer<float>& ref, int n)
+{
+    int count = 0;
+    const auto slices = (juce::int64) peaks.size();
+    for (juce::int64 p = 0; p < slices; ++p)
+        count += peaks[(size_t) p] < loudest (ref, n, p * n / slices, (p + 1) * n / slices, false) ? 1 : 0;
+    return count;
+}
+
+bool allZero (const std::vector<float>& peaks)
+{
+    return std::all_of (peaks.begin(), peaks.end(), [] (float v) { return juce::exactlyEqual (v, 0.0f); });
+}
+
+// Drives a looper block by block: `fill` writes the block's sources (the mix and the input),
+// given the samples since the clock started.
+struct PeakRig
+{
+    RigLooper looper;
+    RigLooper::Clock clock;
+    juce::AudioBuffer<float> mix { 2, kBlock }, in { 2, kBlock }, out { 2, kBlock };
+    std::function<void (juce::AudioBuffer<float>&, juce::AudioBuffer<float>&, juce::int64)> fill;
+    juce::int64 fed = 0;
+    int worstOps = 0;   // the most waveform work a layer's block did
+
+    explicit PeakRig (double bpm = 120.0)
+    {
+        looper.prepare (kRate, kBlock);
+        clock.bpm = bpm;
+        clock.beatsPerBar = 4;
+    }
+    void blocks (int count)
+    {
+        for (int k = 0; k < count; ++k)
+        {
+            mix.clear();
+            in.clear();
+            if (fill)
+                fill (mix, in, fed);
+            std::array<const juce::AudioBuffer<float>*, RigLooper::numSources> sources {};
+            sources[RigLooper::mix] = &mix;
+            sources[RigLooper::input] = &in;
+            const bool wasPlaying = clock.playing;
+            if (looper.process (clock, sources, out))
+                clock.playing = true;
+            if (wasPlaying)
+            {
+                fed += kBlock;
+                clock.beat += kBlock * clock.bpm / (60.0 * kRate);
+            }
+            worstOps = juce::jmax (worstOps, looper.takePeakOpsForTests());
+        }
+    }
+    void seconds (double s) { blocks ((int) std::ceil (s * kRate / kBlock)); }
+    bool until (int layer, RigLooper::State state, double maxSeconds)
+    {
+        for (int k = 0; k < (int) (maxSeconds * kRate / kBlock) && looper.getState (layer) != state; ++k)
+        {
+            blocks (1);
+            if (k % 100 == 0)
+                looper.maintain();
+        }
+        return looper.getState (layer) == state;
+    }
+};
+
+void copySource (const juce::AudioBuffer<float>& sound, juce::AudioBuffer<float>& to, juce::int64 at)
+{
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < kBlock; ++i)
+            to.setSample (ch, i, at + i < sound.getNumSamples() ? sound.getSample (ch, (int) (at + i)) : 0.0f);
+}
+}
+
+struct RigWaveformPeakTests : juce::UnitTest
+{
+    RigWaveformPeakTests() : juce::UnitTest ("Rig waveform peaks", "Rig") {}
+
+    // Each slice holds every bin it touches, and a bin is the loudest of its 2^shift samples, so
+    // a slice reads at most a bin less one sample more at each end: never less than the loudest
+    // sample in it, never more than the loudest within that slack.
+    void expectPeaks (RigLooper& looper, int layer, const juce::AudioBuffer<float>& ref, int n, const juce::String& what)
+    {
+        for (const int count : { 1, 400, 2000 })
+            expectEquals (outside (looper.readPeaks (layer, count), ref, n, 0, peakBin (n) - 1, false), 0,
+                          what + ", " + juce::String (n) + " samples, " + juce::String (count) + " slices");
+    }
+
+    void runTest() override
+    {
+        beginTest ("A sound put in, swapped in or replaced: each slice is its loudest sample, to a bin");
+        {
+            PeakRig rig;
+            rig.clock.playing = true;
+            // Shorter than the table (a bin a sample) and than 400 or 2000 slices, odd lengths, 8 bars
+            // at 120, and 10 minutes.
+            for (const int n : { 100, 5000, 100003, 768000, (int) (600 * kRate) })
+            {
+                {
+                    const auto a = testSound (n, 1);
+                    expect (rig.looper.setLayerAudio (0, a, 4.0) > 0);
+                    expectPeaks (rig.looper, 0, a, n, "setLayerAudio");
+                }
+                {
+                    // A bank swap at the next beat, done by the audio thread.
+                    const auto b = testSound (n, 2);
+                    rig.looper.queueLayerAudio (0, b, 4.0, rig.clock.beat + 0.5, 0.8f, false);
+                    rig.blocks ((int) (0.3 * kRate / kBlock));
+                    expect (! rig.looper.isSwapPending (0));
+                    expectPeaks (rig.looper, 0, b, n, "a bank swap");
+                }
+                {
+                    const auto c = testSound (n, 3);
+                    expect (rig.looper.replaceLayerAudio (0, c));
+                    expectPeaks (rig.looper, 0, c, n, "replaceLayerAudio");
+                }
+                {
+                    const auto d = testSound (n, 4);
+                    rig.looper.queueLayerAudio (0, d, 4.0, -1.0, 0.8f, false);   // right away, on this thread
+                    expectPeaks (rig.looper, 0, d, n, "a swap right away");
+                }
+                rig.looper.maintain();   // frees the swapped-out sound
+            }
+            rig.looper.reset (0);
+        }
+
+        beginTest ("Recording: the waveform is what's recorded so far, through the table doubling, then the loop");
+        {
+            PeakRig rig;
+            constexpr int take = 768000;   // 8 bars at 120
+            constexpr int delay = 100;     // the live delay, samples
+            const auto spiky = testSound (take + 48000, 7);
+            const auto flat = testSound (take + 48000, 8, false);
+            rig.fill = [&] (juce::AudioBuffer<float>& mix, juce::AudioBuffer<float>& in, juce::int64 fed)
+            {
+                copySource (spiky, mix, fed);
+                copySource (flat, in, fed);
+            };
+            rig.looper.setLiveDelay (delay);
+            rig.looper.getLayer (0).source = RigLooper::mix;
+            rig.looper.getLayer (1).source = RigLooper::input;   // a live source: turned by the delay as it closes
+            for (int l = 0; l < 2; ++l)
+            {
+                rig.looper.getLayer (l).bars = 8;
+                rig.looper.pressRecord (l);
+            }
+            rig.blocks (1);   // armed; the clock starts
+            int checks = 0, wrongLength = 0, wrong = 0;
+            while (rig.looper.getState (0) == RigLooper::State::recording || rig.looper.getState (0) == RigLooper::State::armed)
+            {
+                rig.blocks (50);
+                if (rig.looper.getState (0) != RigLooper::State::recording)
+                    break;
+                // Recording starts with the clock, so what's recorded is everything fed since.
+                const int n = (int) rig.fed;
+                wrongLength += (int) std::lround (rig.looper.recordedSeconds (0) * kRate) == n ? 0 : 1;
+                for (const int count : { 400, 2000 })
+                    wrong += outside (rig.looper.readPeaks (0, count), spiky, n, 0, peakBin (n) - 1, false);
+                ++checks;
+            }
+            logMessage ("  " + juce::String (checks) + " looks while it recorded, the table doubled "
+                        + juce::String (std::log2 (peakBin (take))) + " times");
+            expectGreaterThan (checks, 50);
+            expectGreaterOrEqual (peakBin (take), 32, "it doubled several times");
+            expectEquals (wrongLength, 0);
+            expectEquals (wrong, 0, "the slices of what's recorded so far");
+
+            expect (rig.looper.getState (0) == RigLooper::State::playing && rig.looper.getState (1) == RigLooper::State::playing);
+            const auto loop0 = rig.looper.copyLayerAudio (0), loop1 = rig.looper.copyLayerAudio (1);
+            const int n0 = loop0.getNumSamples(), n1 = loop1.getNumSamples();
+            expect (std::abs (n0 - take) <= 1 && n1 == n0, juce::String (n0));
+            // Not turned: exactly what was played (the fades only make the loop quieter than it).
+            expectPeaks (rig.looper, 0, spiky, n0, "a closed take");
+            for (const int count : { 400, 2000 })
+                expectEquals (under (rig.looper.readPeaks (0, count), loop0, n0), 0, "never under the loop as it is");
+            // Turned `delay` earlier as it closed: the waveform is of the loop `delay` on (round it),
+            // to a bin, and the 96-sample fades (the sound is flat for 3000 samples, so within that).
+            for (const int count : { 400, 2000 })
+                expectEquals (outside (rig.looper.readPeaks (1, count), loop1, n1, -delay, peakBin (n1) - 1 + 96, true), 0,
+                              "a live take, " + juce::String (count) + " slices");
+        }
+
+        beginTest ("An overdub raises the waveform; undo puts back exactly what it was");
+        {
+            PeakRig rig;
+            constexpr int n = 768000;
+            const auto quiet = testSound (n, 5);
+            rig.looper.setLayerAudio (0, quiet, 32.0);
+            rig.looper.getLayer (0).source = RigLooper::input;
+            rig.fill = [] (juce::AudioBuffer<float>&, juce::AudioBuffer<float>& in, juce::int64 fed)
+            {
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < kBlock; ++i)
+                        in.setSample (ch, i, ((fed + i) / 1000) % 2 == 0 ? 0.3f : -0.2f);
+            };
+            rig.clock.playing = true;
+            const auto before = rig.looper.readPeaks (0, 2000), before400 = rig.looper.readPeaks (0, 400);
+            rig.looper.pressRecord (0);
+            rig.blocks (1);
+            expect (rig.looper.getState (0) == RigLooper::State::overdubbing);
+            rig.seconds (8.0);   // half the loop
+            rig.looper.pressRecord (0);
+            rig.blocks (1);
+            expect (rig.looper.canUndo (0));
+            const auto after = rig.looper.readPeaks (0, 2000);
+            int lower = 0, raised = 0;
+            for (size_t p = 0; p < after.size(); ++p)
+            {
+                lower += after[p] < before[p] ? 1 : 0;
+                raised += after[p] > before[p] ? 1 : 0;
+            }
+            logMessage ("  " + juce::String (raised) + " of 2000 slices louder after the overdub");
+            expectEquals (lower, 0, "never lower");
+            expectGreaterThan (raised, 600, "about half the loop was overdubbed");
+            // Each bin is the loudest of what was there and what the overdub made of it.
+            const auto dubbed = rig.looper.copyLayerAudio (0);
+            juce::AudioBuffer<float> either (2, n);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < n; ++i)
+                    either.setSample (ch, i, std::abs (quiet.getSample (ch, i)) > std::abs (dubbed.getSample (ch, i)) ? quiet.getSample (ch, i) : dubbed.getSample (ch, i));
+            for (const int count : { 400, 2000 })
+            {
+                const auto peaks = rig.looper.readPeaks (0, count);
+                expectEquals (outside (peaks, either, n, 0, peakBin (n) - 1, false), 0, "within the loudest of before and after");
+                expectEquals (under (peaks, dubbed, n), 0, "never under the loop as it is now");
+            }
+            rig.looper.undo (0);
+            rig.blocks (1);
+            expect (rig.looper.readPeaks (0, 2000) == before, "undo: the same waveform as before the overdub, exactly");
+            expect (rig.looper.readPeaks (0, 400) == before400);
+        }
+
+        beginTest ("Clear, reset and a swap to nothing leave no waveform");
+        {
+            PeakRig rig;
+            rig.clock.playing = true;
+            for (int l = 0; l < 4; ++l)
+                rig.looper.setLayerAudio (l, testSound (100003, l), 4.0);
+            rig.looper.clear (0);
+            rig.looper.reset (1);
+            rig.looper.queueLayerAudio (2, {}, 0.0, -1.0, 0.8f, false);
+            rig.looper.queueLayerAudio (3, {}, 0.0, rig.clock.beat + 0.25, 0.8f, false);
+            rig.blocks ((int) (0.3 * kRate / kBlock));
+            for (int l = 0; l < 4; ++l)
+            {
+                expect (rig.looper.getState (l) == RigLooper::State::empty);
+                expect (allZero (rig.looper.readPeaks (l, 400)) && allZero (rig.looper.readPeaks (l, 1)), "layer " + juce::String (l + 1));
+            }
+            // A new take there starts from nothing: silence draws as silence.
+            rig.looper.getLayer (0).source = RigLooper::input;
+            rig.looper.pressRecord (0);
+            expect (rig.until (0, RigLooper::State::recording, 3.0));
+            rig.seconds (0.5);
+            expect (allZero (rig.looper.readPeaks (0, 400)), "a silent take");
+        }
+
+        beginTest ("Reading the waveform while the audio thread records, overdubs, undoes, swaps and clears");
+        {
+            // Run under ThreadSanitizer for the real check: every read is of atomics only.
+            RigLooper looper;
+            looper.prepare (kRate, kBlock);
+            constexpr double bpm = 480.0;   // a bar is 24000 samples: a 2-bar take doubles the table twice
+            looper.getLayer (0).source = RigLooper::input;
+            std::atomic<bool> running { true };
+            std::atomic<double> beatNow { 0 };
+            std::atomic<int> cycles { 0 }, reads { 0 }, bad { 0 };
+            std::thread audio ([&]
+            {
+                RigLooper::Clock clock;
+                clock.bpm = bpm;
+                clock.playing = true;
+                juce::AudioBuffer<float> in (2, kBlock), out (2, kBlock);
+                juce::Random random (11);
+                std::array<const juce::AudioBuffer<float>*, RigLooper::numSources> sources {};
+                sources[RigLooper::input] = &in;
+                for (int block = 0; running.load(); ++block)
+                {
+                    switch (block % 500)
+                    {
+                        case 0:   looper.getLayer (0).bars = 2; looper.pressRecord (0); break;   // record 2 bars, closes itself
+                        case 300: looper.pressRecord (0); break;   // overdub
+                        case 360: looper.pressRecord (0); break;
+                        case 400: looper.undo (0); break;
+                        case 450: looper.clear (0); ++cycles; break;
+                        default: break;
+                    }
+                    for (int ch = 0; ch < 2; ++ch)
+                        for (int i = 0; i < kBlock; ++i)
+                            in.setSample (ch, i, random.nextFloat() * 1.6f - 0.8f);
+                    looper.process (clock, sources, out);
+                    clock.beat += kBlock * bpm / (60.0 * kRate);
+                    beatNow = clock.beat;
+                }
+            });
+            std::thread reader ([&]
+            {
+                for (int k = 0; running.load(); ++k)
+                    for (int l = 0; l < 4; ++l)
+                    {
+                        for (const float v : looper.readPeaks (l, k % 2 == 0 ? 400 : 2000))
+                            if (! std::isfinite (v) || v < 0.0f || v > 1.0f)
+                                ++bad;
+                        ++reads;
+                    }
+            });
+            const auto started = juce::Time::getMillisecondCounter();
+            for (int k = 0; juce::Time::getMillisecondCounter() - started < 3000; ++k)
+            {
+                // Bank swaps (at the next beat, or now; to a sound or to nothing), replacements, new sounds.
+                looper.queueLayerAudio (1, k % 3 == 2 ? juce::AudioBuffer<float>() : testSound (24000 + 1000 * (k % 5), k), 4.0,
+                                        k % 2 == 0 ? beatNow.load() + 1.0 : -1.0, 0.8f, false);
+                if (k == 0)
+                    looper.setLayerAudio (2, testSound (24000, 99), 4.0);
+                else
+                    looper.replaceLayerAudio (2, testSound (24000, 100 + k));
+                if (k % 2 == 0)
+                    looper.setLayerAudio (3, testSound (12000 + 7 * k, 200 + k), 2.0);
+                else
+                    looper.reset (3);
+                juce::Thread::sleep (5);
+            }
+            running = false;
+            audio.join();
+            reader.join();
+            logMessage ("  " + juce::String (reads.load()) + " reads over " + juce::String (cycles.load())
+                        + " record / overdub / undo / clear rounds");
+            expectEquals (bad.load(), 0, "every value finite and between 0 and 1");
+            expectGreaterThan (reads.load(), 100);
+            expectGreaterThan (cycles.load(), 1);
+        }
+
+        beginTest ("The waveform's work in a block doesn't grow with the loop: 32 seconds and 10 minutes");
+        {
+            std::array<int, 2> worst {};
+            for (int which = 0; which < 2; ++which)
+            {
+                const double seconds = which == 0 ? 32.0 : 596.0;   // (ends at its bar: under kMaxUndoSeconds)
+                PeakRig rig;
+                juce::Random random (3);
+                rig.fill = [&] (juce::AudioBuffer<float>&, juce::AudioBuffer<float>& in, juce::int64)
+                {
+                    for (int ch = 0; ch < 2; ++ch)
+                        for (int i = 0; i < kBlock; ++i)
+                            in.setSample (ch, i, random.nextFloat() * 0.5f - 0.25f);
+                };
+                auto& looper = rig.looper;
+                looper.getLayer (0).source = RigLooper::input;
+                looper.pressRecord (0);
+                expect (rig.until (0, RigLooper::State::recording, 1.0));
+                for (int k = 0; k < (int) (seconds * kRate / kBlock); k += 100)
+                {
+                    rig.blocks (100);
+                    looper.maintain();   // its room grows as it records
+                }
+                looper.pressRecord (0);   // closes at the end of the bar
+                expect (rig.until (0, RigLooper::State::playing, 3.0));
+                const int taken = (int) std::lround (looper.getLayer (0).lengthBeats.load() * 60.0 / rig.clock.bpm * kRate);
+                looper.maintain();        // room to undo an overdub of it
+                looper.pressRecord (0);   // overdub
+                rig.seconds (0.5);
+                looper.pressRecord (0);
+                rig.blocks (2);
+                expect (looper.canUndo (0), "undo room for it");
+                looper.undo (0);
+                rig.blocks (2);
+                looper.queueLayerAudio (0, looper.copyLayerAudio (0), looper.getLayer (0).lengthBeats.load(), rig.clock.beat + 0.5, 0.8f, false);
+                rig.seconds (0.5);   // swapped in at the beat
+                expect (! looper.isSwapPending (0));
+                looper.clear (0);
+                rig.blocks (2);
+                worst[(size_t) which] = rig.worstOps;
+                logMessage ("  " + juce::String (seconds) + " s take (" + juce::String (std::log2 (peakBin (taken)))
+                            + " doublings): at most " + juce::String (rig.worstOps) + " bins touched in a block");
+                expectLessOrEqual (rig.worstOps, RigLooper::kMaxPeakOpsPerBlock);
+            }
+            expectLessOrEqual (worst[1], worst[0] + kBlock, "no more for 10 minutes than for 32 seconds");
+        }
+
+        beginTest ("Reading the waveforms all the time never drops a loop out");
+        {
+            PlayingLooper rig;
+            int reads = 0;
+            const int missing = rig.audio.during ([&]
+            {
+                const auto started = juce::Time::getMillisecondCounter();
+                while (juce::Time::getMillisecondCounter() - started < 1500)
+                    for (int l = 0; l < kTones; ++l, ++reads)
+                        rig.looper.readPeaks (l, 2000);
+            });
+            logMessage ("  " + juce::String (reads) + " reads, " + juce::String (rig.audio.blocks.load()) + " blocks, "
+                        + juce::String (missing) + " missing");
+            expectEquals (missing, 0);
+            expectGreaterThan (reads, 100);
+        }
+    }
+};
+
+static RigWaveformPeakTests rigWaveformPeakTests;
