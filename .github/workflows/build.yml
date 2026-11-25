@@ -150,8 +150,21 @@ jobs:
             touch "$stash/.active"
           fi
 
+      # On Colin's Mac auval also gets a throwaway home folder: loading and saving each plugin's
+      # state would otherwise write song folders into his real ~/Music/Crate/Rig/In Logic.
+      # (The plugins are still copied into his real Components folder, which is where macOS looks.)
       - name: Validate the Audio Unit (what Logic checks)
         run: |
+          auval() {
+            if [ "$RUNNER_ENVIRONMENT" = "self-hosted" ]; then
+              sandbox="$RUNNER_TEMP/auval-home"
+              mkdir -p "$sandbox/Music" "$sandbox/Documents" "$sandbox/Library/Application Support"
+              HOME="$sandbox" CFFIXED_USER_HOME="$sandbox" command auval "$@"
+            else
+              command auval "$@"
+            fi
+          }
+          touch "$RUNNER_TEMP/auval-started"
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           cp -R "build/tools/editor/SampleEditor_artefacts/Release/AU/Sample Editor.component" ~/Library/Audio/Plug-Ins/Components/
           cp -R "build/tools/editor/SampleInstrument_artefacts/Release/AU/Sample Editor Instrument.component" ~/Library/Audio/Plug-Ins/Components/
@@ -181,6 +194,14 @@ jobs:
           auval -v aumu CSyn Cblk
           auval -v aumu CDrm Cblk
           auval -v aumf CRgV Cblk
+          if [ "$RUNNER_ENVIRONMENT" = "self-hosted" ]; then
+            changed=$(find "$HOME/Music/Crate" -newer "$RUNNER_TEMP/auval-started" 2>/dev/null | head -20)
+            if [ -n "$changed" ]; then
+              echo "::error::The AU check wrote into ~/Music/Crate on this Mac:"
+              echo "$changed"
+              exit 1
+            fi
+          fi
 
       - name: Put your own plugin copies back (Colin's Mac)
         if: always() && runner.environment == 'self-hosted'
