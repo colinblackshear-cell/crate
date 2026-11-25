@@ -1,4 +1,5 @@
 #include "PocketAudio.h"
+#include "PocketRoute.h"
 
 PocketAudio::PocketAudio() { writerThread.startThread(); }
 
@@ -14,11 +15,14 @@ void PocketAudio::start (std::function<void (juce::String)> done)
 {
     juce::RuntimePermissions::request (juce::RuntimePermissions::recordAudio, [this, done] (bool granted)
     {
+        micAllowed = granted;
         auto error = devices.initialise (granted ? 1 : 0, 2, nullptr, true);
         if (error.isEmpty())
         {
             devices.addAudioCallback (this);
             running = true;
+            if (granted)
+                pocket::pickMic();   // headphones already in at launch: their mic, or the phone's
         }
         if (error.isEmpty() && ! granted)
             error = "Microphone access is off. Turn it on in Settings to record.";
@@ -30,6 +34,7 @@ void PocketAudio::start (std::function<void (juce::String)> done)
 void PocketAudio::audioDeviceAboutToStart (juce::AudioIODevice* d)
 {
     sampleRate = d->getCurrentSampleRate();
+    silentRun = 0;
     latency = d->getInputLatencyInSamples() + d->getOutputLatencyInSamples();
     if (renderer != nullptr)
     {
@@ -47,10 +52,38 @@ void PocketAudio::updateLatency (int samples)
         renderer->setLatency (samples);   // the looper keeps it in an atomic
 }
 
+bool PocketAudio::inputDead() const
+{
+    if (! running || ! micAllowed)
+        return false;
+    auto* dev = devices.getCurrentAudioDevice();
+    return dev == nullptr || dev->getActiveInputChannels().isZero();
+}
+
+bool PocketAudio::reopenInput()
+{
+    if (! running || ! micAllowed || recording.load())
+        return false;
+    // The phone restarts its audio on each route change, and can catch the mic halfway through
+    // switching (headphones going in): it comes back with no input and stays that way. Ask again,
+    // with the mic on (the manager remembers the dead setup's zero inputs otherwise).
+    auto setup = devices.getAudioDeviceSetup();
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.inputChannels.setBit (0);
+    devices.closeAudioDevice();
+    const auto error = devices.setAudioDeviceSetup (setup, true);
+    silentRun = 0;
+    pocket::pickMic();
+    return error.isEmpty() && ! inputDead();
+}
+
 bool PocketAudio::startRecording (const juce::File& file)
 {
     if (! running || recording.load())
         return false;
+    if (inputDead())
+        reopenInput();   // one more try before telling you there's no mic
     auto* dev = devices.getCurrentAudioDevice();
     if (dev == nullptr || dev->getActiveInputChannels().isZero())
         return false;
@@ -119,6 +152,10 @@ void PocketAudio::audioDeviceIOCallbackWithContext (const float* const* in, int 
             p = juce::jmax (p, std::abs (in[0][i]));
         if (p > peak.load())
             peak = p;
+        if (p < 1.0e-4f)   // below -80 dB: silence or a dead input's hiss, never a real mic in a room
+            silentRun += n;
+        else
+            silentRun = 0;
 
         if (recording.load())
         {

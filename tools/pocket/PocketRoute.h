@@ -24,5 +24,17 @@ void watchRoute (std::function<void()> changed);
 // lot), or -1 when it can't be asked (a computer).
 int routeLatencySamples (double sampleRate);
 
-const char* routeName (Route);   // "WIRED HEADPHONES", "AIRPODS / BLUETOOTH", "NO HEADPHONES"
+const char* routeName (Route);
+
+// Which mic records. Picked again after every route change: a 3.5 mm headset's own mic (or a line in)
+// when it has one, otherwise the phone's built-in mic. USB-C headphones always use the phone's mic. A
+// Bluetooth mic is never picked: on AirPods it would drop the whole sound to phone-call quality, so
+// the beat stays in full quality in your ears and the phone's mic records you. Returns true when it
+// changed the input. Message thread; does nothing on a computer.
+bool pickMic();
+// The mic now recording was heard giving nothing but silence: stop picking it (until it's unplugged)
+// and use the phone's built-in mic instead. Returns true when it moved to the built-in mic.
+bool avoidSilentMic();
+bool micIsBuiltIn();     // true on a computer
+const char* micName();   // "IPHONE MIC", "HEADSET MIC", "BLUETOOTH MIC", "USB INPUT", "NO MIC"   // "WIRED HEADPHONES", "AIRPODS / BLUETOOTH", "NO HEADPHONES"
 }

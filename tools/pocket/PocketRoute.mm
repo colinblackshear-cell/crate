@@ -3,6 +3,8 @@
 #import <AVFoundation/AVFoundation.h>
 #import <Foundation/Foundation.h>
 
+#include <string>
+
 // The phone: asks the audio session where the sound goes, and listens for it changing. Written to build
 // with or without ARC (it never retains or releases by hand).
 namespace pocket
@@ -12,6 +14,26 @@ namespace
 int demoRoute = -1;
 std::function<void()>* routeChanged = nullptr;   // lives for the app's life
 id routeObserver = nil;                           // the notification centre holds it until removed
+std::string silentMic;                            // UID of a headset mic heard giving only silence
+
+// A USB-C "mic" is left out on purpose: USB-C headphones and USB-C-to-jack adapters often report one
+// that sends silence or hiss, and iOS picks it the moment they're plugged in. The phone's mic records.
+bool isWiredMic (NSString* t)
+{
+    return [t isEqualToString: AVAudioSessionPortHeadsetMic]
+        || [t isEqualToString: AVAudioSessionPortLineIn];
+}
+
+AVAudioSessionPortDescription* currentInput()
+{
+    NSArray<AVAudioSessionPortDescription*>* ins = [AVAudioSession sharedInstance].currentRoute.inputs;
+    return ins.count > 0 ? ins[0] : nil;
+}
+
+bool isSilentMic (AVAudioSessionPortDescription* port)
+{
+    return ! silentMic.empty() && port.UID != nil && silentMic == port.UID.UTF8String;
+}
 
 Route routeOf (NSString* t)
 {
@@ -72,6 +94,74 @@ int routeLatencySamples (double sampleRate)
     if (seconds <= 0.0 || sampleRate <= 0.0)
         return -1;
     return (int) (seconds * sampleRate + 0.5);
+}
+
+bool pickMic()
+{
+    AVAudioSession* session = [AVAudioSession sharedInstance];
+    if (! [session.category isEqualToString: AVAudioSessionCategoryPlayAndRecord])
+        return false;   // no mic allowed: the device only plays
+
+    AVAudioSessionPortDescription* builtIn = nil;
+    AVAudioSessionPortDescription* wired = nil;
+    bool silentStillThere = false;
+    for (AVAudioSessionPortDescription* port in session.availableInputs)
+    {
+        if (isSilentMic (port))
+        {
+            silentStillThere = true;
+            continue;
+        }
+        if ([port.portType isEqualToString: AVAudioSessionPortBuiltInMic])
+            builtIn = port;
+        else if (wired == nil && isWiredMic (port.portType))
+            wired = port;
+    }
+    if (! silentStillThere)
+        silentMic.clear();   // unplugged: the next time it's plugged in it gets another chance
+
+    AVAudioSessionPortDescription* want = wired != nil ? wired : builtIn;
+    if (want == nil)
+        return false;
+    AVAudioSessionPortDescription* now = currentInput();
+    AVAudioSessionPortDescription* preferred = session.preferredInput;
+    if (now != nil && [now.UID isEqualToString: want.UID]
+        && preferred != nil && [preferred.UID isEqualToString: want.UID])
+        return false;   // already there: setting it again would only send another route change
+    NSError* error = nil;
+    return [session setPreferredInput: want error: &error] && error == nil;
+}
+
+bool avoidSilentMic()
+{
+    AVAudioSessionPortDescription* now = currentInput();
+    if (now == nil || [now.portType isEqualToString: AVAudioSessionPortBuiltInMic])
+        return false;
+    silentMic = now.UID != nil ? now.UID.UTF8String : "";
+    pickMic();
+    AVAudioSessionPortDescription* after = currentInput();
+    return after == nil || ! [after.UID isEqualToString: now.UID];
+}
+
+bool micIsBuiltIn()
+{
+    AVAudioSessionPortDescription* now = currentInput();
+    return now == nil || [now.portType isEqualToString: AVAudioSessionPortBuiltInMic];
+}
+
+const char* micName()
+{
+    AVAudioSessionPortDescription* now = currentInput();
+    if (now == nil)
+        return "NO MIC";
+    NSString* t = now.portType;
+    if ([t isEqualToString: AVAudioSessionPortBuiltInMic])
+        return "IPHONE MIC";
+    if ([t isEqualToString: AVAudioSessionPortHeadsetMic])
+        return "HEADSET MIC";
+    if ([t isEqualToString: AVAudioSessionPortBluetoothHFP])
+        return "BLUETOOTH MIC";
+    return "USB INPUT";
 }
 
 const char* routeName (Route r)
