@@ -25,6 +25,12 @@ on:
 permissions:
   contents: write
 
+# A new push to a pull request stops that pull request's older check build. Real releases
+# (tags and hand runs) are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   NAME: Kaleidobox
   APP_DIR: build/tools/rig/Kaleidobox_artefacts/Release
