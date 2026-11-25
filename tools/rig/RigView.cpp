@@ -3219,6 +3219,10 @@ void RigView::timerCallback()
     }
     if (moreView != nullptr && moreView->isShowing())
         moreView->tick();
+    // An overdub that started with no undo says why, once, on the status line (nothing pops up).
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        if (const auto why = engine.getLooper().takeNoUndo (i); why != RigLooper::NoUndo::none)
+            say ("Loop " + juce::String (i + 1) + ": " + RigLooper::noUndoMessage (why));
     updateCaptureButtons();
     if (phoneLink != nullptr)
         phoneLink->setShow (currentShow.getFileNameWithoutExtension());

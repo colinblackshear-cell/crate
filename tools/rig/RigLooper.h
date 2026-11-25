@@ -44,13 +44,14 @@ public:
     static constexpr double kMaxUndoSeconds = 600.0;
     static constexpr double kGrowAheadSeconds = 12.0;   // grows when less than this is left
     static constexpr double kGrowStepSeconds = 300.0;   // grows by at most this at a time
-    // Copying a playing loop (copyLayerAudio) is done by the audio thread, a slice each block:
-    // kCopySpeed samples for each sample of the block (between kCopyMinSlice and kCopyMaxSlice),
-    // in pages of kCopyPageSamples. A copy the loop's replacement interrupts is tried again, at
+    // Copying a playing loop (copyLayerAudio), and keeping an overdub's undo, is done by the audio
+    // thread a slice each block, in pages of kCopyPageSamples, from one copy budget for all the
+    // layers: kCopyPagesPerSecond pages a second of audio (at most kCopyMaxPages a block), never
+    // saved up beyond one block's worth. A copy the loop's replacement interrupts is tried again, at
     // most kCopyRounds times. With no block for kStallFloorMs (or four of the longest recent gaps
     // between blocks, up to kStallCapMs) the audio is taken to have stopped.
     static constexpr int kCopyPageShift = 10, kCopyPageSamples = 1 << kCopyPageShift;
-    static constexpr int kCopySpeed = 1024, kCopyMinSlice = 1 << 15, kCopyMaxSlice = 1 << 20, kCopyRounds = 3;
+    static constexpr int kCopyPagesPerSecond = 48000, kCopyMaxPages = 1024, kCopyRounds = 3;
     static constexpr juce::uint32 kStallFloorMs = 1000, kStallCapMs = 5000;
     // The waveform each layer keeps for the window (see readPeaks): kPeakBins loudness bins, each
     // the loudest sample of 2^shift samples of the loop. A loop takes from half to all of them, so
@@ -92,6 +93,10 @@ public:
     private:
         friend class RigLooper;
         std::atomic<int> presses { 0 }, clears { 0 }, undos { 0 };
+        std::atomic<int> noUndo { 0 }, noUndoNews { 0 };   // NoUndo: the last overdub's, and unsaid
+        // Audio thread: presses held back while an undo's restoration ran, and the version the
+        // loop had then (they're dropped if it changes).
+        int deferred = 0, deferredVersion = -1;
         std::atomic<double> restartBeat { -1.0 };
         // Every loop counts its bars on one shared timeline, so their playheads move together.
         // A loop recorded while others played is turned round by this many beats (see
@@ -142,7 +147,7 @@ public:
             int version = -1;   // the layer's version when the copy started (the audio thread's)
             // Under `lock`, while the audio thread copies: the next page in order.
             bool active = false;
-            int next = 0, credit = 0;   // credit: samples of copying owed, short of a page
+            int next = 0;
         };
         Snapshot snap;
 
@@ -213,6 +218,18 @@ public:
     }
     // Whether undo would take back an overdub on this layer (the last one only).
     bool canUndo (int layer) const { return undoLayer.load() == layer; }
+    // Why an overdub has no undo, decided as it starts: the loop is over kMaxUndoSeconds; it plays
+    // so fast (a long sound fitted to few beats) that keeping an undo copy could overrun the
+    // audio's budget; or the undo room wasn't ready yet (it will be for the next one).
+    enum class NoUndo { none, tooLong, squeezed, roomNotReady };
+    // The reason for this layer's last overdub (none if it has an undo), and once for each
+    // overdub that has none, for the window to say (takeNoUndo resets it). Any thread.
+    NoUndo peekNoUndo (int layer) const { return (NoUndo) layers[(size_t) layer].noUndo.load(); }
+    NoUndo takeNoUndo (int layer) { return (NoUndo) layers[(size_t) layer].noUndoNews.exchange (0); }
+    // Message thread: whether an overdub of this layer's loop as it is would have no undo whatever
+    // happens (too long, or squeezed), for the Undo button to say ahead.
+    NoUndo undoLimit (int layer) const;
+    static juce::String noUndoMessage (NoUndo);
 
     // Message thread: puts a sound on a layer, `beats` long, playing from beat 0. Returns the
     // layer's version that names this sound (-1 if it did nothing).
@@ -260,9 +277,57 @@ public:
         int byAudioThread = 0, pagesCopiedBeforeOverdub = 0, retries = 0, underLock = 0, finishedUnderLock = 0;
     };
     CopyStats getCopyStats() const;
+
+    // What the audio thread copies, for tests and benchmarks: pages (kCopyPageSamples of both
+    // channels) and bytes, by kind, in total and per block. Mandatory copies are made whatever
+    // the budget (before an overdub writes a page, before a stale page is read); discretionary
+    // ones are the copies made in order, a slice each block. wholeLoop is a copy of a whole loop
+    // in one block (the old overdub start and undo), which nothing should ever make.
+    enum CopyKind { undoBeforeWrite, undoBeforeRead, saveBeforeWrite, undoInOrder, saveInOrder, wholeLoop, numCopyKinds };
+    static bool isMandatoryCopy (int kind) { return kind != undoInOrder && kind != saveInOrder; }
+    struct CopyCounters
+    {
+        std::array<juce::int64, numCopyKinds> pages {}, bytes {};   // in total
+        std::array<int, numCopyKinds> maxPages {};                   // the most in one block
+        std::array<juce::int64, numCopyKinds> maxBytes {};
+        int maxMandatory = 0, maxDiscretionary = 0, maxTotal = 0;    // pages in one block
+        int maxLooks = 0;                                            // page marks looked at in one block
+        juce::int64 blocks = 0;
+        juce::int64 skippedLayerBlocks = 0;   // a layer's block not played (its lock was busy)
+        // Blocks whose copying went over the budget's bounds: the most a block may copy, and
+        // the most it may copy that it must (see the design of the copy budget).
+        juce::int64 overBudgetBlocks = 0, overMandatoryBlocks = 0, overLookBlocks = 0;
+        juce::int64 overCreditBlocks = 0;   // blocks with more credit than one block's worth and a page
+        double mostCredit = 0, deepestDebt = 0;   // pages: the most ever available, the most owed
+        int adoptions = 0, swaps = 0, restorations = 0;
+        int roomBuffersMost = 0;   // undo-room-sized buffers alive at once, at the most
+    };
+    CopyCounters getCopyCounters() const;
+    void resetCopyCounters();
+    // Undo-room-sized buffers alive now (the room, a spare waiting, one being made or freed).
+    int roomBuffersNow() const { return roomBuffers.load(); }
+    // The undo room's usable length in samples (as the audio thread last published it), and
+    // whether a bigger one is waiting to be taken. Any thread.
+    int undoRoomSamples() const { return roomUsableSamples.load(); }
+    bool isSpareRoomReady() const { return spareReady.load(); }
+    // Message thread (or one loading a show): makes the undo room ready for a loop `samples`
+    // long ahead of need, as a spare the audio thread takes over. maintain() does this for
+    // what's playing and recording; putting in a sound does it for that sound first.
+    void prepareUndoRoom (int samples) { prepareRoom (samples); }
+    // Tests only: the loop as it sounds now (exactly what a copy would be), read under the lock
+    // without changing anything (a copy may finish work first).
+    juce::AudioBuffer<float> soundingLoopForTests (int layer) const;
+    // Whether undo is made a slice at a time (false: a whole copy in the block of the press).
+    static constexpr bool kIncrementalUndo = true;
+    // Whether an undo's pages are still being put back (any thread), for tests and the window.
+    bool isUndoRestoring() const { return restoring.load(); }
+    // Whether the undo's capture is done (tests: no audio running).
+    bool isUndoCaptureCompleteForTests() const { return cap.layer >= 0 && cap.complete; }
+    // Tests only, with no audio running: the capture generation (to try the last ones).
+    void setUndoGenerationForTests (juce::uint32 g) { cap.generation = g; }
     // Tests only: called once while the audio thread copies (`underLock` false), and while a
-    // copy under the lock holds it (true); always copy under the lock (as before); and a slice
-    // size (samples a block) instead of kCopySpeed, to make a copy slow.
+    // copy under the lock holds it (true); always copy under the lock (as before); and the copy
+    // budget as samples a block instead of kCopyPagesPerSecond, to make copying slow.
     static inline std::function<void (int layer, bool underLock)> copyPauseForTests;
     static inline std::atomic<bool> copyUnderLockForTests { false };
     static inline std::atomic<int> copySliceForTests { 0 };
@@ -357,11 +422,16 @@ private:
     // Audio thread, under the layer's lock: take a posted copy; copy the next slice; copy a page
     // before an overdub writes over it.
     void startSnapshot (Layer&);
-    void continueSnapshot (Layer&, int blockSize);
+    void continueSnapshot (Layer&);
     void copyBeforeWrite (Layer& layer, int sample)
     {
         if (layer.snap.active && layer.snap.copied[sample >> kCopyPageShift] == 0)
-            copyPage (layer, sample >> kCopyPageShift, 2);
+        {
+            const int page = sample >> kCopyPageShift;
+            copyPage (layer, page, 2);
+            noteCopy (saveBeforeWrite, juce::jmin (kCopyPageSamples, layer.snap.length - (page << kCopyPageShift)));
+            credit -= 1.0;   // charged to the block's credit, which it may take below nothing
+        }
     }
     // Copies a page of the loop into the copy, and marks it (1 in order, 2 before an overdub).
     static void copyPage (Layer&, int page, juce::uint8 mark);
@@ -394,11 +464,81 @@ private:
     double sampleRate = 44100.0;
     bool wasPlaying = false;              // audio thread: the clock, last block
     std::array<Layer, kLayers> layers;
-    juce::SpinLock undoLock;              // the undo room, while maintain() makes it bigger
-    juce::AudioBuffer<float> undoAudio;
+    // The undo room: one buffer for all the layers, as long as the longest loop (up to
+    // kMaxUndoSeconds), and a mark for each of its pages. Only the audio thread changes which
+    // buffer it is, or touches it, while audio runs (a copier holding the undo layer's lock may
+    // too, when the audio has stopped). A bigger one is made, and written through so its memory
+    // is really there, on the message thread, and handed over in the spare slot: the audio
+    // thread takes it at a block with no undo held (or at a press that needs it) by exchanging
+    // the two, and leaves the old one there for the message thread to free. `undoLock` is held
+    // only to move the spare slot's buffers.
+    struct Room
+    {
+        juce::AudioBuffer<float> audio;
+        std::unique_ptr<juce::uint32[]> stamps;   // a mark a page
+        int stampPages = 0;
+        int usable() const { return audio.getNumChannels() < 2 ? 0 : juce::jmin (audio.getNumSamples(), stampPages << kCopyPageShift); }
+    };
+    static void swapRooms (Room& a, Room& b)
+    {
+        std::swap (a.audio, b.audio);
+        std::swap (a.stamps, b.stamps);
+        std::swap (a.stampPages, b.stampPages);
+    }
+    Room undoRoom, spare;                        // spare: under undoLock
+    std::atomic<bool> spareReady { false };    // the spare is a new room to take (else one to free)
+    std::atomic<int> roomUsableSamples { 0 }; // the room's usable length, published by the audio thread
+    juce::SpinLock undoLock;
+    juce::CriticalSection roomMaking;          // the threads that make and free rooms, one at a time
+    // Off the audio thread: frees a room the audio thread has let go of, and makes one at least
+    // `samples` long (up to kMaxUndoSeconds) if the room isn't, unless the slot is taken.
+    void prepareRoom (int samples);
+    static void fillRoom (Room&, int samples);   // off the audio thread: a new room, written through
+    // Audio thread: takes the spare room if there is one (one try of undoLock a block).
+    bool adoptSpare();
+    bool adoptTried = false;                   // audio thread: this block
     std::atomic<int> undoLayer { -1 };
     std::atomic<int> swapSerials { 0 };   // queueLayerAudio's serials
-    int undoLength = 0;
+    // The undo's capture (audio thread): a generation numbers it, so a page's mark from an older
+    // capture means nothing and a new capture costs nothing. A page is captured (copied from the
+    // loop into the room) in order, a slice a block, or just before the overdub first writes it;
+    // the pages written are marked so. While it's valid, a page captured holds in the room what
+    // the loop held at the press, and a page not captured still holds it in the loop.
+    struct Capture
+    {
+        juce::uint32 generation = 0;   // kMaxGeneration at most (marks: generation << 2 | written 2 | captured 1)
+        int layer = -1;                // the layer it's of (-1: none)
+        int length = 0, pages = 0;
+        int cursor = 0;                // the next page in order
+        bool complete = false;
+        int written = 0;               // pages the overdub has written
+        int firstWritten = -1, lastMarked = -1;
+    };
+    static constexpr juce::uint32 kMaxGeneration = (1u << 30) - 1;
+    Capture cap;
+    std::atomic<bool> marksWorn { false };   // every generation used: new marks wanted
+    int maxBlockSize = 4096;
+    NoUndo startCapture (Layer&, int index);   // at a press: NoUndo::none if it has an undo
+    bool passesGuarantee (const Layer&) const;
+    void markBeforeWrite (Layer&, int sample);
+    void continueCapture (Layer&);
+    void copyRoomPage (Layer&, int page, bool intoRoom);
+    void cancelUndo (int index);   // any thread, under the layer's lock: its undo is gone
+    // An undo before its capture was complete (or where the buffers can't change places): the
+    // pages the overdub wrote are stale until put back from the room. Changed only under the
+    // restoring layer's lock (by the audio thread, or a copier when the audio has stopped).
+    struct Restore
+    {
+        int layer = -1, stale = 0, cursor = 0, pages = 0, looked = 0;
+        juce::uint32 generation = 0;
+    };
+    Restore restore;
+    std::atomic<bool> restoring { false };
+    std::atomic<int> restoreLayer { -1 };
+    bool restorePage (Layer&, int page);   // under the lock: puts back a stale page
+    void restoreBeforeRead (Layer&, int sample);
+    void continueRestoration (Layer&);
+    void finishRestorationUnderLock (Layer&, int index);
     // The undo loop's waveform (audio thread only): kept as an overdub starts, put back by undo.
     std::unique_ptr<float[]> undoPeaks { new float[kPeakBins]() };
     int undoPeakShift = 0, undoPeakCovered = 0;
@@ -419,6 +559,48 @@ private:
     std::atomic<juce::uint32> blocksDone { 0 }, lastBlockMs { 0 }, longestGap256 { 0 };
     std::atomic<juce::Thread::ThreadID> audioThread { nullptr };
     mutable std::atomic<int> statByAudio { 0 }, statBeforeOverdub { 0 }, statRetries { 0 }, statUnderLock { 0 }, statFinishedUnderLock { 0 };
+
+    // The copy counters (getCopyCounters). The block's own tallies are the audio thread's; it
+    // adds them to the atomics as the block ends.
+    struct BlockTally
+    {
+        std::array<int, numCopyKinds> pages {};
+        std::array<juce::int64, numCopyKinds> bytes {};
+        int looks = 0;
+    };
+    BlockTally tally;
+    void noteCopy (int kind, int samples)
+    {
+        ++tally.pages[(size_t) kind];
+        tally.bytes[(size_t) kind] += (juce::int64) samples * 2 * (juce::int64) sizeof (float);
+    }
+    void noteWholeCopy (int samples)
+    {
+        tally.pages[(size_t) wholeLoop] += (samples + kCopyPageSamples - 1) / kCopyPageSamples;
+        tally.bytes[(size_t) wholeLoop] += (juce::int64) samples * 2 * (juce::int64) sizeof (float);
+    }
+    void publishTally (int blockSize, double creditAvailable, double creditNow);
+    // The copy budget (audio thread): pages of copying this block may still make (below zero:
+    // owed, after copies that had to be made), what the block earned, and the most pages it may
+    // look at. One credit for all the layers.
+    double credit = 0, accrual = 0;
+    int lookLimit = 0;
+    // Layers whose lock this block holds (each is tried once a block); a lock is held to the end
+    // of the block while the layer has copying in order to do.
+    std::array<bool, kLayers> heldLocks {};
+    struct Counters
+    {
+        std::array<std::atomic<juce::int64>, numCopyKinds> pages {}, bytes {}, maxBytes {};
+        std::array<std::atomic<int>, numCopyKinds> maxPages {};
+        std::atomic<int> maxMandatory { 0 }, maxDiscretionary { 0 }, maxTotal { 0 }, maxLooks { 0 };
+        std::atomic<juce::int64> blocks { 0 }, skipped { 0 }, overBudget { 0 }, overMandatory { 0 }, overLooks { 0 }, overCredit { 0 };
+        std::atomic<double> mostCredit { 0 }, deepestDebt { 0 };
+        std::atomic<int> adoptions { 0 }, swaps { 0 }, restorations { 0 }, roomBuffersMost { 1 };
+    };
+    Counters counters;
+    std::atomic<int> roomBuffers { 1 };   // undo-room-sized buffers alive (see roomBuffersNow)
+    void roomBufferMade() { const int now = ++roomBuffers; if (now > counters.roomBuffersMost.load()) counters.roomBuffersMost = now; }
+    void roomBufferFreed() { --roomBuffers; }
 
     JUCE_DECLARE_NON_COPYABLE (RigLooper)
 };

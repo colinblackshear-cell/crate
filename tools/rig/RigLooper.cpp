@@ -31,6 +31,14 @@ void endRewrite (std::atomic<juce::uint32>& seq)
     seq.store (seq.load (std::memory_order_relaxed) + 1, std::memory_order_release);
 }
 
+template <typename T>
+void raiseTo (std::atomic<T>& a, T v)
+{
+    for (T now = a.load (std::memory_order_relaxed); v > now && ! a.compare_exchange_weak (now, v, std::memory_order_relaxed);)
+    {
+    }
+}
+
 // Raises a bin to `v` (only ever written by the one holding the layer's lock).
 void raise (std::atomic<float>& bin, float v)
 {
@@ -142,6 +150,7 @@ RigLooper::RigLooper() = default;
 void RigLooper::prepare (double rate, int maxBlock)
 {
     sampleRate = rate > 0 ? rate : 44100.0;
+    maxBlockSize = juce::jmax (1, maxBlock);
     for (size_t i = 0; i < layers.size(); ++i)
     {
         layerOut[i].setSize (2, juce::jmax (1, maxBlock));
@@ -162,8 +171,105 @@ void RigLooper::prepare (double rate, int maxBlock)
             layer.audio.setSize (2, capacity);
         }
     }
-    undoAudio.setSize (2, capacity);
+    // (No audio runs while it's prepared: the room is made here, written through, and any
+    // spare is let go of.)
+    {
+        Room old;
+        {
+            const juce::SpinLock::ScopedLockType ul (undoLock);
+            swapRooms (old, spare);
+            spareReady = false;
+        }
+        if (old.audio.getNumSamples() > 0)
+            roomBufferFreed();
+    }
+    fillRoom (undoRoom, capacity);
+    roomUsableSamples = undoRoom.usable();
     undoLayer = -1;
+    cap = {};
+    marksWorn = false;
+    restoring = false;
+    for (auto& layer : layers)
+        layer.deferred = 0;
+}
+
+void RigLooper::fillRoom (Room& r, int samples)
+{
+    r.audio.setSize (2, juce::jmax (1, samples));
+    // Written through, so its memory is really there before the audio thread writes it.
+    for (int ch = 0; ch < 2; ++ch)
+        juce::FloatVectorOperations::clear (r.audio.getWritePointer (ch), r.audio.getNumSamples());
+    r.stampPages = (r.audio.getNumSamples() + kCopyPageSamples - 1) / kCopyPageSamples;
+    r.stamps.reset (new juce::uint32[(size_t) r.stampPages]());
+}
+
+void RigLooper::prepareRoom (int samples)
+{
+    samples = juce::jmin (samples, (int) (sampleRate * kMaxUndoSeconds));
+    const juce::ScopedLock ml (roomMaking);
+    // The slot first: a room the audio thread let go of is freed; a spare still waiting is kept
+    // if it's big enough, else it's replaced. (Only the audio thread changes the slot meanwhile,
+    // and only by taking a spare: after this the slot is empty, or holds a big enough spare.)
+    {
+        Room old, small;
+        {
+            const juce::SpinLock::ScopedLockType ul (undoLock);
+            if (! spareReady.load() && spare.audio.getNumSamples() > 0)
+                swapRooms (old, spare);
+            else if (spareReady.load() && (spare.usable() >= samples || samples <= roomUsableSamples.load()))
+                return;   // (also for worn marks: a spare is a new set)
+            else if (spareReady.load())
+            {
+                swapRooms (small, spare);
+                spareReady = false;
+            }
+        }
+        for (auto* r : { &old, &small })
+            if (r->audio.getNumSamples() > 0)
+            {
+                *r = {};
+                roomBufferFreed();
+            }
+    }
+    if (marksWorn.load())
+        samples = juce::jmax (samples, roomUsableSamples.load(), 1);   // the same size again, with new marks
+    else if (samples <= 0 || samples <= roomUsableSamples.load())
+        return;
+    Room fresh;
+    roomBufferMade();
+    fillRoom (fresh, samples);
+    const juce::SpinLock::ScopedLockType ul (undoLock);
+    swapRooms (spare, fresh);   // (the slot is empty: see above)
+    spareReady.store (true, std::memory_order_release);
+}
+
+bool RigLooper::adoptSpare()
+{
+    // One try a block; a busy lock only means next block. Only buffers change hands.
+    if (std::exchange (adoptTried, true) || ! undoLock.tryEnter())
+        return false;
+    bool took = false;
+    if (spareReady.load (std::memory_order_acquire))
+    {
+        // (A spare that is no bigger than the room now, after an undo moved buffers, is let go.)
+        if (spare.usable() > undoRoom.usable() || (marksWorn.load() && spare.usable() >= undoRoom.usable()))
+        {
+            swapRooms (undoRoom, spare);
+            took = true;
+        }
+        spareReady.store (false, std::memory_order_relaxed);
+    }
+    undoLock.exit();
+    if (took)
+    {
+        // New marks (all nothing): captures count again from the start.
+        cap.generation = 0;
+        cap.layer = -1;
+        marksWorn = false;
+        roomUsableSamples.store (undoRoom.usable(), std::memory_order_relaxed);
+        counters.adoptions.fetch_add (1, std::memory_order_relaxed);
+    }
+    return took;
 }
 
 int RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double beats)
@@ -176,6 +282,8 @@ int RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double 
         audio.setSize (2, audio.getNumSamples(), true);
         audio.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
     }
+    // The undo room ready for it before it's in, so its first overdub can have an undo.
+    prepareRoom (audio.getNumSamples());
     // Its waveform, worked out here (the sound is still ours), so the lock is only held to put it in.
     std::vector<float> peaks ((size_t) kPeakBins);
     const int peakShift = scanPeaks (audio, audio.getNumSamples(), peaks.data());
@@ -192,8 +300,7 @@ int RigLooper::setLayerAudio (int index, juce::AudioBuffer<float> audio, double 
         layer.syncShift = 0.0;
         layer.lengthBeats = beats;
         layer.state = (int) State::playing;
-        if (undoLayer == index)
-            undoLayer = -1;
+        cancelUndo (index);
         // (Inside the lock, so a version read under it names exactly this sound.)
         version = ++layer.version;
     }
@@ -214,6 +321,7 @@ int RigLooper::queueLayerAudio (int index, juce::AudioBuffer<float> audio, doubl
         audio = {};
         beats = 0;
     }
+    prepareRoom (audio.getNumSamples());   // the undo room ready for it ahead of the swap
     // Its waveform goes with it, worked out here (outside the lock).
     std::vector<float> peaks ((size_t) kPeakBins);
     const int peakShift = scanPeaks (audio, audio.getNumSamples(), peaks.data());
@@ -288,8 +396,7 @@ int RigLooper::applySwap (Layer& layer, int index)
     layer.presses = 0;
     layer.restartBeat = -1.0;
     layer.swapPending = false;
-    if (undoLayer == index)
-        undoLayer = -1;
+    cancelUndo (index);
     const int version = ++layer.version;
     // Which queued swap this was, and the version it left: the layer now holds exactly that sound.
     layer.swapApplied.store (((juce::int64) layer.swapSerial << 32) | (juce::uint32) version, std::memory_order_release);
@@ -313,8 +420,7 @@ bool RigLooper::replaceLayerAudio (int index, juce::AudioBuffer<float> audio)
         abortSnapshot (layer);
         std::swap (layer.audio, audio);
         installPeaks (layer, peaks.data(), peakShift, layer.length);
-        if (undoLayer == index)
-            undoLayer = -1;
+        cancelUndo (index);
         ++layer.version;
     }
     return true;   // the old buffer is freed here, outside the lock
@@ -354,7 +460,7 @@ void RigLooper::startSnapshot (Layer& layer)
     else
     {
         s.active = true;
-        s.next = s.credit = 0;
+        s.next = 0;
         s.version = layer.version.load (std::memory_order_relaxed);   // the sound as it is now
         s.state.store (snapActive, std::memory_order_relaxed);
     }
@@ -370,27 +476,21 @@ void RigLooper::copyPage (Layer& layer, int page, juce::uint8 mark)
     s.copied[page] = mark;
 }
 
-void RigLooper::continueSnapshot (Layer& layer, int blockSize)
+void RigLooper::continueSnapshot (Layer& layer)
 {
+    // In order, with what is left of the block's credit (after every copy that had to be made),
+    // and within the block's limit of pages looked at.
     auto& s = layer.snap;
-    const int forTests = copySliceForTests.load (std::memory_order_relaxed);
-    const int slice = forTests > 0 ? forTests : juce::jlimit (kCopyMinSlice, kCopyMaxSlice, blockSize * kCopySpeed);
-    // Each page looked at counts, copied or not, so the work a block is bounded. (A slice
-    // under a page, for tests only, adds up over blocks.)
-    s.credit += slice;
-    int budget = s.credit / kCopyPageSamples;
-    s.credit -= budget * kCopyPageSamples;
-    while (s.next < s.pages && budget > 0)
+    while (s.next < s.pages && credit >= 1.0 && tally.looks < lookLimit)
     {
+        ++tally.looks;
         if (s.copied[s.next] == 0)
+        {
             copyPage (layer, s.next, 1);
+            noteCopy (saveInOrder, juce::jmin (kCopyPageSamples, s.length - (s.next << kCopyPageShift)));
+            credit -= 1.0;
+        }
         ++s.next;
-        --budget;
-    }
-    if (s.next >= s.pages)
-    {
-        s.active = false;
-        s.state.store (snapDone, std::memory_order_release);
     }
 }
 
@@ -465,6 +565,7 @@ juce::AudioBuffer<float> RigLooper::copyUnderLock (Layer& layer, int index, int*
 {
     const juce::SpinLock::ScopedLockType sl (layer.lock);
     statUnderLock.fetch_add (1, std::memory_order_relaxed);
+    const_cast<RigLooper*> (this)->finishRestorationUnderLock (layer, index);
     if (copyPauseForTests)
         copyPauseForTests (index, true);
     const auto state = (State) layer.state.load();
@@ -549,6 +650,116 @@ RigLooper::CopyStats RigLooper::getCopyStats() const
     return { statByAudio.load(), statBeforeOverdub.load(), statRetries.load(), statUnderLock.load(), statFinishedUnderLock.load() };
 }
 
+void RigLooper::publishTally (int blockSize, double creditAvailable, double creditNow)
+{
+    // The bounds a block's copying must keep to (see the copy budget's design): the most it may
+    // copy (what it earned, `accrual`, and the fraction of a page, or its mandatory bound if more),
+    // and the most that may be copies it must make whatever the budget, for the budget's real rate
+    // (a slowed test budget doesn't slow those).
+    const double earned = 48000.0 * blockSize / sampleRate;
+    const double capped = juce::jmin (1024.0, earned);
+    const int mandatoryBound = (int) std::floor (7.0 * capped / 16.0) + 8;
+    const int blockBound = (int) juce::jmin (1024.0, juce::jmax (std::floor (accrual + 1.0), (double) mandatoryBound));
+    const int lookBound = (int) std::floor (8.0 * accrual) + 8;
+
+    int mandatory = 0, discretionary = 0;
+    for (int k = 0; k < numCopyKinds; ++k)
+    {
+        const int p = tally.pages[(size_t) k];
+        (isMandatoryCopy (k) ? mandatory : discretionary) += p;
+        if (p == 0)
+            continue;
+        counters.pages[(size_t) k].fetch_add (p, std::memory_order_relaxed);
+        counters.bytes[(size_t) k].fetch_add (tally.bytes[(size_t) k], std::memory_order_relaxed);
+        raiseTo (counters.maxPages[(size_t) k], p);
+        raiseTo (counters.maxBytes[(size_t) k], tally.bytes[(size_t) k]);
+    }
+    raiseTo (counters.maxMandatory, mandatory);
+    raiseTo (counters.maxDiscretionary, discretionary);
+    raiseTo (counters.maxTotal, mandatory + discretionary);
+    raiseTo (counters.maxLooks, tally.looks);
+    if (mandatory + discretionary > blockBound)
+        counters.overBudget.fetch_add (1, std::memory_order_relaxed);
+    if (mandatory > mandatoryBound)
+        counters.overMandatory.fetch_add (1, std::memory_order_relaxed);
+    if (tally.looks > lookBound)
+        counters.overLooks.fetch_add (1, std::memory_order_relaxed);
+    raiseTo (counters.mostCredit, creditAvailable);
+    if (creditAvailable > juce::jmin ((double) kCopyMaxPages, accrual + 1.0) + 1.0e-9)
+        counters.overCredit.fetch_add (1, std::memory_order_relaxed);
+    raiseTo (counters.deepestDebt, -creditNow);
+    counters.blocks.fetch_add (1, std::memory_order_relaxed);
+    tally = {};
+}
+
+RigLooper::CopyCounters RigLooper::getCopyCounters() const
+{
+    CopyCounters c;
+    for (size_t k = 0; k < (size_t) numCopyKinds; ++k)
+    {
+        c.pages[k] = counters.pages[k].load();
+        c.bytes[k] = counters.bytes[k].load();
+        c.maxPages[k] = counters.maxPages[k].load();
+        c.maxBytes[k] = counters.maxBytes[k].load();
+    }
+    c.maxMandatory = counters.maxMandatory.load();
+    c.maxDiscretionary = counters.maxDiscretionary.load();
+    c.maxTotal = counters.maxTotal.load();
+    c.maxLooks = counters.maxLooks.load();
+    c.blocks = counters.blocks.load();
+    c.skippedLayerBlocks = counters.skipped.load();
+    c.overBudgetBlocks = counters.overBudget.load();
+    c.overMandatoryBlocks = counters.overMandatory.load();
+    c.overLookBlocks = counters.overLooks.load();
+    c.overCreditBlocks = counters.overCredit.load();
+    c.mostCredit = counters.mostCredit.load();
+    c.deepestDebt = counters.deepestDebt.load();
+    c.adoptions = counters.adoptions.load();
+    c.swaps = counters.swaps.load();
+    c.restorations = counters.restorations.load();
+    c.roomBuffersMost = counters.roomBuffersMost.load();
+    return c;
+}
+
+void RigLooper::resetCopyCounters()
+{
+    for (size_t k = 0; k < (size_t) numCopyKinds; ++k)
+    {
+        counters.pages[k] = 0;
+        counters.bytes[k] = 0;
+        counters.maxPages[k] = 0;
+        counters.maxBytes[k] = 0;
+    }
+    counters.maxMandatory = counters.maxDiscretionary = counters.maxTotal = counters.maxLooks = 0;
+    counters.blocks = counters.skipped = counters.overBudget = counters.overMandatory = counters.overLooks = counters.overCredit = 0;
+    counters.mostCredit = 0;
+    counters.deepestDebt = 0;
+    counters.adoptions = counters.swaps = counters.restorations = 0;
+    counters.roomBuffersMost = roomBuffers.load();
+}
+
+juce::AudioBuffer<float> RigLooper::soundingLoopForTests (int index) const
+{
+    auto& layer = const_cast<Layer&> (layers[(size_t) index]);
+    const juce::SpinLock::ScopedLockType sl (layer.lock);
+    const auto state = (State) layer.state.load();
+    if (layer.length <= 0 || (state != State::playing && state != State::overdubbing))
+        return {};
+    juce::AudioBuffer<float> copy (2, layer.length);
+    for (int ch = 0; ch < 2; ++ch)
+        copy.copyFrom (ch, 0, layer.audio, juce::jmin (ch, layer.audio.getNumChannels() - 1), 0, layer.length);
+    // A page not put back yet sounds as the room holds it.
+    if (restoring.load (std::memory_order_acquire) && restoreLayer.load (std::memory_order_relaxed) == index)
+        for (int page = 0; page < restore.pages; ++page)
+            if (const auto stamp = undoRoom.stamps[(size_t) page]; (stamp & ~3u) == (restore.generation << 2) && (stamp & 2u) != 0)
+            {
+                const int from = page << kCopyPageShift;
+                for (int ch = 0; ch < 2; ++ch)
+                    copy.copyFrom (ch, from, undoRoom.audio, ch, from, juce::jmin (kCopyPageSamples, layer.length - from));
+            }
+    return copy;
+}
+
 std::vector<float> RigLooper::readPeaks (int index, int count) const
 {
     std::vector<float> peaks ((size_t) juce::jmax (1, count), 0.0f);
@@ -602,8 +813,7 @@ void RigLooper::reset (int index)
         layer.bendNow = layer.bendBefore = {};
         layer.bendFade = 0;
         layer.syncShift = 0.0;
-        if (undoLayer == index)
-            undoLayer = -1;
+        cancelUndo (index);
         ++layer.version;
     }
 }
@@ -761,12 +971,16 @@ void RigLooper::maintain()
     juce::int64 total = 0;
     for (auto& layer : layers)
         total += layer.audio.getNumSamples();
+    // The undo room is made ready for the longest loop, and for a recording's room as it grows
+    // (so it's ready before the take closes), up to kMaxUndoSeconds.
     int longest = 0;
     for (auto& layer : layers)
     {
         const auto state = (State) layer.state.load();
         const int capacity = layer.audio.getNumSamples();
         if (state == State::playing || state == State::overdubbing)
+            longest = juce::jmax (longest, layer.publishedLength.load (std::memory_order_relaxed));
+        if (state == State::recording || state == State::armed)
             longest = juce::jmax (longest, capacity);
         if ((state != State::recording && state != State::armed) || capacity >= maxCapacity
             || capacity - layer.recorded.load() > ahead)
@@ -796,18 +1010,14 @@ void RigLooper::maintain()
             abortSnapshot (layer);
             std::swap (layer.audio, room);
         }
+        longest = juce::jmax (longest, bigger);
         // The old buffer goes here, outside the lock.
     }
 
     // Undo needs room for the longest loop (up to kMaxUndoSeconds: longer ones have no undo).
-    longest = juce::jmin (longest, (int) (sampleRate * kMaxUndoSeconds));
-    if (longest > undoAudio.getNumSamples())
-    {
-        juce::AudioBuffer<float> room (2, longest);
-        const juce::SpinLock::ScopedLockType sl (undoLock);
-        std::swap (undoAudio, room);
-        undoLayer = -1;
-    }
+    // A bigger room goes through the spare slot, so an undo held now is never lost; a room the
+    // audio thread let go of is freed here.
+    prepareRoom (longest);
 
     // New loops onto the shared bars.
     for (int i = 0; i < kLayers; ++i)
@@ -848,8 +1058,7 @@ void RigLooper::applySyncShift (int index)
         installPeaks (layer, peaks.data(), peakShift, len);
         layer.startBeat -= shift;
         layer.syncShift = 0.0;
-        if (undoLayer == index)
-            undoLayer = -1;
+        cancelUndo (index);
         ++layer.version;
     }
     // The unturned sound is freed here, outside the lock.
@@ -895,11 +1104,18 @@ int RigLooper::finishRecording (Layer& layer)
             earliestTake = other.startBeat;
         if (st != State::playing && st != State::overdubbing)
             continue;
-        const juce::SpinLock::ScopedTryLockType ol (other.lock);
-        if (! ol.isLocked() || other.length < 2 || other.lengthBeats.load() <= refBeats)
+        // (A layer whose lock this block still holds, for its copying at the block's end, is read
+        // as it is: this is the thread holding it.)
+        const bool mine = heldLocks[(size_t) (&other - layers.data())];
+        if (! mine && ! other.lock.tryEnter())
             continue;
-        refBeats = other.lengthBeats.load();
-        refAnchor = syncAnchor (other);
+        if (other.length >= 2 && other.lengthBeats.load() > refBeats)
+        {
+            refBeats = other.lengthBeats.load();
+            refAnchor = syncAnchor (other);
+        }
+        if (! mine)
+            other.lock.exit();
     }
     if (refBeats <= 0 && earliestTake < layer.startBeat)
     {
@@ -937,25 +1153,48 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
         layer.lengthBeats = 0;
         layer.position = 0;
         layer.syncShift = 0.0;
-        if (undoLayer == index)
-            undoLayer = -1;
+        cancelUndo (index);
         ++layer.version;
     }
 
     if (layer.undos.exchange (0) > 0 && undoLayer == index)
     {
-        const juce::SpinLock::ScopedTryLockType ul (undoLock);
         const auto state = (State) layer.state.load();
-        if (ul.isLocked() && (state == State::playing || state == State::overdubbing) && undoLength == layer.length)
+        if ((state == State::playing || state == State::overdubbing) && cap.layer == index && cap.length == layer.length)
         {
             abortSnapshot (layer);
-            for (int ch = 0; ch < 2; ++ch)
-                layer.audio.copyFrom (ch, 0, undoAudio, ch, 0, undoLength);
+            // The whole loop captured, and the room's buffer no bigger than the loop's (so no
+            // layer ever gains room through an undo), both holding the loop: the buffers change
+            // places, and nothing is copied. Otherwise the pages the overdub wrote are put back
+            // from the room, a slice a block, each before anything reads it (restoreBeforeRead):
+            // from this block on, the loop sounds as it was.
+            const bool swap = cap.complete && undoRoom.audio.getNumChannels() == 2 && layer.audio.getNumChannels() == 2
+                              && undoRoom.audio.getNumSamples() >= layer.length && layer.audio.getNumSamples() >= layer.length
+                              && undoRoom.audio.getNumSamples() <= layer.audio.getNumSamples() && undoRoom.stampPages >= cap.pages;
+            if (swap)
+            {
+                std::swap (layer.audio, undoRoom.audio);
+                roomUsableSamples.store (undoRoom.usable(), std::memory_order_relaxed);
+                counters.swaps.fetch_add (1, std::memory_order_relaxed);
+            }
+            else if (cap.written > 0)
+            {
+                restore.layer = index;
+                restore.stale = cap.written;
+                restore.cursor = juce::jmax (0, cap.firstWritten);
+                restore.pages = cap.pages;
+                restore.looked = 0;
+                restore.generation = cap.generation;
+                restoreLayer.store (index, std::memory_order_relaxed);
+                restoring.store (true, std::memory_order_release);
+                counters.restorations.fetch_add (1, std::memory_order_relaxed);
+            }
             peakOps += installPeaks (layer, undoPeaks.get(), undoPeakShift, undoPeakCovered);   // its waveform too
             layer.state = (int) State::playing;
             ++layer.version;
         }
         undoLayer = -1;
+        cap.layer = -1;
     }
 
     if (const double restart = layer.restartBeat.exchange (-1.0); restart >= 0)
@@ -965,8 +1204,27 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
             layer.startBeat = restart + layer.syncShift.load();   // its bar 1 there
     }
 
-    for (int p = layer.presses.exchange (0); p > 0; --p)
+    int presses = layer.presses.exchange (0);
+    // Presses held back while an undo's restoration ran: applied once it's done, exactly once and
+    // in order, if the loop still plays as it was; otherwise (cleared, replaced) dropped.
+    if (layer.deferred > 0 && ((State) layer.state.load() != State::playing || layer.version.load() != layer.deferredVersion))
+        layer.deferred = 0;
+    if (layer.deferred > 0 && ! restoring.load (std::memory_order_acquire))
     {
+        presses += layer.deferred;
+        layer.deferred = 0;
+    }
+    for (int p = presses; p > 0; --p)
+    {
+        // While a restoration uses the undo room, a press that would start an overdub (and any
+        // after it on this layer) waits. Never on an empty, armed or recording layer.
+        if (restoring.load (std::memory_order_acquire) && ((State) layer.state.load() == State::playing || layer.deferred > 0))
+        {
+            if (layer.deferred == 0)
+                layer.deferredVersion = layer.version.load();
+            layer.deferred += p;
+            break;
+        }
         switch ((State) layer.state.load())
         {
             case State::empty:
@@ -1008,25 +1266,227 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 break;
             }
             case State::playing:
-                if (const juce::SpinLock::ScopedTryLockType ul (undoLock); ul.isLocked() && layer.length <= undoAudio.getNumSamples())
+            {
+                // Whether this overdub has an undo is decided now, once (in constant time), and
+                // the window is told why if not. An undo already held elsewhere stays if not.
+                const auto why = startCapture (layer, index);
+                layer.noUndo = (int) why;
+                if (why != NoUndo::none)
+                    layer.noUndoNews = (int) why;
+                if (why == NoUndo::none)
                 {
-                    for (int ch = 0; ch < 2; ++ch)
-                        undoAudio.copyFrom (ch, 0, layer.audio, ch, 0, layer.length);
                     for (int b = 0; b < kPeakBins; ++b)
                         undoPeaks[(size_t) b] = layer.peaks.bins[(size_t) b].load (std::memory_order_relaxed);
                     undoPeakShift = layer.peaks.shift.load (std::memory_order_relaxed);
                     undoPeakCovered = layer.peaks.covered.load (std::memory_order_relaxed);
                     peakOps += kPeakBins;
-                    undoLayer = index;
-                    undoLength = layer.length;
                 }
                 layer.state = (int) State::overdubbing;
                 break;
+            }
             case State::overdubbing:
                 layer.state = (int) State::playing;
                 break;
         }
     }
+}
+
+void RigLooper::cancelUndo (int index)
+{
+    // (Only if it's this layer's: an undo another layer was just given stays.)
+    int expected = index;
+    undoLayer.compare_exchange_strong (expected, -1);
+    // A restoration of this loop ends too: the pages it would put back are in a buffer that is
+    // no longer the loop.
+    if (restoring.load (std::memory_order_acquire) && restoreLayer.load (std::memory_order_relaxed) == index)
+        restoring.store (false, std::memory_order_release);
+}
+
+bool RigLooper::restorePage (Layer& layer, int page)
+{
+    auto& stamp = undoRoom.stamps[(size_t) page];
+    const juce::uint32 g = restore.generation << 2;
+    if ((stamp & ~3u) != g || (stamp & 2u) == 0)
+        return false;
+    // Both channels, then the mark: a page is only ever seen whole, before or after.
+    copyRoomPage (layer, page, false);
+    stamp = g | 1u;
+    if (--restore.stale <= 0)
+        restoring.store (false, std::memory_order_release);
+    return true;
+}
+
+void RigLooper::restoreBeforeRead (Layer& layer, int sample)
+{
+    const int page = sample >> kCopyPageShift;
+    if (restorePage (layer, page))
+    {
+        noteCopy (undoBeforeRead, juce::jmin (kCopyPageSamples, layer.length - (page << kCopyPageShift)));
+        credit -= 1.0;   // it must be copied: charged, and may take the credit below nothing
+    }
+}
+
+void RigLooper::continueRestoration (Layer& layer)
+{
+    // In order from the first page written, round the loop, with the block's positive credit.
+    while (restore.stale > 0 && credit >= 1.0 && tally.looks < lookLimit && restore.looked < 2 * restore.pages)
+    {
+        ++tally.looks;
+        ++restore.looked;
+        const int page = restore.cursor;
+        restore.cursor = (restore.cursor + 1) % restore.pages;
+        if (restorePage (layer, page))
+        {
+            noteCopy (undoInOrder, juce::jmin (kCopyPageSamples, layer.length - (page << kCopyPageShift)));
+            credit -= 1.0;
+        }
+    }
+    if (restore.stale > 0 && restore.looked >= 2 * restore.pages)
+    {
+        jassertfalse;   // (can't happen: the count is of marked pages)
+        restoring.store (false, std::memory_order_release);
+    }
+}
+
+void RigLooper::finishRestorationUnderLock (Layer& layer, int index)
+{
+    // Off the audio thread, holding the loop's lock (the audio has stopped, or a copy must be made
+    // under the lock): what's left of the restoration, so the loop read is the loop as it was.
+    if (! restoring.load (std::memory_order_acquire) || restoreLayer.load (std::memory_order_relaxed) != index)
+        return;
+    for (int page = 0; page < restore.pages && restore.stale > 0; ++page)
+        restorePage (layer, page);
+    restoring.store (false, std::memory_order_release);
+}
+
+bool RigLooper::passesGuarantee (const Layer& layer) const
+{
+    // The guarantee test: even at the fastest tempo (kMaxBpm), in the largest block, the loop moves
+    // through at most a sixteenth of what the block earns, so the copies an overdub needs before
+    // it writes stay a small, fixed part of the budget. r_worst: loop samples a sample at 240 BPM.
+    const double beats = layer.lengthBeats.load (std::memory_order_relaxed);
+    if (layer.length <= 0 || beats <= 0)
+        return false;
+    const double rWorst = 4.0 * layer.length / (sampleRate * beats);
+    return rWorst <= 64.0 * kCopyPagesPerSecond / sampleRate && maxBlockSize * rWorst / kCopyPageSamples <= 63.0;
+}
+
+RigLooper::NoUndo RigLooper::startCapture (Layer& layer, int index)
+{
+    if (layer.length > (int) (sampleRate * kMaxUndoSeconds))
+        return NoUndo::tooLong;
+    if (! passesGuarantee (layer))
+        return NoUndo::squeezed;
+    if (cap.generation >= kMaxGeneration)
+    {
+        // Every mark has been used: the room's marks are made afresh off the audio thread.
+        cancelUndo (undoLayer.load());
+        cap.layer = -1;
+        marksWorn = true;
+        return NoUndo::roomNotReady;
+    }
+    if (layer.length > undoRoom.usable() && spareReady.load (std::memory_order_acquire))
+        adoptSpare();   // a bigger room is ready: this press replaces any undo anyway
+    if (layer.length > undoRoom.usable())
+        return NoUndo::roomNotReady;
+    // A new capture: every mark of an older one is stale at once.
+    ++cap.generation;
+    cap.layer = index;
+    cap.length = layer.length;
+    cap.pages = (layer.length + kCopyPageSamples - 1) / kCopyPageSamples;
+    cap.cursor = 0;
+    cap.complete = false;
+    cap.written = 0;
+    cap.firstWritten = -1;
+    cap.lastMarked = -1;
+    undoLayer = index;
+    return NoUndo::none;
+}
+
+void RigLooper::copyRoomPage (Layer& layer, int page, bool intoRoom)
+{
+    const int from = page << kCopyPageShift;
+    const int count = juce::jmin (kCopyPageSamples, layer.length - from);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        if (intoRoom)
+            std::memcpy (undoRoom.audio.getWritePointer (ch) + from, layer.audio.getReadPointer (ch) + from, sizeof (float) * (size_t) count);
+        else
+            std::memcpy (layer.audio.getWritePointer (ch) + from, undoRoom.audio.getReadPointer (ch) + from, sizeof (float) * (size_t) count);
+    }
+}
+
+void RigLooper::markBeforeWrite (Layer& layer, int sample)
+{
+    const int page = sample >> kCopyPageShift;
+    if (page == cap.lastMarked)
+        return;
+    cap.lastMarked = page;
+    auto& stamp = undoRoom.stamps[(size_t) page];
+    const juce::uint32 g = cap.generation << 2;
+    if ((stamp & ~3u) != g)
+    {
+        // Not captured yet: captured now, before the overdub writes it.
+        copyRoomPage (layer, page, true);
+        stamp = g | 3u;
+        ++cap.written;
+        noteCopy (undoBeforeWrite, juce::jmin (kCopyPageSamples, layer.length - (page << kCopyPageShift)));
+        credit -= 1.0;
+    }
+    else if ((stamp & 2u) == 0)
+    {
+        stamp |= 2u;
+        ++cap.written;
+    }
+    if (cap.firstWritten < 0)
+        cap.firstWritten = page;
+}
+
+void RigLooper::continueCapture (Layer& layer)
+{
+    // In order, from the cursor, with the block's positive credit: the pages not captured yet.
+    const juce::uint32 g = cap.generation << 2;
+    while (cap.cursor < cap.pages && credit >= 1.0 && tally.looks < lookLimit)
+    {
+        ++tally.looks;
+        auto& stamp = undoRoom.stamps[(size_t) cap.cursor];
+        if ((stamp & ~3u) != g)
+        {
+            copyRoomPage (layer, cap.cursor, true);
+            stamp = g | 1u;
+            noteCopy (undoInOrder, juce::jmin (kCopyPageSamples, layer.length - (cap.cursor << kCopyPageShift)));
+            credit -= 1.0;
+        }
+        ++cap.cursor;
+    }
+    cap.complete = cap.cursor >= cap.pages;
+}
+
+RigLooper::NoUndo RigLooper::undoLimit (int index) const
+{
+    const auto& layer = layers[(size_t) index];
+    const int length = layer.publishedLength.load();
+    const double beats = layer.lengthBeats.load();
+    if (length <= 0 || beats <= 0)
+        return NoUndo::none;
+    if (length > (int) (sampleRate * kMaxUndoSeconds))
+        return NoUndo::tooLong;
+    const double rWorst = 4.0 * length / (sampleRate * beats);
+    if (rWorst > 64.0 * kCopyPagesPerSecond / sampleRate || maxBlockSize * rWorst / kCopyPageSamples > 63.0)
+        return NoUndo::squeezed;
+    return NoUndo::none;
+}
+
+juce::String RigLooper::noUndoMessage (NoUndo why)
+{
+    switch (why)
+    {
+        case NoUndo::tooLong:      return "No undo for this overdub. Loops over 10 minutes can't be undone.";
+        case NoUndo::squeezed:     return "No undo for this overdub. This sound is squeezed too far to keep an undo copy.";
+        case NoUndo::roomNotReady: return "Undo wasn't ready for this overdub yet. It will be for the next one.";
+        case NoUndo::none:         break;
+    }
+    return {};
 }
 
 juce::String RigLooper::bendName (int b)
@@ -1081,6 +1541,21 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         for (auto& layer : layers)
             layer.restartPending = true;
     wasPlaying = clock.playing;
+    // This block's copy credit: what it earns (48,000 pages a second of audio, at most 1,024
+    // pages), added to what's left, never more than one block's worth and the fraction of a page.
+    // A debt (copies that had to be made) is paid back first.
+    {
+        const int forTests = copySliceForTests.load (std::memory_order_relaxed);
+        accrual = forTests > 0 ? juce::jmin ((double) kCopyMaxPages, (double) forTests / kCopyPageSamples)
+                                : juce::jmin ((double) kCopyMaxPages, kCopyPagesPerSecond * (double) n / sampleRate);
+        credit = juce::jmin (credit + accrual, juce::jmin ((double) kCopyMaxPages, accrual + 1.0));
+        lookLimit = (int) std::floor (8.0 * accrual) + 8;
+    }
+    const double available = credit;
+    // A bigger undo room waiting: taken now if no undo is held (else at the press that needs it).
+    adoptTried = false;
+    if (spareReady.load (std::memory_order_acquire) && undoLayer.load() < 0 && ! restoring.load (std::memory_order_acquire))
+        adoptSpare();   // (never while a restoration still reads the room)
 
     for (int index = 0; index < kLayers; ++index)
     {
@@ -1110,12 +1585,15 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 out.addFrom (ch, 0, own, ch, 0, n);
         };
 
-        const juce::SpinLock::ScopedTryLockType sl (layer.lock);
-        if (! sl.isLocked())
+        // The layer's one try of its lock this block. It's let go of at the end of the layer's
+        // turn, or, if it has copying to do with the block's credit, at the end of the block.
+        if (! layer.lock.tryEnter())
         {
+            counters.skipped.fetch_add (1, std::memory_order_relaxed);
             finishLayer();   // the window is swapping in a new sound; back next block (the effects ring on)
             continue;
         }
+        heldLocks[(size_t) index] = true;
 
         if (std::exchange (layer.restartPending, false))
         {
@@ -1130,10 +1608,23 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 layer.bendFade = 0;
             }
         }
+        // The undo's capture ends if the loop was replaced or its undo cancelled (under this lock).
+        if (cap.layer == index && undoLayer.load() != index)
+            cap.layer = -1;
         int peakOps = 0;   // the waveform's work this block (bounded: see kMaxPeakOpsPerBlock)
         handleRequests (layer, index, clock, wantsPlay, peakOps);
+        if (cap.layer == index && undoLayer.load() != index)
+            cap.layer = -1;   // (cleared, or its undo used)
+        // A save's copy of a loop that overdubs faster than the guarantee allows can't keep to
+        // the budget: it's called off (the copier tries again), and the undo is never touched.
+        if (layer.snap.active && (State) layer.state.load() == State::overdubbing && ! passesGuarantee (layer))
+            abortSnapshot (layer);
+        bool capturing = cap.layer == index;
         // The moment a copy asked for is of: here, after this block's requests.
-        if (layer.snap.state.load (std::memory_order_acquire) == snapPosted)
+        // (A copy asked for while this loop's restoration runs starts once it's done, so it never
+        // copies a page not put back yet.)
+        bool restoringHere = restoring.load (std::memory_order_acquire) && restoreLayer.load (std::memory_order_relaxed) == index;
+        if (layer.snap.state.load (std::memory_order_acquire) == snapPosted && ! restoringHere)
             startSnapshot (layer);
 
         const auto* src = sources[(size_t) juce::jlimit (0, numSources - 1, layer.source.load())];
@@ -1160,6 +1651,10 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             if (layer.swapPending.load (std::memory_order_relaxed) && (! clock.playing || beat >= layer.swapBeat - 1.0e-9))
             {
                 peakOps += applySwap (layer, index);
+                if (cap.layer == index && undoLayer.load() != index)
+                    cap.layer = -1;
+                capturing = cap.layer == index;
+                restoringHere = restoringHere && restoring.load (std::memory_order_relaxed);
                 audioL = layer.audio.getWritePointer (0);
                 audioR = layer.audio.getWritePointer (1);
                 capacity = layer.audio.getNumSamples();
@@ -1264,6 +1759,13 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                     const double at = beats / lengthBeats * layer.length;
                     const int j0 = juce::jlimit (0, layer.length - 1, (int) at);
                     const int j1 = (j0 + 1) % layer.length;
+                    if (restoringHere)
+                    {
+                        // Restore before read: a page not put back yet is put back first.
+                        restoreBeforeRead (layer, j0);
+                        restoreBeforeRead (layer, j1);
+                        restoringHere = restoring.load (std::memory_order_relaxed);
+                    }
                     const float f = (float) (at - j0);
                     outL2 = audioL[j0] + (audioL[j1] - audioL[j0]) * f;
                     outR2 = audioR[j0] + (audioR[j1] - audioR[j0]) * f;
@@ -1308,6 +1810,8 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                 if (state == State::overdubbing)
                 {
                     const int w = (i0 - dubDelay + layer.length) % layer.length;
+                    if (capturing)
+                        markBeforeWrite (layer, w);   // the undo keeps what was here
                     copyBeforeWrite (layer, w);   // a copy being made keeps what was here
                     if (srcL != nullptr)
                         audioL[w] += srcL[i];
@@ -1328,8 +1832,6 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
             layer.peaks.covered.store (layer.writeIndex, std::memory_order_relaxed);   // (only grows)
         if (peakOps > statPeakOps.load (std::memory_order_relaxed))
             statPeakOps.store (peakOps, std::memory_order_relaxed);
-        if (layer.snap.active)
-            continueSnapshot (layer, n);
 
         // What the window shows.
         const auto state = (State) layer.state.load();
@@ -1350,7 +1852,38 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
         if (changed)
             ++layer.version;
         finishLayer();
+        if (! layer.snap.active && ! (cap.layer == index && ! cap.complete) && ! (restoringHere && restoring.load (std::memory_order_relaxed)))
+        {
+            heldLocks[(size_t) index] = false;
+            layer.lock.exit();
+        }
     }
+
+    // The copying in order, with what's left of the credit: undo work first, then a save's copy
+    // (which waits while undo work is outstanding).
+    if (cap.layer >= 0 && undoLayer.load() != cap.layer)
+        cap.layer = -1;   // (its loop was replaced as it played: a bank swap)
+    const bool undoWork = (cap.layer >= 0 && ! cap.complete) || restoring.load (std::memory_order_relaxed);
+    if (cap.layer >= 0 && ! cap.complete && heldLocks[(size_t) cap.layer])
+        continueCapture (layers[(size_t) cap.layer]);
+    if (restoring.load (std::memory_order_relaxed) && heldLocks[(size_t) restore.layer])
+        continueRestoration (layers[(size_t) restore.layer]);
+    for (int index = 0; index < kLayers; ++index)
+        if (! undoWork && heldLocks[(size_t) index] && layers[(size_t) index].snap.active)
+        {
+            auto& layer = layers[(size_t) index];
+            continueSnapshot (layer);
+            if (layer.snap.next >= layer.snap.pages)
+            {
+                layer.snap.active = false;
+                layer.snap.state.store (snapDone, std::memory_order_release);
+            }
+        }
+    for (int index = 0; index < kLayers; ++index)
+        if (std::exchange (heldLocks[(size_t) index], false))
+            layers[(size_t) index].lock.exit();
+
+    publishTally (n, available, credit);
 
     // The beat a copier listens for: blocks done, and the longest recent gap between them.
     const auto now = juce::jmax ((juce::uint32) 1, juce::Time::getMillisecondCounter());
