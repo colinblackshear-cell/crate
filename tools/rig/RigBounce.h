@@ -33,6 +33,14 @@ struct Options
     bool dry = false;
     double tailSeconds = 2.0;
     juce::String name;          // the show's name, for the folder ("Song" when empty)
+    // A friend's track (RigFriendTrack): in the files (the mix has it), or left out ("my parts only",
+    // to send back). Only counts when there is one.
+    bool withTrack = true;
+    // Only the mix (no stems): "my parts mixed", or everything to listen to.
+    bool mixOnly = false;
+    // Silence before every file, so they start at the same moment as his mixdown (the time before his
+    // bar 1). Set by the Song screen for a song bounce over a friend's track.
+    double leadSeconds = 0;
 };
 
 struct Result
@@ -64,4 +72,8 @@ bool writeMarkers (RigEngine&, const juce::File& file, juce::Range<double> bars,
 // After the real-time pass: MP3 copies of the WAVs the recorder saved (and removes the WAVs when only
 // MP3 was asked for). Runs on the calling thread.
 void convertRecorded (const juce::Array<juce::File>& wavs, const Options&, juce::StringArray& files);
+// Over a friend's track: whether there is one, and the note for him ("94 BPM, 4/4, F minor...") that
+// goes in the folder. Its file name, or empty.
+bool hasTrack (RigEngine&);
+juce::String writeNoteForFriend (RigEngine&, const Options&, const juce::File& folder);
 }

@@ -1281,6 +1281,8 @@ void RigDirty::captureSave (SaveTicket ticket, const juce::ValueTree& show, cons
     {
         const auto& a = assets[k];
         const auto hash = staged.keys[k];
+        if (a.path.startsWith ("Friend track/"))
+            continue;   // (a friend's track: the show's tree has its id, which is what tells it changed)
         AudioRef r;
         r.present = r.known = true;
         r.hash = hash;

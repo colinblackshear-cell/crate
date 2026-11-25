@@ -1,4 +1,5 @@
 #include "RigEngine.h"
+#include "core/TrackAnalysis.h"
 #include "RigSong.h"
 #include "FactoryKits.h"
 
@@ -427,6 +428,8 @@ void RigEngine::prepare (double rate, int maximumBlockSize)
     performFx.prepare (sampleRate);
     mixBuffer.setSize (2, maxBlock);
     clickBuffer.setSize (2, maxBlock);
+    friendBuffer.setSize (2, maxBlock);
+    friendTrack.prepare (sampleRate);
     capture.prepare (sampleRate);
     for (auto* m : { &midiIn, &mpcMidi, &samplerMidi, &vocoderMidi, &bassMidi, &synthMidi, &drumsMidi, &droneMidi, &vocoderMissed, &midiScratch, &takeMidi })
         m->ensureSize (4096);
@@ -1123,6 +1126,16 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
                 stemLimiters[(size_t) st].process (out[0] + offset, out[1] != nullptr ? out[1] + offset : nullptr, n);
         }
 
+    // A friend's track, under everything: in the mix (so it's recorded), or, for a "my parts only"
+    // bounce, heard like the click and kept out of recordings.
+    juce::AudioBuffer<float> friendBlock (friendBuffer.getArrayOfWritePointers(), 2, n);
+    friendBlock.clear();
+    friendTrack.render (friendBlock, n, transport.getBlockPosition(), transport.getBpm(), transport.isPlayingThisBlock());
+    const bool friendRecorded = friendTrack.recorded.load();
+    if (friendRecorded)
+        for (int ch = 0; ch < 2; ++ch)
+            mix.addFrom (ch, 0, friendBlock, ch, 0, n);
+
     // The metronome: heard (under the master fader), but kept out of recordings.
     juce::AudioBuffer<float> click (clickBuffer.getArrayOfWritePointers(), 2, n);
     click.clear();
@@ -1151,6 +1164,9 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     const float clickGain = masterGain.getTargetValue();
     for (int ch = 0; ch < 2; ++ch)
         mix.addFrom (ch, 0, click, ch, 0, n, clickGain);
+    if (! friendRecorded)
+        for (int ch = 0; ch < 2; ++ch)
+            mix.addFrom (ch, 0, friendBlock, ch, 0, n, clickGain);
 
     // A sound being previewed from the Sounds tab, like the click: heard, not recorded.
     {
@@ -1882,6 +1898,8 @@ juce::ValueTree RigEngine::saveShow() const
         show.appendChild (rignotes::toTree (noteClips), nullptr);
     show.setProperty ("songMode", scenes.songMode, nullptr);
     show.appendChild (timeline.toTree(), nullptr);
+    if (friendTrack.hasAudio())
+        show.appendChild (friendTrack.toTree(), nullptr);
     if (! liveSong.getTakes().empty())
         show.appendChild (liveSong.toTree(), nullptr);
     for (const auto& scene : scenes.getScenes())
@@ -1964,6 +1982,9 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     scenes.clear();
     scenes.songMode = (bool) show.getProperty ("songMode", false);
     timeline.fromTree (show.getChildWithName (RigTimeline::kTreeType));
+    // (its sound comes in readLoopAudio)
+    friendTrack.fromTree (show.getChildWithName (RigFriendTrack::kTreeType));
+    friendBars = 0.0;
     liveSong.fromTree (show.getChildWithName (RigLiveSong::kTreeType));
     takes.clear();
     loadedTakeSets.clear();
@@ -2455,10 +2476,81 @@ void RigEngine::applyScene (const RigScene::State& s, double beat)
     dirty.endAudioFields();
 }
 
+double RigEngine::songLengthBarsOfTrack() const
+{
+    if (! friendTrack.hasAudio())
+        return 0.0;
+    const auto info = friendTrack.getInfo();
+    // (beats are beats at any tempo: it plays like a tape, locked to them)
+    return friendTrack.lengthSeconds() * info.bpm / 60.0 / juce::jmax (1, transport.getBeatsPerBar());
+}
+
+double RigEngine::songLengthBars() const
+{
+    return juce::jmax (timeline.lengthBars(), songLengthBarsOfTrack());
+}
+
+juce::String RigEngine::bringInFriendTrack (std::shared_ptr<const juce::AudioBuffer<float>> audio, const RigFriendTrack::Info& info,
+                                            bool setTempo, bool setKey)
+{
+    if (audio == nullptr || audio->getNumSamples() == 0)
+    {
+        friendTrack.clear();
+        friendBars = 0.0;
+        dirty.noteChange();
+        return "The friend's track is gone from the song.";
+    }
+    transport.stop();
+    if (setTempo)
+    {
+        transport.setBpm (info.bpm);
+        transport.setBeatsPerBar (info.beatsPerBar);
+    }
+    friendTrack.set (std::move (audio), info);
+    friendBars = songLengthBarsOfTrack();
+    juce::String said = (info.name.isNotEmpty() ? info.name : juce::String ("The track")) + " is in: "
+                        + juce::String ((int) std::round (friendBars.load())) + " bars from bar 1 at "
+                        + juce::String (info.bpm, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") + " BPM.";
+    if (setKey && juce::isPositiveAndBelow (info.key, 12))
+    {
+        chords.setKey (info.key, info.minor ? 1 : 0, chords.fillType);
+        chords.liveKeyHome();
+        said << " Chords are in " << crate::TrackAnalysis::keyName (info.key, info.minor) << ".";
+    }
+    dirty.noteChange();
+    controlsMoved = true;
+    return said;
+}
+
+void RigEngine::practiceLoop (double fromBar, double toBar)
+{
+    fromBar = juce::jmax (0.0, std::floor (fromBar + 1.0e-6));
+    toBar = juce::jmax (fromBar + 1.0, std::round (toBar));
+    timeline.cycleStart = fromBar;
+    timeline.cycleEnd = toBar;
+    timeline.cycle = true;
+    if (! transport.isPlaying())
+    {
+        // the song from the loop's first bar
+        timeline.on = true;
+        transport.setPosition (fromBar * juce::jmax (1, transport.getBeatsPerBar()));
+        transport.play();
+    }
+    else
+    {
+        const double bar = transport.getPositionInBeats() / juce::jmax (1, transport.getBeatsPerBar());
+        timeline.on = true;
+        if (bar < fromBar || bar >= toBar)
+            timeline.jumpTo (fromBar);
+    }
+    controlsMoved = true;
+}
+
 void RigEngine::arrange (int n)
 {
     timeline.update();
-    const bool running = timeline.on.load() && transport.isPlayingThisBlock() && ! timeline.liveEmpty();
+    // (A friend's track is the song too: its bars cycle and it plays to its end.)
+    const bool running = timeline.on.load() && transport.isPlayingThisBlock() && (! timeline.liveEmpty() || friendTrack.hasAudio());
     if (! running)
     {
         arrangeFrom.fill (1.0f);
@@ -2477,7 +2569,7 @@ void RigEngine::arrange (int n)
             controlsMoved = true;
         }
         else if (timeline.stopAtEnd.load() && ! timeline.cycle.load() && timeline.gated.load() == 0
-                 && transport.getBlockPosition() >= (timeline.liveEnd() + 1.0) * bpb)
+                 && transport.getBlockPosition() >= (juce::jmax (timeline.liveEnd(), friendBars.load()) + 1.0) * bpb)
         {
             transport.stop();   // a bar after the end, so echoes ring out
             notesOffRequested = true;
@@ -2979,6 +3071,8 @@ std::vector<rigshow::Asset> RigEngine::loopAssets() const
                 a.takeId = take.id;
                 assets.push_back (std::move (a));
             }
+    if (friendTrack.hasAudio())
+        assets.push_back ({ RigFriendTrack::kAssetPath, friendTrack.getAudio() });
     for (int b = 0; b < (int) loopBanks.size(); ++b)
     {
         if (b == getCurrentLoopBank())
@@ -3180,6 +3274,21 @@ void RigEngine::readLoopAudio (const juce::File& showFile)
             if (l.audio == nullptr)
                 l.beats = 0;
         }
+    }
+    if (friendTrack.expectsAudio())
+    {
+        // A friend's track: its sound plays at the tools' 44.1 kHz whatever the file says (it was
+        // saved at the Rig's rate, by the frame).
+        std::shared_ptr<juce::AudioBuffer<float>> audio;
+        const auto file = fileAt (RigFriendTrack::kAssetPath);
+        if (std::unique_ptr<juce::AudioFormatReader> reader { file.existsAsFile() ? formats.createReaderFor (file) : nullptr })
+        {
+            audio = std::make_shared<juce::AudioBuffer<float>> (2, (int) reader->lengthInSamples);
+            reader->read (audio.get(), 0, audio->getNumSamples(), 0, true, true);
+            remember (RigFriendTrack::kAssetPath, file, *audio);
+        }
+        friendTrack.setAudioFromShow (std::move (audio));
+        friendBars = friendTrack.hasAudio() ? songLengthBarsOfTrack() : 0.0;
     }
     committedAudio = std::move (loaded);
     // The show is open: as it is now is what's saved.

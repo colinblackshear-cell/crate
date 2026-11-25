@@ -1,6 +1,7 @@
 #include "SongView.h"
 
 #include "BouncePanel.h"
+#include "FriendTrackPanel.h"
 #include "GrooveView.h"
 #include "RigColours.h"
 #include "RigExport.h"
@@ -1162,9 +1163,77 @@ SongView::SongView (RigEngine& e) : engine (e)
     bigAdd.onClick = [this] { addSectionFromPlaying(); };
     bigEmpty.onClick = [this] { addEmptySection(); };
 
+    // A friend's track, over the top of the song.
+    trackStrip = std::make_unique<FriendTrackStrip> (engine);
+    trackStrip->onBringIn = [this] { bringInTrack(); };
+    trackStrip->onBringInFile = [this] (const juce::File& f) { bringInTrackFile (f); };
+    trackStrip->onChange = [this] { changeTrack(); };
+    trackStrip->onSendBack = [this] { showSendBack(); };
+    trackStrip->onSay = [this] (const juce::String& t) { say (t); };
+    trackStrip->onLayout = [this] { resized(); repaint(); };
+    addAndMakeVisible (*trackStrip);
+
     refresh();
     kept = { timeline().getBlocks(), timeline().getMarkers() };
     startTimerHz (30);
+}
+
+//==============================================================================
+void SongView::bringInTrack()
+{
+    trackChooser = std::make_shared<juce::FileChooser> ("Bring in a track: a friend's song to play over",
+                                                        juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                        "*.wav;*.aif;*.aiff;*.mp3;*.flac;*.m4a;*.ogg");
+    trackChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                               [safe = juce::Component::SafePointer<SongView> (this)] (const juce::FileChooser& fc)
+                               {
+                                   if (safe != nullptr && fc.getResult().existsAsFile())
+                                       safe->bringInTrackFile (fc.getResult());
+                               });
+}
+
+void SongView::bringInTrackFile (const juce::File& file)
+{
+    showTrackSheet (std::make_unique<FriendTrackSheet> (engine, file));
+}
+
+void SongView::changeTrack()
+{
+    if (engine.getFriendTrack().hasAudio())
+        showTrackSheet (std::make_unique<FriendTrackSheet> (engine));
+}
+
+void SongView::showTrackSheet (std::unique_ptr<FriendTrackSheet> sheet)
+{
+    auto* raw = sheet.get();
+    const auto dismiss = [raw]
+    {
+        if (auto* box = raw->findParentComponentOfClass<juce::CallOutBox>())
+            box->dismiss();
+    };
+    raw->onClose = dismiss;
+    raw->onDone = [this, dismiss] (const juce::String& said)
+    {
+        say (said);
+        edited();
+        trackStrip->tick();
+        dismiss();
+    };
+    const auto area = getLocalArea (trackStrip.get(), trackStrip->getLocalBounds());
+    juce::CallOutBox::launchAsynchronously (std::move (sheet), area, this);
+}
+
+void SongView::showSendBack()
+{
+    if (bouncing)
+        return say ("A bounce is playing the song: it stops by itself at the end.");
+    // My parts, each on its own, without his track (the panel has the other two ways).
+    bounceOptions.what = RigBounce::What::song;
+    bounceOptions.split = RigBounce::Split::everything;
+    bounceOptions.withTrack = false;
+    bounceOptions.mixOnly = false;
+    bounceOptions.wav = true;
+    showBouncePanel();
 }
 
 SongView::~SongView() { stopTimer(); }
@@ -1478,6 +1547,7 @@ void SongView::showMoreMenu()
                       });
     }
     menu.addSeparator();
+    menu.addItem ("Bring in a friend's track (a song to play over)...", [this] { bringInTrack(); });
     menu.addItem ("Import a song from Logic (stems + markers)...", onImportFromLogic != nullptr, false, [this]
                   {
                       if (onImportFromLogic)
@@ -1765,6 +1835,7 @@ void SongView::timerCallback()
 {
     if (bars != nullptr)
         bars->tick();
+    trackStrip->tick();
     const bool song = timeline().on.load();
     const auto setLit = [] (rigpanels::PanelButton& b, Lit lit)
     {
@@ -1960,6 +2031,8 @@ void SongView::resized()
     const bool empty = timeline().isEmpty() && timeline().getMarkers().empty();
     stepsArea = area.removeFromTop (28);
     area.removeFromTop (8);
+    trackStrip->setBounds (area.removeFromTop (trackStrip->preferredHeight()));
+    area.removeFromTop (8);
 
     livePads->setVisible (isLivePanelShown());
     if (livePads->isVisible())
@@ -2141,8 +2214,18 @@ bool SongView::startBounce (const RigBounce::Options& given)
         say (RigBounce::describe (engine, o));
         return false;
     }
+    // Over a friend's track, the whole song's files start where his mixdown starts.
+    o.leadSeconds = 0;
+    if (RigBounce::hasTrack (engine) && o.what == RigBounce::What::song)
+    {
+        const auto info = engine.getFriendTrack().getInfo();
+        o.leadSeconds = info.firstBeat * info.bpm / juce::jmax (1.0, engine.getTransport().getBpm());
+    }
     const auto folder = RigBounce::newFolder (RigBounce::toLogicFolder(), o);
-    const auto result = RigBounce::bounceLoops (engine, o, folder);
+    auto result = RigBounce::bounceLoops (engine, o, folder);
+    if (folder.isDirectory())
+        if (const auto note = RigBounce::writeNoteForFriend (engine, o, folder); note.isNotEmpty())
+            result.files.add (note);
     if (result.error.isNotEmpty() && result.files.isEmpty() && o.split != RigBounce::Split::everything)
     {
         say (result.error);
@@ -2162,8 +2245,11 @@ bool SongView::startBounce (const RigBounce::Options& given)
     juce::String why;
     const int bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
     const double tailBeats = o.tailSeconds * engine.getTransport().getBpm() / 60.0;
+    // (his track left out: heard while it plays, not in the files)
+    engine.getFriendTrack().recorded = o.withTrack || ! RigBounce::hasTrack (engine);
     if (view == nullptr || ! view->recordSongRange (folder, bars.getStart(), bars.getEnd() * bpb + tailBeats, &why))
     {
+        engine.getFriendTrack().recorded = true;
         say (why.isNotEmpty() ? why : juce::String ("Couldn't start the bounce."));
         return false;
     }
@@ -2180,9 +2266,11 @@ bool SongView::recordingSaved()
     if (! bouncing)
         return false;
     bouncing = false;
+    engine.getFriendTrack().recorded = true;
     auto files = bounceFiles;
     RigBounce::convertRecorded (engine.getRecorder().getSavedFiles(), bounceRunningOptions, files);
-    say ("Bounced " + juce::String (files.size()) + " files to To Logic/" + bounceFolder.getFileName() + ": every tool, each loop and the mix.");
+    say ("Bounced " + juce::String (files.size()) + " files to To Logic/" + bounceFolder.getFileName()
+         + (bounceRunningOptions.mixOnly ? juce::String (": the mix.") : juce::String (": every tool, each loop and the mix.")));
     if (revealAfterBounce)
         bounceFolder.revealToUser();
     return true;
