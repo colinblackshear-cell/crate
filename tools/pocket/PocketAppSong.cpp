@@ -2,6 +2,7 @@
 
 #include "core/AudioFiles.h"
 #include "Mp3Writer.h"
+#include "core/TrackAnalysis.h"
 
 // The SONG tool in the app: the song's hookup to the looper and the clock, its timer, and its checks.
 using namespace pocket;
@@ -26,6 +27,7 @@ void PocketApp::setupSong()
         thumb.repaint();
     };
     h.countIn = [&L] (double until) { L.setSongCountIn (until); };
+    h.trackBars = [&L] { return L.track().lengthBars(); };
     song = std::make_unique<PocketSong> (std::move (h));
     L.setSong (song.get());
 
@@ -323,6 +325,11 @@ juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce
     const double samplesPerBar = 4.0 * 60.0 / bpm * rate;
     juce::Range<double> bars;
     juce::String what = "Song";
+    // a friend's track: in the mix (withTrack), or left out and your parts lined up with his file
+    auto& track = loopsScreen.engine().track();
+    const auto trackAudio = o.what != SongScreen::Bounce::loops ? track.getAudio() : nullptr;
+    const auto trackInfo = track.getInfo();
+    const bool withTrack = trackAudio != nullptr && o.withTrack;
     if (o.what == SongScreen::Bounce::loops)
         what = "Loops";
     else if (o.what == SongScreen::Bounce::part)
@@ -337,7 +344,9 @@ juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce
         what = secs[(size_t) o.section].name;
     }
     else
-        bars = { 0.0, std::ceil (song->lengthBars() - 1.0e-6) };
+        bars = { 0.0, std::ceil (song->songBars() - 1.0e-6) };
+    if (o.sendBack && trackAudio != nullptr)
+        what = o.withTrack ? trackInfo.name + " + mine" : "My parts for " + trackInfo.name;
 
     // the layers in it, as they sound (effects, moves and board)
     struct Part { int layer; crate::SharedAudio audio; double beats; juce::String name; };
@@ -359,7 +368,12 @@ juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce
     }
     if (o.what == SongScreen::Bounce::loops)
         bars = { 0.0, std::ceil (longest / 4.0 - 1.0e-6) };
-    if (parts.empty() || bars.getLength() <= 0.0)
+    if (o.sendBack && trackAudio == nullptr)
+    {
+        said = "Bring in a friend's track first: SEND BACK lines your parts up with it.";
+        return files;
+    }
+    if ((parts.empty() && ! withTrack) || bars.getLength() <= 0.0)
     {
         said = o.what == SongScreen::Bounce::loops ? "No layers playing to bounce." : "Nothing in the song to bounce yet.";
         return files;
@@ -367,12 +381,24 @@ juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce
 
     const int body = (int) std::round (bars.getLength() * samplesPerBar);
     const int total = body + (int) (rate * o.tailSeconds);
+    // Your parts without his track start where his file's bar 1 is, so they line up from 0:00 in any DAW.
+    const int lead = trackAudio != nullptr && ! withTrack && o.what == SongScreen::Bounce::song
+                         ? (int) std::round (trackInfo.firstBeat * trackInfo.bpm / bpm * rate) : 0;
     auto folder = lib.ideaRoot().getChildFile ("Bounces").getNonexistentChildFile (
         juce::File::createLegalFileName (ideas.current().name + " " + what + " " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M")), {}, false);
     folder.createDirectory();
     const auto tempo = juce::String (bpm, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") + " BPM";
-    auto write = [&] (const juce::String& base, const juce::AudioBuffer<float>& audio)
+    auto write = [&] (const juce::String& base, const juce::AudioBuffer<float>& body)
     {
+        juce::AudioBuffer<float> padded;
+        if (lead > 0)
+        {
+            padded.setSize (2, body.getNumSamples() + lead);
+            padded.clear();
+            for (int ch = 0; ch < 2; ++ch)
+                padded.copyFrom (ch, lead, body, juce::jmin (ch, body.getNumChannels() - 1), 0, body.getNumSamples());
+        }
+        const auto& audio = lead > 0 ? padded : body;
         if (o.wav || ! mp3::available())
         {
             const auto f = folder.getChildFile (juce::File::createLegalFileName (base) + ".wav");
@@ -422,9 +448,31 @@ juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce
         for (int ch = 0; ch < 2; ++ch)
             mix.addFrom (ch, 0, stem, ch, 0, total);
     }
+    if (withTrack)
+    {
+        const auto t = RigFriendTrack::renderRange (*trackAudio, trackInfo, bpm, rate, 4, bars.getStart(), bars.getEnd(), o.tailSeconds, track.gain());
+        for (int ch = 0; ch < 2; ++ch)
+            mix.addFrom (ch, 0, t, ch, 0, juce::jmin (total, t.getNumSamples()));
+    }
     if (const float peak = mix.getMagnitude (0, mix.getNumSamples()); peak > 0.98f)
         mix.applyGain (0.98f / peak);
-    write (what + " - Mix - " + tempo, mix);
+    write (what + (trackAudio != nullptr && ! withTrack ? " - Mix of my parts - " : " - Mix - ") + tempo, mix);
+    if (trackAudio != nullptr && o.sendBack)
+    {
+        // what he needs to know to drop them in
+        juce::String note;
+        note << "From Kaleidobox Pocket, for " << trackInfo.name << ".\n\n";
+        if (! withTrack)
+            note << "These start at 0:00 of your file: drop them in at the very start and they line up.\n";
+        note << "Tempo: " << tempo << ".";
+        if (std::abs (bpm - trackInfo.bpm) > 0.05)
+            note << " (Your track is " << juce::String (trackInfo.bpm, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".")
+                 << " BPM: they were played to it at " << tempo << ", so it ran a little faster or slower here.)";
+        note << "\n";
+        if (trackInfo.key >= 0)
+            note << "Key: " << crate::TrackAnalysis::keyName (trackInfo.key, trackInfo.minor) << ".\n";
+        folder.getChildFile ("Read me - tempo and lining up.txt").replaceWithText (note);
+    }
     said = "Bounced " + juce::String (files.size()) + (files.size() == 1 ? " file" : " files") + " to Files > Kaleidobox Pocket > " + ideas.current().name
            + " > Bounces.";
     lastBounce = files;

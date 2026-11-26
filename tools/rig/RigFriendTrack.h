@@ -72,6 +72,8 @@ public:
     // Adds this block of it into `out` (2 channels, `numSamples`), from clock beat `beat` at `bpm`.
     // Silent while the clock is stopped.
     void render (juce::AudioBuffer<float>& out, int numSamples, double beat, double bpm, bool playing);
+    // Whether it has a sound to play (as of the last render).
+    bool isLoadedForAudio() const { return live != nullptr; }
 
     //==========================================================================
     // Any thread, on its own copy: bars [fromBar, toBar) of the song (plus `tailSeconds`) at `bpm`

@@ -77,6 +77,7 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketDrone.cpp
     DroneScreen.cpp
     SongScreen.cpp
+    TrackInSheet.cpp
     VocoderScreen.cpp
     PocketLinkClient.cpp
     LinkScreens.cpp
@@ -86,6 +87,7 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketAppEffects.cpp
     PocketAppNav.cpp
     PocketAppSong.cpp
+    PocketAppTrack.cpp
     PocketAppSampler.cpp
     ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
     ${VOCODER_SOURCES})
@@ -118,6 +120,8 @@ target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/StripFx.cpp ${TOOLS}/rig/Pe
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/RigChords.cpp)
 # SONG > BOUNCE writes MP3 with the Mac's encoder hookup
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/Mp3Writer.cpp)
+# SONG > FRIEND'S TRACK plays a whole song under yours with the Mac's own player (RigFriendTrack: no engine, no UI)
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/RigFriendTrack.cpp)
 target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS}/rig)
 target_compile_definitions(KaleidoboxPocket PRIVATE CRATE_STRIPFX_NO_PLUGINS=1)
 

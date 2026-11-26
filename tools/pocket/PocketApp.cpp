@@ -471,6 +471,7 @@ PocketApp::PocketApp (Options o)
     loopsScreen.engine().setInstrument (1, &chordsTool.engine());
     loopsScreen.engine().setDrone (&droneTool);
     setupSong();
+    setupTrack();
     droneScreen.toast = [this] (const juce::String& t) { toast (t); };
     droneScreen.onChanged = [this] { saveSong(); };
     droneScreen.micOn = [this] { return micOn; };
@@ -488,6 +489,7 @@ PocketApp::PocketApp (Options o)
     sheet.onDismiss = [this] { closeSheet(); };
     padSheet.onDismiss = [this] { closePadSheet(); };
     tempoSheet.onDismiss = [this] { closeTempo(); };
+    trackSheet.onDismiss = [this] { closeTrackSheet (true); };
     recSetup.onDismiss = [this] { closeRecSetup(); };
     headphones.onDismiss = [this] { closeHeadphones(); };   // closed without a choice: the mic stays off
     soundBank.onDismiss = [this] { closeSoundBank(); };
@@ -525,6 +527,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (sheet);
     addChildComponent (padSheet);
     addChildComponent (tempoSheet);
+    addChildComponent (trackSheet);
     addChildComponent (recSetup);
     addChildComponent (headphones);
     addChildComponent (soundBank);
@@ -585,7 +588,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -1056,6 +1059,7 @@ void PocketApp::closeAllSheets()
     closePadSheet();
     closeSendSheet();
     closeTempo();
+    closeTrackSheet (true);
     closeSoundBank();
     closeRecSetup();
     closeHeadphones();
@@ -1790,6 +1794,49 @@ void PocketApp::closeTempo()
             if (safe != nullptr && ! safe->tempoOpen)
                 safe->tempoSheet.setVisible (false);
         });
+    repaint();
+}
+
+// SONG > FRIEND'S TRACK's sheet (the rest is PocketAppTrack.cpp)
+juce::Rectangle<int> PocketApp::trackBounds() const
+{
+    const int h = juce::jmin (getHeight() - insets.getTop() - 24, TrackInSheet::kHeight + insets.getBottom());
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::openTrackSheet()
+{
+    if (trackOpen)
+        return;
+    closeAllSheets();
+    trackOpen = true;
+    dim->setVisible (true);
+    trackSheet.setBounds (trackBounds().withY (getHeight()));
+    trackSheet.setVisible (true);
+    trackSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (trackSheet, trackBounds(), true);
+}
+
+void PocketApp::closeTrackSheet (bool cancel)
+{
+    if (! trackOpen)
+        return;
+    if (cancel)
+        trackSheet.cancel();
+    trackOpen = false;
+    dim->setVisible (false);
+    slide (trackSheet, trackBounds(), false);
+    if (! animate)
+        trackSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->trackOpen)
+                safe->trackSheet.setVisible (false);
+        });
+    if (songScreen != nullptr)
+        songScreen->refresh();
     repaint();
 }
 
@@ -2779,6 +2826,7 @@ void PocketApp::loadSong()
     droneTool.fromVar (v.getProperty ("drone", {}), songKey.root);
     droneScreen.toolChanged();
     song->fromVar (v.getProperty ("arrangement", {}));   // older songs: none
+    trackFromVar (v.getProperty ("friendTrack", {}));    // older songs: none
     savedSongEdits = song->edits();
     songScreen->selectBlock (-1);
     songScreen->setPlayhead (0);
@@ -2795,8 +2843,10 @@ void PocketApp::saveSong()
     o->setProperty ("synth", synthPart.toVar());
     o->setProperty ("chords", chordsTool.toVar());
     o->setProperty ("drone", droneTool.toVar());
-    if (! song->blocks.empty() || ! song->takes().empty())
+    if (! song->blocks.empty() || ! song->takes().empty() || ! song->markers.empty())
         o->setProperty ("arrangement", song->toVar());   // the SONG tool
+    if (const auto t = trackToVar(); ! t.isVoid())
+        o->setProperty ("friendTrack", t);   // its sound is "Friend track/Track.wav" beside song.json
     savedSongEdits = song->edits();
     if (const auto b = boardsToVar(); ! b.isVoid())
         o->setProperty ("boards", b);
@@ -3104,6 +3154,7 @@ void PocketApp::resized()
     layoutSheet (sheetOpen);
     padSheet.setBounds (padSheetOpen ? padSheetBounds() : padSheetBounds().withY (h));
     tempoSheet.setBounds (tempoOpen ? tempoBounds() : tempoBounds().withY (h));
+    trackSheet.setBounds (trackOpen ? trackBounds() : trackBounds().withY (h));
     recSetup.setBounds (recSetupOpen ? recSetupBounds() : recSetupBounds().withY (h));
     headphones.setBounds (phonesOpen ? headphonesBounds() : headphonesBounds().withY (h));
     soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - 560 - insets.getBottom()) : tempoBounds().withTop (h - 560 - insets.getBottom()).withY (h));
@@ -3945,6 +3996,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = runSongChecks (songReport, folder); why.isNotEmpty())
         problems.add ("Song: " + why);
 
+    // SONG > FRIEND'S TRACK: brought in (tempo from the name, bar 1, CANCEL), heard under the song, PRACTICE, saved, SEND BACK
+    juce::String trackReport;
+    if (const auto why = runTrackChecks (trackReport, folder); why.isNotEmpty())
+        problems.add ("Friend's track: " + why);
+
     // The sampler: a trimmed sound is what its pad plays, at once and after the song is opened again
     juce::String samplerReport;
     if (const auto why = runSamplerChecks (samplerReport); why.isNotEmpty())
@@ -4025,7 +4081,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nDeleting songs (the open one, the last one):\n" + deleteReport
                           + "\nSampler (trim onto a pad, save, reopen):\n" + samplerReport
                           + "\nOwn chords (EDIT CHORD, save, reopen, key change):\n" + ownChordReport
-                          + "\nSong (REC LIVE, play, edit, punch, save; 120 BPM):\n" + songReport);
+                          + "\nSong (REC LIVE, play, edit, punch, save; 120 BPM):\n" + songReport
+                          + "\nFriend's track (100 BPM, bar 1 at 0.5 s):\n" + trackReport);
     for (auto& line : problems)
         std::fprintf (stderr, "SELF-CHECK FAILED: %s\n", line.toRawUTF8());
 }

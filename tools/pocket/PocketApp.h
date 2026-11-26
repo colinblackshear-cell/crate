@@ -19,6 +19,7 @@
 #include "RecordScreen.h"
 #include "SoundsScreen.h"
 #include "TempoSheet.h"
+#include "TrackInSheet.h"
 #include "SoundBankSheet.h"
 #include "VocoderScreen.h"
 #include "SingScreen.h"
@@ -344,6 +345,25 @@ private:
     void shareBounce (const juce::Array<juce::File>&);
     void bounceToMac();
     juce::Array<juce::File> lastBounce;
+    // SONG > FRIEND'S TRACK (PocketAppTrack.cpp): a whole song to play over, saved with the song (its WAV in the
+    // song's folder), the sheet that brings one in, and its checks.
+    void setupTrack();
+    void bringInTrack();
+    void bringInTrackFile (const juce::File&, bool inBackground = true);
+    void changeTrack();
+    void takeOutTrack();
+    void putBackTrack();
+    void openTrackSheet();
+    void closeTrackSheet (bool cancel);
+    juce::Rectangle<int> trackBounds() const;
+    void keepTrack (crate::SharedAudio, const RigFriendTrack::Info&, bool isNew);
+    juce::var trackToVar();
+    void trackFromVar (const juce::var&);
+    void listenToTrack (bool on);
+    juce::String runTrackChecks (juce::String& report, const juce::File& folder);
+    crate::SharedAudio removedTrack;
+    RigFriendTrack::Info removedTrackInfo;
+    bool trackOpen = false;
     juce::ScopedMessageBox bounceSharing;
     juce::TimedCallback songTick { [this] { songTickNow(); } };
     int savedSongEdits = -1;
@@ -355,6 +375,7 @@ private:
     EffectsSheet sheet;
     PadSheet padSheet;
     TempoSheet tempoSheet;
+    TrackInSheet trackSheet;
     SoundBankSheet soundBank;
     pocket::RecSetupSheet recSetup;
     pocket::HeadphonesSheet headphones;

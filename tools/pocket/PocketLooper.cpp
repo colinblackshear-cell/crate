@@ -396,8 +396,9 @@ void LoopsEngine::prepare (double rate)
         v->assign ((size_t) kChunk, 0.0f);
     for (auto& v : srcInst)
         v.assign ((size_t) kChunk, 0.0f);
-    for (auto* v : { &padsL, &padsR, &voiceL, &voiceR, &allL, &allR, &srcLoops, &srcMaster })
+    for (auto* v : { &padsL, &padsR, &voiceL, &voiceR, &allL, &allR, &srcLoops, &srcMaster, &trackL, &trackR })
         v->assign ((size_t) kChunk, 0.0f);
+    friendTrack.prepare (rate);
     for (int l = 0; l < kLoopLayers; ++l)
     {
         layerL[(size_t) l].assign ((size_t) kChunk, 0.0f);
@@ -575,6 +576,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     bool anyActive = false;
     for (auto& l : layers)
         anyActive = anyActive || l.st != LoopState::empty;
+    anyActive = anyActive || friendTrack.isLoadedForAudio();   // a friend's track keeps the clock too
     if (! anyActive && wasRunning && transportOn.load() && ! beats.isPlaying())
         transportOn = false;   // everything was cleared: let go of the clock
     beats.holdClock (transportOn.load());
@@ -607,7 +609,10 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     const double blockBeat = beats.clockBeat();
     const double bps = beats.getBpm() / (60.0 * sampleRate);
     if (song != nullptr)
+    {
         song->update();
+        song->wrap (blockBeat);   // PRACTICE: back to its first bar
+    }
     boardClock.bpm = beats.getBpm();
     boardClock.ppq = blockBeat;
     boardClock.playing = running;
@@ -937,6 +942,26 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     // record (after the mix, so MASTER can be resampled)
     for (int l = 0; l < kLoopLayers; ++l)
         recordLayer (layers[(size_t) l], l, blockBeat, bps, n);
+
+    // a friend's track: heard like the click, after everything records (a bounce puts it in itself)
+    {
+        std::fill (trackL.begin(), trackL.begin() + n, 0.0f);
+        std::fill (trackR.begin(), trackR.begin() + n, 0.0f);
+        float* ch[2] = { trackL.data(), trackR.data() };
+        juce::AudioBuffer<float> out (ch, 2, n);
+        const double beat = song != nullptr && song->running() ? song->barAt (blockBeat) * 4.0 : blockBeat;
+        friendTrack.render (out, n, beat, beats.getBpm(), running);
+        for (int i = 0; i < n; ++i)
+        {
+            if (right != nullptr)
+            {
+                left[i] += trackL[(size_t) i];
+                right[i] += trackR[(size_t) i];
+            }
+            else
+                left[i] += 0.5f * (trackL[(size_t) i] + trackR[(size_t) i]);
+        }
+    }
 
     for (auto& l : layers)
         l.uiCounting = l.st == LoopState::waiting && l.fresh && l.armBeat > blockBeat && l.withCountIn > 0;
