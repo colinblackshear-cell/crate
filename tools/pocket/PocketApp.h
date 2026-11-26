@@ -262,6 +262,12 @@ private:
     std::shared_ptr<pocket::NotePart> lockPart;   // the notes of the take being locked (PADS, SYNTH), for QUANTIZE
     double lockStart = 0, lockLen = 8, padsFrom = 0;
     bool lockArmed = false;
+    // REC on PADS, DRUMS PLAY LIVE and SYNTH KEYS/ARP keeps looping and recording, each pass adding, until STOP; then
+    // it goes on a layer from the loop's next top (Colin 2026-11-26). The self-checks turn it off to test one pass.
+    bool loopUntilStop = true;
+    bool lockUntilStop = false;   // this REC is waiting for STOP (lockStart is far away until then)
+    bool lockClosing = false;     // STOP pressed: the layer starts at lockStart
+    bool closeLoopRec();          // STOP while looping: lock it from the next top (false: nothing went in)
     // What the header and the count-in panel show.
     struct RecView
     {

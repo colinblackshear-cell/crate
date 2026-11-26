@@ -209,6 +209,9 @@ public:
     void serviceTake();           // often, while it records
     void endTake();               // notes still held end at the pass's end
     bool taking() const { return takeOn; }
+    // Loop until STOP: notes keep going in pass after pass (wrapped into the pattern) until this beat.
+    void setTakeEnd (double beat) { takeEnd = beat; }
+    double takeEndBeat() const { return takeEnd; }
     bool hasStash() const { return stashed; }
     void restoreStash();
     void clearKeepingUndo();      // the part went on a layer: an empty pattern, the part kept for UNDO
@@ -218,7 +221,7 @@ public:
 private:
     SynthEngine eng;
     bool takeOn = false, stashed = false;
-    double takeFrom = 0, takeTo = 0;
+    double takeFrom = 0, takeTo = 0, takeEnd = 0;   // takeTo: the first pass ends (the pattern plays from there); takeEnd: notes stop going in
     std::array<double, 128> openAt {};
     std::array<float, 128> openVel {};
     void addTakeNote (double onBeat, double offBeat, int note, float velocity);

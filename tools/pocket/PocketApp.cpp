@@ -2206,6 +2206,8 @@ void PocketApp::stopRec()
         return songScreen->pressRecLive();   // STOP + KEEP
     if (sampler.isRecording())
         return sampler.stopRecording();
+    if (playingIn() && lockUntilStop && ! lockClosing && closeLoopRec())
+        return;   // looping until STOP: it goes on a layer from the loop's next top
     if (playingIn())
     {
         // Still playing hits into the pattern: stop there. What's in the pattern stays.
@@ -2229,6 +2231,37 @@ void PocketApp::stopRec()
     }
     if (const int l = loopsScreen.busyLayer(); l >= 0)
         loopsScreen.stopTake (l);   // recording: ends at the bar line; waiting: called off
+}
+
+bool PocketApp::closeLoopRec()
+{
+    auto& b = beats.engine();
+    bool any = false;
+    if (lockKind == LockKind::synthLive)
+    {
+        synthPart.serviceTake();
+        any = ! synthPart.pattern.empty();
+    }
+    else if (lockKind == LockKind::pads)
+        any = ! beats.drums().padPattern.hits.empty();
+    else if (lockKind == LockKind::drumsLive)
+    {
+        auto& data = beats.drums();
+        any = ! data.patterns[(size_t) data.slot][0].isEmpty() || ! data.patterns[(size_t) data.slot][1].isEmpty();
+    }
+    if (! any || ! b.clockRunning())
+        return false;
+    // the loop's next top (the tick moves it on a pass when it's too close to arm in time)
+    const double now = b.clockBeat();
+    lockStart = std::ceil ((juce::jmax (now, padsFrom) + 0.3) / lockLen - 1.0e-9) * lockLen;
+    if (lockKind == LockKind::pads && lockStart - now < 0.5)
+        lockStart += lockLen;
+    if (lockKind == LockKind::synthLive)
+        synthPart.setTakeEnd (lockStart);   // what you play until the layer starts still goes in
+    lockClosing = true;
+    toast ("Got it. It goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + U8(" from the top of the loop. STOP again calls it off."));
+    headerTickNow();
+    return true;
 }
 
 void PocketApp::recLoops()
@@ -2288,7 +2321,17 @@ void PocketApp::recDrums()
     lockKind = LockKind::drumsLive;
     lockArmed = false;
     lockLayer = -1;
+    lockClosing = false;
+    lockUntilStop = loopUntilStop;
     lockWatch.startTimer (20);
+    if (lockUntilStop)
+    {
+        lockStart = 1.0e15;   // until STOP
+        toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in")
+               + U8(". It loops and keeps recording, so each pass adds. Press STOP when it\xe2\x80\x99s right: it goes on layer ")
+               + juce::String (layer + 1) + ".");
+        return;
+    }
     toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in") + ": they go in the pattern. Then it goes on layer "
            + juce::String (layer + 1) + " and keeps looping.");
 }
@@ -2321,7 +2364,17 @@ void PocketApp::recPads()
     lockKind = LockKind::pads;
     lockArmed = false;
     lockLayer = -1;
+    lockClosing = false;
+    lockUntilStop = loopUntilStop && ! patternOnly;
     lockWatch.startTimer (20);
+    if (lockUntilStop)
+    {
+        lockStart = 1.0e15;   // until STOP
+        toast ("Play the pads " + juce::String (running ? "now" : "after the count-in")
+               + U8(". It loops and keeps recording, so each pass adds. Press STOP when it\xe2\x80\x99s right: it goes on layer ")
+               + juce::String (loopsScreen.nextLayer() + 1) + ".");
+        return;
+    }
     if (patternOnly)
     {
         lockStart = 1.0e15;   // never locked onto a layer: the pattern loops, taking every pass, until REC stops it
@@ -2390,12 +2443,22 @@ void PocketApp::recSynth()
         lockStart = std::ceil ((padsFrom + lockLen) / lockLen - 1.0e-9) * lockLen;
         synthPart.startTake (bars, padsFrom, padsFrom + lockLen);
         lockKind = LockKind::synthLive;
+        if (loopUntilStop)
+        {
+            lockStart = 1.0e15;   // until STOP: every pass adds
+            synthPart.setTakeEnd (1.0e15);
+            toast ("Play " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (bars).toLowerCase()
+                   + U8(" that loops and keeps recording, so each pass adds. Press STOP when it\xe2\x80\x99s right: it goes on layer ") + juce::String (layer + 1) + ".");
+        }
+        else
         toast ("Play " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (bars).toLowerCase()
                + U8(". It loops, then goes on layer ") + juce::String (layer + 1) + ".");
     }
     startClockForRec();
     lockArmed = false;
     lockLayer = -1;
+    lockClosing = false;
+    lockUntilStop = loopUntilStop && lockKind == LockKind::synthLive;
     lockWatch.startTimer (20);
     synthScreen.partChanged();
 }
@@ -2507,7 +2570,7 @@ void PocketApp::lockWatchTick()
     if (synthPart.taking())
     {
         synthPart.serviceTake();
-        if (b.clockRunning() && b.clockBeat() >= padsFrom + lockLen)
+        if (b.clockRunning() && b.clockBeat() >= synthPart.takeEndBeat())
             finishSynthTake();
         synthScreen.repaint();
     }
@@ -3408,6 +3471,7 @@ void PocketApp::savePng (const juce::File& file)
 
 void PocketApp::writeSnapshots (const juce::File& folder)
 {
+    loopUntilStop = false;   // (the self-checks test one pass and its lock; runRecChecks tests looping until STOP on its own)
     folder.createDirectory();
     animate = false;
     applyAnimate();
@@ -4335,6 +4399,41 @@ juce::String PocketApp::runRecChecks (juce::String& report)
         problems.add ("UNDO did not take the last take off");
     else
         report << "UNDO: took layer 5 off\n";
+
+    // PADS, looping until STOP (Colin 2026-11-26): a hit in the first pass and one in the second both go in; no layer
+    // until STOP; then it goes on the next layer from the loop's top.
+    {
+        loopUntilStop = true;
+        showTool (Tool::pads, false);
+        beats.clearPattern();
+        want = loopsScreen.nextLayer();
+        recPressed();
+        pump (barSamples / 2);
+        beats.recordHit (12, 1.0f);
+        pump (barSamples * 3);   // past the end of the first pass (2 bars)
+        const bool stillOpen = L.state (want) == pocket::LoopState::empty && playingIn();
+        beats.recordHit (14, 1.0f);   // the second pass: it still goes in
+        pump (barSamples / 4);
+        recPressed();                 // STOP
+        const bool closing = lockClosing && playingIn();
+        if (! stillOpen)
+            problems.add ("REC on PADS (loop until STOP): it stopped recording after one pass");
+        else if (! closing)
+            problems.add ("REC on PADS (loop until STOP): STOP didn't close the loop onto a layer");
+        else if (! waitPlaying (want, 12))
+            problems.add ("REC on PADS (loop until STOP): no take landed after STOP");
+        else
+        {
+            checkTake ("PADS (loop until STOP)", want, 8.0, 8.0);
+            if (beats.drums().padPattern.hits.size() != 2)
+                problems.add ("REC on PADS (loop until STOP): the pattern has " + juce::String ((int) beats.drums().padPattern.hits.size())
+                              + " hits, not the 2 played across two passes");
+            report << "loop until STOP: a hit in pass 1 and one in pass 2 both went in; the layer started after STOP\n";
+        }
+        loopsScreen.undo();
+        pump (2048);
+        loopUntilStop = false;
+    }
     togglePlay();   // stop
     pump (2048);
 
@@ -4482,6 +4581,42 @@ juce::String PocketApp::runRecChecks (juce::String& report)
             if (! synthPart.pattern.empty())
                 problems.add ("REC on SYNTH (PATTERN): the pattern wasn't cleared after the lock");
         }
+
+        // KEYS, looping until STOP: a note in the first pass and one in the second both go in, then STOP locks it
+        loopUntilStop = true;
+        appSettings.recLength = 0;   // 1 bar
+        synthPart.reset();
+        synthPart.setPreset (synthPresetIndex ("Pluck"));
+        synthPart.mode = SynthPart::keysMode;
+        synthPart.quantize = 0;
+        synthPart.apply();
+        want = loopsScreen.nextLayer();
+        recPressed();
+        const double from = padsFrom;
+        playKey (from + 1.02, 0, 0.3);   // pass 1
+        playKey (from + 6.02, 4, 0.3);   // pass 2, a beat later in the loop
+        const bool open = playingIn() && L.state (want) == pocket::LoopState::empty;
+        recPressed();                    // STOP
+        const bool landedLoop = open && waitPlaying (want, 12);
+        juce::String got;
+        for (auto& n : synthPart.stash.notes)
+            got << (got.isEmpty() ? "" : ", ") << SongKey::noteName (n.note) << "@" << juce::String (n.beat, 2);
+        report << "synth loop until STOP: from " << juce::String (from, 3) << ", notes " << got << ", layer " << (want + 1) << (landedLoop ? " playing" : " NOT playing") << "\n";
+        if (! open)
+            problems.add ("REC on SYNTH (loop until STOP): it stopped recording after one pass");
+        else if (! landedLoop)
+            problems.add ("REC on SYNTH (loop until STOP): no take landed after STOP");
+        else
+        {
+            checkTake ("SYNTH (loop until STOP)", want, 4.0, 4.0);
+            const auto& ns = synthPart.stash.notes;
+            auto loopBeat = [] (double clock) { return std::fmod (std::round (clock / 0.25) * 0.25, 4.0); };   // snapped to 1/16, in the 1-bar loop
+            auto near = [] (double a, double b) { const double d = std::abs (a - b); return juce::jmin (d, 4.0 - d) < 0.26; };
+            const bool both = ns.size() == 2 && near (ns[0].beat, loopBeat (from + 1.02)) && near (ns[1].beat, loopBeat (from + 6.02));
+            if (! both)
+                problems.add ("REC on SYNTH (loop until STOP): the pattern got " + got + " (a note from each pass expected)");
+        }
+        loopUntilStop = false;
     }
     togglePlay();
     pump (2048);

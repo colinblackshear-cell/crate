@@ -738,6 +738,7 @@ void SynthPart::startTake (int bars, double from, double to)
     pattern.setBars (bars);
     takeFrom = from;
     takeTo = to;
+    takeEnd = to;
     openAt.fill (-1.0);
     takeOn = true;
     SynthEngine::Played junk[64];
@@ -782,7 +783,7 @@ void SynthPart::serviceTake()
             const int note = juce::jlimit (0, 127, e.note);
             if (e.on)
             {
-                if (e.beat >= takeFrom - kSynthStep && e.beat < takeTo)
+                if (e.beat >= takeFrom - kSynthStep && e.beat < takeEnd)
                 {
                     openAt[(size_t) note] = e.beat;
                     openVel[(size_t) note] = e.velocity;
@@ -790,7 +791,7 @@ void SynthPart::serviceTake()
             }
             else if (openAt[(size_t) note] >= 0)
             {
-                addTakeNote (openAt[(size_t) note], juce::jmin (e.beat, takeTo + 2.0), note, openVel[(size_t) note]);
+                addTakeNote (openAt[(size_t) note], juce::jmin (e.beat, takeEnd + 2.0), note, openVel[(size_t) note]);
                 openAt[(size_t) note] = -1.0;
                 changed = true;
             }
@@ -807,7 +808,7 @@ void SynthPart::endTake()
     for (int note = 0; note < 128; ++note)
         if (openAt[(size_t) note] >= 0)
         {
-            addTakeNote (openAt[(size_t) note], takeTo, note, openVel[(size_t) note]);
+            addTakeNote (openAt[(size_t) note], juce::jmax (openAt[(size_t) note] + 0.06, juce::jmin (takeEnd, openAt[(size_t) note] + pattern.lengthBeats())), note, openVel[(size_t) note]);
             openAt[(size_t) note] = -1.0;
         }
     takeOn = false;
