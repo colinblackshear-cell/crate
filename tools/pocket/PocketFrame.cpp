@@ -311,7 +311,7 @@ void ThumbBar::paint (juce::Graphics& g)
 
     auto undoR = buttonRect (undo);
     drawRaised (g, undoR, Look::cream, pressed == undo, 12.0f);
-    label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", "LAST TAKE", col::ink, 18.0f);
+    label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", s.undoPass ? "LAST PASS" : "LAST TAKE", col::ink, 18.0f);
 
     // VISUALS: a little kaleidoscope of the tools' colours; amber while the light show is on.
     {

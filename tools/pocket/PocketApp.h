@@ -268,6 +268,17 @@ private:
     bool lockUntilStop = false;   // this REC is waiting for STOP (lockStart is far away until then)
     bool lockClosing = false;     // STOP pressed: the layer starts at lockStart
     bool closeLoopRec();          // STOP while looping: lock it from the next top (false: nothing went in)
+    // UNDO while looping: what each pass added can be taken back, pass by pass (a snapshot at each loop top).
+    struct PassSnap { pocket::PadPattern pads; crate::drums::Pattern drums; pocket::SynthPattern synth; };
+    std::vector<PassSnap> passSnaps;
+    double nextPassAt = 0;
+    PassSnap takePassSnap();
+    bool sameAsPassSnap (const PassSnap&);
+    void restorePassSnap (const PassSnap&);
+    void startPassUndo();
+    void watchPasses();
+    bool undoPassNow() const { return playingIn() && lockUntilStop && ! lockClosing; }
+    void undoPass();
     // What the header and the count-in panel show.
     struct RecView
     {

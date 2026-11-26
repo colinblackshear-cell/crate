@@ -294,6 +294,7 @@ PocketApp::PocketApp (Options o)
         s.bpm = beats.drums().bpm;
         s.click = appSettings.click;
         s.recBusy = recBusy();
+        s.undoPass = undoPassNow();
         s.playing = beats.engine().clockRunning();
         s.visuals = visualsShown();
         return s;
@@ -2136,6 +2137,11 @@ void PocketApp::thumbPressed (int button)
         case ThumbBar::visuals: showVisuals (! visualsShown()); break;
         case ThumbBar::undo:
         {
+            if (undoPassNow())
+            {
+                undoPass();   // looping REC: the last pass comes off, the recording goes on
+                break;
+            }
             // the last take; a SYNTH part comes back into the pattern with its layer taken off
             const int top = loopsScreen.lastTakeUndoLayer();
             loopsScreen.undo();
@@ -2233,6 +2239,98 @@ void PocketApp::stopRec()
         loopsScreen.stopTake (l);   // recording: ends at the bar line; waiting: called off
 }
 
+PocketApp::PassSnap PocketApp::takePassSnap()
+{
+    PassSnap p;
+    if (lockKind == LockKind::pads)
+        p.pads = beats.drums().padPattern;
+    else if (lockKind == LockKind::drumsLive)
+        p.drums = beats.drums().edited();
+    else if (lockKind == LockKind::synthLive)
+    {
+        synthPart.serviceTake();
+        p.synth = synthPart.pattern;
+    }
+    return p;
+}
+
+bool PocketApp::sameAsPassSnap (const PassSnap& p)
+{
+    if (lockKind == LockKind::pads)
+        return juce::JSON::toString (beats.drums().padPattern.toVar(), true) == juce::JSON::toString (p.pads.toVar(), true);
+    if (lockKind == LockKind::drumsLive)
+        return beats.drums().edited() == p.drums;
+    if (lockKind == LockKind::synthLive)
+    {
+        synthPart.serviceTake();
+        return juce::JSON::toString (synthPart.pattern.toVar(), true) == juce::JSON::toString (p.synth.toVar(), true);
+    }
+    return true;
+}
+
+void PocketApp::restorePassSnap (const PassSnap& p)
+{
+    if (lockKind == LockKind::pads)
+    {
+        beats.drums().padPattern = p.pads;
+        beats.patternChanged();
+    }
+    else if (lockKind == LockKind::drumsLive)
+    {
+        beats.drums().edited() = p.drums;
+        beats.drumsChanged();
+    }
+    else if (lockKind == LockKind::synthLive)
+    {
+        synthPart.serviceTake();   // (what's already played is read first, so it doesn't come back after)
+        synthPart.pattern = p.synth;
+        synthPart.patternChanged();
+        synthScreen.repaint();
+    }
+}
+
+void PocketApp::startPassUndo()
+{
+    passSnaps.clear();
+    passSnaps.push_back (takePassSnap());
+    nextPassAt = std::ceil ((padsFrom + 1.0e-3) / lockLen) * lockLen;   // the loop's next top
+}
+
+// At each loop top: what the pass added is kept as a step UNDO can go back to.
+void PocketApp::watchPasses()
+{
+    auto& b = beats.engine();
+    if (! b.clockRunning() || b.clockBeat() < nextPassAt)
+        return;
+    while (nextPassAt <= b.clockBeat())
+        nextPassAt += lockLen;
+    if (! passSnaps.empty() && sameAsPassSnap (passSnaps.back()))
+        return;
+    passSnaps.push_back (takePassSnap());
+    if (passSnaps.size() > 32)
+        passSnaps.erase (passSnaps.begin() + 1);   // (the first, what you started from, always stays)
+}
+
+void PocketApp::undoPass()
+{
+    if (passSnaps.empty())
+        return toast ("Nothing to undo yet");
+    if (! sameAsPassSnap (passSnaps.back()))
+    {
+        restorePassSnap (passSnaps.back());   // this pass's notes come off
+        toast (U8("Took back what you just played. It keeps recording: UNDO again goes back a pass."));
+    }
+    else if (passSnaps.size() > 1)
+    {
+        passSnaps.pop_back();
+        restorePassSnap (passSnaps.back());
+        toast (U8("Took back a pass. It keeps recording."));
+    }
+    else
+        toast ("Back to the start of this recording. Keep playing, or STOP.");
+    thumb.repaint();
+}
+
 bool PocketApp::closeLoopRec()
 {
     auto& b = beats.engine();
@@ -2317,23 +2415,30 @@ void PocketApp::recDrums()
     lockStart = std::ceil ((padsFrom + lockLen + 1.0) / lockLen - 1.0e-9) * lockLen;
     if (! b.isPlaying())
         b.setPlaying (true);
+    const bool made = ! data.patterns[(size_t) data.slot][0].isEmpty() || ! data.patterns[(size_t) data.slot][1].isEmpty();
+    if (made)
+        lockStart = std::ceil ((now + 0.3) / lockLen - 1.0e-9) * lockLen;   // a beat that's already made: to the looper from its next start
     beats.setRecordingDrums (true, padsFrom);
     lockKind = LockKind::drumsLive;
     lockArmed = false;
     lockLayer = -1;
     lockClosing = false;
-    lockUntilStop = loopUntilStop;
+    lockUntilStop = loopUntilStop && ! made;
     lockWatch.startTimer (20);
     if (lockUntilStop)
     {
         lockStart = 1.0e15;   // until STOP
+        startPassUndo();
         toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in")
                + U8(". It loops and keeps recording, so each pass adds. Press STOP when it\xe2\x80\x99s right: it goes on layer ")
                + juce::String (layer + 1) + ".");
         return;
     }
-    toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in") + ": they go in the pattern. Then it goes on layer "
-           + juce::String (layer + 1) + " and keeps looping.");
+    if (made)
+        toast ("Your beat goes on layer " + juce::String (layer + 1) + U8(" in the looper from its next start. Hits you play before then go in too."));
+    else
+        toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in") + ": they go in the pattern. Then it goes on layer "
+               + juce::String (layer + 1) + " and keeps looping.");
 }
 
 void PocketApp::recPads()
@@ -2365,11 +2470,12 @@ void PocketApp::recPads()
     lockArmed = false;
     lockLayer = -1;
     lockClosing = false;
-    lockUntilStop = loopUntilStop && ! patternOnly;
+    lockUntilStop = loopUntilStop && ! patternOnly && empty;   // a beat that's already made goes straight to the looper
     lockWatch.startTimer (20);
     if (lockUntilStop)
     {
         lockStart = 1.0e15;   // until STOP
+        startPassUndo();
         toast ("Play the pads " + juce::String (running ? "now" : "after the count-in")
                + U8(". It loops and keeps recording, so each pass adds. Press STOP when it\xe2\x80\x99s right: it goes on layer ")
                + juce::String (loopsScreen.nextLayer() + 1) + ".");
@@ -2386,7 +2492,7 @@ void PocketApp::recPads()
         toast ("Play the pads " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (lockBars).toLowerCase()
                + ". Then it goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + " and keeps looping.");
     else
-        toast ("The pattern goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + U8(" from its next start. Hits you play before then go in too."));
+        toast ("Your beat goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + U8(" in the looper from its next start. Hits you play before then go in too."));
 }
 
 void PocketApp::startClockForRec()
@@ -2459,6 +2565,8 @@ void PocketApp::recSynth()
     lockLayer = -1;
     lockClosing = false;
     lockUntilStop = loopUntilStop && lockKind == LockKind::synthLive;
+    if (lockUntilStop)
+        startPassUndo();
     lockWatch.startTimer (20);
     synthScreen.partChanged();
 }
@@ -2574,6 +2682,8 @@ void PocketApp::lockWatchTick()
             finishSynthTake();
         synthScreen.repaint();
     }
+    if (lockUntilStop && ! lockArmed)
+        watchPasses();
     if (! lockArmed && synthLock())
     {
         if (! b.clockRunning())
@@ -4405,6 +4515,16 @@ juce::String PocketApp::runRecChecks (juce::String& report)
     {
         loopUntilStop = true;
         showTool (Tool::pads, false);
+        // a beat that's already made goes straight to the looper (no STOP needed)
+        beats.fillDemoPattern();
+        want = loopsScreen.nextLayer();
+        recPressed();
+        if (lockUntilStop || ! waitPlaying (want, 10))
+            problems.add ("REC on PADS with a beat made: it didn't go straight to the looper");
+        else
+            report << "a beat already made: REC sent it straight to layer " << (want + 1) << "\n";
+        loopsScreen.undo();
+        pump (2048);
         beats.clearPattern();
         want = loopsScreen.nextLayer();
         recPressed();
@@ -4413,7 +4533,17 @@ juce::String PocketApp::runRecChecks (juce::String& report)
         pump (barSamples * 3);   // past the end of the first pass (2 bars)
         const bool stillOpen = L.state (want) == pocket::LoopState::empty && playingIn();
         beats.recordHit (14, 1.0f);   // the second pass: it still goes in
-        pump (barSamples / 4);
+        pump (barSamples / 8);
+        thumbPressed (ThumbBar::undo);   // a mistake: UNDO takes back this pass's hit, the first pass's stays
+        const int afterUndo = (int) beats.drums().padPattern.hits.size();
+        const bool stillRecording = playingIn() && L.state (want) == pocket::LoopState::empty;
+        if (afterUndo != 1 || ! stillRecording)
+            problems.add ("REC on PADS (loop until STOP): UNDO in the second pass left " + juce::String (afterUndo) + " hits (1 expected)"
+                          + (stillRecording ? juce::String() : juce::String (" and stopped the recording")));
+        else
+            report << "loop until STOP: UNDO took back the second pass's hit and kept recording\n";
+        beats.recordHit (14, 1.0f);   // played again, right this time
+        pump (barSamples / 8);
         recPressed();                 // STOP
         const bool closing = lockClosing && playingIn();
         if (! stillOpen)
