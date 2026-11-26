@@ -749,15 +749,15 @@ void DroneScreen::paintMiracle (juce::Graphics& g)
     {
         auto r = hitRect (toneBase + i);
         const bool lit = toneOn && i == tone, down = pressed == toneBase + i;
-        g.setColour (lit ? kDrone : juce::Colour (0xfff7f2e8));
+        g.setColour (lit ? kDrone : col::creamLight);
         g.fillRoundedRectangle (r.translated (0.0f, down ? 2.0f : 0.0f), 10.0f);
-        g.setColour (lit ? kDrone.darker (0.4f) : juce::Colour (0xffcfc5b2));
+        g.setColour (lit ? kDrone.darker (0.4f) : juce::Colour (0xff08060c));
         g.fillRoundedRectangle (r.withTop (r.getBottom() - 3.0f).translated (0.0f, down ? 0.0f : 0.0f), 2.0f);
         const bool own = i == crate::drone::kOwnTone;
         const juce::String hz = own ? crate::drone::toneHzText (drone.ownHz.load()) : crate::drone::toneHzText (crate::drone::tones()[(size_t) i].hz);
         const juce::String name = own ? juce::String ("YOUR OWN") : juce::String (crate::drone::tones()[(size_t) i].name);
         auto text = r.reduced (3.0f, 2.0f);
-        g.setColour (lit ? juce::Colours::white : col::ink);
+        g.setColour (lit ? col::onBright : col::ink);
         g.setFont (lcdFont (juce::jmin (22.0f, text.getHeight() * 0.5f)));
         g.drawFittedText (hz, text.removeFromTop (text.getHeight() * 0.55f).toNearestInt(), juce::Justification::centredBottom, 1, 0.8f);
         g.setFont (condensedBold (juce::jmin (12.0f, text.getHeight() * 0.8f)));
@@ -773,7 +773,7 @@ void DroneScreen::paintMiracle (juce::Graphics& g)
         auto top = r.removeFromTop (lineH + 4.0f);
         const auto hzText = crate::drone::toneHzText (hz) + " Hz";
         g.setFont (lcdFont (juce::jmin (24.0f, top.getHeight())));
-        g.setColour (juce::Colour (0xfff08bb4).withAlpha (toneOn ? 1.0f : 0.5f));
+        g.setColour (juce::Colour (0xfff27bb0).withAlpha (toneOn ? 1.0f : 0.5f));
         const float hzW = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), hzText) + 10.0f;
         g.drawText (hzText, top.removeFromLeft (hzW), juce::Justification::centredLeft);
         g.setColour (kString.withAlpha (toneOn ? 1.0f : 0.55f));
@@ -783,7 +783,7 @@ void DroneScreen::paintMiracle (juce::Graphics& g)
         const juce::String meaning = ! toneOn ? juce::String ("Off. Tap a tone to play it.")
                                      : tone < (int) crate::drone::tones().size() ? juce::String (crate::drone::tones()[(size_t) tone].meaning)
                                                                                  : juce::String ("Your own frequency.");
-        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (small (12.5f));
         g.drawFittedText (meaning, r.removeFromTop (lineH).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         const int beat = drone.toneBeat.load();

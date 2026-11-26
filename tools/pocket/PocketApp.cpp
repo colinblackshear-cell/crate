@@ -992,7 +992,7 @@ juce::String PocketApp::phoneSummary() const
         for (auto& f : lib.getRoot().getChildFile (folder).findChildFiles (juce::File::findFiles, true))
             bytes += f.getSize();
     const int n = (int) lib.items().size(), layers = loopsScreen.layerCount();
-    return juce::String (n) + (n == 1 ? " sound" : " sounds") + U8(" Â· ") + juce::String (layers) + (layers == 1 ? " loop layer" : " loop layers")
+    return juce::String (n) + (n == 1 ? " sound" : " sounds") + U8(" \xc2\xb7 ") + juce::String (layers) + (layers == 1 ? " loop layer" : " loop layers")
            + U8(" in this song Â· ") + juce::String (juce::roundToInt ((double) bytes / 1048576.0)) + " MB";
 }
 

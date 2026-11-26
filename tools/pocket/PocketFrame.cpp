@@ -158,7 +158,7 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
 void showSongKeyMenu (juce::Component& target, juce::Rectangle<int> area, SongKey current, std::function<void (SongKey)> picked)
 {
     juce::PopupMenu m;
-    m.addSectionHeader (U8("THE SONG'S KEY Â· SYNTH, CHORDS AND VOCODER"));
+    m.addSectionHeader (U8("THE SONG'S KEY \xc2\xb7 SYNTH, CHORDS AND VOCODER"));
     m.addItem (101, "Minor", true, current.minor);
     m.addItem (102, "Major", true, ! current.minor);
     m.addSeparator();
