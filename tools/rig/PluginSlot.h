@@ -90,10 +90,20 @@ public:
     void prepare (double sampleRate, int maxBlock);
     void setPlayHead (juce::AudioPlayHead*);
     // Makes the plugin (it can take a moment) and puts it in. `done` hears an error, or "".
+    // Only the newest request lands: a later load, setInstance, clear() or fromTree drops a load
+    // still on its way (its plugin is deleted when it comes, here on the message thread, and its
+    // `done` isn't called). Until a plugin picked here is in (or if it doesn't load), the slot is
+    // what it was.
     void load (const juce::PluginDescription&, std::function<void (const juce::String& error)> done = {});
     void setInstance (std::unique_ptr<juce::AudioPluginInstance>);
+    // Takes the plugin out (Remove): the show no longer has one here.
     void clear();
     bool isLoaded() const { return loaded.load(); }
+    // A plugin to save: the one loaded, or a show's own that isn't in: still loading, not
+    // installed here, didn't open, or left closed after a freeze. Saved as the show had it.
+    bool hasPluginToSave() const { return loaded.load() || (kept.isValid() && ! oldSavingForTests); }
+    // A plugin picked by hand that's still on its way (its name; empty when there's none).
+    juce::String getNameLoading() const { return loadingByHand; }
     // Loaded and not switched off: it's what you hear.
     bool isPlaying() const { return loaded.load() && ! bypassed.load(); }
     juce::String getName() const;
@@ -119,6 +129,12 @@ public:
     // Saved with the show: which plugin and its settings.
     juce::ValueTree toTree() const;
     void fromTree (const juce::ValueTree&);
+    // What a save writes for this slot, in `tree`: the plugin as it is now, the show's own tree
+    // (exactly) while its plugin isn't in, or nothing (an invalid tree) when there's no plugin.
+    // False, with why in `problem`, when the plugin's can't be written whole (it gave no
+    // settings where it had some, or they couldn't be read): the save must fail then. `tree` is
+    // still the most there is (for a host, which can't be told no).
+    bool treeForSave (juce::ValueTree& tree, juce::String& problem) const;
 
     // Audio thread. An instrument replaces `buffer` with what it plays for `midi`; an effect
     // works on `buffer` in place. False (and nothing done) when empty, bypassed or busy.
@@ -139,7 +155,14 @@ public:
 
     std::function<void()> onChange;   // loaded, cleared (message thread)
 
+    // Tests only, all off: each brings back one of the old faults, so the tests show they catch it.
+    static inline bool oldLoadResultForTests = false;   // a load that worked says "It didn't load" (so a show's settings aren't put back)
+    static inline bool oldSavingForTests = false;       // only a loaded plugin is saved
+    static inline bool noGenerationForTests = false;    // a load on its way lands whatever was asked for after it
+
 private:
+    void startLoad (const juce::PluginDescription&, const juce::ValueTree& restore, bool byHand, std::function<void (const juce::String&)> done);
+    bool liveTree (juce::ValueTree& tree, juce::String& problem) const;
     const bool isInstrument;
     juce::SharedResourcePointer<PluginHost> host;
     juce::SpinLock lock;
@@ -147,7 +170,11 @@ private:
     std::atomic<bool> loaded { false };
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer noMidi;
-    juce::ValueTree leftClosed;   // a show's plugin that froze last time: kept, so saving keeps it
+    juce::ValueTree kept;   // a show's plugin that isn't in (loading, missing, didn't open, froze last time): saved as it is
+    juce::uint64 generation = 0;   // the newest request: only its load lands (message thread)
+    juce::Array<juce::PluginDescription> stillOpening;   // loads on their way (for the "opening" note)
+    juce::String loadingByHand;
+    mutable bool hasHadState = false;   // this plugin had settings (from the show, or saved): none now is a fault
     juce::AudioPlayHead* playHead = nullptr;
     double rate = 44100.0;
     int block = 512;
