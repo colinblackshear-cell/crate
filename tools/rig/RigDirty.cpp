@@ -42,6 +42,34 @@ std::string stored (int field, float v)
     return std::to_string (juce::roundToInt (v));
 }
 
+// Binary (a hosted plugin's own state, most often): every byte counts, a zero byte or bytes
+// that aren't text included (FNV-1a over the bytes, and their number).
+std::string bytesHash (const juce::MemoryBlock& m)
+{
+    juce::uint64 h = 14695981039346656037ull;
+    const auto* p = static_cast<const juce::uint8*> (m.getData());
+    for (size_t i = 0; i < m.getSize(); ++i)
+        h = (h ^ p[i]) * 1099511628211ull;
+    return juce::String::toHexString ((juce::int64) h).toStdString() + "/" + std::to_string (m.getSize());
+}
+
+// The text inside an XML state, with the elements it's in (none in the tools' own states).
+void collectText (const juce::XmlElement& e, juce::MemoryOutputStream& out)
+{
+    for (auto* c : e.getChildIterator())
+    {
+        if (c->isTextElement())
+        {
+            out << e.getTagName();
+            out.writeByte (0);
+            out << c->getText();
+            out.writeByte (0);
+        }
+        else
+            collectText (*c, out);
+    }
+}
+
 // A value as the show's tree has it ("state", "fx" and "data" are base64; when they're XML,
 // their own keys and values; other binary is hashed).
 void flattenTree (const juce::ValueTree& t, const std::string& path, RigDirty::Flat& out, bool byPosition);
@@ -53,8 +81,17 @@ void flattenValue (const std::string& path, const juce::String& name, const juce
         if (m.fromBase64Encoding (s))
         {
             if (auto x = juce::AudioProcessor::getXmlFromBinary (m.getData(), (int) m.getSize()))
-                return flattenTree (juce::ValueTree::fromXml (*x), path + "@" + name.toStdString() + "{xml}", out, false);
-            out[path + "@" + name.toStdString() + "{bin}"] = juce::String::toHexString ((juce::int64) m.toString().hashCode64()).toStdString();
+            {
+                const auto key = path + "@" + name.toStdString() + "{xml}";
+                flattenTree (juce::ValueTree::fromXml (*x), key, out, false);
+                // (A ValueTree has no text: a hosted VST3's own state is base64 text inside the XML.)
+                juce::MemoryOutputStream text;
+                collectText (*x, text);
+                if (text.getDataSize() > 0)
+                    out[key + "{text}"] = bytesHash (text.getMemoryBlock());
+                return;
+            }
+            out[path + "@" + name.toStdString() + "{bin}"] = bytesHash (m);
             return;
         }
     }
