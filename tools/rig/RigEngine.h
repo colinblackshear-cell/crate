@@ -427,6 +427,9 @@ public:
     // fader, pan and sends, and the plugin in its slot (an Arturia synth on the Bass or Synth).
     static constexpr const char* kToolSoundType = "KaleidoboxToolSound";
     juce::ValueTree saveToolSound (int strip) const;
+    // The same, with why it can't be saved whole in `problem` (a plugin's settings couldn't be
+    // read; see saveShow): then it mustn't be kept or sent.
+    juce::ValueTree saveToolSound (int strip, juce::String& problem) const;
     // From a saved show (or a whole box's show tree). Invalid if the show doesn't have that tool.
     static juce::ValueTree toolSoundFromShow (const juce::ValueTree& show, int strip);
     // Puts a tool sound on its tool here, leaving every other tool as it is. False if it isn't one.
@@ -442,6 +445,12 @@ public:
 
     // A show: both tools' sounds and settings, the mixer, tempo, routing and learned controls.
     juce::ValueTree saveShow() const;
+    // The same, with why it isn't whole in `problem` (empty when it is): a plugin that couldn't
+    // give its settings. A save fails on it, never writing less. A plugin that isn't in (still
+    // loading, not installed here) is saved as the show had it, which is whole.
+    juce::ValueTree saveShow (juce::String& problem) const;
+    struct PluginProblem { juce::String tool, text; };   // the tool as the show names it ("Synth", "FX Synth", "Loop 1"), and why
+    juce::ValueTree saveShow (std::vector<PluginProblem>& problems) const;
     void loadShow (const juce::ValueTree&);
     static constexpr const char* kShowType = "CrateRigShow";
     // A new song: every tool, loop, part and setting as a new Rig has them (the windows stay
@@ -523,8 +532,9 @@ public:
     rigshow::Result saveShowFile (const juce::File& showFile, rigshow::SaveKind kind = rigshow::SaveKind::copy);
     // The plugin's state (the host keeps it): the show, naming the loops' revision saved for it
     // under `loopsShowFile`. An invalid tree (with why in `result`) when the loops couldn't be
-    // saved; the caller then gives the host its last saved state instead.
-    juce::ValueTree saveShowForHost (const juce::File& loopsShowFile, rigshow::Result& result);
+    // saved, or a plugin's settings couldn't be read (that's in `pluginProblem` too, when given); the
+    // caller then gives the host its last saved state instead.
+    juce::ValueTree saveShowForHost (const juce::File& loopsShowFile, rigshow::Result& result, juce::String* pluginProblem = nullptr);
     // Why the last readLoopAudio couldn't find the show's loops (empty when it did).
     juce::String getLoopAudioProblem() const { return loopAudioProblem; }
     // A save's warning or error for the window to show (the plugin saves when the host asks).
