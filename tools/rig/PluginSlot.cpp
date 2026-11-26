@@ -506,6 +506,9 @@ void PluginSlot::startLoad (const juce::PluginDescription& description, const ju
                                                 }
                                                 if (ok)
                                                 {
+                                                    // (The show's own plugin: the dirty model hears it go live.)
+                                                    if (putBack && showPluginLanding)
+                                                        showPluginLanding (false);
                                                     setInstance (std::move (made));
                                                     if (putBack)
                                                     {
@@ -519,6 +522,8 @@ void PluginSlot::startLoad (const juce::PluginDescription& description, const ju
                                                             if (onChange)
                                                                 onChange();
                                                         }
+                                                        if (showPluginLanding)
+                                                            showPluginLanding (true);
                                                     }
                                                 }
                                                 if (done)
@@ -718,6 +723,8 @@ void PluginSlot::fromTree (const juce::ValueTree& tree)
     }
     bypassed = (bool) tree.getProperty ("bypassed", false);
     level = juce::jlimit (0.0f, 2.0f, (float) tree.getProperty ("level", 1.0f));
+    restoredLevel = level.load();
+    restoredBypassed = bypassed.load();
     startLoad (description, kept, false, {});
 }
 

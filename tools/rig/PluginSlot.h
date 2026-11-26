@@ -154,6 +154,13 @@ public:
     void autoMapMacros();
 
     std::function<void()> onChange;   // loaded, cleared (message thread)
+    // A show's own plugin (restored from its tree, never one picked by hand) going live: called
+    // with false just before the slot reports it, and true just after (its state and knobs in).
+    // Only for the load that lands (the newest request). Message thread.
+    std::function<void (bool landed)> showPluginLanding;
+    // The slot's level and bypass are still what the show's tree gave them (not changed while
+    // its plugin loaded). Message thread.
+    bool levelAndBypassAsShowHad() const { return juce::exactlyEqual (level.load(), restoredLevel) && bypassed.load() == restoredBypassed; }
 
     // Tests only, all off: each brings back one of the old faults, so the tests show they catch it.
     static inline bool oldLoadResultForTests = false;   // a load that worked says "It didn't load" (so a show's settings aren't put back)
@@ -174,6 +181,8 @@ private:
     juce::uint64 generation = 0;   // the newest request: only its load lands (message thread)
     juce::Array<juce::PluginDescription> stillOpening;   // loads on their way (for the "opening" note)
     juce::String loadingByHand;
+    float restoredLevel = 1.0f;     // what fromTree set level and bypass to
+    bool restoredBypassed = false;
     mutable bool hasHadState = false;   // this plugin had settings (from the show, or saved): none now is a fault
     juce::AudioPlayHead* playHead = nullptr;
     double rate = 44100.0;

@@ -198,6 +198,24 @@ RigEngine::RigEngine()
         loopFx[(size_t) i].setPlayHead (&transport);
         looper.setEffects (i, &loopFx[(size_t) i]);
     }
+    // A show's own hosted plugin going live: the dirty model moves only that slot's plugin in its
+    // baseline (RigDirty::pluginLanding), by where saveShow writes it.
+    auto landing = [this] (PluginSlot& slot, std::string key)
+    {
+        slot.showPluginLanding = [this, &slot, key] (bool landed)
+        {
+            if (landed)
+                dirty.pluginLanded (slot.levelAndBypassAsShowHad());
+            else
+                dirty.pluginLanding (key);
+        };
+    };
+    landing (bassPlugin, "Show/Instrument[tool=Bass]/Plugin");
+    landing (synthPlugin, "Show/Instrument[tool=Synth]/Plugin");
+    for (int st = 0; st < numStrips; ++st)
+        landing (fx[(size_t) st].plugin, "Show/Tool[name=" + toolName (fxTool + st).toStdString() + "]@state{xml}/Plugin");
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        landing (loopFx[(size_t) i].plugin, "Show/Loop[index=" + std::to_string (i) + "]@fx{xml}/Plugin");
     transport.setBpm (mpc.getProject().currentSequence().bpm);
     // The MPC changes sequence (and moves through its songs) on the Rig's bar lines.
     mpc.getSequencer().switchWhileFollowing = true;
