@@ -9,8 +9,8 @@ using namespace pocket;
 //==============================================================================
 namespace
 {
-const juce::Colour kStage { 0xff15110e }, kStageGlow { 0xff2a211a };
-const juce::Colour kPaper { 0xfff6efe1 }, kSoft { 0xffd9ccb4 }, kDim { 0xffa89a86 };
+const juce::Colour kStage { 0xff0f0c15 }, kStageGlow { 0xff221b2d };
+const juce::Colour kPaper { 0xfff3eadb }, kSoft { 0xffe4dbee }, kDim { 0xffb7a9c2 };
 
 float rise (float opened, float at) { return crate::kaleidoscope::rise (opened, at); }
 }
@@ -125,9 +125,9 @@ void TitleScreen::paint (juce::Graphics& g)
         juce::Graphics::ScopedSaveState save (g);
         g.setOpacity (e);
         card = card.translated (0, 14.0f * (1.0f - e));
-        g.setColour (juce::Colour (0xff241e19));
+        g.setColour (juce::Colour (0xff221b2d));
         g.fillRoundedRectangle (card, 14.0f);
-        g.setColour (juce::Colour (0xff3a322b));
+        g.setColour (juce::Colour (0xff3a2f4f));
         g.drawRoundedRectangle (card.reduced (0.75f), 14.0f, 1.5f);
         auto play = card.removeFromRight (70).withSizeKeepingCentre (46, 46);
         g.setColour (col::amber);
@@ -135,13 +135,13 @@ void TitleScreen::paint (juce::Graphics& g)
         juce::Path tri;
         const auto pc = play.getCentre();
         tri.addTriangle (pc.x - 5, pc.y - 8, pc.x - 5, pc.y + 8, pc.x + 9, pc.y);
-        g.setColour (col::ink);
+        g.setColour (col::onBright);
         g.fillPath (tri);
         auto in = card.reduced (16, 10);
-        g.setColour (juce::Colour (0xffb8aa92));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (spaced (condensedBold (12.0f), 0.14f));
         g.drawText ("PICK UP WHERE YOU LEFT OFF", in.removeFromTop (16), juce::Justification::centredLeft);
-        g.setColour (juce::Colour (0xfff1e7d1));
+        g.setColour (juce::Colour (0xfff3eadb));
         g.setFont (small (18.0f).boldened());
         g.drawFittedText (continueName, in.removeFromTop (24).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
         auto row = in.removeFromTop (18);
@@ -152,7 +152,7 @@ void TitleScreen::paint (juce::Graphics& g)
             g.fillRoundedRectangle (x, row.getCentreY() - 3.0f, 18.0f, 6.0f, 3.0f);
             x += 22.0f;
         }
-        g.setColour (juce::Colour (0xffb8aa92));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (small (13.0f));
         g.drawFittedText (continueMeta, row.withLeft (x + (continueLayers.empty() ? 0.0f : 4.0f)).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
     }
@@ -183,12 +183,12 @@ const std::vector<TourOverlay::Stop>& TourOverlay::stops()
 {
     static const std::vector<Stop> all {
         { "TOOLS", col::ink, "Pick a tool", "LOOPS, DRUMS, PADS, SAMPLER, SYNTH, CHORDS and VOCODER live down here, and EFFECTS puts a pedalboard on any of them. Tap one, or slide a finger along the row. The song keeps playing.", "Next" },
-        { "REC", juce::Colour (0xffd8452f), "One button records", U8("REC records the tool on screen onto the next empty loop layer, in time. Tap it again to stop. Tap the display up top for count-in and length; BPM sets the tempo, CLICK the metronome."), "Got it" },
-        { "CHORDS", juce::Colour (0xffb9a3dc), "Chords in the song's key", "Eight chords of the song's key: tap one, or fill the PROGRESSION for one chord a bar. They set the vocoder's notes, and SYNTH plays in the same key.", "Next" },
+        { "REC", juce::Colour (0xffec4e8a), "One button records", U8("REC records the tool on screen onto the next empty loop layer, in time. Tap it again to stop. Tap the display up top for count-in and length; BPM sets the tempo, CLICK the metronome."), "Got it" },
+        { "CHORDS", juce::Colour (0xff9a5cf0), "Chords in the song's key", "Eight chords of the song's key: tap one, or fill the PROGRESSION for one chord a bar. They set the vocoder's notes, and SYNTH plays in the same key.", "Next" },
         { "PADS", col::amber, "Hit it!", "Every pad holds a sound, and a factory kit is already loaded. Tap one. Press REC to play a pattern in, then it locks onto a layer. Hold a pad for its sound on the SAMPLER.", "I hit it" },
         { "LOOPS", col::ink, "Build it up", "Every take lands on its own layer, marked with the tool that made it. Tap a layer for IN / OUT, FIT or QUANTIZE, EFFECTS and TO MAC, or hold one for the same in a quick menu.", "Next" },
-        { "VOCODER", juce::Colour (0xff82cf6a), "Headphones first", "The mic stays off until you say what you're listening on. With headphones on, you hear yourself; without, it still records.", "Next" },
-        { "MENU", juce::Colour (0xff56b3d6), "Your songs, and the rest", "Tap the menu icon, or swipe in from the left edge: your songs, Sounds, the sound recorder, Mac link, Remote, Settings, and this tour. Hold a song to rename it or delete it.", "Let's make one" } };
+        { "VOCODER", juce::Colour (0xfff27bb0), "Headphones first", "The mic stays off until you say what you're listening on. With headphones on, you hear yourself; without, it still records.", "Next" },
+        { "MENU", juce::Colour (0xffa877f5), "Your songs, and the rest", "Tap the menu icon, or swipe in from the left edge: your songs, Sounds, the sound recorder, Mac link, Remote, Settings, and this tour. Hold a song to rename it or delete it.", "Let's make one" } };
     return all;
 }
 
@@ -238,7 +238,7 @@ void TourOverlay::paint (juce::Graphics& g)
         dimPath.addRoundedRectangle (spot.toFloat().expanded (4), 14.0f);
         dimPath.setUsingNonZeroWinding (false);
     }
-    g.setColour (juce::Colour (0x8c231d17));
+    g.setColour (juce::Colour (0x8c221b2d));
     g.fillPath (dimPath);
     if (! spot.isEmpty())
     {

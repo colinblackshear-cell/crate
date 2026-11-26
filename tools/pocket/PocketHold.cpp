@@ -4,7 +4,7 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kHoldRed { 0xffd8452f };
+const juce::Colour kHoldRed { 0xffec4e8a };
 }
 
 void HoldMenu::open (HoldSpec s, juce::Rectangle<int> t, int top, int bottom)

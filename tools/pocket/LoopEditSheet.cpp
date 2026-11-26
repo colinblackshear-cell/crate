@@ -4,8 +4,8 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kKnobColours[kFxKnobs] = { juce::Colour (0xfff5b13d), juce::Colour (0xff5fb3c4), juce::Colour (0xff9a7fd0),
-                                              juce::Colour (0xffb9a3dc), juce::Colour (0xfff0674f) };
+const juce::Colour kKnobColours[kFxKnobs] = { juce::Colour (0xfff7c04a), juce::Colour (0xffa877f5), juce::Colour (0xff9a5cf0),
+                                              juce::Colour (0xff9a5cf0), juce::Colour (0xfff59a2a) };
 constexpr int kWaveBins = 150;
 
 bool hasLoop (LoopState s) { return s == LoopState::playing || s == LoopState::overdubWait || s == LoopState::overdubbing; }
@@ -527,7 +527,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
             g.fillRect (x, box.getY() + 6, 1.0f, wave.getBottom() - box.getY() - 6);
             if (total <= 64.0 || bar % 4 == 0)
             {
-                g.setColour (juce::Colour (0xffa89a86));
+                g.setColour (juce::Colour (0xffb7a9c2));
                 g.drawText (juce::String (bar + 1), juce::Rectangle<float> (x + 3, box.getY() + 4, 24, 14), juce::Justification::centredLeft);
             }
         }
@@ -571,7 +571,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
             fx = juce::jlimit (box.getX() + 2, box.getRight() - 2 - tw, fx);
             auto flag = juce::Rectangle<float> (fx, h == 0 ? wave.getY() - 24 : wave.getBottom() + 6, tw, 17);
             g.fillRoundedRectangle (flag, 4.0f);
-            g.setColour (col::ink);
+            g.setColour (col::onBright);
             g.setFont (f);
             g.drawText (text, flag, juce::Justification::centred);
         }
@@ -580,10 +580,10 @@ void LoopEditSheet::paint (juce::Graphics& g)
     {
         // the moves of one knob (tap to see another)
         auto lane = laneArea();
-        g.setColour (juce::Colour (0xff2a241f));
+        g.setColour (juce::Colour (0xff221b2d));
         g.fillRoundedRectangle (lane, 5.0f);
         const bool has = loops.hasMoves (current, laneKnob);
-        g.setColour (has ? kKnobColours[laneKnob] : juce::Colour (0xffa89a86));
+        g.setColour (has ? kKnobColours[laneKnob] : juce::Colour (0xffb7a9c2));
         g.setFont (spaced (condensedBold (11.0f), 0.1f));
         const bool anyMoves = loops.hasAnyMoves (current);
         g.drawText (juce::String (fxKnobName (laneKnob)) + " MOVES" + (has ? juce::String() : juce::String (anyMoves ? "  (TAP: NEXT KNOB)" : U8("  \xc2\xb7 NONE YET: REC MOVES, THEN TURN A KNOB"))),
@@ -676,7 +676,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
         auto cell = knobCell (k);
         const float v = loops.shownKnob (current, k);
         const bool active = std::abs (v - fxDefault (k)) > 0.01f || k == fxVolume;
-        g.setColour (juce::Colour (0xffe8dfc9));
+        g.setColour (juce::Colour (0xffe4dbee));
         g.setFont (spaced (condensed (13.0f), 0.1f));
         g.drawText (fxKnobName (k), cell.withHeight (20).translated (0, 4), juce::Justification::centred);
         auto kr = cell.withSizeKeepingCentre (54, 54).translated (0, 1);
@@ -691,7 +691,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
             g.setColour (loops.recMoves (current) && dragging == 10 + k ? col::red : kKnobColours[k]);
             g.fillEllipse (kr.getRight() - 6, kr.getY() - 2, 8, 8);
         }
-        g.setColour (juce::Colour (0xffe8a24a));
+        g.setColour (juce::Colour (0xfff59a2a));
         g.setFont (lcdFont (16.0f));
         g.drawText (fxValueText (k, v), cell.withTrimmedTop (cell.getHeight() - 24), juce::Justification::centred);
     }

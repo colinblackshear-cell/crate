@@ -86,7 +86,7 @@ public:
                     g.fillRoundedRectangle (r.withTrimmedBottom (3), 11.0f);
                 }
                 crate::drums::steptools::drawHitMarks (g, r.withTrimmedBottom (4).reduced (9.0f, 8.0f), hits, p.shape[(size_t) v][(size_t) s],
-                                                       col::ink.withAlpha (0.8f), true, condensedBold (13.0f));
+                                                       col::onBright.withAlpha (0.8f), true, condensedBold (13.0f));
             }
             if (! on && (hints >> box & 1u) != 0)
             {
@@ -99,7 +99,7 @@ public:
                 g.drawRoundedRectangle (body.reduced (1.5f), 10.0f, 2.6f);
             }
             g.setFont (condensed (10.5f));
-            g.setColour (on ? col::ink.withAlpha (0.45f) : juce::Colour (0x55f1e7d1));
+            g.setColour (on ? col::onBright.withAlpha (0.45f) : juce::Colour (0x55f3eadb));
             g.drawText (juce::String (s + 1), r.withTrimmedBottom (5).reduced (7, 3), juce::Justification::bottomRight);
             if (on && p.accent[(size_t) s])
             {
@@ -190,7 +190,7 @@ public:
             const bool isPicked = v == picked;
             if (isPicked)
             {
-                g.setColour (juce::Colour (0xff3a3226));
+                g.setColour (juce::Colour (0xff3a2f4f));
                 g.fillRoundedRectangle (4, y - 0.5f, r.getWidth() - 8, rowH + 1.0f, 3.0f);
                 g.setColour (col::amber);
                 g.drawRoundedRectangle (4, y - 0.5f, r.getWidth() - 8, rowH + 1.0f, 3.0f, 1.4f);
@@ -204,7 +204,7 @@ public:
             for (int s = 0; s < 16; ++s)
             {
                 const bool on = p.hits[(size_t) v][(size_t) (pageStart + s)] > 0 && pageStart + s < p.length;
-                g.setColour (on ? (isPicked ? col::amber : col::amber.withAlpha (0.8f)) : juce::Colour (isPicked ? 0xff4d4437 : 0xff3a332c));
+                g.setColour (on ? (isPicked ? col::amber : col::amber.withAlpha (0.8f)) : juce::Colour (isPicked ? 0xff3a2f4f : 0xff3a2f4f));
                 g.fillRoundedRectangle (left + (float) s * colW + 1.5f, y + 1.6f, colW - 3.0f, rowH - 3.2f, 1.4f);
             }
         }
@@ -263,7 +263,7 @@ public:
             auto r = padRect (slot);
             drawRaised (g, r, lit ? Look::amber : Look::dark, lit, 14.0f);
             const bool used = hasHits != nullptr && hasHits (v);
-            g.setColour (lit ? col::ink : used ? col::lcdAmber : juce::Colour (0xfff1e7d1));
+            g.setColour (lit ? col::onBright : used ? col::lcdAmber : juce::Colour (0xfff3eadb));
             g.setFont (condensedBold (r.getHeight() > 60.0f ? 22.0f : 18.0f));
             g.drawText (voiceLabels[v], r.withTrimmedBottom (4), juce::Justification::centred);
         }
@@ -599,7 +599,7 @@ public:
             for (int s = 0; s < crate::drums::kMaxSteps; ++s)
                 hasHits = hasHits || pat.hits[(size_t) i][(size_t) s] > 0;
             drawRaised (g, r, i == v ? Look::green : Look::dark, false, 11.0f);
-            g.setColour (i == v ? col::ink : hasHits ? col::lcdAmber : juce::Colour (0xfff1e7d1));
+            g.setColour (i == v ? col::onBright : hasHits ? col::lcdAmber : juce::Colour (0xfff3eadb));
             g.setFont (condensed (15.0f));
             g.drawText (voiceLabels[i], r.withTrimmedBottom (3), juce::Justification::centred);
             if (owner.drumHasSound (i))   // a sound of your own is on it: a blue dot
@@ -874,7 +874,7 @@ public:
         for (int b = 0; ! p.hits.empty() && b <= (int) len; ++b)   // (an empty one shows its hint instead)
         {
             const float x = inner.getX() + inner.getWidth() * (float) (b / len);
-            g.setColour (juce::Colour (b % 4 == 0 ? 0x55f1e7d1 : 0x22f1e7d1));
+            g.setColour (juce::Colour (b % 4 == 0 ? 0x55f3eadb : 0x22f3eadb));
             g.fillRect (x, inner.getY(), 1.0f, inner.getHeight());
         }
         // the pads in it, one row each (in the order they first come)
@@ -884,7 +884,7 @@ public:
                 rows.push_back (h.pad);
         const int numRows = juce::jmax (1, juce::jmin (6, (int) rows.size()));
         const float rowH = inner.getHeight() / (float) numRows;
-        const juce::Colour colours[] = { col::lcdText, col::amber, col::blue, col::green, juce::Colour (0xffb9a3dc), juce::Colour (0xfff6dfa0) };
+        const juce::Colour colours[] = { col::lcdText, col::amber, col::blue, col::green, juce::Colour (0xff9a5cf0), juce::Colour (0xfff6dfa0) };
         for (auto& h : p.hits)
         {
             const int row = (int) (std::find (rows.begin(), rows.end(), h.pad) - rows.begin()) % numRows;
@@ -894,7 +894,7 @@ public:
         }
         if (p.hits.empty())
         {
-            g.setColour (juce::Colour (0x99f1e7d1));
+            g.setColour (juce::Colour (0x99f3eadb));
             g.setFont (small (13.5f));
             g.drawText (owner.recPads ? "Play the pads: they go into the pattern" : U8("Press REC, then play the pads: a beat that loops"),
                         inner, juce::Justification::centred);
@@ -955,20 +955,20 @@ public:
             {
                 // 16 LEVELS: how loud each pad plays, as a bar and a number
                 auto bar = juce::Rectangle<float> (inner.getX() + 8, inner.getBottom() - 10, inner.getWidth() - 16, 4.0f);
-                g.setColour (juce::Colour (0x33f1e7d1));
+                g.setColour (juce::Colour (0x33f3eadb));
                 g.fillRoundedRectangle (bar, 2.0f);
-                g.setColour (lit ? col::ink : col::amber);
+                g.setColour (lit ? col::onBright : col::amber);
                 g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) (i + 1) / 16.0f), 2.0f);
                 g.setFont (condensedBold (22.0f));
-                g.setColour (lit ? col::ink : juce::Colour (0xfff1e7d1));
+                g.setColour (lit ? col::onBright : juce::Colour (0xfff3eadb));
                 g.drawText (juce::String (i + 1), inner.withTrimmedBottom (10), juce::Justification::centred);
                 continue;
             }
             g.setFont (lcdFont (17.0f));
-            g.setColour (lit ? col::ink.withAlpha (0.6f) : juce::Colour (0x99f1e7d1));
+            g.setColour (lit ? col::onBright.withAlpha (0.6f) : juce::Colour (0x99f3eadb));
             g.drawText (Kit::padLabel (index), inner.reduced (9, 6).withHeight (18), juce::Justification::topLeft);
             g.setFont (condensed (15.0f));
-            g.setColour (lit ? col::ink : pad.empty() ? juce::Colour (0x88f1e7d1) : juce::Colour (0xfff1e7d1));
+            g.setColour (lit ? col::onBright : pad.empty() ? juce::Colour (0x88f3eadb) : juce::Colour (0xfff3eadb));
             g.drawFittedText (pad.empty() ? juce::String (U8("—")) : pad.name, inner.reduced (9, 7).toNearestInt(), juce::Justification::bottomLeft, 2, 0.9f);
         }
 
@@ -1119,7 +1119,7 @@ private:
         g.drawFittedText (owner.levelsOf >= 0 ? U8("16 LEVELS \xc2\xb7 ") + Kit::padLabel (src) + " " + p.name.toUpperCase()
                                               : U8("COPY ") + Kit::padLabel (src) + " " + p.name.toUpperCase() + U8(" TO\xe2\x80\xa6"),
                           in.withHeight (r.getHeight() * 0.5f + 4.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
-        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (small (12.5f));
         g.drawFittedText (owner.levelsOf >= 0 ? "Quiet on the first pad, loud on the last. Hits record at the level you play."
                                               : "Tap the pad it goes to. Any bank: pick the bank first.",
@@ -1158,7 +1158,7 @@ private:
             g.saveState();
             g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, b.getCentreX(), b.getCentreY()));
             juce::Rectangle<float> rot (b.getCentreX() - b.getHeight() / 2, b.getCentreY() - b.getWidth() / 2, b.getHeight(), b.getWidth());
-            const auto ink = lit ? col::ink : col::cream;
+            const auto ink = lit ? juce::Colours::white : col::ink;
             g.setColour (ink);
             g.setFont (spaced (condensedBold (21.0f), 0.14f));
             g.drawText (latched ? "REPEAT LATCHED" : "REPEAT", rot.removeFromTop (rot.getHeight() * 0.58f), juce::Justification::centred);

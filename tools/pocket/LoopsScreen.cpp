@@ -10,7 +10,7 @@ namespace
 constexpr int kPeakBins = 96;
 const char* const kSourceNames[4] = { "MIC", "DRUMS", "VOCODER", "MIX" };
 
-const juce::Colour kRowRed { 0xfff0674f }, kRowAmber { 0xfff5b13d }, kRowBlue { 0xff56b3d6 }, kRowGrey { 0xff8a8174 }, kRowText { 0xffe8dfc9 };
+const juce::Colour kRowRed { 0xfff59a2a }, kRowAmber { 0xfff7c04a }, kRowBlue { 0xffa877f5 }, kRowGrey { 0xff8e7fa0 }, kRowText { 0xffe4dbee };
 
 bool hasLoop (LoopState s) { return s == LoopState::playing || s == LoopState::overdubWait || s == LoopState::overdubbing; }
 bool isBusy (LoopState s) { return s == LoopState::waiting || s == LoopState::recording || s == LoopState::overdubbing; }
@@ -874,7 +874,7 @@ void LoopsScreen::drawChoice (juce::Graphics& g, juce::Rectangle<float> cell, co
 {
     if (on)
         drawRaised (g, cell.reduced (3, 0), Look::amber, false, 12.0f);
-    g.setColour (on ? col::ink : (dim ? col::inkDim : col::ink));
+    g.setColour (on ? col::onBright : (dim ? col::inkDim : col::ink));
     g.setFont (spaced (condensed (17.0f), 0.08f));
     g.drawText (text, cell.withTrimmedBottom (3), juce::Justification::centred);
 }
@@ -922,7 +922,7 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
     const int tool = take != nullptr ? take->tool : 0;
     const auto colour = layerToolColour (tool);
     const bool muted = row.muted && hasLoop (st);
-    g.setColour (juce::Colour (0xff2c2620));
+    g.setColour (juce::Colour (0xff221b2d));
     g.fillRoundedRectangle (iconBox, 7.0f);
     drawLayerToolIcon (g, tool, iconBox.getCentre(), muted ? colour.withAlpha (0.4f) : colour);
 
@@ -1027,7 +1027,7 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
         }
         if (jobLayer == l)
         {
-            g.setColour (juce::Colour (0xcc1a1613));
+            g.setColour (juce::Colour (0xcc0f0c15));
             g.fillRect (wave);
             g.setColour (kRowText);
             g.setFont (spaced (condensedBold (13.0f), 0.1f));
@@ -1037,7 +1037,7 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
 
     auto mute = muteRect (l);
     drawRaised (g, mute, row.muted ? Look::blue : Look::dark, pressed == rowMute + l, 10.0f);
-    g.setColour (row.muted ? col::ink : juce::Colour (0xfff1e7d1));
+    g.setColour (row.muted ? col::onBright : juce::Colour (0xfff3eadb));
     g.setFont (condensed (17.0f));
     g.drawText ("M", mute.withTrimmedBottom (3), juce::Justification::centred);
 }

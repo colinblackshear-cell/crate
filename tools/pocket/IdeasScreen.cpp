@@ -9,8 +9,8 @@ using namespace pocket;
 namespace
 {
 constexpr int kCardH = 90, kGap = 10, kMargin = 16, kLaneH = 16, kLaneGap = 5, kMaxLanes = 5;
-const juce::Colour kOnDark { 0xfff1e7d1 }, kOnDarkDim { 0xffb8aa92 }, kHeroRing { 0xfff2b632 };
-const juce::Colour kNumberColours[3] = { juce::Colour (0xff5fb3c4), juce::Colour (0xfff0674f), juce::Colour (0xff82cf6a) };
+const juce::Colour kOnDark { 0xfff3eadb }, kOnDarkDim { 0xffb7a9c2 }, kHeroRing { 0xfff7c04a };
+const juce::Colour kNumberColours[3] = { juce::Colour (0xffa877f5), juce::Colour (0xfff59a2a), juce::Colour (0xfff27bb0) };
 
 // The tiles under START A SONG FROM ANY TOOL: the tool, what the tile says, and MY VOICE (LOOPS on the mic).
 struct TileInfo { Tool tool; const char* label; bool voice; };
@@ -165,7 +165,7 @@ struct IdeasScreen::List : public juce::Component
                                             juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), idea.name) + 2.0f);
             g.drawFittedText (idea.name, nameRow.withWidth (nameW).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
             if (idea.starred)
-                drawStar (g, { nameRow.getX() + nameW + 11.0f, nameRow.getCentreY() }, 7.5f, juce::Colour (0xffc98a00));
+                drawStar (g, { nameRow.getX() + nameW + 11.0f, nameRow.getCentreY() }, 7.5f, juce::Colour (0xffc9a54e));
             g.setColour (col::inkDim);
             g.setFont (small (13.5f));
             juce::String meta = whenText (idea.modified);
@@ -210,9 +210,9 @@ struct IdeasScreen::List : public juce::Component
             // play what it has so far
             auto pb = playButton (row);
             const bool playing = owner.isPlaying && owner.isPlaying (idea.id);
-            g.setColour (playing ? col::red : col::ink);
+            g.setColour (playing ? col::red : col::green);
             g.fillEllipse (pb.translated (0, pressedPlay == row ? 1.0f : 0.0f));
-            drawPlayGlyph (g, pb, juce::Colours::white, playing);
+            drawPlayGlyph (g, pb, playing ? juce::Colours::white : col::onBright, playing);
         }
         if (ord.empty())
         {
@@ -475,7 +475,7 @@ struct IdeasScreen::Content : public juce::Component
         g.setColour (col::well);
         g.fillRoundedRectangle (L.how.toFloat(), 16.0f);
         auto how = L.how.reduced (16, 14);
-        g.setColour (juce::Colour (0xffd9ccb4));
+        g.setColour (juce::Colour (0xffe4dbee));
         g.setFont (spaced (condensedBold (13.5f), 0.14f));
         g.drawText ("HOW IT WORKS", how.removeFromTop (24), juce::Justification::centredLeft);
         if (owner.howOpen)
@@ -549,7 +549,7 @@ struct IdeasScreen::Content : public juce::Component
             g.setFont (lcdFont (15.0f));
             g.drawText (juce::String (l + 1), lane.removeFromLeft (16), juce::Justification::centredLeft);
             lane.removeFromLeft (4);
-            g.setColour (juce::Colour (0xff2b231d));
+            g.setColour (juce::Colour (0xff221b2d));
             g.fillRoundedRectangle (lane, 4.0f);
             crate::lanes::drawPeaks (g, owner.heroPeaks[(size_t) l], lane, colour);
         }
@@ -646,10 +646,10 @@ IdeasScreen::IdeasScreen (Ideas& i) : ideas (i)
         g.setFont (spaced (condensed (19.0f)));
         g.drawText ("NEW SONG", r, juce::Justification::centred);
     };
-    playCurrent.glyph = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour)
+    playCurrent.glyph = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour ink)
     {
         auto* h = hero();
-        drawPlayGlyph (g, r, col::ink, h != nullptr && isPlaying && isPlaying (h->id));
+        drawPlayGlyph (g, r, ink, h != nullptr && isPlaying && isPlaying (h->id));
     };
     openCurrent.setFontHeight (18.0f);
     startSpark.setFontHeight (17.0f);

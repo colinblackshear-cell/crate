@@ -67,9 +67,9 @@ RecordScreen::RecordScreen (PocketHost& h, PocketAudio& a, Library& lib, Effects
         const float d = juce::jmin (r.getWidth(), r.getHeight()) - 4;
         auto c = r.getCentre();
         auto circle = juce::Rectangle<float> (d, d).withCentre (c);
-        g.setColour (juce::Colour (0xff8d2a1c));
+        g.setColour (juce::Colour (0xff7a1a42));
         g.fillEllipse (circle.translated (0, 4));
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff58b78), c.x, circle.getY(), juce::Colour (0xffd8452f), c.x, circle.getBottom(), false));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff27ba8), c.x, circle.getY(), juce::Colour (0xffec4e8a), c.x, circle.getBottom(), false));
         g.fillEllipse (circle);
         g.setColour (juce::Colours::white.withAlpha (0.35f));
         g.drawEllipse (circle.reduced (1), 1.2f);
@@ -619,7 +619,7 @@ void RecordScreen::paint (juce::Graphics& g)
     for (int i = 0; i < 20; ++i)
     {
         auto c = i < 15 ? col::green : i < 18 ? col::amber : col::red;
-        g.setColour (i < lit ? c : juce::Colour (0xff3a3128));
+        g.setColour (i < lit ? c : juce::Colour (0xff3a2f4f));
         g.fillRoundedRectangle (meter.getX() + (float) i * seg, meter.getY(), seg - 2.5f, meter.getHeight(), 1.5f);
     }
 

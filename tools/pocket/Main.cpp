@@ -82,7 +82,7 @@ private:
     {
     public:
         Window (const juce::String& name, PocketApp::Options options)
-            : DocumentWindow (name, juce::Colour (0xffefe7d6), DocumentWindow::allButtons)
+            : DocumentWindow (name, juce::Colour (0xff17131f), DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
             setContentOwned (content = new PocketApp (options), true);

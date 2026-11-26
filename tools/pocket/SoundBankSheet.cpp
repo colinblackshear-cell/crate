@@ -74,7 +74,7 @@ void SoundBankSheet::paint (juce::Graphics& g)
     g.setColour (col::amber);
     g.setFont (spaced (condensedBold (15.0f), 0.08f));
     g.drawText ("YOUR OWN SOUNDS (SPLICE, ANYWHERE)", box.reduced (14, 8).withHeight (20), juce::Justification::centredLeft);
-    g.setColour (juce::Colour (0xfff1e7d1));
+    g.setColour (juce::Colour (0xfff3eadb));
     g.setFont (small (13.5f));
     g.drawFittedText (U8("Files app › On My iPhone › Kaleidobox Pocket › Drop Sounds Here: anything you put there comes in when you open this. From Splice or Mail, Save to Files into that folder. Or send sounds from the Mac over the link."),
                       box.reduced (14, 8).withTrimmedTop (22).toNearestInt(), juce::Justification::topLeft, 4);

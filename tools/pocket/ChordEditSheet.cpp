@@ -4,7 +4,7 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kChordLilac { 0xffb9a3dc };
+const juce::Colour kChordLilac { 0xff9a5cf0 };
 }
 
 ChordEditSheet::ChordEditSheet (ChordsTool& t) : tool (t)
@@ -339,7 +339,7 @@ void ChordEditSheet::paint (juce::Graphics& g)
             }
             else
             {
-                g.setColour (lit ? kChordLilac.darker (0.25f) : juce::Colour (0xff2b2520));
+                g.setColour (lit ? kChordLilac.darker (0.25f) : juce::Colour (0xff221b2d));
                 g.fillRoundedRectangle (r, 3.0f);
             }
             if (lit)

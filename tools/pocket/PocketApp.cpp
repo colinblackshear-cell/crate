@@ -76,7 +76,7 @@ public:
         g.setColour (col::inkFaint);
         g.setFont (spaced (condensedBold (12.0f), 0.14f));
         g.drawText ("ON THIS IPHONE", box.withTrimmedLeft (16).withHeight (28), juce::Justification::bottomLeft);
-        g.setColour (juce::Colour (0xfff1e7d6));
+        g.setColour (juce::Colour (0xfff3eadb));
         g.setFont (small (16.0f));
         g.drawFittedText (summary ? summary() : juce::String(), box.reduced (16, 0).withTrimmedTop (30).toNearestInt(), juce::Justification::topLeft, 2);
     }
@@ -159,9 +159,9 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (1);
-        g.setColour (juce::Colour (0xf0201c18));
+        g.setColour (juce::Colour (0xf00f0c15));
         g.fillRoundedRectangle (r, 14.0f);
-        g.setColour (juce::Colour (0xfff1e7d6));
+        g.setColour (juce::Colour (0xfff3eadb));
         g.setFont (small (15.0f));
         if (action == nullptr)
             return g.drawFittedText (text, r.reduced (14, 4).toNearestInt(), juce::Justification::centred, 2);
@@ -169,7 +169,7 @@ public:
         auto b = buttonRect();
         g.setColour (col::amber);
         g.fillRoundedRectangle (b, 10.0f);
-        g.setColour (col::ink);
+        g.setColour (col::onBright);
         g.setFont (spaced (condensedBold (16.0f), 0.08f));
         g.drawText (actionLabel, b, juce::Justification::centred);
     }
@@ -2833,9 +2833,9 @@ void PocketApp::paint (juce::Graphics& g)
 
     const int top = insets.getTop();
     const bool dark = remoteShowing();
-    const auto paper = juce::Colour (0xfff1e7d6);
+    const auto paper = juce::Colour (0xfff3eadb);
     if (dark)
-        g.fillAll (juce::Colour (0xff1f1b17));
+        g.fillAll (juce::Colour (0xff17131f));
     const bool subPage = page == Page::more || page == Page::recorder;
     {
         auto back = backRect();
@@ -2896,8 +2896,8 @@ void PocketApp::paint (juce::Graphics& g)
             x += w;
         };
         part (v.left, leftColour);
-        part (sep, juce::Colour (0xff8a7d6a));
-        part (v.right, juce::Colour (0xffcdbfa5));
+        part (sep, juce::Colour (0xff8e7fa0));
+        part (v.right, juce::Colour (0xffb7a9c2));
     }
 
     // the link to the Mac: green when linked; tap it for Link to your Mac
@@ -2907,7 +2907,7 @@ void PocketApp::paint (juce::Graphics& g)
     const bool dotOnly = page != Page::songs;
     if (dark && ! dotOnly)
     {
-        g.setColour (juce::Colour (0xff332c26));
+        g.setColour (juce::Colour (0xff3a2f4f));
         g.fillRoundedRectangle (chip, 9.0f);
     }
     auto dot = dotOnly ? juce::Rectangle<float> (chip.getCentreX() - 5.5f, chip.getCentreY() - 5.5f, 11, 11)
@@ -2930,7 +2930,7 @@ void PocketApp::paint (juce::Graphics& g)
         g.drawFittedText (text, chip.withTrimmedLeft (30).withTrimmedRight (4).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
     }
 
-    g.setColour (dark ? juce::Colour (0xff3a332c) : col::rule);
+    g.setColour (dark ? juce::Colour (0xff3a2f4f) : col::rule);
     g.fillRect (0, top + 44, getWidth(), 2);
 }
 

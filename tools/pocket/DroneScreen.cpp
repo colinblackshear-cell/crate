@@ -4,7 +4,7 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kDrone { 0xffd8578e }, kString { 0xfff1e7d1 }, kBridge { 0xffc9b48a };
+const juce::Colour kDrone { 0xff5fe3c6 }, kString { 0xfff3eadb }, kBridge { 0xffc9a54e };
 const char* const kFirstNames[4] = { "PA", "MA", "NI", "SA" };
 const char* const kSyncNames[4] = { "OWN TIME", "BEAT", "2 BEATS", "BAR" };
 const char* const kOctNames[3] = { "LOW", "MID", "HIGH" };
@@ -543,7 +543,7 @@ void DroneScreen::drawKnobAt (juce::Graphics& g, int k)
     auto label = r.removeFromTop (16.0f), value = r.removeFromBottom (16.0f);
     const float d = juce::jmin (r.getWidth() - 10.0f, r.getHeight());
     drawKnob (g, juce::Rectangle<float> (d, d).withCentre (r.getCentre()), knobValue (k), kDrone, true, inWell);
-    g.setColour (inWell ? juce::Colour (0xffcdbfa5) : col::inkDim);
+    g.setColour (inWell ? juce::Colour (0xffb7a9c2) : col::inkDim);
     g.setFont (spaced (condensedBold (12.5f), 0.08f));
     g.drawFittedText (kKnobNames[k], label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
     g.setColour (inWell ? col::lcdAmber : col::ink);
@@ -594,7 +594,7 @@ void DroneScreen::paintPattern (juce::Graphics& g)
         {
             const auto cell = hitRect (cellBase + step * 4 + string).reduced (1.5f);
             const bool lit = (drone.steps[(size_t) step].load() >> string) & 1;
-            auto fill = lit ? kDrone : juce::Colour ((step / 4) % 2 == 0 ? 0xff3a332d : 0xff2e2925);
+            auto fill = lit ? kDrone : juce::Colour ((step / 4) % 2 == 0 ? 0xff3a2f4f : 0xff221b2d);
             if (steps == 0 || step >= steps)
                 fill = fill.withMultipliedAlpha (lit ? 0.4f : 0.6f);
             g.setColour (fill);
@@ -679,7 +679,7 @@ void DroneScreen::paint (juce::Graphics& g)
             g.strokePath (path, juce::PathStrokeType (s == 3 ? 7.0f : 5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
         g.setColour ((on || ringing > 0.05f) ? kString.interpolatedWith (kDrone, juce::jlimit (0.0f, 1.0f, ringing * 1.4f + f * 0.5f))
-                                             : juce::Colour (0xff6a5c4e));
+                                             : juce::Colour (0xff8e7fa0));
         g.strokePath (path, juce::PathStrokeType (s == 3 ? 3.0f : 2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
@@ -710,7 +710,7 @@ void DroneScreen::paint (juce::Graphics& g)
     // SING INTO THE STRINGS
     drawWell (g, singWell, 12.0f);
     drawKnobAt (g, resonateKnob);
-    g.setColour (juce::Colour (0xffcdbfa5));
+    g.setColour (juce::Colour (0xffb7a9c2));
     g.setFont (spaced (lcdFont (15.0f), 0.04f));
     g.drawFittedText ("SING INTO THE STRINGS", singTitle.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
     drawChip (g, hitRect (feedId), U8("TO: ") + droneFeedName ((DroneFeed) drone.feed.load()), false, pressed == feedId, 13.0f);
@@ -723,11 +723,11 @@ void DroneScreen::paint (juce::Graphics& g)
         const int lit = juce::roundToInt (meter * count);
         for (int i = 0; i < count; ++i)
         {
-            g.setColour (i < lit ? kDrone.brighter (0.1f + 0.4f * (float) i / count) : juce::Colour (0xff2e2925));
+            g.setColour (i < lit ? kDrone.brighter (0.1f + 0.4f * (float) i / count) : juce::Colour (0xff221b2d));
             g.fillRoundedRectangle (meterR.getX() + (float) i * (bw + gp), meterR.getY(), bw, meterR.getHeight(), 2.0f);
         }
     }
-    g.setColour (micWarningShown() ? col::lcdText : juce::Colour (0xffa89a86));
+    g.setColour (micWarningShown() ? col::lcdText : juce::Colour (0xffb7a9c2));
     g.setFont (small (12.5f));
     g.drawFittedText (statusText(), statusR.toNearestInt(), juce::Justification::topLeft, 2, 0.8f);
 }

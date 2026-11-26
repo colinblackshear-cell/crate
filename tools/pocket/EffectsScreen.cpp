@@ -5,9 +5,9 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kTileOff { 0xff3a332b }, kTileText { 0xffbdb2a0 }, kLabel { 0xffcdbfa5 };
-const juce::Colour kGreenBg { 0xffe6f2e2 }, kGreenEdge { 0xff8fc06a }, kAmberBg { 0xfffbe9c4 };
-const juce::Colour kKnobFaces[4] { juce::Colour (0xff5fb3c4), juce::Colour (0xff8fc06a), juce::Colour (0xffefe7d6), juce::Colour (0xfff0846a) };
+const juce::Colour kTileOff { 0xff3a2f4f }, kTileText { 0xffb7a9c2 }, kLabel { 0xffb7a9c2 };
+const juce::Colour kGreenBg { 0xff17332f }, kGreenEdge { 0xff2fc6a8 }, kAmberBg { 0xff3a2f1c };
+const juce::Colour kKnobFaces[4] { juce::Colour (0xffa877f5), juce::Colour (0xff2fc6a8), juce::Colour (0xffc9bcd6), juce::Colour (0xfff59a2a) };
 constexpr float kRowH = 46.0f;
 }
 
@@ -739,7 +739,7 @@ juce::String EffectsScreen::hintText() const
 void EffectsScreen::drawButton (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, int id, bool lit, float font)
 {
     drawRaised (g, r, lit ? Look::amber : Look::cream, pressed == id, 11.0f);
-    g.setColour (col::ink);
+    g.setColour (lit ? col::onBright : col::ink);
     g.setFont (spaced (condensedBold (font), 0.08f));
     g.drawFittedText (text, r.withTrimmedBottom (3.0f).reduced (4.0f, 0.0f).toNearestInt(), juce::Justification::centred, 1, 0.8f);
 }
@@ -785,7 +785,7 @@ void EffectsScreen::drawChips (juce::Graphics& g)
         drawChip (g, r, boardLabel (id), id == src, pressed == chipBase + id, 14.0f);
         if (model.board (id).audible())
         {
-            g.setColour (id == src ? col::ink : col::green.darker (0.2f));
+            g.setColour (id == src ? col::onBright : col::green.darker (0.2f));
             g.fillEllipse (r.getRight() - 11.0f, r.getY() + 5.0f, 6.0f, 6.0f);
         }
     }
@@ -829,7 +829,7 @@ void EffectsScreen::drawBanner (juce::Graphics& g)
     auto button = [&] (juce::Rectangle<float> r, const juce::String& text, bool lit, int id)
     {
         drawRaised (g, r, lit ? Look::amber : Look::cream, pressed == id, 10.0f);
-        g.setColour (col::ink);
+        g.setColour (lit ? col::onBright : col::ink);
         g.setFont (spaced (condensedBold (13.0f), 0.08f));
         g.drawFittedText (text, r.withTrimmedBottom (3.0f).reduced (4.0f, 0.0f).toNearestInt(), juce::Justification::centred, 1, 0.8f);
     };
@@ -847,7 +847,7 @@ void EffectsScreen::drawLcd (juce::Graphics& g)
 {
     drawWell (g, lcdR, 12.0f);
     const int idx = choiceIndexOf (choices, board());
-    const auto arrows = juce::Colour (0xffcdbfa5);
+    const auto arrows = juce::Colour (0xffb7a9c2);
     g.setColour (pressed == prevId ? col::amber : arrows);
     g.setFont (lcdFont (26.0f));
     g.drawText (U8("\xe2\x80\xb9"), juce::Rectangle<float> (lcdR.getX(), lcdR.getY(), 40.0f, lcdR.getHeight()), juce::Justification::centred);
@@ -888,16 +888,16 @@ void EffectsScreen::drawGrid (juce::Graphics& g)
             g.setColour (col::creamLight);
             g.drawRoundedRectangle (r.reduced (1.0f), 9.0f, 2.5f);
         }
-        g.setColour (on ? col::ink : kTileText);
+        g.setColour (on ? col::onBright : kTileText);
         g.setFont (spaced (condensedBold (r.getHeight() < 50.0f ? 12.0f : 13.0f), 0.06f));
         g.drawFittedText (pedalShortName (p), r.withHeight (juce::jmin (24.0f, r.getHeight() * 0.42f)).withTrimmedTop (3.0f).reduced (3.0f, 0.0f).toNearestInt(),
                           juce::Justification::centred, 1, 0.8f);
         // the stomp dot
         const float d = juce::jmin (16.0f, r.getHeight() * 0.3f);
         const juce::Point<float> dc (r.getCentreX(), r.getBottom() - d * 0.5f - juce::jmax (5.0f, r.getHeight() * 0.14f));
-        g.setColour (juce::Colour (0xff1a1613));
+        g.setColour (juce::Colour (0xff0f0c15));
         g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (dc));
-        g.setColour (on ? col::creamLight : juce::Colour (0xff4a4239));
+        g.setColour (on ? col::creamLight : juce::Colour (0xff3a2f4f));
         g.fillEllipse (juce::Rectangle<float> (d * 0.5f, d * 0.5f).withCentre (dc));
         if (pressed == dotBase + c)
         {
@@ -984,7 +984,7 @@ void EffectsScreen::drawPanel (juce::Graphics& g)
         const bool down = pressed == id;
         g.setColour (lit ? colour : kTileOff);
         g.fillRoundedRectangle (r.translated (0.0f, down ? 1.0f : 0.0f), 8.0f);
-        g.setColour (lit ? col::ink : juce::Colour (0xffd9cfb8));
+        g.setColour (lit ? col::onBright : juce::Colour (0xffe4dbee));
         g.setFont (spaced (condensedBold (14.0f), 0.04f));
         g.drawFittedText (chips.labels[(size_t) i], r.toNearestInt(), juce::Justification::centred, 1, 0.75f);
     }
@@ -1025,7 +1025,7 @@ void EffectsScreen::drawTuner (juce::Graphics& g, juce::Rectangle<float> r)
     }
     // the needle's scale, -50 .. +50 cents
     auto scale = juce::Rectangle<float> (r.getX() + 24.0f, r.getBottom() - 30.0f, r.getWidth() - 48.0f, 14.0f);
-    g.setColour (juce::Colour (0xff4a4239));
+    g.setColour (juce::Colour (0xff3a2f4f));
     g.fillRoundedRectangle (scale, 7.0f);
     g.setColour (col::green.withAlpha (0.5f));
     g.fillRect (juce::Rectangle<float> (scale.getCentreX() - scale.getWidth() * 0.05f, scale.getY(), scale.getWidth() * 0.1f, scale.getHeight()));
@@ -1055,7 +1055,7 @@ void EffectsScreen::drawList (juce::Graphics& g)
         if (row.getBottom() < top || row.getY() > middleR.getBottom())
             continue;
         const auto& c = choices[(size_t) i];
-        g.setColour (i == current ? juce::Colour (0xff4a3f2c) : (pressed == rowBase + i ? kTileOff.brighter (0.2f) : kTileOff));
+        g.setColour (i == current ? juce::Colour (0xff3a2f4f) : (pressed == rowBase + i ? kTileOff.brighter (0.2f) : kTileOff));
         g.fillRoundedRectangle (row, 8.0f);
         g.setColour (i == current ? col::lcdAmber : col::creamLight);
         g.setFont (condensedBold (17.0f));
@@ -1096,9 +1096,9 @@ void EffectsScreen::drawPad (juce::Graphics& g)
     drawButton (g, padHoldR, "HOLD", padHoldId, hold, 14.0f);
     drawButton (g, padDoneR, "DONE", padDoneId, false, 14.0f);
 
-    g.setColour (juce::Colour (0xff2a241f));
+    g.setColour (juce::Colour (0xff221b2d));
     g.fillRoundedRectangle (padArea, 12.0f);
-    g.setColour (juce::Colour (0xff3d352d));
+    g.setColour (juce::Colour (0xff3a2f4f));
     for (int i = 1; i < 4; ++i)
     {
         const float x = padArea.getX() + padArea.getWidth() * (float) i / 4.0f, y = padArea.getY() + padArea.getHeight() * (float) i / 4.0f;

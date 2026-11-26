@@ -6,8 +6,8 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour darkBg { 0xff1f1b17 }, darkKey { 0xff3a332c }, darkKeyTop { 0xff453d35 }, creamText { 0xfff1e7d6 }, dimText { 0xffa89c88 };
-const juce::Colour lcdGreen { 0xff7cf29a }, muteBlue { 0xff4aa8e8 };
+const juce::Colour darkBg { 0xff17131f }, darkKey { 0xff3a2f4f }, darkKeyTop { 0xff4b3e66 }, creamText { 0xfff3eadb }, dimText { 0xffb7a9c2 };
+const juce::Colour lcdGreen { 0xff55dfc3 }, muteBlue { 0xffa877f5 };
 
 void drawDot (juce::Graphics& g, juce::Point<float> c, juce::Colour colour, bool glow)
 {
@@ -105,7 +105,7 @@ void MacLinkScreen::paint (juce::Graphics& g)
 
     // the Mac, showing its numbers
     auto screen = juce::Rectangle<float> (w * 0.5f - 52, 30, 104, 64);
-    g.setColour (col::ink);
+    g.setColour (col::brass);
     g.fillRoundedRectangle (screen, 8.0f);
     drawWell (g, screen.reduced (6), 4.0f);
     g.setColour (col::lcdAmber);
@@ -230,7 +230,7 @@ void MacLinkScreen::paint (juce::Graphics& g)
     g.setFont (spaced (condensed (18.0f), 0.1f));
     g.drawText (linked ? "UNLINK" : "NOT NOW", leftButton(), juce::Justification::centred);
     drawRaised (g, rightButton(), Look::amber, false, 14.0f);
-    g.setColour (col::ink);
+    g.setColour (col::onBright);
     g.setFont (spaced (condensedBold (19.0f), 0.1f));
     const auto right = linked ? juce::String ("REMOTE") : client.getStatus() == LinkClient::Status::connecting ? U8("LINKING…") : juce::String ("LINK");
     g.drawText (right, rightButton().withTrimmedBottom (3), juce::Justification::centred);
@@ -374,7 +374,7 @@ void SendToMacSheet::paint (juce::Graphics& g)
     else
     {
         drawRaised (g, linkRect(), Look::amber, false, 10.0f);
-        g.setColour (col::ink);
+        g.setColour (col::onBright);
         g.setFont (spaced (condensedBold (15.0f), 0.1f));
         g.drawText ("LINK", linkRect().withTrimmedBottom (3), juce::Justification::centred);
     }
@@ -422,7 +422,7 @@ void SendToMacSheet::paint (juce::Graphics& g)
     }
 
     drawRaised (g, sendRect(), Look::amber, sending, 14.0f);
-    g.setColour (col::ink);
+    g.setColour (col::onBright);
     g.setFont (spaced (condensedBold (21.0f), 0.12f));
     g.drawText (sending ? U8("SENDING…") : juce::String ("SEND"), sendRect().withTrimmedBottom (3), juce::Justification::centred);
 
@@ -521,8 +521,8 @@ const juce::StringArray& RemoteScreen::trackNames()
 
 static juce::Colour trackColour (int i)
 {
-    static const juce::Colour c[] = { juce::Colour (0xffe8432f), juce::Colour (0xffe85a3a), juce::Colour (0xfff39b33), juce::Colour (0xffefcb45),
-                                      juce::Colour (0xff5fb3c4), juce::Colour (0xffc58fd6), juce::Colour (0xff9cc27a), juce::Colour (0xffd8c49a) };
+    static const juce::Colour c[] = { juce::Colour (0xffec4e8a), juce::Colour (0xffe85a3a), juce::Colour (0xfff39b33), juce::Colour (0xffefcb45),
+                                      juce::Colour (0xffa877f5), juce::Colour (0xffc58fd6), juce::Colour (0xff2fc6a8), juce::Colour (0xffd8c49a) };
     return c[juce::jlimit (0, 7, i)];
 }
 
@@ -632,15 +632,15 @@ void RemoteScreen::paint (juce::Graphics& g)
     {
         darkKeyShape (g, rectFor (id), topC, botC, pressed == id);
     };
-    key (play, playing ? juce::Colour (0xff7be89a) : darkKeyTop, playing ? juce::Colour (0xff3fbf68) : darkKey);
+    key (play, playing ? juce::Colour (0xff55dfc3) : darkKeyTop, playing ? juce::Colour (0xff27b89b) : darkKey);
     key (stop, darkKeyTop, darkKey);
-    key (rec, recNow == 2 ? juce::Colour (0xffef6a55) : darkKeyTop, recNow == 2 ? juce::Colour (0xffc4321f) : darkKey);
+    key (rec, recNow == 2 ? juce::Colour (0xffe5588f) : darkKeyTop, recNow == 2 ? juce::Colour (0xffa8285a) : darkKey);
     key (recWhat, darkKeyTop, darkKey);
     {
         auto r = rectFor (play).withTrimmedBottom (3);
         juce::Path tri;
         tri.addTriangle (r.getCentreX() - 6, r.getY() + 14, r.getCentreX() - 6, r.getY() + 32, r.getCentreX() + 9, r.getY() + 23);
-        g.setColour (playing ? col::ink : creamText);
+        g.setColour (playing ? col::onBright : creamText);
         g.fillPath (tri);
         g.setFont (spaced (condensedBold (18.0f), 0.1f));
         g.drawText ("PLAY", r.withTrimmedTop (36), juce::Justification::centredTop);
@@ -690,12 +690,12 @@ void RemoteScreen::paint (juce::Graphics& g)
         const bool current = exists && i == at;
         const bool upNext = exists && i == nextIndex && playing;
         if (current)
-            darkKeyShape (g, r, juce::Colour (0xff7be89a), juce::Colour (0xff3fbf68), pressed == sectionBase + i);
+            darkKeyShape (g, r, juce::Colour (0xff55dfc3), juce::Colour (0xff27b89b), pressed == sectionBase + i);
         else if (upNext)
-            darkKeyShape (g, r, juce::Colour (0xfff9c768), col::amberDark, pressed == sectionBase + i);
+            darkKeyShape (g, r, juce::Colour (0xfff7c04a), col::amberDark, pressed == sectionBase + i);
         else
-            darkKeyShape (g, r, exists ? darkKeyTop : juce::Colour (0xff2c2621), exists ? darkKey : juce::Colour (0xff26211d), pressed == sectionBase + i);
-        const auto ink = current || upNext ? col::ink : exists ? creamText : juce::Colour (0xff5d544a);
+            darkKeyShape (g, r, exists ? darkKeyTop : juce::Colour (0xff221b2d), exists ? darkKey : juce::Colour (0xff221b2d), pressed == sectionBase + i);
+        const auto ink = current || upNext ? col::onBright : exists ? creamText : juce::Colour (0xff8e7fa0);
         g.setColour (ink);
         g.setFont (condensedBold (24.0f));
         g.drawText (juce::String::charToString ((juce::juce_wchar) ('A' + i)), r.withTrimmedLeft (12).withTrimmedTop (4).withHeight (28), juce::Justification::centredLeft);
@@ -717,12 +717,12 @@ void RemoteScreen::paint (juce::Graphics& g)
         auto r = rectFor (trackBase + i);
         const bool muted = mutes.isArray() && i < mutes.size() && (bool) mutes[i];
         if (muted)
-            darkKeyShape (g, r, juce::Colour (0xff6cc0f0), juce::Colour (0xff2f86c4), pressed == trackBase + i, 9.0f);
+            darkKeyShape (g, r, juce::Colour (0xffc19cf8), juce::Colour (0xff8a5fd8), pressed == trackBase + i, 9.0f);
         else
             darkKeyShape (g, r, darkKeyTop, darkKey, pressed == trackBase + i, 9.0f);
         g.setColour (trackColour (i));
         g.fillRoundedRectangle (r.getX() + 12, r.getY() + 10, 6, r.getHeight() - 23, 3.0f);
-        g.setColour (muted ? col::ink : creamText);
+        g.setColour (muted ? col::onBright : creamText);
         g.setFont (spaced (condensedBold (17.0f), 0.08f));
         g.drawText (trackNames()[i], r.withTrimmedLeft (28).withTrimmedBottom (3), juce::Justification::centredLeft);
         if (muted)
@@ -738,9 +738,9 @@ void RemoteScreen::paint (juce::Graphics& g)
         recLayerText = U8("● LAYER ") + juce::String (layer + 1) + U8(" · NEXT BAR");
     else if (layerState == 2)
         recLayerText = U8("■ CLOSE LAYER ") + juce::String (layer + 1);
-    darkKeyShape (g, rectFor (recLayer), layerState == 2 ? juce::Colour (0xffef6a55) : juce::Colour (0xfff9c768),
-                  layerState == 2 ? juce::Colour (0xffc4321f) : col::amberDark, pressed == recLayer, 12.0f);
-    g.setColour (col::ink);
+    darkKeyShape (g, rectFor (recLayer), layerState == 2 ? juce::Colour (0xffe5588f) : juce::Colour (0xfff7c04a),
+                  layerState == 2 ? juce::Colour (0xffa8285a) : col::amberDark, pressed == recLayer, 12.0f);
+    g.setColour (col::onBright);
     g.setFont (spaced (condensedBold (17.0f), 0.08f));
     g.drawFittedText (recLayerText, rectFor (recLayer).withTrimmedBottom (3).toNearestInt(), juce::Justification::centred, 1);
     darkKeyShape (g, rectFor (undoLayer), darkKeyTop, darkKey, pressed == undoLayer, 12.0f);
@@ -752,7 +752,7 @@ void RemoteScreen::paint (juce::Graphics& g)
         g.setColour (darkBg.withAlpha (0.82f));
         g.fillRect (getLocalBounds().withTrimmedTop (96));
         auto card = juce::Rectangle<float> (30, 230, w - 60, 200);
-        g.setColour (juce::Colour (0xff2b2520));
+        g.setColour (juce::Colour (0xff221b2d));
         g.fillRoundedRectangle (card, 18.0f);
         g.setColour (creamText);
         g.setFont (fraunces (26.0f));
@@ -761,8 +761,8 @@ void RemoteScreen::paint (juce::Graphics& g)
         g.setFont (small (15.0f));
         g.drawFittedText ("Link this iPhone to Kaleidobox on your Mac (same Wi-Fi) to play, change sections, mute tracks and record loops while you sing.",
                           card.reduced (22, 0).withTrimmedTop (60).withHeight (64).toNearestInt(), juce::Justification::centredTop, 3);
-        darkKeyShape (g, rectFor (linkButton), juce::Colour (0xfff9c768), col::amberDark, pressed == linkButton, 12.0f);
-        g.setColour (col::ink);
+        darkKeyShape (g, rectFor (linkButton), juce::Colour (0xfff7c04a), col::amberDark, pressed == linkButton, 12.0f);
+        g.setColour (col::onBright);
         g.setFont (spaced (condensedBold (18.0f), 0.1f));
         g.drawText ("LINK TO MAC", rectFor (linkButton).withTrimmedBottom (3), juce::Justification::centred);
     }

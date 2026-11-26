@@ -38,7 +38,7 @@ struct SoundsScreen::Row : juce::Component
         auto r = getLocalBounds().toFloat();
         if (selected)
         {
-            g.setColour (juce::Colour (0xfff3dfb8));
+            g.setColour (col::creamLight);
             g.fillRoundedRectangle (r.reduced (8, 1), 14.0f);
         }
         else
@@ -50,7 +50,7 @@ struct SoundsScreen::Row : juce::Component
         auto play = playButton();
         drawRaised (g, play, selected ? Look::green : Look::dark, false, 10.0f);
         auto pb = play.withTrimmedBottom (3);
-        g.setColour (selected ? col::ink : juce::Colour (0xff7fb2dd));
+        g.setColour (selected ? col::onBright : juce::Colour (0xffa877f5));
         juce::Path p;
         if (playing)
             p.addRoundedRectangle (pb.getCentreX() - 7, pb.getCentreY() - 7, 14.0f, 14.0f, 2.0f);
@@ -63,14 +63,14 @@ struct SoundsScreen::Row : juce::Component
         g.setFont (spaced (condensed (20.0f), 0.02f));
         g.drawText (item.name, juce::Rectangle<float> (x, 4, r.getWidth() - x - 100, 26), juce::Justification::centredLeft, true);
 
-        juce::Colour tagColour = item.tag == kTagRecorded ? col::red : item.tag == kTagImported ? col::blue : juce::Colour (0xff8cc070);
+        juce::Colour tagColour = item.tag == kTagRecorded ? col::red : item.tag == kTagImported ? col::blue : juce::Colour (0xff2fc6a8);
         const juce::String tag = item.tag;
         g.setFont (spaced (condensed (11.0f), 0.1f));
         const float tw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), tag) + 18;
         juce::Rectangle<float> pill (x, 31, tw, 18);
         g.setColour (tagColour);
         g.fillRoundedRectangle (pill, 9.0f);
-        g.setColour (item.tag == kTagFromMac ? col::ink : juce::Colours::white);
+        g.setColour (col::onBright);
         g.drawText (tag, pill, juce::Justification::centred);
         g.setColour (col::inkDim);
         g.setFont (small (14.0f));
@@ -156,7 +156,7 @@ SoundsScreen::SoundsScreen (PocketHost& h, PocketAudio& a, Library& lib) : host 
     };
     shareButton.glyph = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour)
     {
-        g.setColour (juce::Colour (0xfff1e7d6));
+        g.setColour (juce::Colour (0xfff3eadb));
         auto c = r.getCentre();
         g.drawLine (c.x, c.y - 9, c.x, c.y + 4, 2.2f);
         juce::Path head;

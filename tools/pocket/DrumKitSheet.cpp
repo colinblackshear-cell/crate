@@ -150,7 +150,7 @@ void DrumKitSheet::paint (juce::Graphics& g)
     g.setColour (sample ? col::blue : col::amber);
     g.setFont (spaced (condensedBold (14.0f), 0.08f));
     g.drawText (sample ? "YOUR SOUND" : "ANALOG", sourceBox.reduced (14, 0).withWidth (96), juce::Justification::centredLeft);
-    g.setColour (juce::Colour (0xfff1e7d1));
+    g.setColour (juce::Colour (0xfff3eadb));
     g.setFont (small (15.0f));
     g.drawText (sample ? sourceName.toUpperCase() : juce::String ("The machine's own sound"), sourceBox.reduced (14, 0).withTrimmedLeft (104),
                 juce::Justification::centredLeft, true);

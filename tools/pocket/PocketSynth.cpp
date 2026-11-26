@@ -19,7 +19,7 @@ const char* synthKindName (int kind)
 
 juce::Colour synthKindColour (int kind)
 {
-    static const juce::uint32 colours[kSynthKinds] = { 0xfff0806a, 0xfff5b13d, 0xff8fc06a, 0xff5fb3c4, 0xffb9a3dc, 0xffe8432f, 0xffd9a35a, 0xff7fb8e0 };
+    static const juce::uint32 colours[kSynthKinds] = { 0xfff59a2a, 0xfff7c04a, 0xff2fc6a8, 0xffa877f5, 0xff9a5cf0, 0xffec4e8a, 0xfff7c04a, 0xffa877f5 };
     return juce::Colour (colours[juce::jlimit (0, kSynthKinds - 1, kind)]);
 }
 

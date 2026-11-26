@@ -21,15 +21,15 @@ EffectsSheet::EffectsSheet()
         addAndMakeVisible (k);
     };
 
-    add ("PITCH", 0xfff0c030, -12, 12, 0, 0, [] (double v) { return juce::String ((int) std::round (v)) + " st"; }, K::pitch);
-    add ("LOW CUT", 0xff4aa8c8, 20, 2000, 20, 200, [] (double v) { return K::isOn (K::lowCut, v) ? hz (v) : juce::String ("Off"); }, K::lowCut);
-    add ("HIGH CUT", 0xff4aa8c8, 1000, 20000, 20000, 6000, [] (double v) { return K::isOn (K::highCut, v) ? hz (v) : juce::String ("Off"); }, K::highCut);
-    add ("RESO", 0xfff0c030, 0, 1, 0, 0, pct, K::reso);
-    add ("DRIVE", 0xffe5533a, 0, 1, 0, 0, pct, K::drive);
-    add ("BITS", 0xffb48ad8, 4, 16, 16, 0, [] (double v) { return K::isOn (K::bits, v) ? juce::String ((int) std::round (v)) : juce::String ("Off"); }, K::bits);
-    add ("RATE", 0xffb48ad8, 2000, 44100, 44100, 12000, [] (double v) { return K::isOn (K::rate, v) ? hz (v) : juce::String ("Off"); }, K::rate);
-    add ("DELAY", 0xff8cc070, 0, 1, 0, 0, [] (double v) { return v > 0.01 ? pct (v) : juce::String ("Off"); }, K::delay);
-    add ("REVERB", 0xff8cc070, 0, 1, 0, 0, pct, K::reverb);
+    add ("PITCH", 0xfff7c04a, -12, 12, 0, 0, [] (double v) { return juce::String ((int) std::round (v)) + " st"; }, K::pitch);
+    add ("LOW CUT", 0xffa877f5, 20, 2000, 20, 200, [] (double v) { return K::isOn (K::lowCut, v) ? hz (v) : juce::String ("Off"); }, K::lowCut);
+    add ("HIGH CUT", 0xffa877f5, 1000, 20000, 20000, 6000, [] (double v) { return K::isOn (K::highCut, v) ? hz (v) : juce::String ("Off"); }, K::highCut);
+    add ("RESO", 0xfff7c04a, 0, 1, 0, 0, pct, K::reso);
+    add ("DRIVE", 0xffe5588f, 0, 1, 0, 0, pct, K::drive);
+    add ("BITS", 0xff9a5cf0, 4, 16, 16, 0, [] (double v) { return K::isOn (K::bits, v) ? juce::String ((int) std::round (v)) : juce::String ("Off"); }, K::bits);
+    add ("RATE", 0xff9a5cf0, 2000, 44100, 44100, 12000, [] (double v) { return K::isOn (K::rate, v) ? hz (v) : juce::String ("Off"); }, K::rate);
+    add ("DELAY", 0xff2fc6a8, 0, 1, 0, 0, [] (double v) { return v > 0.01 ? pct (v) : juce::String ("Off"); }, K::delay);
+    add ("REVERB", 0xff2fc6a8, 0, 1, 0, 0, pct, K::reverb);
 
     hear.setLamp (true, true);
     hear.setToggled (true);
@@ -120,14 +120,14 @@ void EffectsSheet::Slider01::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
     const float a = 14.0f, w = r.getWidth() - 28.0f, cy = r.getCentreY();
-    g.setColour (juce::Colour (0xffcfc4ab));
+    g.setColour (juce::Colour (0xff3a2f4f));
     g.fillRoundedRectangle (a, cy - 4, w, 8, 4);
     const float x = a + w * (float) value / 100.0f;
     g.setColour (col::amber);
     g.fillRoundedRectangle (a, cy - 4, x - a, 8, 4);
-    g.setColour (juce::Colour (0xffa89b82));
+    g.setColour (juce::Colour (0xffc9a54e));
     g.fillEllipse (x - 14, cy - 12, 28, 28);
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffaf5e8), x, cy - 14, juce::Colour (0xffd8ccb2), x, cy + 14, false));
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff3eadb), x, cy - 14, juce::Colour (0xffd8ccb2), x, cy + 14, false));
     g.fillEllipse (x - 14, cy - 14, 28, 28);
     g.setColour (juce::Colour (0x33000000));
     g.drawEllipse (x - 14, cy - 14, 28, 28, 1.0f);

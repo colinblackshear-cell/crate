@@ -31,9 +31,9 @@ juce::Colour layerToolColour (int tool)
         case LayerTool::synth: return toolColour (Tool::synth);
         case LayerTool::chords: return toolColour (Tool::chords);
         case LayerTool::vocoder: return toolColour (Tool::vocoder);
-        case LayerTool::mix: return juce::Colour (0xffcdbfa5);
+        case LayerTool::mix: return juce::Colour (0xffb7a9c2);
         case LayerTool::drone: return toolColour (Tool::drone);
-        default: return juce::Colour (0xffe8a24a);   // your voice: warm, apart from the vocoder's green
+        default: return juce::Colour (0xfff59a2a);   // your voice: warm, apart from the vocoder's green
     }
 }
 
