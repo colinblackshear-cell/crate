@@ -70,6 +70,8 @@ public:
     std::function<void()> onSourceChanged;
     // A take finished recording and now loops on `layer` (the app offers a vibe, KEEP, TRY AGAIN, MAKE IT A PAD).
     std::function<void (int layer)> onTakeLanded;
+    // EFFECTS on the panel or the hold menu: the app's simple vibe sheet (its KNOBS opens the editor's effects page).
+    std::function<void (int layer)> onEffects;
     // The layer a vocoder take is waiting or recording on (-1 = none). stopVocoder() ends it at the bar.
     int vocoderLayer() const;
     void stopVocoder();

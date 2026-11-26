@@ -304,7 +304,20 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect (loopsScreen.editorSheet().isVisible(), "Hold menu on a layer: FIT didn't open the editor");
         loopsScreen.closeEditor();
         run (2, "EFFECTS");
-        expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::effectsPage, "Hold menu on a layer: EFFECTS didn't open the effects page");
+        // EFFECTS opens the vibe sheet; a vibe sets the layer's knobs, and KNOBS goes on to the editor's effects page
+        expect (vibeOpen && vibeSheet.layer() == loopsScreen.selectedLayer(), "Hold menu on a layer: EFFECTS didn't open the vibe sheet");
+        {
+            const int vl = vibeSheet.layer();
+            const auto before = loopsScreen.engine().fxOf (vl);
+            vibeSheet.moveDot ({ 0.8f, 0.5f });
+            if (vibeSheet.onChange)
+                vibeSheet.onChange (pocket::TakeSheet::space, { 0.8f, 0.5f });
+            expect (loopsScreen.engine().knob (vl, pocket::fxReverb) > 0.3f, "Vibe sheet: SPACE didn't turn the layer's reverb up");
+            if (vibeSheet.onKnobs)
+                vibeSheet.onKnobs();
+            loopsScreen.engine().setFx (vl, before);
+        }
+        expect (! vibeOpen && loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::effectsPage, "Vibe sheet: KNOBS didn't open the effects page");
         loopsScreen.closeEditor();
         run (3, "WARP");
         expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::warpPage, "Hold menu on a layer: WARP didn't open the Warp page");

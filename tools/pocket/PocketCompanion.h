@@ -66,4 +66,40 @@ private:
     PButton vibes[kVibes], more { U8("More effects and knobs \xe2\x80\xba"), Look::ghost }, again { "Try again" }, makePad { "Make it a pad" },
             keep { "Keep it", Look::green };
 };
+
+// EFFECTS on a layer, the simple way: pick a vibe, then one finger on the pad runs the whole sound (left-right how much,
+// up-down bright or dark). RECORD MY MOVES writes what the finger does into the loop. KNOBS and FULL PEDALBOARD go
+// deeper (the loop editor's five knobs; the layer's board of pedals).
+class VibeSheet : public DragSheet
+{
+public:
+    VibeSheet();
+    ~VibeSheet() override;
+    void show (int layer, const juce::String& what, int vibe, juce::Point<float> xy, bool recording);
+    int layer() const { return shownLayer; }
+    // The layer's effects for a vibe and a place on the pad (x: amount 0..1, y: 0 dark .. 1 bright; 0.5, 0.5 = the vibe as is).
+    static LayerFxState fxFor (LayerFxState fx, int vibe, juce::Point<float> xy);
+
+    std::function<void (int vibe, juce::Point<float> xy)> onChange;
+    std::function<void (bool down)> onTouch;           // a finger on the pad / lifted (moves are written while it's down)
+    std::function<void (bool on)> onRecordMoves;
+    std::function<void()> onKnobs, onBoard, onDone;
+    void setRecording (bool on);
+
+    int preferredHeight() const { return 600; }
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void moveDot (juce::Point<float> xy01);   // (the self-checks)
+
+private:
+    class Pad;
+    void refresh();
+    int shownLayer = -1, vibe = 0;
+    juce::Point<float> dot { 0.5f, 0.5f };
+    bool rec = false;
+    juce::String what;
+    std::unique_ptr<Pad> pad;
+    PButton vibes[TakeSheet::kVibes], recButton { U8("\xe2\x97\x8f Record my moves") }, knobs { U8("Knobs \xe2\x80\xba") },
+            board { U8("Full pedalboard \xe2\x80\xba") }, done { "Done", Look::green };
+};
 }

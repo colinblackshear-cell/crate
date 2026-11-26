@@ -554,6 +554,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (recSetup);
     addChildComponent (addSheet);
     addChildComponent (takeSheet);
+    addChildComponent (vibeSheet);
     addChildComponent (headphones);
     addChildComponent (soundBank);
     addChildComponent (*sendSheet);
@@ -613,7 +614,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet, &vibeSheet })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -875,7 +876,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen || vibeOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -1093,6 +1094,7 @@ void PocketApp::closeAllSheets()
     closeDrumKit();
     closeAddLayer();
     closeTakeSheet();
+    closeVibeSheet();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -3187,6 +3189,7 @@ void PocketApp::resized()
     recSetup.setBounds (recSetupOpen ? recSetupBounds() : recSetupBounds().withY (h));
     addSheet.setBounds (addOpen ? addLayerBounds() : addLayerBounds().withY (h));
     takeSheet.setBounds (takeOpen ? takeSheetBounds() : takeSheetBounds().withY (h));
+    vibeSheet.setBounds (vibeOpen ? vibeBounds() : vibeBounds().withY (h));
     headphones.setBounds (phonesOpen ? headphonesBounds() : headphonesBounds().withY (h));
     soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - 560 - insets.getBottom()) : tempoBounds().withTop (h - 560 - insets.getBottom()).withY (h));
     toastBox->setBounds (24, content.getBottom() - 60, w - 48, 52);
@@ -3569,6 +3572,10 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     savePng (folder.getChildFile ("51-take-sheet.png"));
     closeTakeSheet();
     showTool (Tool::loops, false);
+    openVibeSheet (1, pocket::TakeSheet::echo);
+    vibeSheet.moveDot ({ 0.68f, 0.62f });
+    savePng (folder.getChildFile ("52-layer-vibes.png"));
+    closeVibeSheet();
     showIdeasList();
     openDrawer();
     savePng (folder.getChildFile ("20b-drawer-on-home.png"));
@@ -5227,13 +5234,60 @@ void PocketApp::setupCompanion()
     };
     takeSheet.onMoreEffects = [this]
     {
-        const int l = takeSheet.layer();
+        const int l = takeSheet.layer(), vibe = takeSheet.currentVibe();
         closeTakeSheet();
+        openVibeSheet (l, vibe);
+    };
+    loopsScreen.onTakeLanded = [this] (int layer) { openTakeSheet (layer); };
+    loopsScreen.onEffects = [this] (int layer) { openVibeSheet (layer); };
+
+    auto applyVibe = [this] (int vibe, juce::Point<float> xy)
+    {
+        const int l = vibeSheet.layer();
+        if (! loopsScreen.hasLayer (l))
+            return closeVibeSheet();
+        layerVibe[(size_t) l] = vibe;
+        layerXY[(size_t) l] = xy;
+        auto& engine = loopsScreen.engine();
+        const auto fx = pocket::VibeSheet::fxFor (engine.fxOf (l), vibe, xy);
+        for (int k : { (int) pocket::fxFilter, (int) pocket::fxDelay, (int) pocket::fxReverb, (int) pocket::fxDrive })
+            engine.setKnob (l, k, fx.knob[(size_t) k]);   // (knob by knob: recorded moves stay)
+        loopsScreen.boardsChanged();
+        loopsScreen.repaint();
+    };
+    vibeSheet.onChange = applyVibe;
+    vibeSheet.onTouch = [this] (bool down)
+    {
+        const int l = vibeSheet.layer();
+        if (! loopsScreen.hasLayer (l))
+            return;
+        for (int k : { (int) pocket::fxFilter, (int) pocket::fxDelay, (int) pocket::fxReverb, (int) pocket::fxDrive })
+            loopsScreen.engine().touchKnob (l, k, down);
+    };
+    vibeSheet.onRecordMoves = [this] (bool on)
+    {
+        const int l = vibeSheet.layer();
+        if (loopsScreen.hasLayer (l))
+            loopsScreen.engine().setRecMoves (l, on);
+        if (on)
+            toast ("Recording moves: drag the dot while the loop plays. Tap again to stop.");
+    };
+    vibeSheet.onKnobs = [this]
+    {
+        const int l = vibeSheet.layer();
+        closeVibeSheet();
         showTool (Tool::loops, false);
         loopsScreen.selectLayer (l);
         loopsScreen.openEditor (l, LoopEditSheet::effectsPage);
     };
-    loopsScreen.onTakeLanded = [this] (int layer) { openTakeSheet (layer); };
+    vibeSheet.onBoard = [this]
+    {
+        const int l = vibeSheet.layer();
+        closeVibeSheet();
+        openEffects (pocket::layerBoardId (l));
+    };
+    vibeSheet.onDone = [this] { closeVibeSheet(); };
+    vibeSheet.onDismiss = [this] { closeVibeSheet(); };
 }
 
 juce::Rectangle<int> PocketApp::addLayerBounds() const
@@ -5355,6 +5409,52 @@ void PocketApp::closeTakeSheet()
         {
             if (safe != nullptr && ! safe->takeOpen)
                 safe->takeSheet.setVisible (false);
+        });
+    repaint();
+}
+
+juce::Rectangle<int> PocketApp::vibeBounds() const
+{
+    const int h = juce::jmin (getHeight() - insets.getTop() - 20, vibeSheet.preferredHeight() + insets.getBottom());
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+// EFFECTS on a layer: the vibe sheet (no dim: the layers stay in view and keep looping)
+void PocketApp::openVibeSheet (int layer, int vibe)
+{
+    if (! loopsScreen.hasLayer (layer))
+        return;
+    closeAllSheets();
+    if (vibe >= 0)
+        layerVibe[(size_t) layer] = vibe;
+    juce::String name;
+    loopsScreen.layerSound (layer, &name);
+    name = "Layer " + juce::String (layer + 1);
+    vibeOpen = true;
+    vibeSheet.show (layer, name, layerVibe[(size_t) layer], layerXY[(size_t) layer], loopsScreen.engine().recMoves (layer));
+    vibeSheet.setBounds (vibeBounds().withY (getHeight()));
+    vibeSheet.setVisible (true);
+    vibeSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (vibeSheet, vibeBounds(), true);
+}
+
+void PocketApp::closeVibeSheet()
+{
+    if (! vibeOpen)
+        return;
+    vibeOpen = false;
+    const int l = vibeSheet.layer();
+    if (loopsScreen.hasLayer (l) && loopsScreen.engine().recMoves (l))
+        loopsScreen.engine().setRecMoves (l, false);
+    slide (vibeSheet, vibeBounds(), false);
+    if (! animate)
+        vibeSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->vibeOpen)
+                safe->vibeSheet.setVisible (false);
         });
     repaint();
 }

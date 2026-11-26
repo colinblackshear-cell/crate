@@ -381,7 +381,13 @@ private:
     pocket::RecSetupSheet recSetup;
     pocket::AddLayerSheet addSheet;   // + ADD A LAYER
     pocket::TakeSheet takeSheet;      // after a take: vibe, keep, try again, make it a pad
-    bool addOpen = false, takeOpen = false;
+    pocket::VibeSheet vibeSheet;      // EFFECTS on a layer: vibes + one-finger pad
+    bool addOpen = false, takeOpen = false, vibeOpen = false;
+    std::array<int, 8> layerVibe {};  // the vibe last picked on each layer (shown again when its sheet opens)
+    std::array<juce::Point<float>, 8> layerXY { { { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f } } };
+    juce::Rectangle<int> vibeBounds() const;
+    void openVibeSheet (int layer, int vibe = -1);
+    void closeVibeSheet();
     Tool takeTool = Tool::loops;      // what made the take the sheet is about (TRY AGAIN records with it again)
     void setupCompanion();
     juce::Rectangle<int> addLayerBounds() const;

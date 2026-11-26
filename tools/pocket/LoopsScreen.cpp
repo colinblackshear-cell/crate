@@ -506,6 +506,8 @@ void LoopsScreen::pressPanel (int which)
         case pFx:
             if (dubbing)
                 return host.toast ("Let the dub finish first (or STOP DUB).");
+            if (which == pFx && onEffects)
+                return onEffects (l);
             openEditor (l, which == pFx ? LoopEditSheet::effectsPage : LoopEditSheet::shapePage,
                         which == pQuant ? (take->part != nullptr ? LoopEditSheet::quantizeFocus : LoopEditSheet::fitFocus) : LoopEditSheet::noFocus);
             break;

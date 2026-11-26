@@ -221,4 +221,154 @@ void TakeSheet::resized()
     makePad.setBounds (x0 + half + 10, 262, half, 52);
     keep.setBounds (x0, 326, iw, 66);
 }
+
+//==============================================================================
+class VibeSheet::Pad : public juce::Component
+{
+public:
+    explicit Pad (VibeSheet& o) : owner (o) {}
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        drawWell (g, r, 18.0f);
+        g.setColour (col::wellCard);
+        g.drawLine (r.getCentreX(), r.getY() + 8, r.getCentreX(), r.getBottom() - 8, 1.0f);
+        g.drawLine (r.getX() + 8, r.getCentreY(), r.getRight() - 8, r.getCentreY(), 1.0f);
+        g.setColour (col::inkDim);
+        g.setFont (spaced (condensedBold (12.0f), 0.1f));
+        auto in = r.reduced (12.0f, 8.0f);
+        g.drawText (U8("BRIGHT \xe2\x86\x91"), in, juce::Justification::topLeft);
+        g.drawText (U8("DARK \xe2\x86\x93"), in.withTrimmedBottom (18.0f), juce::Justification::bottomLeft);
+        g.drawText (U8("LESS \xe2\x86\x90 HOW MUCH \xe2\x86\x92 MORE"), in, juce::Justification::bottomLeft);
+        g.setColour (col::lcdAmber);
+        g.drawText (juce::String (TakeSheet::vibeName (owner.vibe)).toUpperCase(), in, juce::Justification::topRight);
+        const auto c = juce::Point<float> (r.getX() + owner.dot.x * r.getWidth(), r.getBottom() - owner.dot.y * r.getHeight());
+        g.setColour ((owner.rec ? col::red : col::amber).withAlpha (0.25f));
+        g.fillEllipse (juce::Rectangle<float> (64.0f, 64.0f).withCentre (c));
+        g.setColour (owner.rec ? col::red : col::amber);
+        g.fillEllipse (juce::Rectangle<float> (34.0f, 34.0f).withCentre (c));
+    }
+    void mouseDown (const juce::MouseEvent& e) override { if (owner.onTouch) owner.onTouch (true); place (e.position); }
+    void mouseDrag (const juce::MouseEvent& e) override { place (e.position); }
+    void mouseUp (const juce::MouseEvent&) override { if (owner.onTouch) owner.onTouch (false); }
+    void place (juce::Point<float> p)
+    {
+        auto r = getLocalBounds().toFloat();
+        owner.moveDot ({ juce::jlimit (0.0f, 1.0f, (p.x - r.getX()) / r.getWidth()), juce::jlimit (0.0f, 1.0f, (r.getBottom() - p.y) / r.getHeight()) });
+    }
+    VibeSheet& owner;
+};
+
+LayerFxState VibeSheet::fxFor (LayerFxState fx, int v, juce::Point<float> xy)
+{
+    auto out = TakeSheet::withVibe (fx, v);
+    const float amount = juce::jlimit (0.0f, 2.0f, xy.x * 2.0f);   // the middle = the vibe as made
+    for (int k : { (int) fxDelay, (int) fxReverb, (int) fxDrive })
+        out.knob[(size_t) k] = juce::jlimit (0.0f, 1.0f, out.knob[(size_t) k] * amount);
+    if (v == TakeSheet::none)
+    {
+        // no vibe picked: the pad is still a space + tone pad (a little room, more to the right)
+        out.knob[(size_t) fxReverb] = juce::jlimit (0.0f, 1.0f, juce::jmax (0.0f, xy.x - 0.5f) * 1.2f);
+    }
+    out.knob[(size_t) fxFilter] = juce::jlimit (0.04f, 0.96f, out.knob[(size_t) fxFilter] + (xy.y - 0.5f) * 0.7f);
+    return out;
+}
+
+VibeSheet::VibeSheet() : pad (std::make_unique<Pad> (*this))
+{
+    for (int i = 0; i < TakeSheet::kVibes; ++i)
+    {
+        vibes[i].setText (TakeSheet::vibeName (i));
+        vibes[i].setFontHeight (16.0f);
+        vibes[i].onClick = [this, i]
+        {
+            vibe = i;
+            refresh();
+            if (onChange)
+                onChange (vibe, dot);
+        };
+        addAndMakeVisible (vibes[i]);
+    }
+    addAndMakeVisible (*pad);
+    for (auto* b : { &recButton, &knobs, &board })
+    {
+        b->setFontHeight (15.0f);
+        addAndMakeVisible (b);
+    }
+    done.setFontHeight (16.0f);
+    addAndMakeVisible (done);
+    recButton.onClick = [this] { setRecording (! rec); if (onRecordMoves) onRecordMoves (rec); };
+    knobs.onClick = [this] { if (onKnobs) onKnobs(); };
+    board.onClick = [this] { if (onBoard) onBoard(); };
+    done.onClick = [this] { if (onDone) onDone(); };
+    setDragZone (70);
+}
+
+VibeSheet::~VibeSheet() = default;
+
+void VibeSheet::show (int l, const juce::String& w, int v, juce::Point<float> xy, bool recording)
+{
+    shownLayer = l;
+    what = w;
+    vibe = juce::jlimit (0, TakeSheet::kVibes - 1, v);
+    dot = xy;
+    rec = recording;
+    refresh();
+}
+
+void VibeSheet::setRecording (bool on)
+{
+    rec = on;
+    refresh();
+}
+
+void VibeSheet::moveDot (juce::Point<float> xy01)
+{
+    dot = xy01;
+    pad->repaint();
+    if (onChange)
+        onChange (vibe, dot);
+}
+
+void VibeSheet::refresh()
+{
+    for (int i = 0; i < TakeSheet::kVibes; ++i)
+        vibes[i].setLook (i == vibe ? Look::amber : Look::cream);
+    recButton.setLook (rec ? Look::red : Look::cream);
+    recButton.setText (rec ? U8("\xe2\x97\x8f Recording moves") : U8("\xe2\x97\x8f Record my moves"));
+    pad->repaint();
+    repaint();
+}
+
+void VibeSheet::paint (juce::Graphics& g)
+{
+    g.setColour (col::cream);
+    g.fillRoundedRectangle (getLocalBounds().toFloat().withTrimmedBottom (-20.0f), 24.0f);
+    drawGrabber (g, getWidth());
+    g.setColour (col::inkDim);
+    g.setFont (spaced (condensedBold (12.0f), 0.12f));
+    g.drawText ("EFFECTS ON", 20, 14, getWidth() - 140, 18, juce::Justification::centredLeft);
+    g.setColour (col::ink);
+    g.setFont (fraunces (26.0f));
+    g.drawFittedText (what, juce::Rectangle<int> (20, 30, getWidth() - 140, 32), juce::Justification::centredLeft, 1, 0.8f);
+    g.setColour (col::inkDim);
+    g.setFont (small (13.5f));
+    g.drawText ("Drag the dot. One finger runs the whole sound.", juce::Rectangle<int> (16, pad->getBottom() + 4, getWidth() - 32, 20),
+                juce::Justification::centred);
+}
+
+void VibeSheet::resized()
+{
+    const int w = getWidth(), x0 = 16, iw = w - 32, gap = 8;
+    done.setBounds (w - 16 - 88, 18, 88, 44);
+    const int vw = (iw - 2 * gap) / 3;
+    for (int i = 0; i < TakeSheet::kVibes; ++i)
+        vibes[i].setBounds (x0 + (i % 3) * (vw + gap), 74 + (i / 3) * (48 + gap), vw, 48);
+    pad->setBounds (x0, 74 + 2 * 48 + gap + 12, iw, 230);
+    const int half = (iw - 10) / 2;
+    const int y = pad->getBottom() + 30;
+    recButton.setBounds (x0, y, iw, 50);
+    knobs.setBounds (x0, y + 58, half, 46);
+    board.setBounds (x0 + half + 10, y + 58, half, 46);
+}
 }
