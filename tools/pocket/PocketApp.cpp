@@ -275,7 +275,8 @@ PocketApp::PocketApp (Options o)
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
     // The companion row: the layers, the two tools most ideas start with, + ADD A LAYER in the middle (every other tool is
     // in its sheet, in plain words), and the synth.
-    toolRow.tools = { Tool::loops, Tool::pads, Tool::add, Tool::drums, Tool::synth };
+    // (Colin 2026-11-26: the looper, the sampler and the effects are the heart of it; drums and synth are in + ADD A LAYER)
+    toolRow.tools = { Tool::loops, Tool::sampler, Tool::add, Tool::pads, Tool::effects };
     // EFFECTS from a tool opens on that tool's board
     toolRow.onSelect = [this] (Tool t)
     {
@@ -3558,7 +3559,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
             return 0.0f;
         };
         toolRow.slideStart (cellX (Tool::loops));
-        toolRow.slideTo (cellX (Tool::drums));
+        toolRow.slideTo (cellX (Tool::pads));
         savePng (folder.getChildFile ("25-toolrow-slide.png"));
         toolRow.slideEnd (cellX (Tool::drums), -200.0f);   // (called off: it stays on LOOPS)
     }
@@ -5354,6 +5355,10 @@ void PocketApp::pickLayerSource (int choice)
             loopsScreen.setSource ((int) LoopSource::mic);
             recPressed();
             return;
+        case C::sampler:
+            showTool (Tool::sampler);
+            toast ("Record or pick a sound, then chop it, pitch it and send it to a pad or a layer.");
+            return;
         case C::pads:
             showTool (Tool::pads);
             beats.setPadEdit (false);
@@ -5362,6 +5367,15 @@ void PocketApp::pickLayerSource (int choice)
         case C::drums:
             showTool (Tool::drums);
             toast ("Tap boxes for hits, press PLAY to hear them. REC puts the beat on a new layer.");
+            return;
+        case C::bass:
+            if (const auto basses = pocket::synthPresetsOf (0); ! basses.empty() && synthPart.kind() != 0)
+            {
+                synthPart.setPreset (basses.front());
+                synthScreen.partChanged();
+            }
+            showTool (Tool::synth);
+            toast ("A bass sound, every key in the song's key. Press REC, then play: it records onto a new layer.");
             return;
         case C::synth:
             showTool (Tool::synth);

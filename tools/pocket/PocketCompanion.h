@@ -9,12 +9,12 @@
 // plain words, what to record with. After each take, a sheet offers a vibe, TRY AGAIN, MAKE IT A PAD or KEEP IT.
 namespace pocket
 {
-// + ADD A LAYER: six big tiles (MY VOICE, PADS, DRUMS, SYNTH, VOCODER, RESAMPLE), the rec setup in one line, and the
+// + ADD A LAYER: eight equal tiles (MY VOICE, SAMPLER, PADS, DRUMS, BASS, SYNTH, VOCODER, RESAMPLE; Colin: no one is most important), the rec setup in one line, and the
 // deeper tools as chips (CHORDS, DRONE, SONG, EFFECTS).
 class AddLayerSheet : public DragSheet
 {
 public:
-    enum Choice { voice, pads, drums, synth, vocoder, resample, kChoices };
+    enum Choice { voice, sampler, pads, drums, bass, synth, vocoder, resample, kChoices };
 
     AddLayerSheet();
     ~AddLayerSheet() override;
@@ -23,7 +23,7 @@ public:
     std::function<void()> onRecSetup;
     std::function<juce::String()> setupText;     // "4 bars \xc2\xb7 count in 1 bar"
 
-    int preferredHeight() const { return 560; }
+    int preferredHeight() const { return 640; }
     void refresh() { repaint(); }
     void paint (juce::Graphics&) override;
     void resized() override;

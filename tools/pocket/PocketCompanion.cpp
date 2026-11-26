@@ -46,9 +46,11 @@ AddLayerSheet::AddLayerSheet()
 {
     struct Def { const char* name; const char* line; Tool colourOf; };
     const Def defs[kChoices] = {
-        { "My voice", "Sing, rap, hum, or record any sound around you", Tool::loops },
+        { "My voice", "Sing, rap, hum, or catch any sound around you", Tool::loops },
+        { "Sampler", "Grab a sound, chop it, pitch it, add effects", Tool::sampler },
         { "Pads", "Tap sounds: your own recordings or the kits", Tool::pads },
         { "Drums", "Tap boxes to make a beat, or play it in live", Tool::drums },
+        { "Bass", "A low line under it all. Every key fits", Tool::drone },
         { "Synth", "Pick a sound and play. Every key fits", Tool::synth },
         { "Vocoder", "Your voice turned into a robot choir", Tool::vocoder },
         { "Resample", "Grab any layer, or the whole mix, as a new sound", Tool::song },
@@ -105,10 +107,10 @@ void AddLayerSheet::paint (juce::Graphics& g)
 void AddLayerSheet::resized()
 {
     const int w = getWidth(), x0 = 16, iw = w - 32, gap = 10;
-    const int tileW = (iw - gap) / 2, tileH = 96;
-    for (int i = 0; i < tiles.size(); ++i)
+    const int tileW = (iw - gap) / 2, tileH = 88;
+    for (int i = 0; i < tiles.size(); ++i)   // all the same size: no one choice is the most important
         tiles[i]->setBounds (x0 + (i % 2) * (tileW + gap), 94 + (i / 2) * (tileH + gap), tileW, tileH);
-    const int setupY = 94 + 3 * tileH + 2 * gap + 12;
+    const int setupY = 94 + 4 * tileH + 3 * gap + 12;
     setupCard = juce::Rectangle<float> ((float) x0, (float) setupY, (float) iw, 58.0f);
     change.setBounds (x0 + iw - 8 - 96, setupY + 7, 96, 44);
     const int chipY = setupY + 58 + 34;

@@ -24,7 +24,7 @@ const char* toolName (Tool t)
 {
     switch (t)
     {
-        case Tool::loops: return "LAYERS";
+        case Tool::loops: return "LOOPER";
         case Tool::drums: return "DRUMS";
         case Tool::pads: return "PADS";
         case Tool::sampler: return "SAMPLER";
