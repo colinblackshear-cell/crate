@@ -9,7 +9,7 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kPadDark { 0xff4a4037 }, kPadText { 0xfff1e7d1 };
+const juce::Colour kPadDark { 0xff4a3d63 }, kPadText { 0xfff3eadb };
 
 juce::String clockOf (double s)
 {
@@ -826,11 +826,11 @@ void SamplerPadPicker::paint (juce::Graphics& g)
         const auto& p = kit.pads[(size_t) pad];
         auto r = padRect (i);
         const float down = pressed == i ? 2.0f : 0.0f;
-        g.setColour (juce::Colour (0xff120f0c));
+        g.setColour (juce::Colour (0xff0f0c15));
         g.fillRoundedRectangle (r.translated (0, 3), 10.0f);
-        g.setColour (pad == target ? col::amber : p.empty() ? juce::Colour (0xff6a5e52) : kPadDark);
+        g.setColour (pad == target ? col::amber : p.empty() ? juce::Colour (0xff2e2540) : kPadDark);
         g.fillRoundedRectangle (r.translated (0, down), 10.0f);
-        const auto ink = pad == target ? col::ink : kPadText;
+        const auto ink = pad == target ? col::onBright : kPadText;
         g.setColour (ink.withAlpha (0.8f));
         g.setFont (lcdFont (17.0f));
         g.drawText (Kit::padLabel (pad), r.translated (0, down).reduced (8, 4).withHeight (20), juce::Justification::topLeft);

@@ -4,8 +4,8 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kSynth { 0xff5fb3c4 }, kDarkKey { 0xff2b2520 }, kPaper { 0xfff1e7d1 }, kKeyFace { 0xfffaf4e6 }, kRootDot { 0xfff0806a };
-const juce::Colour kKnobFaces[4] = { juce::Colour (0xff5fb3c4), juce::Colour (0xff8fc06a), juce::Colour (0xffe8dcc4), juce::Colour (0xfff0806a) };
+const juce::Colour kSynth { 0xffa877f5 }, kDarkKey { 0xff221b2d }, kPaper { 0xfff3eadb }, kKeyFace { 0xfff3eadb }, kRootDot { 0xfff59a2a };
+const juce::Colour kKnobFaces[4] = { juce::Colour (0xffa877f5), juce::Colour (0xff2fc6a8), juce::Colour (0xffe4dbee), juce::Colour (0xfff59a2a) };
 const char* const kKnobNames[4] = { "TONE", "SHAPE", "DECAY", "ECHO" };
 const char* const kModeNames[3] = { "KEYS", "PATTERN", "ARP" };
 const char* const kArpNames[3] = { "UP", "DOWN", "UP-DN" };
@@ -587,7 +587,7 @@ void SynthScreen::drawKnob (juce::Graphics& g, int k)
     const auto cc = c.getCentre();
     g.setColour (col::ink);
     g.drawLine (cc.x + std::sin (a) * d * 0.14f, cc.y - std::cos (a) * d * 0.14f, cc.x + std::sin (a) * d * 0.4f, cc.y - std::cos (a) * d * 0.4f, 3.0f);
-    g.setColour (juce::Colour (0xffcdbfa5));
+    g.setColour (juce::Colour (0xffb7a9c2));
     g.setFont (spaced (condensedBold (12.0f), 0.12f));
     const juce::String name = k == 2 && synthKnobIsRelease (part.preset) ? "RELEASE" : kKnobNames[k];
     g.drawText (name, juce::Rectangle<float> (r.getX(), c.getBottom() + 3.0f, r.getWidth(), 14.0f), juce::Justification::centred);
@@ -601,7 +601,7 @@ void SynthScreen::drawStrip (juce::Graphics& g, juce::Rectangle<float> r)
     drawWell (g, r, 10.0f);
     const auto& pat = part.pattern;
     g.setFont (spaced (condensedBold (11.0f), 0.12f));
-    g.setColour (juce::Colour (0xffcdbfa5));
+    g.setColour (juce::Colour (0xffb7a9c2));
     const juce::String bars = juce::String (pat.bars) + (pat.bars == 1 ? " BAR" : " BARS");
     const juce::String head = pat.empty() ? U8("PATTERN \xc2\xb7 EMPTY \xc2\xb7 REC PUTS WHAT YOU PLAY HERE \xc2\xb7 TAP TO EDIT")
                                           : U8("PATTERN \xc2\xb7 ") + bars + U8(" \xc2\xb7 TAP PATTERN TO EDIT");
@@ -659,11 +659,11 @@ void SynthScreen::drawSteps (juce::Graphics& g)
         }
         if (label.isNotEmpty())
         {
-            g.setColour (col::ink);
+            g.setColour (col::onBright);
             g.setFont (condensedBold (15.0f));
             g.drawFittedText (label, r.reduced (3, 0).withTrimmedBottom (12).toNearestInt(), juce::Justification::centred, 1, 0.7f);
         }
-        g.setColour (label.isNotEmpty() ? col::ink.withAlpha (0.6f) : juce::Colour (0xff8a7d6a));
+        g.setColour (label.isNotEmpty() ? col::onBright.withAlpha (0.7f) : juce::Colour (0xff8e7fa0));
         g.setFont (condensedBold (11.0f));
         g.drawText (juce::String (global + 1), r.reduced (5, 3), juce::Justification::bottomRight);
         if (playing == global)
@@ -703,10 +703,10 @@ void SynthScreen::drawKeys (juce::Graphics& g)
         }
         else if (part.chromatic && k.inScale (note))
         {
-            g.setColour ((black ? kPaper : col::inkFaint).withAlpha (0.8f));
+            g.setColour ((black ? kPaper : col::onBright).withAlpha (0.7f));
             g.fillEllipse (r.getCentreX() - 3.0f, markY + 1.0f + down, 6.0f, 6.0f);
         }
-        g.setColour (black ? kPaper : col::ink);
+        g.setColour (black ? kPaper : col::onBright);
         g.setFont (condensedBold (black ? 13.0f : 16.0f));
         const auto name = SongKey::pitchName (note);
         g.drawFittedText (name, r.translated (0, down).withTrimmedTop (r.getHeight() - 30.0f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
@@ -735,12 +735,12 @@ void SynthScreen::paint (juce::Graphics& g)
         for (int i = 0; i < (int) list.size(); ++i)
             if (list[(size_t) i] == part.preset)
                 at = i;
-        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (lcdFont (19.0f));
         g.drawText (juce::String (at + 1) + " OF " + juce::String ((int) list.size()), prevR.getUnion (nextR).reduced (30, 0), juce::Justification::centred);
         for (auto [r, t] : { std::pair { prevR, U8("\xe2\x80\xb9") }, std::pair { nextR, U8("\xe2\x80\xba") } })
         {
-            g.setColour (pressed == (r == prevR ? prevId : nextId) ? col::lcdAmber : juce::Colour (0xffcdbfa5));
+            g.setColour (pressed == (r == prevR ? prevId : nextId) ? col::lcdAmber : juce::Colour (0xffb7a9c2));
             g.setFont (condensedBold (30.0f));
             g.drawText (t, r, juce::Justification::centred);
         }
@@ -755,7 +755,7 @@ void SynthScreen::paint (juce::Graphics& g)
         g.fillRoundedRectangle (r.translated (0, 3), 9.0f);
         g.setColour (lit ? c : kDarkKey);
         g.fillRoundedRectangle (r.translated (0, down ? 2.0f : 0.0f), 9.0f);
-        g.setColour (lit ? col::ink : kPaper);
+        g.setColour (lit ? col::onBright : kPaper);
         g.setFont (spaced (condensedBold (15.0f), 0.08f));
         g.drawText (synthKindName (i), r.translated (0, down ? 2.0f : 0.0f), juce::Justification::centred);
     }

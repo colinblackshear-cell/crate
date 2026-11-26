@@ -5,9 +5,9 @@ namespace pocket
 {
 namespace
 {
-const juce::Colour kPaper { 0xfff1e7d1 }, kRecTop { 0xffe9573f }, kRecBottom { 0xffc93a26 }, kRecEdge { 0xff8f2617 },
-                   kStopTop { 0xff2e2822 }, kStopBottom { 0xff1d1915 }, kPlayGreen { 0xff3c8f56 },
-                   kGreenBg { 0xffe6f2e2 }, kGreenEdge { 0xff8fc06a }, kAmberBg { 0xfffbe9c4 };
+const juce::Colour kPaper { 0xfff3eadb }, kRecTop { 0xffe5588f }, kRecBottom { 0xffc0346a }, kRecEdge { 0xff7a1a42 },
+                   kStopTop { 0xff2e2540 }, kStopBottom { 0xff1d1728 }, kPlayGreen { 0xff1f8f7a },
+                   kGreenBg { 0xff17332f }, kGreenEdge { 0xff2fc6a8 }, kAmberBg { 0xff3a2f1c };
 
 void label2 (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& top, const juce::String& bottom, juce::Colour ink, float topSize = 19.0f)
 {
@@ -42,18 +42,18 @@ juce::Colour toolColour (Tool t)
 {
     switch (t)
     {
-        case Tool::loops: return col::ink;
-        case Tool::drums: return juce::Colour (0xfff0674f);
+        case Tool::loops: return col::green;
+        case Tool::drums: return juce::Colour (0xfff59a2a);
         case Tool::pads: return col::amber;
-        case Tool::sampler: return juce::Colour (0xffe08fb0);
-        case Tool::synth: return juce::Colour (0xff5fb3c4);
-        case Tool::chords: return juce::Colour (0xffb9a3dc);
-        case Tool::vocoder: return juce::Colour (0xff82cf6a);
-        case Tool::drone: return juce::Colour (0xffd8578e);   // the Mac's Drone: kumkum rose
-        case Tool::effects: return juce::Colour (0xffe8c27a);
-        case Tool::song: return juce::Colour (0xff8fb84a);   // the Mac's Song screen: leaf green
+        case Tool::sampler: return juce::Colour (0xfff7c04a);
+        case Tool::synth: return juce::Colour (0xffa877f5);
+        case Tool::chords: return juce::Colour (0xff9a5cf0);
+        case Tool::vocoder: return juce::Colour (0xfff27bb0);
+        case Tool::drone: return juce::Colour (0xff5fe3c6);   // the Mac's Drone, minty
+        case Tool::effects: return juce::Colour (0xffec4e8a);
+        case Tool::song: return juce::Colour (0xffc9a54e);   // brass
     }
-    return col::ink;
+    return col::green;
 }
 
 void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour ink)
@@ -191,7 +191,7 @@ void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
     }
     else
         drawRaised (g, r, lit ? Look::amber : Look::cream, pressed, 10.0f);
-    g.setColour (col::ink);
+    g.setColour (lit ? col::onBright : col::ink);
     g.setFont (spaced (condensedBold (fontHeight), 0.06f));
     g.drawFittedText (text, r.withTrimmedBottom (3).translated (0, pressed ? 2.0f : 0.0f).reduced (4, 0).toNearestInt(), juce::Justification::centred, 2, 0.7f);
 }
@@ -249,7 +249,7 @@ void ThumbBar::paint (juce::Graphics& g)
 
     auto clickR = buttonRect (click);
     drawRaised (g, clickR, s.click ? Look::amber : Look::cream, pressed == click, 12.0f);
-    label2 (g, clickR.withTrimmedBottom (3).translated (0, pressed == click ? 2.0f : 0.0f), "CLICK", s.click ? "ON" : "OFF", col::ink);
+    label2 (g, clickR.withTrimmedBottom (3).translated (0, pressed == click ? 2.0f : 0.0f), "CLICK", s.click ? "ON" : "OFF", s.click ? col::onBright : col::ink);
 
     // REC: red; dark STOP while it counts in or records
     {
@@ -296,7 +296,7 @@ void ThumbBar::paint (juce::Graphics& g)
         {
             juce::Path tri;
             tri.addTriangle (c.x - 7, c.y - 10, c.x - 7, c.y + 10, c.x + 10, c.y);
-            g.setColour (col::ink);
+            g.setColour (col::onBright);
             g.fillPath (tri);
         }
     }
@@ -453,7 +453,7 @@ void CountInPanel::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0x55000000));
     g.fillRoundedRectangle (r.translated (0, 3), 16.0f);
     drawWell (g, r, 16.0f);
-    g.setColour (juce::Colour (0xffd9cfb8));
+    g.setColour (juce::Colour (0xffe4dbee));
     g.setFont (spaced (lcdFont (19.0f), 0.08f));
     const juce::String head = totalBars > 1 ? U8("COUNT-IN \xc2\xb7 BAR ") + juce::String (barNow + 1) + " OF " + juce::String (totalBars) + U8(" \xc2\xb7 CLICK")
                                             : U8("COUNT-IN \xc2\xb7 THE CLICK IS PLAYING");
@@ -464,14 +464,14 @@ void CountInPanel::paint (juce::Graphics& g)
     {
         auto c = juce::Rectangle<float> (r.getCentreX() - total * 0.5f + (float) i * (d + gap), r.getY() + 38, d, d);
         const bool lit = i <= beat;
-        g.setColour (lit ? juce::Colour (0xfff0846c) : juce::Colour (0xff2e2823));
+        g.setColour (lit ? juce::Colour (0xfff59a2a) : juce::Colour (0xff221b2d));
         g.fillEllipse (c);
         if (i == beat)
         {
-            g.setColour (juce::Colour (0xfff0846c).withAlpha (0.35f));
+            g.setColour (juce::Colour (0xfff59a2a).withAlpha (0.35f));
             g.drawEllipse (c.expanded (3), 3.0f);
         }
-        g.setColour (lit ? juce::Colour (0xff3a160f) : juce::Colour (0xff6b6155));
+        g.setColour (lit ? juce::Colour (0xff3a160f) : juce::Colour (0xff8e7fa0));
         g.setFont (lcdFont (d * 0.75f));
         g.drawText (juce::String (i + 1), c, juce::Justification::centred);
     }
@@ -634,7 +634,7 @@ void HeadphonesSheet::paint (juce::Graphics& g)
         g.drawText (routeName (order[i]), r.reduced (12, 0).withHeight (26).translated (0, 5), juce::Justification::centredLeft);
         if (found)
         {
-            g.setColour (i == 0 ? juce::Colour (0xff3c8f56) : col::amberDark);
+            g.setColour (i == 0 ? col::green : col::amber);
             g.setFont (spaced (condensedBold (13.0f), 0.1f));
             const auto t = r.reduced (12, 0).withHeight (26).translated (0, 5);
             g.drawText (i == 2 ? "NOW" : "FOUND", t.withTrimmedRight (18), juce::Justification::centredRight);

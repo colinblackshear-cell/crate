@@ -4,7 +4,7 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kChords { 0xffb9a3dc }, kPadDark { 0xff4a4037 }, kPadText { 0xfff1e7d1 }, kBoxDark { 0xff2b2520 };
+const juce::Colour kChords { 0xff9a5cf0 }, kPadDark { 0xff4a3d63 }, kPadText { 0xfff3eadb }, kBoxDark { 0xff221b2d };
 const char* const kStyleNames[4] = { "HOLD", "STRUM", "ARP", "STABS" };
 constexpr float kChipH = 40.0f, kChipRow = kChipH + 6.0f;   // CHORDS ON / OFF over the pads
 const char* const kPlaysNames[3] = { "SYNTH", "MY PAD SOUND", "VOCODER NOTES" };
@@ -593,12 +593,12 @@ void ChordsScreen::paint (juce::Graphics& g)
     if (! liveWell.isEmpty())
     {
         drawWell (g, liveWell, 12.0f);
-        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (spaced (condensedBold (15.0f), 0.12f));
         g.drawText ("LIVE KEY", liveTitle, juce::Justification::centredLeft);
         const int playingKey = tool.playingLiveKey(), asked = tool.liveKey(), home = tool.key.root;
         const bool waiting = tool.liveWaiting() && asked != playingKey;
-        g.setColour (juce::Colour (0xff120f0c));
+        g.setColour (juce::Colour (0xff0f0c15));
         g.fillRoundedRectangle (liveLcd, 6.0f);
         juce::String text = waiting ? "NEXT: " + SongKey::pitchName (asked) : "IN " + SongKey::pitchName (playingKey);
         if (tool.liveOctave() != 0)
@@ -612,12 +612,12 @@ void ChordsScreen::paint (juce::Graphics& g)
             const bool black = k == 1 || k == 3 || k == 6 || k == 8 || k == 10;
             auto r = liveKeyR[(size_t) k];
             const bool down = pressed == liveKeyBase + k;
-            juce::Colour top = black ? juce::Colour (0xff3a332c) : juce::Colour (0xfffbf6ea);
-            juce::Colour bottom = black ? juce::Colour (0xff1a1612) : juce::Colour (0xffe0d6c1);
+            juce::Colour top = black ? juce::Colour (0xff3a2f4f) : juce::Colour (0xfff3eadb);
+            juce::Colour bottom = black ? juce::Colour (0xff1a1612) : juce::Colour (0xffc9bcd6);
             const bool lit = k == playingKey || (waiting && k == asked && blinkOn);
             if (lit)
                 top = col::lcdAmber.brighter (0.25f), bottom = col::lcdAmber;
-            g.setColour (black ? juce::Colours::black : juce::Colour (0xffa99c84));
+            g.setColour (black ? juce::Colours::black : juce::Colour (0xff8e7fa0));
             g.fillRoundedRectangle (r.translated (0, 3.0f), 6.0f);
             r = r.translated (0, down ? 2.0f : 0.0f);
             g.setGradientFill (juce::ColourGradient (top, r.getX(), r.getY(), bottom, r.getX(), r.getBottom(), false));
@@ -627,7 +627,7 @@ void ChordsScreen::paint (juce::Graphics& g)
                 g.setColour (kChords);
                 g.fillRoundedRectangle (r.removeFromBottom (5.0f).reduced (6.0f, 0.0f).translated (0.0f, -2.0f), 2.0f);
             }
-            g.setColour (lit || ! black ? col::ink : kPadText);
+            g.setColour (lit || ! black ? col::onBright : kPadText);
             g.setFont (condensedBold (black ? 15.0f : 18.0f));
             g.drawFittedText (SongKey::pitchName (k), r.withTrimmedBottom (5.0f).removeFromBottom (24.0f).toNearestInt(), juce::Justification::centred, 1, 0.6f);
         };
@@ -641,7 +641,7 @@ void ChordsScreen::paint (juce::Graphics& g)
     if (! progWell.isEmpty())
     {
         drawWell (g, progWell, 12.0f);
-        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (spaced (lcdFont (14.0f), 0.04f));
         g.drawFittedText (U8("PROGRESSION \xc2\xb7 ONE CHORD PER BAR"), progTitle.toNearestInt(), juce::Justification::centredLeft, 2, 0.7f);
     }
@@ -660,7 +660,7 @@ void ChordsScreen::paint (juce::Graphics& g)
             g.setColour (col::lcdAmber);
             g.drawRoundedRectangle (r.reduced (1.0f), 8.0f, 2.5f);
         }
-        g.setColour (playing ? col::ink : (pad >= 0 ? kPadText : juce::Colour (0xff6a5c4e)));
+        g.setColour (playing ? col::onBright : (pad >= 0 ? kPadText : juce::Colour (0xff8e7fa0)));
         g.setFont (condensedBold (pad >= 0 ? 17.0f : 15.0f));
         g.drawFittedText (pad >= 0 ? tool.livePadName (pad) : juce::String (i + 1), r.reduced (3, 0).toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
@@ -719,7 +719,7 @@ void ChordsScreen::paint (juce::Graphics& g)
         auto p = padR[(size_t) i];
         const bool lit = s == i;
         const float down = pressed == padBase + i ? 2.0f : 0.0f;
-        g.setColour (juce::Colour (0xff120f0c));
+        g.setColour (juce::Colour (0xff0f0c15));
         g.fillRoundedRectangle (p.translated (0, 3), 10.0f);
         g.setColour (lit ? kChords : kPadDark);
         g.fillRoundedRectangle (p.translated (0, down), 10.0f);
@@ -728,7 +728,7 @@ void ChordsScreen::paint (juce::Graphics& g)
             g.setColour (col::lcdAmber.withAlpha (0.5f));
             g.drawRoundedRectangle (p.translated (0, down).reduced (1.0f), 10.0f, 1.5f);
         }
-        g.setColour (lit ? col::ink : kPadText);
+        g.setColour (lit ? col::onBright : kPadText);
         g.setFont (condensedBold (p.getHeight() > 70.0f ? 20.0f : 17.0f));
         // Chords off: the note the pad plays big, its chord small under it.
         juce::String big = tool.livePadName (i), under = tool.padNumeral (i);
@@ -743,10 +743,10 @@ void ChordsScreen::paint (juce::Graphics& g)
         if (tool.isOwn (i))
         {
             // your own chord: a lilac corner dot (amber on the lit pad)
-            g.setColour (lit ? col::ink : kChords);
+            g.setColour (lit ? col::onBright : kChords);
             g.fillEllipse (p.getRight() - 15.0f, p.getY() + 7.0f + down, 8.0f, 8.0f);
         }
-        g.setColour (tool.isOwn (i) ? (lit ? juce::Colour (0xff3a2a55) : kChords) : lit ? juce::Colour (0xff3a2a55) : juce::Colour (0xffa89a86));
+        g.setColour (tool.isOwn (i) ? (lit ? juce::Colour (0xff0f0c15) : kChords) : lit ? juce::Colour (0xff0f0c15) : juce::Colour (0xffb7a9c2));
         g.setFont (lcdFont (15.0f));
         g.drawFittedText (under, p.translated (0, down).withTrimmedTop (p.getHeight() * 0.6f).reduced (3, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.7f);
     }

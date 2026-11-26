@@ -74,9 +74,9 @@ public:
             auto pb = playButton (i);
             const bool playing = owner.isPlaying && owner.isPlaying (row.id);
             auto disc = pb.withSizeKeepingCentre (38, 38).translated (0, pressedPlay == i ? 1.0f : 0.0f);
-            g.setColour (playing ? col::red : col::ink);
+            g.setColour (playing ? col::red : col::green);
             g.fillEllipse (disc);
-            g.setColour (juce::Colours::white);
+            g.setColour (playing ? juce::Colours::white : col::onBright);
             const auto c = disc.getCentre();
             if (playing)
                 g.fillRoundedRectangle (c.x - 6, c.y - 6, 12, 12, 2.0f);
