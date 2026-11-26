@@ -499,6 +499,18 @@ PocketApp::PocketApp (Options o)
     padSheet.onClear = [this] (int) { beats.padsChanged(); };
     padSheet.onUndoClear = [this] (int) { beats.padsChanged(); };
     padSheet.onTrim = [this] (int pad) { openSamplePage (pad); };
+    padSheet.onPlayAsKeys = [this] (int pad)
+    {
+        closePadSheet();
+        beats.playAsKeys (pad);
+    };
+    padSheet.onMore = [this] (int pad)
+    {
+        closePadSheet();
+        juce::Component::SafePointer<PocketApp> safe (this);
+        juce::Timer::callAfterDelay (280, [safe, pad] { if (safe != nullptr) safe->beats.holdPad (pad); });
+    };
+    beats.songKey = [this] { return songKey; };
     padSheet.onChop = [this] (int pad)
     {
         const auto id = beats.kit().pads[(size_t) pad].soundId;

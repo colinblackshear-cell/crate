@@ -93,4 +93,25 @@ private:
     std::function<juce::String (double)> format;
     std::function<bool (double)> isActive;
 };
+
+// PITCH as a wide strip: -12..+12 semitones, the original in the middle. Drag along it (whole semitones), double-tap
+// for the original. The value reads "+3 Â· HIGHER". Owners put - and + buttons beside it.
+class PitchStrip : public juce::Component
+{
+public:
+    int getValue() const { return value; }
+    void setValue (int semitones, bool notify = false);
+    std::function<void (int)> onChange;
+    static juce::String describe (int semitones);   // "+3 Â· higher", "original", "-2 Â· lower"
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent& e) override { setFromX (e.position.x); }
+    void mouseDrag (const juce::MouseEvent& e) override { setFromX (e.position.x); }
+    void mouseDoubleClick (const juce::MouseEvent&) override { setValue (0, true); }
+
+private:
+    juce::Rectangle<float> track() const;
+    void setFromX (float x);
+    int value = 0;
+};
 }

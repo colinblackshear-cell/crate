@@ -2,6 +2,7 @@
 
 #include "BeatsEngine.h"
 #include "PocketHost.h"
+#include "PocketKey.h"
 #include "PocketKit.h"
 #include "PocketLibrary.h"
 #include "PocketTheme.h"
@@ -60,6 +61,14 @@ public:
     int copySource() const { return copyFrom; }
     void endPadMode();                                       // leaves 16 LEVELS or COPY
     void holdPad (int pad);                                  // what a long press on a pad does (also for the self-checks)
+    // PLAY / EDIT on the pads. In PLAY a pad only plays: holding it keeps it sounding and nothing pops up. In EDIT a
+    // tap opens the pad's sheet (pitch first), and a hold opens the full pad menu.
+    void setPadEdit (bool on);
+    bool padEditing() const { return padEdit; }
+    // PLAY AS KEYS: the pad's sound on all 16 pads of its bank, each a step of the song's key higher (the original in
+    // the middle, A08 and A16). UNDO (the note's button) puts the bank back.
+    void playAsKeys (int pad);
+    std::function<pocket::SongKey()> songKey;
     // The self-checks: a finger lands on a pad of the bank, the hold time passes, the finger lifts.
     void testTouchPad (int pad);
     void testHoldElapsed();
@@ -189,6 +198,7 @@ private:
     int levelsOf = -1, copyFrom = -1, removedPad = -1, copiedTo = -1;
     pocket::KitPad removed, copiedWas;
     bool haveRemoved = false, haveCopied = false;
+    bool padEdit = false;              // PLAY / EDIT on the pads
    #if JUCE_IOS || JUCE_ANDROID
     juce::ScopedMessageBox sharing;
    #endif

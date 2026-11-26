@@ -348,7 +348,18 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         beats.selectPad (9);
         beats.engine().stopPads();
         renderPads (2);
-        // a touch sounds at once, with no menu; the hold then opens the menu and the sound plays on until the finger lifts
+        // PLAY: a touch sounds, and holding it never brings a menu (it only keeps the pad sounding)
+        beats.setPadEdit (false);
+        beats.testTouchPad (9);
+        renderPads (1);
+        expect ((beats.engine().soundingPads() >> 9 & 1) != 0, "Pad PLAY: a touch didn't sound the pad");
+        beats.testHoldElapsed();
+        expect (! holdCard.isOpen(), "Pad PLAY: holding a pad opened a menu (it should only play)");
+        beats.testLiftPad();
+        beats.engine().stopPads();
+        renderPads (2);
+        // EDIT: a touch sounds at once, with no menu; the hold then opens the menu and the sound plays on until the finger lifts
+        beats.setPadEdit (true);
         beats.testTouchPad (9);
         renderPads (1);
         expect ((beats.engine().soundingPads() >> 9 & 1) != 0, "Pad: a touch didn't sound the pad in the first block");
@@ -359,6 +370,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect ((beats.engine().soundingPads() >> 9 & 1) != 0, "Pad: the hold menu cut the sound");
         beats.testLiftPad();
         holdCard.close();
+        beats.setPadEdit (false);
         // the rows
         beats.holdPad (9);
         const auto spec = holdCard.current();
@@ -367,7 +379,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         const bool rowsOk = spec.items.size() >= 8 && spec.items[0].text == "EDIT THIS SLICE";
         auto row = [&] (int i) -> const pocket::HoldItem& { return spec.items[(size_t) i + 1]; };
         expect (rowsOk && (spec.items.size() == 8 || (spec.items.size() == 9 && row (7).text == "FACTORY SOUND BACK")) && row (0).text == "SOUND PAGE" && row (1).text.startsWith ("SWAP SOUND") && row (2).text == "RECORD A NEW SOUND"
-                    && row (3).text.startsWith ("VOLUME") && row (4).text == "16 LEVELS" && row (5).text == "COPY TO ANOTHER PAD"
+                    && row (3).text.startsWith ("PITCH") && row (4).text == "16 LEVELS" && row (5).text == "COPY TO ANOTHER PAD"
                     && row (6).text == "REMOVE SOUND" && row (6).danger && spec.title.startsWith ("PAD A10"), "Hold menu on a pad: the rows are not the agreed ones");
         auto choose = [&] (int item)
         {
@@ -375,7 +387,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
             holdCard.choose (item + 1);
         };
         choose (3);
-        expect (padSheetOpen && padSheet.pad() == 9, "Hold menu on a pad: VOLUME · PAN · TUNE didn't open the pad sheet");
+        expect (padSheetOpen && padSheet.pad() == 9, "Hold menu on a pad: PITCH · VOLUME · PAN didn't open the pad sheet");
         closePadSheet();
         choose (0);
         expect (page == Page::tool && tool == Tool::sampler && sampler.target() == 9, "Hold menu on a pad: SOUND PAGE didn't open the SAMPLER on pad A10");

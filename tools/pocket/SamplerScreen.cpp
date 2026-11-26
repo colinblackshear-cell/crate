@@ -23,8 +23,14 @@ SamplerScreen::SamplerScreen (PocketHost& h, PocketAudio& a, Library& lib, Kit& 
 {
     setOpaque (false);
     for (auto* c : std::initializer_list<juce::Component*> { &wave, &soundsButton, &allButton, &undoButton, &moreButton, &hearButton, &trimButton,
-                                                             &sendButton, &pickButton, &clearButton, &chopButton, &toolButton })
+                                                             &sendButton, &pickButton, &clearButton, &chopButton, &toolButton,
+                                                             &pitch, &pitchDown, &pitchUp })
         addAndMakeVisible (c);
+    pitch.onChange = [this] (int st) { setPitch (st); };
+    pitchDown.setFontHeight (24.0f);
+    pitchUp.setFontHeight (24.0f);
+    pitchDown.onClick = [this] { setPitch (pitch.getValue() - 1); };
+    pitchUp.onClick = [this] { setPitch (pitch.getValue() + 1); };
     wave.setEmptyText ("Press REC to sample a sound from the mic, or SOUNDS to open one");
     wave.onSelectionChange = [this] { updateLabels(); };
 
@@ -176,6 +182,7 @@ void SamplerScreen::editForPad (int pad)
     if (targetPad < 0)
         return;
     const auto& p = kit.pads[(size_t) targetPad];
+    pitch.setValue (p.empty() ? 0 : juce::roundToInt (p.tune / 10.0));
     if (p.empty() || library.find (p.soundId) == nullptr)
     {
         updateLabels();
@@ -296,6 +303,50 @@ void SamplerScreen::selectAll()
     updateLabels();
 }
 
+// A sound played faster (ratio > 1, higher) or slower (lower), like a sampler's pad
+static juce::AudioBuffer<float> varispeed (const juce::AudioBuffer<float>& in, double ratio)
+{
+    const int n = in.getNumSamples();
+    const int outN = juce::jmax (1, (int) std::floor ((double) n / ratio));
+    juce::AudioBuffer<float> out (in.getNumChannels(), outN);
+    for (int c = 0; c < in.getNumChannels(); ++c)
+    {
+        const float* src = in.getReadPointer (c);
+        float* dst = out.getWritePointer (c);
+        for (int i = 0; i < outN; ++i)
+        {
+            const double pos = (double) i * ratio;
+            const int i0 = juce::jmin (n - 1, (int) pos);
+            const int i1 = juce::jmin (n - 1, i0 + 1);
+            const float f = (float) (pos - (double) i0);
+            dst[i] = src[i0] + (src[i1] - src[i0]) * f;
+        }
+    }
+    return out;
+}
+
+void SamplerScreen::setPitch (int st)
+{
+    st = juce::jlimit (-12, 12, st);
+    pitch.setValue (st);
+    // on the pad this sound came from (or went to), the change is heard on the pad at once
+    if (juce::isPositiveAndBelow (targetPad, kPads))
+    {
+        auto& p = kit.pads[(size_t) targetPad];
+        if (! p.empty() && p.soundId == currentId && p.tune != st * 10)
+        {
+            p.tune = st * 10;
+            if (onPadSet)
+                onPadSet (targetPad);
+        }
+    }
+    if (audio.isPlaying())
+    {
+        audio.stopPlaying();
+        hear();
+    }
+}
+
 // What SEND TO PAD puts on a pad: IN to OUT, with the sound's effects
 void SamplerScreen::hear()
 {
@@ -306,10 +357,16 @@ void SamplerScreen::hear()
     auto a = wave.getAudio();
     const auto sel = crate::Edits::orWhole (*a, wave.getSelection());
     const auto* item = library.find (currentId);
-    if (item != nullptr && item->fx.anyOn())
+    const int st = pitch.getValue();
+    if ((item != nullptr && item->fx.anyOn()) || st != 0)
     {
-        auto part = crate::share (crate::SoundFx::apply (crate::Edits::copy (*a, sel), item->fx.toSettings()));
-        audio.play (part, 0, part->getNumSamples());
+        auto part = crate::Edits::copy (*a, sel);
+        if (item != nullptr && item->fx.anyOn())
+            part = crate::SoundFx::apply (part, item->fx.toSettings());
+        if (st != 0)
+            part = varispeed (part, std::pow (2.0, st / 12.0));   // as the pad plays it: faster and higher, or slower and lower
+        auto shared = crate::share (std::move (part));
+        audio.play (shared, 0, shared->getNumSamples());
     }
     else
         audio.play (a, sel.getStart(), sel.getEnd());
@@ -421,9 +478,9 @@ bool SamplerScreen::sendTo (int pad)
         auto& now = kit.pads[(size_t) pad];
         now.volume = old.volume;
         now.pan = old.pan;
-        now.tune = old.tune;
         now.mode = old.mode;
     }
+    kit.pads[(size_t) pad].tune = pitch.getValue() * 10;   // the page's PITCH goes onto the pad
     targetPad = pad;
     updateLabels();
     if (onPadSet)
@@ -676,7 +733,11 @@ void SamplerScreen::resized()
     auto sendRow = juce::Rectangle<int> (x0, h - 8 - 56, iw, 56);
     auto hearRow = sendRow.withY (sendRow.getY() - 8 - 52).withHeight (52);
     auto row1 = juce::Rectangle<int> (x0, hearRow.getY() - 8 - 44, iw, 44);
-    infoArea = { (float) x0, (float) (row1.getY() - 6 - 24), (float) iw, 24.0f };
+    auto pitchRow = juce::Rectangle<int> (x0, row1.getY() - 8 - 64, iw, 64);
+    pitchDown.setBounds (pitchRow.getX(), pitchRow.getBottom() - 46, 46, 46);
+    pitchUp.setBounds (pitchRow.getRight() - 46, pitchRow.getBottom() - 46, 46, 46);
+    pitch.setBounds (pitchRow.reduced (52, 0));
+    infoArea = { (float) x0, (float) (pitchRow.getY() - 6 - 24), (float) iw, 24.0f };
     wave.setBounds (x0, 94, iw, juce::jmax (90, (int) infoArea.getY() - 4 - 94));
 
     pickButton.setBounds (sendRow.removeFromRight (92));

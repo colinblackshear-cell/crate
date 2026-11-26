@@ -236,4 +236,63 @@ void KnobView::paint (juce::Graphics& g)
     g.setFont (lcdFont (21.0f));
     g.drawText (format (value), valueArea, juce::Justification::centred);
 }
+
+//==============================================================================
+juce::String PitchStrip::describe (int st)
+{
+    if (st == 0)
+        return "original";
+    return (st > 0 ? "+" : U8("\xe2\x88\x92")) + juce::String (std::abs (st)) + (st > 0 ? U8(" \xc2\xb7 higher") : U8(" \xc2\xb7 lower"));
+}
+
+void PitchStrip::setValue (int st, bool notify)
+{
+    st = juce::jlimit (-12, 12, st);
+    if (st == value)
+        return;
+    value = st;
+    repaint();
+    if (notify && onChange)
+        onChange (value);
+}
+
+juce::Rectangle<float> PitchStrip::track() const
+{
+    auto r = getLocalBounds().toFloat();
+    return r.withTrimmedTop (22.0f).reduced (14.0f, 0.0f);
+}
+
+void PitchStrip::setFromX (float x)
+{
+    const auto t = track();
+    const float n = juce::jlimit (0.0f, 1.0f, (x - t.getX()) / juce::jmax (1.0f, t.getWidth()));
+    setValue (juce::roundToInt (n * 24.0f) - 12, true);
+}
+
+void PitchStrip::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (col::ink);
+    g.setFont (spaced (condensedBold (16.0f), 0.08f));
+    g.drawText ("PITCH", r.withHeight (20.0f), juce::Justification::centredLeft);
+    g.setColour (value == 0 ? col::inkDim : col::amberDark);
+    g.setFont (spaced (condensedBold (16.0f), 0.04f));
+    g.drawText (describe (value).toUpperCase(), r.withHeight (20.0f), juce::Justification::centredRight);
+
+    const auto t = track();
+    const float cy = t.getCentreY(), x0 = t.getX(), w = t.getWidth();
+    auto xOf = [&] (int st) { return x0 + w * (float) (st + 12) / 24.0f; };
+    auto bar = juce::Rectangle<float> (x0, cy - 5.0f, w, 10.0f);
+    drawWell (g, bar.expanded (0.0f, 1.0f), 5.0f);
+    const float cx = xOf (0), vx = xOf (value);
+    g.setColour (col::amber);
+    g.fillRoundedRectangle (juce::Rectangle<float> (juce::jmin (cx, vx), cy - 4.0f, std::abs (vx - cx), 8.0f), 4.0f);
+    for (int st = -12; st <= 12; st += 12)
+    {
+        g.setColour (col::inkFaint);
+        g.fillRect (juce::Rectangle<float> (xOf (st) - 1.0f, cy + 9.0f, 2.0f, 6.0f));
+    }
+    const float knob = 30.0f;
+    drawRaised (g, juce::Rectangle<float> (vx - knob * 0.5f, cy - knob * 0.5f, knob, knob), Look::dark, false, knob * 0.5f);
+}
 }

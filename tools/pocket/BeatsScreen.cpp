@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include "BeatsScreen.h"
 #include "StepMarks.h"
 #include "PocketFactory.h"
@@ -763,13 +764,8 @@ public:
         addAndMakeVisible (repeatStrip);
 
         editPads.setFontHeight (15.0f);
-        editPads.onClick = [this]
-        {
-            const int pad = owner.selected;
-            if (pad < 0 || owner.padKit.pads[(size_t) pad].empty())
-                return owner.host.toast ("Tap a pad that has a sound, then EDIT PADS");
-            owner.host.openPadSheet (pad);
-        };
+        editPads.setLamp (true, false);
+        editPads.onClick = [this] { owner.setPadEdit (! owner.padEdit); };
         addAndMakeVisible (editPads);
 
         toMac.setFontHeight (15.0f);
@@ -814,6 +810,15 @@ public:
             m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&undoButton));
         };
         refresh();
+    }
+
+    void showEditing (bool on)
+    {
+        editPads.setText (on ? "Editing" : "Edit");
+        editPads.setLook (on ? Look::amber : Look::cream);
+        editPads.setLamp (true, on);
+        hold.release();
+        repaint();
     }
 
     void refresh()
@@ -1056,7 +1061,8 @@ public:
             owner.beatsEngine.padOn (pad);
             owner.recordHit (pad, 1.0f);
         }
-        if (! owner.recPads)
+        // PLAY: a pad only plays (a hold just keeps it sounding). EDIT: a hold opens the pad menu, a tap its sheet.
+        if (owner.padEdit && ! owner.recPads)
             hold.press (at);
         repaint();
     }
@@ -1079,8 +1085,22 @@ public:
     // A finger lifts: its pad lets go (the others keep sounding and repeating).
     void liftPad (int source = 0)
     {
+        const bool tapped = hold.isArmed();   // EDIT: let go before the hold time = a tap, which opens the pad's sheet
         hold.release();
         auto& pad = padOfSource[(size_t) source];
+        if (tapped && pad >= 0 && owner.padEdit && owner.levelsOf < 0 && owner.copyFrom < 0)
+        {
+            const int tappedPad = pad;
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<juce::Component> (this), o = &owner, tappedPad]
+            {
+                if (safe == nullptr)
+                    return;
+                if (o->padKit.pads[(size_t) tappedPad].empty())
+                    o->holdPad (tappedPad);   // (an empty pad: PUT A SOUND ON IT, RECORD A NEW SOUND)
+                else
+                    o->host.openPadSheet (tappedPad);
+            });
+        }
         if (pad >= 0)
             owner.beatsEngine.padOff (owner.levelsOf >= 0 ? owner.levelsOf : pad);
         if (held == pad)
@@ -1103,7 +1123,7 @@ public:
     }
 
     juce::Rectangle<float> padRectFor (int pad) const { return padBounds (pad % 16); }
-    void fireHoldNow() { hold.fireNow(); }
+    void fireHoldNow() { if (hold.isArmed()) hold.fireNow(); }   // (PLAY never arms it)
     bool holdIsArmed() const { return hold.isArmed(); }
 
 private:
@@ -1127,7 +1147,7 @@ private:
     }
 
     BeatsScreen& owner;
-    PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit pads" }, toMac { "To mac" };
+    PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit" }, toMac { "To mac" };
     PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Sample a sound") },
             modeExit { "Exit", Look::amber };
     pocket::HoldDetector hold { [this] { holdFired(); } };
@@ -1260,7 +1280,7 @@ HoldSpec BeatsScreen::padMenuSpec (int pad)
     s.items.push_back ({ "SOUND PAGE", U8("the whole sound \xc2\xb7 in / out"), false, true, [this, pad] { host.openSamplePage (pad); } });
     s.items.push_back ({ U8("SWAP SOUND\xe2\x80\xa6"), {}, false, true, swap });
     s.items.push_back ({ "RECORD A NEW SOUND", "sampler", false, true, [this, pad] { host.openSampler (pad); } });
-    s.items.push_back ({ U8("VOLUME \xc2\xb7 PAN \xc2\xb7 TUNE"), {}, false, true, [this, pad] { host.openPadSheet (pad); } });
+    s.items.push_back ({ U8("PITCH \xc2\xb7 VOLUME \xc2\xb7 PAN"), "play as keys", false, true, [this, pad] { host.openPadSheet (pad); } });
     s.items.push_back ({ "16 LEVELS", {}, false, true, [this, pad] { startLevels (pad); } });
     s.items.push_back ({ "COPY TO ANOTHER PAD", {}, false, true, [this, pad] { startCopy (pad); } });
     s.items.push_back ({ "REMOVE SOUND", "undo brings it back", true, true, [this, pad] { removePad (pad); } });
@@ -1418,6 +1438,51 @@ void BeatsScreen::testLiftSource (int source) { padsView->liftPad (source); }
 void BeatsScreen::testHoldElapsed() { padsView->fireHoldNow(); }
 void BeatsScreen::testLiftPad() { padsView->liftPad(); }
 juce::Rectangle<float> BeatsScreen::testPadBounds (int pad) const { return padsView->padRectFor (pad) + padsView->getPosition().toFloat(); }
+
+void BeatsScreen::setPadEdit (bool on)
+{
+    padEdit = on;
+    padsView->showEditing (on);
+    host.toast (on ? juce::String ("EDIT: tap a pad to change its pitch, volume and sound. Hold it for more.")
+                   : juce::String ("PLAY: pads just play"));
+}
+
+void BeatsScreen::playAsKeys (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads) || padKit.pads[(size_t) pad].empty())
+        return;
+    const auto key = songKey ? songKey() : pocket::SongKey();
+    const auto source = padKit.pads[(size_t) pad];
+    const int first = pad / 16 * 16;
+    std::array<KitPad, 16> before;
+    for (int i = 0; i < 16; ++i)
+        before[(size_t) i] = padKit.pads[(size_t) (first + i)];
+    // A01 is the lowest: the bank climbs the key from an octave below the sound (A01) to an octave above (A15);
+    // A16 is the sound as it is (A08 too), so the original is always under a thumb.
+    const auto baseName = source.name.isNotEmpty() ? source.name : juce::String ("Sound");
+    for (int i = 0; i < 16; ++i)
+    {
+        const int degree = i < 15 ? i - 7 : 0;
+        const int semis = juce::jlimit (-12, 12, key.degreeSemis (degree));
+        auto p = source;
+        p.tune = semis * 10;
+        p.name = semis == 0 ? baseName : baseName + (semis > 0 ? " +" : " ") + juce::String (semis);
+        beatsEngine.padOff (first + i);
+        padKit.pads[(size_t) (first + i)] = p;
+    }
+    padsChanged();
+    selectPad (first + 7);
+    host.toastAction ("Bank " + juce::String::charToString ((juce::juce_wchar) ('A' + first / 16)) + " plays \"" + baseName
+                          + "\" as keys in " + key.label().toLowerCase() + ". A08 is the original.",
+                      "UNDO", [safe = juce::Component::SafePointer<BeatsScreen> (this), first, before]
+                      {
+                          if (safe == nullptr)
+                              return;
+                          for (int i = 0; i < 16; ++i)
+                              safe->padKit.pads[(size_t) (first + i)] = before[(size_t) i];
+                          safe->padsChanged();
+                      });
+}
 
 void BeatsScreen::holdPad (int pad)
 {
