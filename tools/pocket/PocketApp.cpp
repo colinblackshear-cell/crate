@@ -3720,6 +3720,12 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         synthScreen.setMode (SynthPart::arpMode);
         synthScreen.setDemoHeld ({ 0, 2, 4 });
         savePng (folder.getChildFile ("14c-synth-arp.png"));
+        synthPart.arpHold = false;
+        synthPart.chords = true;
+        synthScreen.setMode (SynthPart::keysMode);
+        synthScreen.setDemoHeld ({ 3, 11 });
+        savePng (folder.getChildFile ("14e-synth-chords.png"));
+        synthPart.chords = false;
         synthScreen.setDemoHeld ({ 4, 9 });
         synthPart.chromatic = true;
         synthScreen.setMode (SynthPart::keysMode);

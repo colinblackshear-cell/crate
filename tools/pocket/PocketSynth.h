@@ -178,6 +178,7 @@ public:
     int octave = 0;            // -2..2
     int mode = keysMode;
     bool chromatic = false;
+    bool chords = false;       // in key: each key plays its chord (the key's note, a third and a fifth up, all in the key)
     int quantize = 0;          // REC: 0 1/16, 1 1/8, 2 off (as played)
     int arpStyle = 0;          // 0 up, 1 down, 2 up and down
     int arpRate = 1;           // 0 1/8, 1 1/16
@@ -193,9 +194,13 @@ public:
     juce::var toVar() const;
     void fromVar (const juce::var&);
 
-    // The keys: in the key (8 keys, the scale from the root up to the root an octave up) or chromatic
+    // The keys: in the key (16 keys in two rows: the scale from the root up two octaves) or chromatic
     // (a piano octave from C: 8 white keys and 5 black).
-    int keyCount() const { return chromatic ? 13 : 8; }
+    int keyCount() const { return chromatic ? 13 : 16; }
+    // The notes a key sounds: its note, and with CHORDS (in key) the third and fifth above it in the key.
+    std::vector<int> keyNotes (int key, const SongKey&) const;
+    // In key, the scale step a key plays: the low row root to root (0-7), the top row from that root up (7-14).
+    static int keyDegree (int key) { key = juce::jlimit (0, 15, key); return key < 8 ? key : key - 1; }
     int keyNote (int key, const SongKey&) const;
 
     // REC into the pattern: what the keys and the arp play from `from` to `to` (beats on the clock) goes in,

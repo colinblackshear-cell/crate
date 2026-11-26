@@ -608,6 +608,7 @@ void SynthPart::reset()
     octave = 0;
     mode = keysMode;
     chromatic = false;
+    chords = false;
     quantize = 0;
     arpStyle = 0;
     arpRate = 1;
@@ -668,11 +669,19 @@ int SynthPart::keyNote (int key, const SongKey& k) const
 {
     const int base = 48 + 12 * octave;
     if (! chromatic)
-        return base + k.root + k.degreeSemis (juce::jlimit (0, 7, key));
+        return base + k.root + k.degreeSemis (keyDegree (key));
     // piano order: the 8 white keys, then the 5 black ones
     static constexpr int whites[8] = { 0, 2, 4, 5, 7, 9, 11, 12 }, blacks[5] = { 1, 3, 6, 8, 10 };
     key = juce::jlimit (0, 12, key);
     return base + (key < 8 ? whites[key] : blacks[key - 8]);
+}
+
+std::vector<int> SynthPart::keyNotes (int key, const SongKey& k) const
+{
+    if (chromatic || ! chords)
+        return { keyNote (key, k) };
+    const int base = 48 + 12 * octave + k.root, d = keyDegree (key);
+    return { base + k.degreeSemis (d), base + k.degreeSemis (d + 2), base + k.degreeSemis (d + 4) };
 }
 
 juce::var SynthPart::toVar() const
@@ -686,6 +695,7 @@ juce::var SynthPart::toVar() const
     o->setProperty ("octave", octave);
     o->setProperty ("mode", mode);
     o->setProperty ("chromatic", chromatic);
+    o->setProperty ("chords", chords);
     o->setProperty ("quantize", quantize);
     o->setProperty ("arpStyle", arpStyle);
     o->setProperty ("arpRate", arpRate);
@@ -709,6 +719,7 @@ void SynthPart::fromVar (const juce::var& v)
     octave = juce::jlimit (-2, 2, (int) v.getProperty ("octave", 0));
     mode = juce::jlimit (0, 2, (int) v.getProperty ("mode", 0));
     chromatic = (bool) v.getProperty ("chromatic", false);
+    chords = (bool) v.getProperty ("chords", false);
     quantize = juce::jlimit (0, 2, (int) v.getProperty ("quantize", 0));
     arpStyle = juce::jlimit (0, 2, (int) v.getProperty ("arpStyle", 0));
     arpRate = juce::jlimit (0, 1, (int) v.getProperty ("arpRate", 1));
@@ -846,6 +857,13 @@ juce::String synthSelfCheck (juce::String& report)
                << "; chromatic key 1 = " << SongKey::noteName (c0) << ", first black = " << SongKey::noteName (cs) << "\n";
         if (n0 != 57 || n2 != 60 || n7 != 69 || c0 != 48 || cs != 49)
             problems.add ("the keys don't follow the song's key (A minor gave " + juce::String (n0) + ", " + juce::String (n2) + ", " + juce::String (n7) + ")");
+        // the top row goes on up the scale; CHORDS: key 1 is A minor (A C E), key 2 is B diminished (B D F), all in the key
+        const int n14 = part.keyNote (14, am), n8 = part.keyNote (8, am);
+        part.chords = true;
+        const auto c1 = part.keyNotes (0, am), c2 = part.keyNotes (1, am);
+        part.chords = false;
+        if (n14 != 79 || n8 != 69 || c1 != std::vector<int> { 57, 60, 64 } || c2 != std::vector<int> { 59, 62, 65 } || part.keyNotes (0, am).size() != 1)
+            problems.add ("the second row of keys or CHORDS don't follow the song's key");
 
         SynthEngine e (clock);
         e.prepare (sr);
