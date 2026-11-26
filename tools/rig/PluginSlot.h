@@ -100,7 +100,8 @@ public:
     void clear();
     bool isLoaded() const { return loaded.load(); }
     // A plugin to save: the one loaded, or a show's own that isn't in: still loading, not
-    // installed here, didn't open, or left closed after a freeze. Saved as the show had it.
+    // installed here, didn't open, or left closed after a freeze. Saved as the show had it (with
+    // the slot's level and bypass as they are now, if you changed them since).
     bool hasPluginToSave() const { return loaded.load() || (kept.isValid() && ! oldSavingForTests); }
     // A plugin picked by hand that's still on its way (its name; empty when there's none).
     juce::String getNameLoading() const { return loadingByHand; }
@@ -130,7 +131,8 @@ public:
     juce::ValueTree toTree() const;
     void fromTree (const juce::ValueTree&);
     // What a save writes for this slot, in `tree`: the plugin as it is now, the show's own tree
-    // (exactly) while its plugin isn't in, or nothing (an invalid tree) when there's no plugin.
+    // (exactly, but for a level or bypass you changed meanwhile) while its plugin isn't in, or
+    // nothing (an invalid tree) when there's no plugin.
     // False, with why in `problem`, when the plugin's can't be written whole (it gave no
     // settings where it had some, or they couldn't be read): the save must fail then. `tree` is
     // still the most there is (for a host, which can't be told no).
@@ -166,10 +168,12 @@ public:
     static inline bool oldLoadResultForTests = false;   // a load that worked says "It didn't load" (so a show's settings aren't put back)
     static inline bool oldSavingForTests = false;       // only a loaded plugin is saved
     static inline bool noGenerationForTests = false;    // a load on its way lands whatever was asked for after it
+    static inline bool keptLevelOverlayOffForTests = false;   // a level or bypass changed while the show's plugin isn't in isn't saved
 
 private:
     void startLoad (const juce::PluginDescription&, const juce::ValueTree& restore, bool byHand, std::function<void (const juce::String&)> done);
     bool liveTree (juce::ValueTree& tree, juce::String& problem) const;
+    juce::ValueTree keptForSave() const;
     const bool isInstrument;
     juce::SharedResourcePointer<PluginHost> host;
     juce::SpinLock lock;

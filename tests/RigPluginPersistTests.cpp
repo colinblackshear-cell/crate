@@ -900,6 +900,149 @@ struct RigPluginPersistTests final : juce::UnitTest
             expect (! c2, "no generation check (c) is caught: the older show's plugin lands in the newer one");
         }
 
+        beginTest ("18. a level or bypass changed while the show's plugin isn't in is saved; nothing else of its tree changes");
+        {
+            // The plugin's tree without its level and bypass (what must stay byte for byte).
+            auto withoutHost = [] (const juce::String& x)
+            {
+                auto xml = juce::parseXML (x);
+                if (xml == nullptr)
+                    return x;
+                xml->removeAttribute ("level");
+                xml->removeAttribute ("bypassed");
+                return xml->toString (juce::XmlElement::TextFormat().singleLine());
+            };
+            auto attr = [] (const juce::String& x, const char* attrName)
+            {
+                auto xml = juce::parseXML (x);
+                return xml != nullptr ? xml->getStringAttribute (attrName) : juce::String ("(none)");
+            };
+            const auto m = makeShow();
+            for (auto how : { "loading", "missing", "failed", "left closed" })
+            {
+                const juce::String which (how);
+                if (which == "loading") format->hold = true;
+                if (which == "missing") format->missing.add ("fake:A");
+                if (which == "failed") format->failing.add ("fake:A");
+                if (which == "left closed")
+                {
+                    if (hadNote) { resetFakes(); continue; }
+                    openingNote().getParentDirectory().createDirectory();
+                    openingNote().replaceWithText (FakeFormat::describe ("fake:A").createIdentifierString());
+                    detachHost();
+                    attachHost();
+                }
+                auto e = openShow (m.file);
+                if (which != "loading")
+                    pump (100);
+                auto& s = e->getSynthPlugin();
+                expect (! s.isLoaded(), which);
+                // Unchanged: byte for byte.
+                expectEquals (instrumentXml (e->saveShow()), m.pluginXml, which + ": unchanged, the show's tree exactly");
+                s.level = 0.25f;
+                const auto f = newFile ("level " + which);
+                expect (saveTo (*e, f).ok);
+                const auto saved = instrumentXml (readShow (f));
+                expectWithinAbsoluteError ((float) attr (saved, "level").getFloatValue(), 0.25f, 1.0e-6f, which + ": the level you set is saved");
+                expectEquals (withoutHost (saved), withoutHost (m.pluginXml), which + ": the rest of its tree byte for byte");
+                s.bypassed = true;
+                expect (attr (instrumentXml (e->saveShow()), "bypassed") == "1", which + ": bypass too");
+                s.bypassed = false;
+                s.level = 0.6f;
+                expectEquals (instrumentXml (e->saveShow()), m.pluginXml, which + ": put back: the show's tree exactly (it was never changed)");
+                // Reopened, the level comes back.
+                if (which == "loading")
+                {
+                    format->hold = false;
+                    auto again = openShow (f);
+                    pumpUntil ([&] { return again->getSynthPlugin().isLoaded(); });
+                    expectWithinAbsoluteError (again->getSynthPlugin().level.load(), 0.25f, 1.0e-6f, "reopened: the level saved while it loaded");
+                    expect (fake (again->getSynthPlugin()) != nullptr && fake (again->getSynthPlugin())->patch == "Lead 7", "and its settings");
+                }
+                if (which == "left closed")
+                {
+                    e.reset();
+                    openingNote().deleteFile();
+                    detachHost();
+                    attachHost();
+                }
+                resetFakes();
+            }
+
+            // Every saver: the Last show, Logic's state, a tool sound, a strip's and a loop's racks.
+            {
+                format->hold = true;
+                auto e = openShow (m.file);
+                e->getSynthPlugin().level = 0.25f;
+                juce::PropertiesFile::Options o;
+                o.applicationName = "KaleidoboxPersistTests";
+                juce::PropertiesFile settings (folder.getChildFile ("settings.xml"), o);
+                const auto last = folder.getChildFile ("Last show.crateshow");
+                expect (riglastshow::save (*e, last, settings).ok);
+                expectWithinAbsoluteError ((float) attr (instrumentXml (readShow (last)), "level").getFloatValue(), 0.25f, 1.0e-6f, "the Last show");
+                const auto sound = e->saveToolSound (RigEngine::synthStrip);
+                expectWithinAbsoluteError ((float) attr (instrumentXml (sound), "level").getFloatValue(), 0.25f, 1.0e-6f, "a tool sound");
+                expectEquals (withoutHost (instrumentXml (sound)), withoutHost (m.pluginXml), "a tool sound: the rest byte for byte");
+                resetFakes();
+            }
+            {
+                juce::MemoryBlock state;
+                {
+                    RigPlugin plugin;
+                    plugin.prepareToPlay (kRate, kBlock);
+                    auto& s = plugin.getEngine().getSynthPlugin();
+                    s.load (FakeFormat::describe ("fake:G"));
+                    pumpUntil ([&] { return s.isLoaded(); });
+                    s.level = 0.3f;
+                    plugin.getStateInformation (state);
+                }
+                format->hold = true;
+                RigPlugin again;
+                again.prepareToPlay (kRate, kBlock);
+                again.setStateInformation (state.getData(), (int) state.getSize());
+                again.getEngine().getSynthPlugin().level = 0.9f;
+                juce::MemoryBlock whileLoading;
+                again.getStateInformation (whileLoading);
+                auto xml = juce::AudioProcessor::getXmlFromBinary (whileLoading.getData(), (int) whileLoading.getSize());
+                const auto tree = xml != nullptr ? instrumentXml (juce::ValueTree::fromXml (*xml)) : juce::String();
+                expectWithinAbsoluteError ((float) attr (tree, "level").getFloatValue(), 0.9f, 1.0e-6f, "Logic's state while it loads");
+                resetFakes();
+            }
+            {
+                auto e = freshEngine();
+                e->getFx (RigEngine::synthStrip).plugin.load (FakeFormat::describe ("fake:C"));
+                e->getLoopFx (0).plugin.load (FakeFormat::describe ("fake:K"));
+                pumpUntil ([&] { return e->getFx (RigEngine::synthStrip).plugin.isLoaded() && e->getLoopFx (0).plugin.isLoaded(); });
+                const auto file = newFile ("racks");
+                expect (saveTo (*e, file).ok);
+                const auto fxXml = stripPluginXml (readShow (file)), loopXml = loopPluginXml (readShow (file));
+                format->hold = true;
+                auto again = openShow (file);
+                again->getFx (RigEngine::synthStrip).plugin.level = 0.4f;
+                again->getLoopFx (0).plugin.bypassed = true;
+                const auto f = newFile ("racks while loading");
+                expect (saveTo (*again, f).ok);
+                const auto show = readShow (f);
+                expectWithinAbsoluteError ((float) attr (stripPluginXml (show), "level").getFloatValue(), 0.4f, 1.0e-6f, "a strip's rack");
+                expectEquals (withoutHost (stripPluginXml (show)), withoutHost (fxXml), "a strip's rack: the rest byte for byte");
+                expect (attr (loopPluginXml (show), "bypassed") == "1", "a loop's rack");
+                expectEquals (withoutHost (loopPluginXml (show)), withoutHost (loopXml), "a loop's rack: the rest byte for byte");
+                resetFakes();
+            }
+
+            // Negative control: the old saving (the show's tree exactly) loses the level.
+            {
+                format->hold = true;
+                auto e = openShow (m.file);
+                e->getSynthPlugin().level = 0.25f;
+                PluginSlot::keptLevelOverlayOffForTests = true;
+                const auto lost = attr (instrumentXml (e->saveShow()), "level").getFloatValue();
+                PluginSlot::keptLevelOverlayOffForTests = false;
+                expect (std::abs (lost - 0.25f) > 0.1f, "with the old saving, the level changed while it loaded is lost (caught)");
+                resetFakes();
+            }
+        }
+
         resetFakes();
         expectEquals (FakeSound::deletedOffMessageThread, 0, "every fake plugin was deleted on the message thread");
         if (! hadNote)

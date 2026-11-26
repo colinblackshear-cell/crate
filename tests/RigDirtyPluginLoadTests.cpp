@@ -151,6 +151,8 @@ struct RigDirtyPluginLoadTests final : juce::UnitTest
         format->failing.clear();
         FakeSound::throwOnGetState = FakeSound::emptyState = FakeSound::throwOnSetState = false;
         RigDirty::noLandingRebaseForTests = false;
+        PluginSlot::keptLevelOverlayOffForTests = false;
+        rigshow::hooks().at = nullptr;
         pump (20);
     }
     juce::File newFile (const juce::String& label) { return folder.getChildFile (juce::String (++fileCount) + " " + label + ".crateshow"); }
@@ -312,8 +314,8 @@ struct RigDirtyPluginLoadTests final : juce::UnitTest
                     s.bypassed = true;
                 else
                     s.level = 0.3f;
-                // (Until it's in, the show's tree is what's saved for it, level and all: see the report.)
-                logMessage ("  " + what + ": while it loads the verdict is " + stateName (verdict (*e)));
+                // (Saved with the show's tree for it, with your level or bypass: a change already.)
+                expectState (*e, DS::dirty, what + ": while it loads");
                 land (synthFirst ? "fake:A" : "fake:C");
                 land();
                 expectState (*e, DS::dirty, what);
@@ -666,6 +668,105 @@ struct RigDirtyPluginLoadTests final : juce::UnitTest
                     has = has || (live.count (k) > 0 && live.at (k) == v);
             expect (has, "the baseline has the plugin's own (landed) state");
             resetFakes();
+        }
+
+        beginTest ("16. a level changed while the show's plugin loads: dirty while it loads and once it's in; saved with it, clean after");
+        {
+            const auto file = makeShow (Where::synth);
+            {
+                auto e = openHeld (file);
+                expectState (*e, DS::clean, "loading");
+                e->getSynthPlugin().level = 0.25f;
+                expectState (*e, DS::dirty, "level changed while it loads");
+                land();
+                expectState (*e, DS::dirty, "level: still dirty once it's in");
+                expectEquals (e->getDirty().getStats().pluginLandingsRebased, 1, "(its state's entries still moved)");
+                e->getSynthPlugin().level = 0.6f;
+                expectState (*e, DS::clean, "level put back: clean");
+                resetFakes();
+            }
+            for (bool bypass : { false, true })
+            {
+                // Saved while it loads, with the edit: clean after the save, and once it's in.
+                const juce::String what = bypass ? "bypass" : "level";
+                auto e = openHeld (file);
+                auto& s = e->getSynthPlugin();
+                if (bypass) s.bypassed = true; else s.level = 0.25f;
+                expectState (*e, DS::dirty, what + " changed while it loads");
+                const auto saved = newFile (what + " saved while loading");
+                expect (e->saveShowFile (saved, rigshow::SaveKind::document).ok);
+                expectState (*e, DS::clean, what + ": right after the save");
+                land();
+                expectState (*e, DS::clean, what + ": saved while loading, then in");
+                expectEquals (e->getDirty().getStats().pluginLandingsRebased, 1, what + ": its state's entries moved");
+                staysClean (*e, what + ": saved, then in");
+                if (bypass) s.bypassed = false; else s.level = 0.6f;
+                expectState (*e, DS::dirty, what + ": back to what the old file had: dirty (the saved file has yours)");
+                resetFakes();
+                auto again = openSaved (saved);
+                pumpUntil ([&] { return again->getSynthPlugin().isLoaded(); });
+                if (bypass)
+                    expect (again->getSynthPlugin().bypassed.load(), "reopened: the bypass saved while it loaded");
+                else
+                    expectWithinAbsoluteError (again->getSynthPlugin().level.load(), 0.25f, 1.0e-6f, "reopened: the level saved while it loaded");
+                expectState (*again, DS::clean, what + ": reopened, in");
+                resetFakes();
+            }
+            {
+                // The plugin landing during the save itself (after the save took the show, before
+                // its baseline is set): the save's candidate moves too.
+                auto e = openHeld (file);
+                e->getSynthPlugin().level = 0.25f;
+                juce::StringArray said;
+                e->getDirty().log = [&said] (const juce::String& t) { said.add (t); };
+                bool landedInSave = false;
+                rigshow::hooks().at = [&] (const juce::String& point, int)
+                {
+                    if (point == "beforeCommit" && ! landedInSave)
+                    {
+                        landedInSave = format->finish();
+                        pump (20);
+                    }
+                    return true;
+                };
+                const auto saved = newFile ("landed during the save");
+                expect (e->saveShowFile (saved, rigshow::SaveKind::document).ok);
+                rigshow::hooks().at = nullptr;
+                expect (landedInSave && e->getSynthPlugin().isLoaded(), "(it landed during the save)");
+                bool candidateMoved = false;
+                for (const auto& t : said)
+                    candidateMoved = candidateMoved || t.contains ("save(s) in flight");
+                expect (candidateMoved, "the save's candidate moved too: " + said.joinIntoString (" | ").substring (0, 300));
+                expectState (*e, DS::clean, "landed during the save: clean after it");
+                e->getDirty().log = nullptr;
+                resetFakes();
+            }
+            {
+                // A missing plugin: a level change is yours, saved, and clean after the save.
+                const auto missingFile = makeShow (Where::synth, "fake:M");
+                format->missing.add ("fake:M");
+                auto e = openSaved (missingFile);
+                pump (100);
+                expectState (*e, DS::clean, "missing");
+                e->getSynthPlugin().level = 0.25f;
+                expectState (*e, DS::dirty, "missing: level changed");
+                const auto saved = newFile ("missing, level");
+                expect (e->saveShowFile (saved, rigshow::SaveKind::document).ok);
+                expectState (*e, DS::clean, "missing: saved");
+                const auto tree = juce::parseXML (pluginXml (readShow (saved), Where::synth));
+                expect (tree != nullptr && std::abs ((float) tree->getDoubleAttribute ("level") - 0.25f) < 1.0e-6f, "missing: the level is in the file");
+                resetFakes();
+            }
+            {
+                // Negative control: the old saving (the show's tree exactly) hides the edit.
+                PluginSlot::keptLevelOverlayOffForTests = true;
+                auto e = openHeld (file);
+                e->getSynthPlugin().level = 0.25f;
+                const auto got = verdict (*e);
+                PluginSlot::keptLevelOverlayOffForTests = false;
+                expect (got == DS::clean, "with the old saving, a level changed while it loads reads clean (the fault is caught): " + stateName (got));
+                resetFakes();
+            }
         }
 
         beginTest ("15. what a landing costs on the message thread, in a rich show (two looks at the show, against one check)");
