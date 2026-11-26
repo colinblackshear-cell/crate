@@ -253,7 +253,14 @@ void LoopsScreen::refresh()
         const int v = loops.version (l);
         const bool changed = st != r.st || v != r.version || st == LoopState::recording;
         const bool stateChanged = st != r.st || r.muted != loops.isMuted (l);
+        const bool landed = r.st == LoopState::recording && st == LoopState::playing;
         r.st = st;
+        if (landed && onTakeLanded && ! demo)
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LoopsScreen> (this), l]
+            {
+                if (safe != nullptr && safe->onTakeLanded)
+                    safe->onTakeLanded (l);
+            });
         r.muted = loops.isMuted (l);
         if (changed)
         {

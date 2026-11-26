@@ -68,6 +68,8 @@ public:
         return undoStack.back().items[0].layer;
     }
     std::function<void()> onSourceChanged;
+    // A take finished recording and now loops on `layer` (the app offers a vibe, KEEP, TRY AGAIN, MAKE IT A PAD).
+    std::function<void (int layer)> onTakeLanded;
     // The layer a vocoder take is waiting or recording on (-1 = none). stopVocoder() ends it at the bar.
     int vocoderLayer() const;
     void stopVocoder();

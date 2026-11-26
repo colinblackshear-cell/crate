@@ -53,6 +53,7 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketChordPlayer.cpp
     SingScreen.cpp
     PocketFrame.cpp
+    PocketCompanion.cpp
     PocketIntro.cpp
     PocketLesson.cpp
     SoundBankSheet.cpp

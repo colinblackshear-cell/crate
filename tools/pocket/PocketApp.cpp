@@ -273,9 +273,20 @@ PocketApp::PocketApp (Options o)
     dim->onTap = [this] { closeAllSheets(); };
 
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
-    toolRow.tools = { Tool::loops, Tool::song, Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone, Tool::effects };
+    // The companion row: the layers, the two tools most ideas start with, + ADD A LAYER in the middle (every other tool is
+    // in its sheet, in plain words), and the synth.
+    toolRow.tools = { Tool::loops, Tool::pads, Tool::add, Tool::drums, Tool::synth };
     // EFFECTS from a tool opens on that tool's board
-    toolRow.onSelect = [this] (Tool t) { if (t == Tool::effects) openEffects (page == Page::tool ? boardForTool (tool) : -1); else showTool (t); };
+    toolRow.onSelect = [this] (Tool t)
+    {
+        if (t == Tool::add)
+            openAddLayer();
+        else if (t == Tool::effects)
+            openEffects (page == Page::tool ? boardForTool (tool) : -1);
+        else
+            showTool (t);
+    };
+    setupCompanion();
     thumb.state = [this]
     {
         ThumbBar::State s;
@@ -541,6 +552,8 @@ PocketApp::PocketApp (Options o)
     addChildComponent (tempoSheet);
     addChildComponent (trackSheet);
     addChildComponent (recSetup);
+    addChildComponent (addSheet);
+    addChildComponent (takeSheet);
     addChildComponent (headphones);
     addChildComponent (soundBank);
     addChildComponent (*sendSheet);
@@ -600,7 +613,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -862,7 +875,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -1078,6 +1091,8 @@ void PocketApp::closeAllSheets()
     closePadPicker();
     closeChordEdit();
     closeDrumKit();
+    closeAddLayer();
+    closeTakeSheet();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -2979,7 +2994,9 @@ void PocketApp::swipeTool (int direction)
     for (int i = 0; i < (int) toolRow.tools.size(); ++i)
         if (toolRow.tools[(size_t) i] == tool)
             at = i;
-    const int to = at + direction;
+    int to = at + direction;
+    if (juce::isPositiveAndBelow (to, (int) toolRow.tools.size()) && toolRow.tools[(size_t) to] == Tool::add)
+        to += direction;   // (+ ADD A LAYER is a sheet: a swipe goes past it)
     if (at < 0 || to < 0 || to >= (int) toolRow.tools.size() || ! toolRow.onSelect)
         return;
     toolRow.onSelect (toolRow.tools[(size_t) to]);
@@ -3168,6 +3185,8 @@ void PocketApp::resized()
     tempoSheet.setBounds (tempoOpen ? tempoBounds() : tempoBounds().withY (h));
     trackSheet.setBounds (trackOpen ? trackBounds() : trackBounds().withY (h));
     recSetup.setBounds (recSetupOpen ? recSetupBounds() : recSetupBounds().withY (h));
+    addSheet.setBounds (addOpen ? addLayerBounds() : addLayerBounds().withY (h));
+    takeSheet.setBounds (takeOpen ? takeSheetBounds() : takeSheetBounds().withY (h));
     headphones.setBounds (phonesOpen ? headphonesBounds() : headphonesBounds().withY (h));
     soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - 560 - insets.getBottom()) : tempoBounds().withTop (h - 560 - insets.getBottom()).withY (h));
     toastBox->setBounds (24, content.getBottom() - 60, w - 48, 52);
@@ -3536,10 +3555,20 @@ void PocketApp::writeSnapshots (const juce::File& folder)
             return 0.0f;
         };
         toolRow.slideStart (cellX (Tool::loops));
-        toolRow.slideTo (cellX (Tool::chords));
+        toolRow.slideTo (cellX (Tool::drums));
         savePng (folder.getChildFile ("25-toolrow-slide.png"));
-        toolRow.slideEnd (cellX (Tool::chords), -200.0f);   // (called off: it stays on LOOPS)
+        toolRow.slideEnd (cellX (Tool::drums), -200.0f);   // (called off: it stays on LOOPS)
     }
+    // the companion flow: + ADD A LAYER, and the sheet after a take (on the synth layer)
+    openAddLayer();
+    savePng (folder.getChildFile ("50-add-a-layer.png"));
+    closeAddLayer();
+    showTool (Tool::synth, false);
+    openTakeSheet (1, true);
+    takeSheet.setVibe (pocket::TakeSheet::space);
+    savePng (folder.getChildFile ("51-take-sheet.png"));
+    closeTakeSheet();
+    showTool (Tool::loops, false);
     showIdeasList();
     openDrawer();
     savePng (folder.getChildFile ("20b-drawer-on-home.png"));
@@ -5141,4 +5170,191 @@ juce::String PocketApp::runLoopEditChecks (juce::String& report)
         L.setLayer (l, nullptr, false);
     pump (2048);
     return problems.joinIntoString ("\n");
+}
+
+// The companion flow: + ADD A LAYER (the tool row's middle button) and the sheet after each take.
+
+void PocketApp::setupCompanion()
+{
+    addSheet.onPick = [this] (int choice) { pickLayerSource (choice); };
+    addSheet.onMoreTool = [this] (Tool t)
+    {
+        closeAddLayer();
+        if (toolRow.onSelect)
+            toolRow.onSelect (t);
+    };
+    addSheet.onRecSetup = [this]
+    {
+        closeAddLayer();
+        openRecSetup();
+    };
+    addSheet.setupText = [this]
+    {
+        const int bars = appSettings.recBars();
+        const juce::String length = bars <= 0 ? juce::String ("Free length") : juce::String (bars) + (bars == 1 ? " bar" : " bars");
+        const int count = appSettings.countInBars;
+        return length + U8(" \xc2\xb7 ") + (count == 0 ? juce::String ("no count-in") : "count in " + juce::String (count) + (count == 1 ? " bar" : " bars"));
+    };
+    addSheet.onDismiss = [this] { closeAddLayer(); };
+
+    takeSheet.onVibe = [this] (int vibe)
+    {
+        const int l = takeSheet.layer();
+        if (! loopsScreen.hasLayer (l))
+            return closeTakeSheet();
+        auto& engine = loopsScreen.engine();
+        engine.setFx (l, pocket::TakeSheet::withVibe (engine.fxOf (l), vibe));
+        loopsScreen.boardsChanged();
+        loopsScreen.repaint();
+    };
+    takeSheet.onKeep = [this] { closeTakeSheet(); };
+    takeSheet.onDismiss = [this] { closeTakeSheet(); };
+    takeSheet.onTryAgain = [this]
+    {
+        const int l = takeSheet.layer();
+        closeTakeSheet();
+        if (loopsScreen.lastTakeUndoLayer() == l)
+            loopsScreen.undo();
+        if (page != Page::tool || tool != takeTool)
+            showTool (takeTool, false);
+        recPressed();
+    };
+    takeSheet.onMakePad = [this]
+    {
+        const int l = takeSheet.layer();
+        closeTakeSheet();
+        sampleLayer (l);
+    };
+    takeSheet.onMoreEffects = [this]
+    {
+        const int l = takeSheet.layer();
+        closeTakeSheet();
+        showTool (Tool::loops, false);
+        loopsScreen.selectLayer (l);
+        loopsScreen.openEditor (l, LoopEditSheet::effectsPage);
+    };
+    loopsScreen.onTakeLanded = [this] (int layer) { openTakeSheet (layer); };
+}
+
+juce::Rectangle<int> PocketApp::addLayerBounds() const
+{
+    const int h = addSheet.preferredHeight() + insets.getBottom();
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+juce::Rectangle<int> PocketApp::takeSheetBounds() const
+{
+    const int h = takeSheet.preferredHeight() + insets.getBottom();
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::openAddLayer()
+{
+    if (addOpen)
+        return;
+    closeAllSheets();
+    addOpen = true;
+    addSheet.refresh();
+    dim->setVisible (true);
+    addSheet.setBounds (addLayerBounds().withY (getHeight()));
+    addSheet.setVisible (true);
+    addSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (addSheet, addLayerBounds(), true);
+}
+
+void PocketApp::closeAddLayer()
+{
+    if (! addOpen)
+        return;
+    addOpen = false;
+    dim->setVisible (false);
+    slide (addSheet, addLayerBounds(), false);
+    if (! animate)
+        addSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->addOpen)
+                safe->addSheet.setVisible (false);
+        });
+    repaint();
+}
+
+// A tile on + ADD A LAYER. MY VOICE starts recording at once (the mic asks first, as ever); the instruments open ready
+// to play, with REC under the thumb.
+void PocketApp::pickLayerSource (int choice)
+{
+    using C = pocket::AddLayerSheet;
+    closeAddLayer();
+    switch (choice)
+    {
+        case C::voice:
+            showTool (Tool::loops, false);
+            loopsScreen.setSource ((int) LoopSource::mic);
+            recPressed();
+            return;
+        case C::pads:
+            showTool (Tool::pads);
+            beats.setPadEdit (false);
+            toast ("Play the pads. Press REC to record them as a new layer.");
+            return;
+        case C::drums:
+            showTool (Tool::drums);
+            toast ("Tap boxes for hits, press PLAY to hear them. REC puts the beat on a new layer.");
+            return;
+        case C::synth:
+            showTool (Tool::synth);
+            toast ("Every key fits the song. Press REC, then play: it records onto a new layer.");
+            return;
+        case C::vocoder:
+            showTool (Tool::vocoder);
+            return;
+        case C::resample:
+            showTool (Tool::sampler, false);
+            if (sampler.onSampleTool)
+                sampler.onSampleTool();
+            return;
+        default:
+            return;
+    }
+}
+
+// After a take lands on a layer: the sheet comes up while it loops. Not in the screenshots, the lesson or the tour.
+void PocketApp::openTakeSheet (int layer, bool force)
+{
+    if (! loopsScreen.hasLayer (layer))
+        return;
+    if (! force && (! animate || lessonOn || page != Page::tool || title->isVisible() || tour->isVisible()))
+        return;
+    if (takeOpen || sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen
+        || drumKitOpen || addOpen || holdCard.isOpen())
+        return;
+    takeTool = tool;
+    const juce::String what = tool == Tool::loops && loopsScreen.source() == (int) LoopSource::mic ? juce::String ("My voice")
+                            : juce::String (toolName (tool)).toLowerCase().replaceSection (0, 1, juce::String (toolName (tool)).substring (0, 1));
+    takeOpen = true;
+    takeSheet.show (layer, what);
+    takeSheet.setBounds (takeSheetBounds().withY (getHeight()));
+    takeSheet.setVisible (true);
+    takeSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (takeSheet, takeSheetBounds(), true);
+}
+
+void PocketApp::closeTakeSheet()
+{
+    if (! takeOpen)
+        return;
+    takeOpen = false;
+    slide (takeSheet, takeSheetBounds(), false);
+    if (! animate)
+        takeSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->takeOpen)
+                safe->takeSheet.setVisible (false);
+        });
+    repaint();
 }

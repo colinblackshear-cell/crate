@@ -182,32 +182,41 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
             return 0.0f;
         };
         toolRow.slideStart (cellX (Tool::loops));
+        toolRow.slideTo (cellX (Tool::pads));
         toolRow.slideTo (cellX (Tool::drums));
-        toolRow.slideTo (cellX (Tool::sampler));
-        expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::sampler, "Tool row: the finger on SAMPLER didn't light SAMPLER");
+        expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::drums, "Tool row: the finger on DRUMS didn't light DRUMS");
         toolRow.slideTo (cellX (Tool::synth));
         expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::synth, "Tool row: the finger on SYNTH didn't light SYNTH");
         expect (tool == Tool::loops, "Tool row: the tool changed before the finger lifted");
         toolRow.slideEnd (cellX (Tool::synth), 10.0f);
         expect (page == Page::tool && tool == Tool::synth, "Tool row: lifting on SYNTH didn't pick it");
         toolRow.slideStart (cellX (Tool::synth));
-        toolRow.slideTo (cellX (Tool::chords));
-        toolRow.slideEnd (cellX (Tool::chords), -200.0f);   // a finger that went up the screen calls it off
+        toolRow.slideTo (cellX (Tool::drums));
+        toolRow.slideEnd (cellX (Tool::drums), -200.0f);   // a finger that went up the screen calls it off
         expect (tool == Tool::synth, "Tool row: a slide taken up and away still picked a tool");
-        toolRow.slideStart (cellX (Tool::chords));
-        toolRow.slideEnd (cellX (Tool::chords), 10.0f);
-        expect (tool == Tool::chords, "Tool row: a plain tap on CHORDS no longer picks it");
+        toolRow.slideStart (cellX (Tool::pads));
+        toolRow.slideEnd (cellX (Tool::pads), 10.0f);
+        expect (tool == Tool::pads, "Tool row: a plain tap on PADS no longer picks it");
+        // + ADD A LAYER: a tap opens the sheet (it isn't a screen); a tile goes to its tool
+        toolRow.slideStart (cellX (Tool::add));
+        toolRow.slideEnd (cellX (Tool::add), 10.0f);
+        expect (addOpen && tool == Tool::pads, "Tool row: + ADD A LAYER didn't open the Add a layer sheet");
+        addSheet.pick (pocket::AddLayerSheet::drums);
+        expect (! addOpen && page == Page::tool && tool == Tool::drums, "Add a layer: DRUMS didn't open the drums");
+        openAddLayer();
+        addSheet.pick (pocket::AddLayerSheet::synth);
+        expect (! addOpen && tool == Tool::synth, "Add a layer: SYNTH didn't open the synth");
         // the header bar: a swipe left is the next tool, right the previous
         showTool (Tool::loops, false);
         mouseDown (fake (*this, { 300.0f, (float) insets.getTop() + 20.0f }));
         mouseDrag (fake (*this, { 240.0f, (float) insets.getTop() + 22.0f }));
         mouseDrag (fake (*this, { 180.0f, (float) insets.getTop() + 22.0f }));
         mouseUp (fake (*this, { 180.0f, (float) insets.getTop() + 22.0f }));
-        expect (tool == Tool::song, "Header swipe: a swipe left on LOOPS didn't go to SONG");
+        expect (tool == Tool::pads, "Header swipe: a swipe left on LAYERS didn't go to PADS");
         mouseDown (fake (*this, { 120.0f, (float) insets.getTop() + 20.0f }));
         mouseDrag (fake (*this, { 200.0f, (float) insets.getTop() + 22.0f }));
         mouseUp (fake (*this, { 200.0f, (float) insets.getTop() + 22.0f }));
-        expect (tool == Tool::loops, "Header swipe: a swipe right on DRUMS didn't go back to LOOPS");
+        expect (tool == Tool::loops, "Header swipe: a swipe right on PADS didn't go back to LAYERS");
         report << "tools: sliding a finger along the row lights the tool under it and picks it on lift (up and away calls it off); "
                   "a swipe on the header goes to the next or previous tool\n";
         // the amber outline: only the brief flash, and never in a demo

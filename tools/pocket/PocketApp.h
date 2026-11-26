@@ -10,6 +10,7 @@
 #include "PocketDrawer.h"
 #include "PocketHold.h"
 #include "PocketAudio.h"
+#include "PocketCompanion.h"
 #include "PocketFrame.h"
 #include "PocketHost.h"
 #include "PocketIdeas.h"
@@ -378,6 +379,18 @@ private:
     TrackInSheet trackSheet;
     SoundBankSheet soundBank;
     pocket::RecSetupSheet recSetup;
+    pocket::AddLayerSheet addSheet;   // + ADD A LAYER
+    pocket::TakeSheet takeSheet;      // after a take: vibe, keep, try again, make it a pad
+    bool addOpen = false, takeOpen = false;
+    Tool takeTool = Tool::loops;      // what made the take the sheet is about (TRY AGAIN records with it again)
+    void setupCompanion();
+    juce::Rectangle<int> addLayerBounds() const;
+    juce::Rectangle<int> takeSheetBounds() const;
+    void openAddLayer();
+    void closeAddLayer();
+    void pickLayerSource (int choice);
+    void openTakeSheet (int layer, bool force = false);   // force: the screenshots
+    void closeTakeSheet();
     pocket::HeadphonesSheet headphones;
     pocket::ThumbBar thumb;
     pocket::ToolRow toolRow;

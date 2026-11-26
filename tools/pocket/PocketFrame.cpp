@@ -24,7 +24,7 @@ const char* toolName (Tool t)
 {
     switch (t)
     {
-        case Tool::loops: return "LOOPS";
+        case Tool::loops: return "LAYERS";
         case Tool::drums: return "DRUMS";
         case Tool::pads: return "PADS";
         case Tool::sampler: return "SAMPLER";
@@ -34,6 +34,7 @@ const char* toolName (Tool t)
         case Tool::drone: return "DRONE";
         case Tool::effects: return "EFFECTS";
         case Tool::song: return "SONG";
+        case Tool::add: return "ADD";
     }
     return "";
 }
@@ -52,6 +53,7 @@ juce::Colour toolColour (Tool t)
         case Tool::drone: return juce::Colour (0xff5fe3c6);   // the Mac's Drone, minty
         case Tool::effects: return juce::Colour (0xffec4e8a);
         case Tool::song: return juce::Colour (0xffc9a54e);   // brass
+        case Tool::add: return col::red;
     }
     return col::green;
 }
@@ -62,6 +64,12 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
     const juce::PathStrokeType stroke (2.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
     switch (t)
     {
+        case Tool::add:   // a plus
+        {
+            g.drawLine (c.x - 9, c.y, c.x + 9, c.y, 3.2f);
+            g.drawLine (c.x, c.y - 9, c.x, c.y + 9, 3.2f);
+            break;
+        }
         case Tool::loops:   // two tape reels
         {
             g.drawEllipse (c.x - 11, c.y - 5, 10, 10, 2.3f);
@@ -344,6 +352,18 @@ void ToolRow::paint (juce::Graphics& g)
         const auto t = tools[(size_t) i];
         const float wellW = juce::jmin (56.0f, cell.getWidth() - 4.0f);   // eight tools on a 375-point phone: 41 wide
         auto well = juce::Rectangle<float> (cell.getCentreX() - wellW * 0.5f, cell.getY() + 2, wellW, 40);
+        if (t == Tool::add)
+        {
+            // + ADD A LAYER: always a big magenta button, never "picked"
+            auto b = juce::Rectangle<float> (cell.getCentreX() - 30.0f, cell.getY() - 2.0f, 60.0f, 46.0f);
+            drawRaised (g, b, Look::red, false, 16.0f);
+            drawToolIcon (g, t, b.getCentre().translated (0.0f, -1.0f), juce::Colours::white);
+            g.setColour (col::ink);
+            g.setFont (spaced (condensedBold (labelHeight()), 0.06f));
+            g.drawFittedText ("ADD A LAYER", juce::Rectangle<float> (cell.getX() - 14.0f, well.getBottom() + 2, cell.getWidth() + 28.0f, 16).toNearestInt(),
+                              juce::Justification::centred, 1, 0.9f);
+            continue;
+        }
         if (on)
         {
             g.setColour (col::well);
