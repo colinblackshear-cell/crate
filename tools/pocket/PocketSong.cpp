@@ -63,6 +63,8 @@ void PocketSong::publish()
     pending.on = on.load();
     pending.gated = gated.load();
     pending.startBar = startBar.load();
+    pending.practiceFrom = practiceFrom;
+    pending.practiceTo = practiceTo;
     ++pendingVersion;
 }
 
@@ -72,6 +74,19 @@ double PocketSong::lengthBars() const
     for (const auto& b : blocks)
         end = juce::jmax (end, b.end());
     return end;
+}
+
+double PocketSong::songBars() const
+{
+    return juce::jmax (lengthBars(), trackBars());
+}
+
+void PocketSong::setPractice (double from, double to)
+{
+    from = juce::jmax (0.0, from);
+    practiceFrom = from;
+    practiceTo = to > from + kEps ? to : from;
+    publish();
 }
 
 bool PocketSong::layerUsed (int layer) const
@@ -96,7 +111,7 @@ int PocketSong::blockAt (int layer, double bar) const
 std::vector<PocketSong::Section> PocketSong::sections() const
 {
     std::vector<Section> out;
-    const double end = juce::jmax (1.0, std::ceil (lengthBars() - kEps));
+    const double end = juce::jmax (1.0, std::ceil (songBars() - kEps));
     if (markers.empty())
     {
         out.push_back ({ "Song", 0.0, end });
@@ -429,6 +444,8 @@ bool PocketSong::begin (double first, double runFrom, bool isFresh, juce::String
     const auto fail = [&] (const juce::String& s) { if (why != nullptr) *why = s; endBar = -1; return false; };
     if (isLive())
         return fail ("REC LIVE is already on.");
+    if (isPracticing())
+        setPractice (0, 0);   // REC LIVE writes the song as it goes: no going round
     liveLayers.clear();
     for (int l = 0; l < kLayers; ++l)
         if (host.hasLoop (l))
@@ -604,7 +621,7 @@ void PocketSong::tick()
     if (! isLive())
     {
         // The song plays to its end and stops there; the transport's STOP stops it too.
-        if (on.load() && host.clockRunning() && ! blocks.empty() && barNow() >= std::ceil (lengthBars() - kEps) - kEps)
+        if (on.load() && host.clockRunning() && ! isPracticing() && songBars() > kEps && barNow() >= std::ceil (songBars() - kEps) - kEps)
             stopPlaying();
         else if (on.load() && seenRunning && ! host.clockRunning())
         {
@@ -970,7 +987,23 @@ void PocketSong::update()
         liveVersion = pendingVersion;
     }
     liveOn = live.on;
-    liveStartBar = live.startBar;
+    if (! liveOn)
+        wrapShift = 0;
+    liveStartBar = live.startBar - wrapShift;
+    shownShift.store (wrapShift, std::memory_order_relaxed);
+}
+
+void PocketSong::wrap (double clockBeat)
+{
+    const double from = live.practiceFrom, to = live.practiceTo;
+    if (! liveOn || to <= from + kEps)
+        return;
+    for (int guard = 0; guard < 64 && barAt (clockBeat) >= to - 1.0e-9; ++guard)
+    {
+        wrapShift += to - from;
+        liveStartBar = live.startBar - wrapShift;
+    }
+    shownShift.store (wrapShift, std::memory_order_relaxed);
 }
 
 float PocketSong::gain (int layer, double bar) const

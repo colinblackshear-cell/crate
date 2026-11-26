@@ -30,6 +30,7 @@
 #include "RigSounds.h"
 #include "RigDirty.h"
 #include "RigLoopLab.h"
+#include "RigFriendTrack.h"
 #include "core/SafetyLimiter.h"
 #include "core/control/Controllers.h"
 #include "core/visuals/VisualTap.h"
@@ -112,6 +113,21 @@ public:
     RigLooper& getLooper() { return looper; }
     // Loop Lab: a layer opened to warp its timing, tempo and pitch (RigLoopLab.h).
     RigLoopLab& getLoopLab() { return loopLab; }
+    // A friend's track (a whole song someone sent you) playing under everything, locked to the bars
+    // (RigFriendTrack.h). Saved with the show.
+    RigFriendTrack& getFriendTrack() { return friendTrack; }
+    const RigFriendTrack& getFriendTrack() const { return friendTrack; }
+    // Brings one in (message thread): plays from bar 1, sets the tempo and time signature to its
+    // own (when `setTempo`), and its key on the Chords (key >= 0, when `setKey`). Says what happened.
+    juce::String bringInFriendTrack (std::shared_ptr<const juce::AudioBuffer<float>>, const RigFriendTrack::Info&, bool setTempo, bool setKey);
+    // Practice loop: bars [fromBar, toBar) over and over, with the song (to work out a part over his
+    // track). Starts the clock there if it's stopped. Off: plays on.
+    void practiceLoop (double fromBar, double toBar);
+    void practiceOff() { timeline.cycle = false; controlsMoved = true; }
+    bool isPracticing() const { return timeline.cycle.load() && timeline.on.load(); }
+    // How long the song is, in bars: its blocks or the friend's track, whichever ends later.
+    double songLengthBars() const;
+    double songLengthBarsOfTrack() const;   // the friend's track's part of that (0 for none)
     // Quantize, for every tool and loop (its settings are saved with the show and kept by New song).
     RigQuantizer& getQuantizer() { return quantizer; }
     RigScenes& getScenes() { return scenes; }
@@ -549,6 +565,8 @@ private:
     crate::controllers::Setup controllers { crate::controllers::Setup::defaultFile() };
     RigLooper looper;
     RigLoopLab loopLab { looper, transport };
+    RigFriendTrack friendTrack;
+    std::atomic<double> friendBars { 0.0 };   // how many of the clock's bars it plays (the timer keeps it)
     // Gives the looper's recording layers more room as they go, and finishes loop bank switches
     // (message thread).
     struct LoopRoom : juce::Timer
@@ -557,6 +575,8 @@ private:
         void timerCallback() override
         {
             engine.looper.maintain();
+            engine.friendTrack.service();
+            engine.friendBars = engine.friendTrack.hasAudio() ? engine.songLengthBarsOfTrack() : 0.0;
             engine.loopLab.tick();
             engine.serviceLoopBanks();
             engine.quantizer.service();
@@ -667,7 +687,7 @@ private:
 
     // Audio-thread buffers, sized in prepare().
     juce::AudioBuffer<float> mpcBuffer, samplerBuffer, vocoderBuffer, bassBuffer, synthBuffer, drumsBuffer, inputBuffer, rawInputBuffer, loopsBuffer, mixBuffer, clickBuffer,
-        droneBuffer, droneFeedBuffer;
+        droneBuffer, droneFeedBuffer, friendBuffer;
     // (droneMidi: what the keys play, for the drone's Follow keys; empty while that's off.)
     juce::MidiBuffer midiIn, mpcMidi, samplerMidi, vocoderMidi, bassMidi, synthMidi, drumsMidi, droneMidi;
     double sampleRate = 0;

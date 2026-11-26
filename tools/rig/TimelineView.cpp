@@ -1239,7 +1239,7 @@ bool TimelineView::recordSongRange (const juce::File& folder, double fromBar, do
     const auto fail = [why] (const juce::String& text) { if (why != nullptr) *why = text; return false; };
     if (recordingSong)
         return fail ("The song is already being recorded.");
-    if (timeline.isEmpty())
+    if (timeline.isEmpty() && ! engine.getFriendTrack().hasAudio())
         return fail ("Put the song on the timeline first.");
     if (engine.getRecorder().getState() != RigRecorder::State::idle)
         return fail ("The set is already recording (Rec, top bar). Stop that first.");

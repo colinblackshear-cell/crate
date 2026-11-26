@@ -1,6 +1,7 @@
 #include "SongScreen.h"
 
 #include "PocketLoopTools.h"
+#include "core/TrackAnalysis.h"
 
 #include <cmath>
 
@@ -91,9 +92,10 @@ void SongScreen::pressPlay()
         song.stopPlaying();
         return repaint();
     }
-    if (song.blocks.empty())
+    if (song.blocks.empty() && ! hasTrack())
         return say ("Nothing in the song yet: REC LIVE, or tap a lane to put its loop there.");
-    song.play (playFrom);
+    song.play (song.isPracticing() && (playFrom < song.practiceRange().getStart() || playFrom >= song.practiceRange().getEnd())
+                   ? song.practiceRange().getStart() : playFrom);
     repaint();
 }
 
@@ -147,6 +149,13 @@ void SongScreen::layout()
         row (wellR.getBottom() + gap, { { 1.0f, markId }, { 1.0f, cancelId }, { 1.3f, keepId } });
         return;
     }
+
+    // the friend's track: its chip (tap: tempo, bar 1, key...), M, PRACTICE, SEND BACK
+    if (hasTrack())
+        row (y, { { 1.7f, trackId }, { 0.5f, trackMuteId }, { 1.05f, practiceId }, { 1.15f, sendBackId } });
+    else
+        row (y, { { 1.0f, trackId } });
+    y += rowH + gap;
 
     const float toolsH = (rowH + gap) * 3.0f;
     wellR = { x0, y, iw, juce::jmax (150.0f, h - y - toolsH - 4.0f) };
@@ -346,6 +355,29 @@ void SongScreen::press (int id)
             break;
         }
         case bounceId: showBounceMenu(); break;
+        case trackId:
+            if (! hasTrack())
+            {
+                if (canPutBackTrack && canPutBackTrack())
+                    showTrackMenu();
+                else if (onBringInTrack)
+                    onBringInTrack();
+            }
+            else
+                showTrackMenu();
+            break;
+        case trackMuteId:
+        {
+            auto& t = loops.track();
+            t.mute = ! t.mute.load();
+            say (t.mute.load() ? "The track is muted: only your parts play." : "The track plays again.");
+            if (onChanged)
+                onChanged();
+            repaint();
+            break;
+        }
+        case practiceId: showPracticeMenu(); break;
+        case sendBackId: showSendBackMenu(); break;
         case zoomOutId: barW = juce::jmax (6.0f, barW / 1.5f); repaint(); break;
         case zoomInId: barW = juce::jmin (90.0f, barW * 1.5f); repaint(); break;
         default:
@@ -536,9 +568,10 @@ void SongScreen::mouseUp (const juce::MouseEvent& e)
 void SongScreen::timerCallback()
 {
     const bool live = song.isLive();
-    if (live != shownLive || song.edits() != shownEdits)
+    if (live != shownLive || song.edits() != shownEdits || hasTrack() != shownTrack)
     {
         shownLive = live;
+        shownTrack = hasTrack();
         shownEdits = song.edits();
         if (! juce::isPositiveAndBelow (selected, (int) song.blocks.size()))
             selected = -1;
@@ -548,6 +581,8 @@ void SongScreen::timerCallback()
     }
     if (! isVisible())
         return;
+    if (hasTrack())
+        loops.track().service();
     if (song.isOn() || live)
     {
         // keep the playhead in view
@@ -571,12 +606,22 @@ juce::String SongScreen::statusText() const
         const double bar = now - (song.isPunch() ? 0.0 : song.liveStart());
         return U8("\xe2\x97\x8f REC LIVE \xc2\xb7 BAR ") + barNumber (bar) + U8(" \xc2\xb7 ") + juce::String (song.changes()) + " CHANGES";
     }
-    const double len = std::ceil (song.lengthBars() - 1.0e-6);
+    const double len = std::ceil (song.songBars() - 1.0e-6);
     juce::String take = juce::isPositiveAndBelow (song.currentTake(), (int) song.takes().size()) ? song.takes()[(size_t) song.currentTake()].name.toUpperCase()
                                                                                                  : juce::String ("SONG");
+    if (song.blocks.empty() && hasTrack())
+        take = "TRACK";
+    if (song.isPracticing())
+    {
+        const auto r = song.practiceRange();
+        const auto bars = barNumber (r.getStart()) + "-" + juce::String ((int) std::round (r.getEnd()));
+        if (song.isOn())
+            return U8("\xe2\x86\xbb PRACTICE ") + bars + U8(" \xc2\xb7 BAR ") + barNumber (song.barNow());
+        return U8("\xe2\x86\xbb PRACTICE ") + bars + U8(" \xc2\xb7 PLAY TO START");
+    }
     if (song.isOn())
         return U8("\xe2\x96\xb6 ") + take + U8(" \xc2\xb7 BAR ") + barNumber (song.barNow()) + " OF " + juce::String ((int) len);
-    if (song.blocks.empty())
+    if (song.blocks.empty() && ! hasTrack())
         return "NO SONG YET";
     return take + U8(" \xc2\xb7 ") + juce::String ((int) len) + (len == 1 ? " BAR" : " BARS") + U8(" \xc2\xb7 FROM BAR ") + barNumber (playFrom);
 }
@@ -641,6 +686,10 @@ void SongScreen::paint (juce::Graphics& g)
             }
             case endId: drawChip (g, h.r, "REC FROM END", false, down, 13.0f); break;
             case bounceId: drawChip (g, h.r, U8("BOUNCE \xe2\x96\xbe"), false, down, 13.0f); break;
+            case trackId: paintTrackChip (g, h.r, down); break;
+            case trackMuteId: drawChip (g, h.r, "M", loops.track().mute.load(), down, 15.0f, col::red); break;
+            case practiceId: drawChip (g, h.r, song.isPracticing() ? U8("\xe2\x86\xbb ON \xe2\x96\xbe") : U8("PRACTICE \xe2\x96\xbe"), song.isPracticing(), down, 13.0f, col::green); break;
+            case sendBackId: drawChip (g, h.r, U8("SEND BACK \xe2\x96\xbe"), false, down, 13.0f); break;
             case zoomOutId: drawChip (g, h.r, U8("\xe2\x88\x92"), false, down, 18.0f); break;
             case zoomInId: drawChip (g, h.r, "+", false, down, 18.0f); break;
             default: break;
@@ -756,6 +805,26 @@ void SongScreen::paintLanes (juce::Graphics& g)
         }
     }
 
+    // the friend's track under the ruler, to its end; PRACTICE's bars on the ruler
+    if (const double tb = song.trackBars(); tb > 1.0e-6)
+    {
+        const float x1 = xOfBar (0.0), x2 = xOfBar (tb);
+        g.setColour (col::blue.withAlpha (0.75f));
+        g.fillRect (juce::Rectangle<float> (x1, rulerR.getBottom() - 4.0f, x2 - x1, 3.0f));
+        g.setColour (col::blue.withAlpha (0.06f));
+        g.fillRect (juce::Rectangle<float> (x1, lanesR.getY(), x2 - x1, lanesR.getHeight()));
+    }
+    if (song.isPracticing())
+    {
+        const auto r = song.practiceRange();
+        const float x1 = xOfBar (r.getStart()), x2 = xOfBar (r.getEnd());
+        g.setColour (col::green.withAlpha (0.12f));
+        g.fillRect (juce::Rectangle<float> (x1, rulerR.getY(), x2 - x1, lanesR.getBottom() - rulerR.getY()));
+        g.setColour (col::green.withAlpha (0.8f));
+        g.drawVerticalLine ((int) x1, rulerR.getY(), lanesR.getBottom());
+        g.drawVerticalLine ((int) x2, rulerR.getY(), lanesR.getBottom());
+    }
+
     // the blocks
     for (int i = 0; i < (int) song.blocks.size(); ++i)
     {
@@ -811,7 +880,7 @@ void SongScreen::paintLanes (juce::Graphics& g)
     g.setColour (song.isOn() ? col::green : col::amber);
     g.fillRect (hx - 1.0f, rulerR.getY(), 2.0f, lanesR.getBottom() - rulerR.getY());
 
-    if (song.blocks.empty())
+    if (song.blocks.empty() && ! hasTrack())
     {
         g.setColour (col::cream.withAlpha (0.8f));
         g.setFont (small (14.0f));
@@ -875,5 +944,165 @@ void SongScreen::showBounceMenu()
                          o.section = safe->section;
                          if (safe->onBounce)
                              safe->onBounce (o);
+                     });
+}
+
+//==============================================================================
+// The friend's track
+void SongScreen::paintTrackChip (juce::Graphics& g, juce::Rectangle<float> r, bool down)
+{
+    const auto& t = loops.track();
+    if (! t.hasAudio())
+    {
+        drawChip (g, r, canPutBackTrack && canPutBackTrack() ? U8("+ FRIEND'S TRACK \xe2\x96\xbe") : "+ BRING IN A FRIEND'S TRACK", false, down, 13.0f);
+        return;
+    }
+    drawRaised (g, r, Look::dark, down, 10.0f);
+    const auto info = t.getInfo();
+    auto inner = r.reduced (9.0f, 3.0f);
+    // where it is (a thin line along the bottom)
+    if (const double bars = t.lengthBars(); bars > 0.0 && song.isOn())
+    {
+        const float f = (float) juce::jlimit (0.0, 1.0, song.barNow() / bars);
+        g.setColour (col::blue.withAlpha (0.8f));
+        g.fillRect (juce::Rectangle<float> (r.getX() + 6.0f, r.getBottom() - 5.0f, (r.getWidth() - 12.0f) * f, 2.0f));
+    }
+    g.setColour (col::creamLight);
+    g.setFont (condensedBold (13.0f));
+    g.drawText (info.name.toUpperCase(), inner.removeFromTop (inner.getHeight() * 0.55f), juce::Justification::bottomLeft, true);
+    g.setColour (t.mute.load() ? col::inkFaint : col::blue.brighter (0.4f));
+    g.setFont (condensed (12.0f));
+    juce::String detail = juce::String (info.bpm, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") + " BPM";
+    if (info.key >= 0)
+        detail << U8(" \xc2\xb7 ") << crate::TrackAnalysis::keyName (info.key, info.minor).toUpperCase();
+    detail << U8(" \xe2\x96\xbe");
+    g.drawText (detail, inner, juce::Justification::topLeft, true);
+}
+
+void SongScreen::showTrackMenu()
+{
+    if (song.isLive())
+        return say ("After STOP + KEEP.");
+    juce::PopupMenu m;
+    const bool has = hasTrack();
+    m.addSectionHeader ("FRIEND'S TRACK");
+    if (has)
+    {
+        const auto info = loops.track().getInfo();
+        m.addItem (-1, info.name + U8(" \xc2\xb7 ") + juce::String ((int) std::ceil (loops.track().lengthBars() - 1.0e-6)) + " bars", false);
+        m.addItem (1, "Tempo, bar 1, key...");
+        m.addItem (2, "Bring in another track...");
+        m.addItem (3, "Take it out");
+    }
+    else
+    {
+        m.addItem (2, "Bring in a track from Files...");
+        if (canPutBackTrack && canPutBackTrack())
+            m.addItem (4, "Put it back");
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (hitRect (trackId).toNearestInt())),
+                     [safe = juce::Component::SafePointer<SongScreen> (this)] (int r)
+                     {
+                         if (safe == nullptr)
+                             return;
+                         auto call = [] (const std::function<void()>& f) { if (f) f(); };
+                         if (r == 1) call (safe->onChangeTrack);
+                         if (r == 2) call (safe->onBringInTrack);
+                         if (r == 3)
+                         {
+                             safe->song.setPractice (0, 0);
+                             call (safe->onTakeOutTrack);
+                         }
+                         if (r == 4) call (safe->onPutBackTrack);
+                         if (safe != nullptr)
+                             safe->refresh();
+                     });
+}
+
+void SongScreen::showPracticeMenu()
+{
+    if (song.isLive())
+        return say ("PRACTICE after STOP + KEEP.");
+    const auto secs = song.sections();
+    juce::PopupMenu m;
+    m.addSectionHeader ("PRACTICE: ROUND AND ROUND");
+    for (int i = 0; i < (int) secs.size(); ++i)
+    {
+        const auto& sc = secs[(size_t) i];
+        const bool on = song.isPracticing() && std::abs (song.practiceRange().getStart() - sc.start) < 1.0e-6
+                        && std::abs (song.practiceRange().getEnd() - sc.end) < 1.0e-6;
+        m.addItem (100 + i, sc.name + U8(" \xc2\xb7 bars ") + barNumber (sc.start) + "-" + juce::String ((int) std::round (sc.end)), true, on);
+    }
+    const double from = std::floor (playFrom + 1.0e-6);
+    m.addItem (10, "4 bars from the playhead (bar " + barNumber (from) + ")");
+    m.addItem (11, "8 bars from the playhead");
+    if (song.isPracticing())
+    {
+        m.addSeparator();
+        m.addItem (1, "Practice off");
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (hitRect (practiceId).toNearestInt())),
+                     [safe = juce::Component::SafePointer<SongScreen> (this), secs, from] (int r)
+                     {
+                         if (safe == nullptr || r <= 0)
+                             return;
+                         auto& sg = safe->song;
+                         if (r == 1)
+                         {
+                             sg.setPractice (0, 0);
+                             safe->say ("Practice off: the song plays on to its end.");
+                             return safe->refresh();
+                         }
+                         double a = from, b = from + (r == 10 ? 4.0 : 8.0);
+                         if (r >= 100 && r - 100 < (int) secs.size())
+                         {
+                             a = secs[(size_t) (r - 100)].start;
+                             b = secs[(size_t) (r - 100)].end;
+                         }
+                         sg.setPractice (a, b);
+                         safe->playFrom = a;
+                         sg.play (a);
+                         safe->say ("Practice: bars " + barNumber (a) + "-" + juce::String ((int) std::round (b)) + " round and round. Tap STOP when you're done.");
+                         safe->refresh();
+                     });
+}
+
+SongScreen::Bounce SongScreen::sendBackPreset (int which) const
+{
+    Bounce b;
+    b.what = Bounce::song;
+    b.sendBack = true;
+    b.withTrack = which == 2;
+    b.eachLayer = which == 0;
+    b.wav = which != 2;
+    b.mp3 = which == 2;
+    b.tailSeconds = bounceSettings.tailSeconds;
+    return b;
+}
+
+void SongScreen::showSendBackMenu()
+{
+    if (song.isLive())
+        return say ("SEND BACK after STOP + KEEP.");
+    juce::PopupMenu m;
+    m.addSectionHeader ("SEND BACK");
+    m.addItem (1, "My parts, each (WAVs, lined up with his file)");
+    m.addItem (2, "My parts mixed (one WAV, lined up)");
+    m.addItem (3, "Everything, to listen to (MP3)");
+    m.addSeparator();
+    m.addItem (20, "TO MAC: the last bounce");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (hitRect (sendBackId).toNearestInt())),
+                     [safe = juce::Component::SafePointer<SongScreen> (this)] (int r)
+                     {
+                         if (safe == nullptr || r <= 0)
+                             return;
+                         if (r == 20)
+                         {
+                             if (safe->onBounceToMac)
+                                 safe->onBounceToMac();
+                             return;
+                         }
+                         if (safe->onBounce)
+                             safe->onBounce (safe->sendBackPreset (r - 1));
                      });
 }

@@ -55,6 +55,20 @@ BouncePanel::BouncePanel (RigEngine& e, RigBounce::Options start) : engine (e), 
     vintage::setLit (bounceButton, vintage::Lit::play);
     bounceButton.setToggleState (true, juce::dontSendNotification);
 
+    trackRow = RigBounce::hasTrack (engine);
+    eachPartButton.setTooltip ("Each of your parts as its own file, without his track, all starting where his mixdown starts "
+                               "(plus a mix of your parts). Plays the song once in real time.");
+    eachPartButton.onClick = [this] { pickSendBack (SendBack::myPartsEach); };
+    mixedPartsButton.setTooltip ("One file of everything you added, without his track. Plays the song once in real time.");
+    mixedPartsButton.onClick = [this] { pickSendBack (SendBack::myPartsMixed); };
+    listenButton.setTooltip ("His track and your parts in one MP3, to listen to. Plays the song once in real time.");
+    listenButton.onClick = [this] { pickSendBack (SendBack::everythingToListen); };
+    for (auto* b : { &eachPartButton, &mixedPartsButton, &listenButton })
+    {
+        addChildComponent (b);
+        b->setVisible (trackRow);
+    }
+
     for (auto* c : std::initializer_list<juce::Component*> { &songButton, &loopsButton, &sectionBox, &mixButton, &eachButton, &allButton, &wavButton,
                                                              &mp3Button, &dryButton, &tailBox, &bounceButton })
         addAndMakeVisible (c);
@@ -63,13 +77,31 @@ BouncePanel::BouncePanel (RigEngine& e, RigBounce::Options start) : engine (e), 
     mp3Button.setEnabled (mp3::available());
     if (options.what == What::section && ! juce::isPositiveAndBelow (options.section, (int) secs.size()))
         options.what = What::song;
-    setSize (kWidth, kHeight);
+    setSize (kWidth, kHeight + (trackRow ? kTrackRowHeight : 0));
+    update();
+}
+
+void BouncePanel::pickSendBack (SendBack s)
+{
+    options.what = What::song;
+    options.split = Split::everything;
+    options.withTrack = s == SendBack::everythingToListen;
+    options.mixOnly = s != SendBack::myPartsEach;
+    if (s == SendBack::everythingToListen && mp3::available())
+    {
+        options.mp3 = true;
+        options.wav = false;
+    }
+    else if (s != SendBack::everythingToListen)
+        options.wav = true;
     update();
 }
 
 void BouncePanel::pickWhat (What w)
 {
     options.what = w;
+    options.withTrack = true;   // (the Send back row is its own choice)
+    options.mixOnly = false;
     if (w == What::loops && options.split == Split::everything)
         options.split = Split::eachLoop;   // the tools play the song; the loops on their own are instant
     update();
@@ -78,6 +110,8 @@ void BouncePanel::pickWhat (What w)
 void BouncePanel::pickSection (int s)
 {
     options.what = What::section;
+    options.withTrack = true;
+    options.mixOnly = false;
     options.section = s;
     update();
 }
@@ -85,6 +119,8 @@ void BouncePanel::pickSection (int s)
 void BouncePanel::pickSplit (Split s)
 {
     options.split = s;
+    options.withTrack = true;
+    options.mixOnly = false;
     if (s == Split::everything && options.what == What::loops)
         options.what = What::song;
     update();
@@ -124,6 +160,10 @@ void BouncePanel::update()
     lit (mp3Button, options.mp3);
     lit (dryButton, options.dry);
     allButton.setButtonText (options.split == Split::everything ? "Everything (real time)" : "Everything");
+    const bool sendBack = options.what == What::song && options.split == Split::everything;
+    lit (eachPartButton, sendBack && ! options.withTrack && ! options.mixOnly);
+    lit (mixedPartsButton, sendBack && ! options.withTrack && options.mixOnly);
+    lit (listenButton, sendBack && options.withTrack && options.mixOnly);
     if (onChange)
         onChange (options);
     repaint (statusArea);
@@ -136,6 +176,8 @@ void BouncePanel::paint (juce::Graphics& g)
     vintage::engraved (g, "WHAT", whatLabel, juce::Justification::centredLeft, 14.0f);
     vintage::engraved (g, "SPLIT", splitLabel, juce::Justification::centredLeft, 14.0f);
     vintage::engraved (g, "FORMAT", formatLabel, juce::Justification::centredLeft, 14.0f);
+    if (trackRow)
+        vintage::engraved (g, "SEND BACK", trackLabel, juce::Justification::centredLeft, 14.0f);
     auto box = statusArea.toFloat();
     vintage::drawLcd (g, box);
     auto text = RigBounce::describe (engine, options);
@@ -160,6 +202,8 @@ void BouncePanel::resized()
     row (whatLabel, { { &songButton, 110 }, { &sectionBox, 200 }, { &loopsButton, 200 } });
     row (splitLabel, { { &mixButton, 110 }, { &eachButton, 180 }, { &allButton, 220 } });
     row (formatLabel, { { &wavButton, 80 }, { &mp3Button, 80 }, { &dryButton, 80 }, { &tailBox, 120 } });
+    if (trackRow)
+        row (trackLabel, { { &eachPartButton, 160 }, { &mixedPartsButton, 160 }, { &listenButton, 160 } });
     statusArea = r.removeFromTop (44);
     r.removeFromTop (12);
     bounceButton.setBounds (r.removeFromTop (48).removeFromRight (200));

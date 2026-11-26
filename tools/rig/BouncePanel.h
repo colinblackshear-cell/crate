@@ -23,11 +23,15 @@ public:
     void pickSplit (RigBounce::Split);
     void setFormats (bool wav, bool mp3);
     void pressBounce();
+    // Over a friend's track (its row shows only then): the three ways to send it back.
+    enum class SendBack { myPartsEach, myPartsMixed, everythingToListen };
+    void pickSendBack (SendBack);
+    bool showsTrackRow() const { return trackRow; }
 
     std::function<void (const RigBounce::Options&)> onBounce;   // the panel closes after it
     std::function<void (const RigBounce::Options&)> onChange;   // remembered for next time
 
-    static constexpr int kWidth = 620, kHeight = 340;
+    static constexpr int kWidth = 620, kHeight = 340, kTrackRowHeight = 48;
 
 private:
     void update();
@@ -40,7 +44,9 @@ private:
     juce::TextButton wavButton { "WAV" }, mp3Button { "MP3" }, dryButton { "Dry" };
     juce::ComboBox tailBox;
     juce::TextButton bounceButton { "Bounce" };
-    juce::Rectangle<int> titleArea, whatLabel, splitLabel, formatLabel, statusArea;
+    juce::TextButton eachPartButton { "My parts, each" }, mixedPartsButton { "My parts mixed" }, listenButton { "All, to listen" };
+    bool trackRow = false;
+    juce::Rectangle<int> titleArea, whatLabel, splitLabel, formatLabel, trackLabel, statusArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BouncePanel)
 };

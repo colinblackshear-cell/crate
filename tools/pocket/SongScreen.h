@@ -17,6 +17,9 @@
 //                 its loop), FADE IN, FADE OUT and LEVEL.
 //   Sections      tap a section on the ruler to pick it: PUNCH plays from 2 bars before and records those bars again.
 //   TAKES         every run of REC LIVE, to switch between; the count-in; REC LIVE from the end.
+//   TRACK         a friend's song to play over (it plays from bar 1 under the layers): bring one in from Files,
+//                 its tempo, bar 1 and key, M, PRACTICE (a section round and round) and SEND BACK (your parts,
+//                 lined up with his file, or everything as an MP3 to listen to).
 // The thumb bar's REC is REC LIVE here (PocketApp drives it).
 class SongScreen : public juce::Component, private juce::Timer
 {
@@ -34,12 +37,22 @@ public:
         int section = -1;
         bool eachLayer = true, wav = true, mp3 = true;
         double tailSeconds = 2.0;
+        bool withTrack = true;    // a friend's track in the mix (off: only your parts, lined up with his file)
+        bool sendBack = false;    // SEND BACK: named for the track, with a note on lining it up
     };
     Bounce bounceSettings;
     std::function<void (const Bounce&)> onBounce;
     std::function<void()> onBounceToMac;
     void showBounceMenu();
+    void showSendBackMenu();
+    // SEND BACK's three: 0 my parts each (+ mixed), 1 my parts mixed, 2 everything as an MP3 to listen to.
+    Bounce sendBackPreset (int which) const;
 
+    // A friend's track (the looper's): bring one in, change it, take it out, put it back. The app does these.
+    std::function<void()> onBringInTrack, onChangeTrack, onTakeOutTrack, onPutBackTrack;
+    std::function<bool()> canPutBackTrack;
+    void showTrackMenu();
+    void showPracticeMenu();
     // What the buttons do (also for the thumb bar and the self-checks).
     void pressRecLive();
     void pressPlay();
@@ -55,6 +68,7 @@ public:
     {
         none = 0, recId = 1, playId, takesId, markId, cancelId, keepId,
         splitId, copyId, deleteId, slipId, fadeInId, fadeOutId, levelId, punchId, endId, zoomOutId, zoomInId, bounceId,
+        trackId, trackMuteId, practiceId, sendBackId,
         tileBase = 40, laneArea = 60, rulerArea = 61
     };
     void press (int id);
@@ -86,6 +100,8 @@ private:
     void paintLanes (juce::Graphics&);
     void paintTiles (juce::Graphics&);
     bool hasLoop (int layer) const;
+    bool hasTrack() const { return loops.track().hasAudio(); }
+    void paintTrackChip (juce::Graphics&, juce::Rectangle<float>, bool down);
     void say (const juce::String& s) { if (toast) toast (s); }
 
     pocket::PocketSong& song;
@@ -97,7 +113,7 @@ private:
     double playFrom = 0, scroll = 0;
     float barW = 22.0f;
     int shownEdits = -1;
-    bool shownLive = false;
+    bool shownLive = false, shownTrack = false;
 
     Drag drag = Drag::none;
     juce::Point<float> downAt;

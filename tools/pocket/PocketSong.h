@@ -56,6 +56,7 @@ public:
         std::function<bool()> clockRunning;
         std::function<void (bool)> setClock;            // starts (from beat 0) or stops the clock
         std::function<void (double untilBeat)> countIn; // the click counts until this beat (-1: none)
+        std::function<double()> trackBars;              // a friend's track under the song: how many bars it plays (0: none)
     };
     explicit PocketSong (Host h) : host (std::move (h)) {}
 
@@ -66,6 +67,9 @@ public:
     void changed();
     int edits() const { return editCount; }
     double lengthBars() const;               // where the last block (or the last section) ends
+    // How far the song plays: its blocks, or a friend's track under it if that's longer.
+    double songBars() const;
+    double trackBars() const { return host.trackBars ? juce::jmax (0.0, host.trackBars()) : 0.0; }
     bool layerUsed (int layer) const;
     int blockAt (int layer, double bar) const;
     // Sections from the markers: [start, end) and names. None: one section, the whole song.
@@ -90,7 +94,11 @@ public:
     void play (double fromBar = 0);          // the song in charge, from that bar
     void stopPlaying();
     bool isOn() const { return on.load(); }
-    double barNow() const { return startBar.load() + host.clockBeat() / kBeatsPerBar; }
+    double barNow() const { return startBar.load() + host.clockBeat() / kBeatsPerBar - shownShift.load(); }
+    // PRACTICE: the song plays bars [from, to) round and round (to <= from: off). REC LIVE and PUNCH turn it off.
+    void setPractice (double from, double to);
+    bool isPracticing() const { return practiceTo > practiceFrom; }
+    juce::Range<double> practiceRange() const { return { practiceFrom, juce::jmax (practiceFrom, practiceTo) }; }
     // The timer's part (~30 Hz): Rec live, and the song stopping a bar after its end.
     void tick();
 
@@ -136,6 +144,8 @@ public:
     void update();
     bool running() const { return liveOn; }   // after update(): the song decides what plays
     double barAt (double clockBeat) const { return liveStartBar + clockBeat / kBeatsPerBar; }
+    // PRACTICE: back to its first bar once the clock reaches its end (each block, before barAt).
+    void wrap (double clockBeat);
     float gain (int layer, double bar) const;
     // The clock beat a layer's loop has its top on, inside the block at `bar` (or -1e9: none).
     double originBeat (int layer, double bar) const;
@@ -188,12 +198,16 @@ private:
         bool on = false;
         juce::uint32 gated = 0;
         double startBar = 0;
+        double practiceFrom = 0, practiceTo = 0;
     };
     juce::SpinLock lock;
     Snapshot pending, live;
     int pendingVersion = 0, liveVersion = 0;
     bool liveOn = false;
     double liveStartBar = 0;
+    double wrapShift = 0;                         // bars PRACTICE has gone back, since the song started
+    std::atomic<double> shownShift { 0.0 };       // the same, for barNow()
+    double practiceFrom = 0, practiceTo = 0;      // the message thread's
     void publish();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PocketSong)

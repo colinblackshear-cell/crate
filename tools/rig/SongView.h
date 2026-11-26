@@ -9,6 +9,8 @@
 #include "RigSong.h"
 
 class TimelineView;
+class FriendTrackStrip;
+class FriendTrackSheet;
 
 // The Song screen (F3). Your song is a row of sections (Intro, Verse, Chorus...) left to right,
 // each as wide as its bars, over a bar ruler and the click. Down the side are the tracks you're
@@ -126,6 +128,14 @@ public:
     std::function<juce::String()> getShowName;
     bool revealAfterBounce = true;   // opens the folder in the Finder (the tests turn it off)
 
+    // A friend's track (its row along the top): pick a file and bring it in, the sheet for one that's
+    // in (tempo, bar 1, key), and Send it back (the Bounce panel set for your parts only).
+    void bringInTrack();
+    void bringInTrackFile (const juce::File&);
+    void changeTrack();
+    void showSendBack();
+    FriendTrackStrip* getTrackStrip() const { return trackStrip.get(); }
+
     // The lanes the board shows, top to bottom.
     std::vector<int> shownLanes() const;
     bool showingAllLanes = false;
@@ -168,6 +178,9 @@ private:
     bool wasLive = false;
     int lastTakes = -1, lastTake = -2, keptTake = -2;
     std::unique_ptr<TimelineView> bars;
+    std::unique_ptr<FriendTrackStrip> trackStrip;
+    std::shared_ptr<juce::FileChooser> trackChooser;
+    void showTrackSheet (std::unique_ptr<FriendTrackSheet>);
     juce::Viewport viewport;
     juce::Rectangle<int> titleArea, stepsArea, boardArea, moreLanesArea, emptyArea, addLayerArea;
     int selSection = -1, selLane = -1;

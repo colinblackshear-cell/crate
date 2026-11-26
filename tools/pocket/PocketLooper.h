@@ -8,6 +8,7 @@
 #include "PocketAudio.h"
 #include "core/Warp.h"
 #include "PocketSong.h"
+#include "RigFriendTrack.h"
 
 #include <array>
 #include <atomic>
@@ -115,6 +116,11 @@ public:
     // The SONG tool: while its song plays, each layer plays only inside its blocks (with their fades, level
     // and slip). Not owned. Set before the sound starts.
     void setSong (PocketSong* s) { song = s; }
+    // A friend's track (the Mac's RigFriendTrack): a whole song that plays under everything, locked to the
+    // bars (the song's bars while the SONG plays, the clock's otherwise). Heard, never recorded into a layer
+    // (MASTER resamples without it): a bounce adds it itself. Message thread, but its level and mute any time.
+    RigFriendTrack& track() { return friendTrack; }
+    const RigFriendTrack& track() const { return friendTrack; }
     // The song's REC LIVE count-in: the click counts until this beat (-1: none).
     void setSongCountIn (double untilBeat) { songCountIn = untilBeat; }
     // The count-in, in bars (0, 1 or 2), for a recording that starts the clock. The click plays through it.
@@ -286,6 +292,8 @@ private:
     std::array<Instrument*, kInstruments> instruments {};
     DroneVoice* drone = nullptr;
     PocketSong* song = nullptr;
+    RigFriendTrack friendTrack;
+    std::vector<float> trackL, trackR;
     std::atomic<double> songCountIn { -1.0 };
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;

@@ -4,6 +4,7 @@
 #include "RigEngine.h"
 #include "RigExport.h"
 #include "RigSong.h"
+#include "core/TrackAnalysis.h"
 
 namespace
 {
@@ -75,7 +76,8 @@ juce::Range<double> RigBounce::barsFor (RigEngine& engine, const Options& o)
     switch (o.what)
     {
         case What::song:
-            return { 0.0, (double) RigExport::timelineBars (engine) };
+            // (a friend's track is the song too: to its end)
+            return { 0.0, juce::jmax ((double) RigExport::timelineBars (engine), std::ceil (engine.songLengthBarsOfTrack() - 1.0e-3)) };
         case What::section:
         {
             const auto secs = rigsong::sections (timeline);
@@ -125,27 +127,79 @@ juce::Array<int> RigBounce::loopsFor (RigEngine& engine, const Options& o)
     return out;
 }
 
+bool RigBounce::hasTrack (RigEngine& engine)
+{
+    return engine.getFriendTrack().hasAudio();
+}
+
+juce::String RigBounce::writeNoteForFriend (RigEngine& engine, const Options& o, const juce::File& folder)
+{
+    if (! hasTrack (engine) || o.what == What::loops)
+        return {};
+    const auto info = engine.getFriendTrack().getInfo();
+    const double bpm = bpmOf (engine);
+    juce::String text;
+    text << "From Kaleidobox, over " << (info.name.isNotEmpty() ? info.name : juce::String ("your track")) << "\n\n"
+         << "Tempo: " << juce::String (bpm, 1).trimCharactersAtEnd ("0").trimCharactersAtEnd (".") << " BPM, "
+         << engine.getTransport().getBeatsPerBar() << "/4";
+    if (juce::isPositiveAndBelow (info.key, 12))
+        text << ", " << crate::TrackAnalysis::keyName (info.key, info.minor);
+    text << "\n\n";
+    if (o.what == What::song)
+        text << "Every file here starts at the same moment as your mixdown. Put them at the same place as the mixdown "
+                "in your session (its start) and they line up.\n";
+    else
+        text << "These files start at bar " << (int) barsFor (engine, o).getStart() + 1 << " of the song.\n";
+    text << (o.withTrack ? "The mix has your track in it.\n" : "Your track isn't in them: just my parts.\n");
+    const auto file = folder.getChildFile ("Read me - tempo and lining up.txt");
+    return file.replaceWithText (text) ? file.getFileName() : juce::String();
+}
+
 juce::String RigBounce::describe (RigEngine& engine, const Options& o)
 {
     const auto bars = barsFor (engine, o);
     const auto loops = loopsFor (engine, o);
-    if (bars.getLength() <= 0.0 || (loops.isEmpty() && o.split != Split::everything))
+    const bool track = hasTrack (engine) && o.what != What::loops;
+    if (bars.getLength() <= 0.0 || (loops.isEmpty() && o.split != Split::everything && ! (track && o.withTrack)))
         return o.what == What::loops ? "No loops playing to bounce." : "Nothing in the song to bounce yet.";
     juce::String s = whatName (engine, o) + ", " + rigsong::barsText (bars.getLength()) + ": ";
-    switch (o.split)
-    {
-        case Split::mix: s << "the mix"; break;
-        case Split::eachLoop: s << loops.size() << (loops.size() == 1 ? " loop" : " loops") << " + the mix"; break;
-        case Split::everything: s << loops.size() << (loops.size() == 1 ? " loop" : " loops") << ", every tool + the mix (plays once, in real time)"; break;
-    }
+    if (o.mixOnly)
+        s << (o.split == Split::everything ? "one mix of every tool and loop (plays once, in real time)" : "the mix");
+    else
+        switch (o.split)
+        {
+            case Split::mix: s << "the mix"; break;
+            case Split::eachLoop: s << loops.size() << (loops.size() == 1 ? " loop" : " loops") << " + the mix"; break;
+            case Split::everything: s << loops.size() << (loops.size() == 1 ? " loop" : " loops") << ", every tool + the mix (plays once, in real time)"; break;
+        }
+    if (track)
+        s << (o.withTrack ? ", with his track" : ", without his track");
     s << ", " << (o.wav && o.mp3 ? "WAV + MP3" : o.mp3 ? "MP3" : "WAV");
     if (o.dry)
         s << ", dry";
     return s;
 }
 
-bool RigBounce::writeAudio (const juce::File& base, const juce::AudioBuffer<float>& audio, double rate, const Options& o, juce::StringArray& files)
+namespace
 {
+// `audio` with `seconds` of silence before it.
+juce::AudioBuffer<float> withLead (const juce::AudioBuffer<float>& audio, double seconds, double rate)
+{
+    const int lead = (int) std::round (juce::jmax (0.0, seconds) * rate);
+    juce::AudioBuffer<float> out (juce::jmax (1, audio.getNumChannels()), lead + audio.getNumSamples());
+    out.clear();
+    for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+        out.copyFrom (ch, lead, audio, ch, 0, audio.getNumSamples());
+    return out;
+}
+}
+
+bool RigBounce::writeAudio (const juce::File& base, const juce::AudioBuffer<float>& given, double rate, const Options& o, juce::StringArray& files)
+{
+    juce::AudioBuffer<float> padded;
+    if (o.leadSeconds > 0.0005)
+        padded = withLead (given, o.leadSeconds, rate);
+    const auto& audio = o.leadSeconds > 0.0005 ? padded : given;
     bool ok = true;
     const auto parent = base.getParentDirectory();
     const auto name = base.getFileName();
@@ -190,7 +244,8 @@ RigBounce::Result RigBounce::bounceLoops (RigEngine& engine, const Options& o, c
     result.folder = folder;
     const auto bars = barsFor (engine, o);
     const auto loops = loopsFor (engine, o);
-    if (bars.getLength() <= 0.0 || (loops.isEmpty() && o.split != Split::everything))
+    const bool track = hasTrack (engine) && o.what != What::loops && o.withTrack;
+    if (bars.getLength() <= 0.0 || (loops.isEmpty() && o.split != Split::everything && ! track))
     {
         result.error = describe (engine, o);
         return result;
@@ -213,7 +268,7 @@ RigBounce::Result RigBounce::bounceLoops (RigEngine& engine, const Options& o, c
                         : RigExport::renderTimelineRange (engine, l, bpm, rate, ! o.dry, bars.getStart(), bars.getEnd(), o.tailSeconds);
         if (stem.getNumSamples() == 0)
             continue;
-        if (o.split != Split::mix)
+        if (o.split != Split::mix && ! o.mixOnly)
             ok = writeAudio (folder.getChildFile (what + " - Loop " + juce::String (l + 1) + " - " + tempo), stem, rate, o, result.files) && ok;
         if (o.split != Split::everything)
         {
@@ -228,6 +283,23 @@ RigBounce::Result RigBounce::bounceLoops (RigEngine& engine, const Options& o, c
             for (int ch = 0; ch < 2; ++ch)
                 mix.addFrom (ch, 0, stem, ch, 0, stem.getNumSamples());
         }
+    }
+    if (o.split != Split::everything && track)
+    {
+        // His track, under the loops (in the mix only: he has it).
+        const auto& ft = engine.getFriendTrack();
+        auto under = RigFriendTrack::renderRange (*ft.getAudio(), ft.getInfo(), bpm, rate, engine.getTransport().getBeatsPerBar(),
+                                                  bars.getStart(), bars.getEnd(), o.tailSeconds, ft.gain());
+        if (mix.getNumSamples() < under.getNumSamples())
+        {
+            juce::AudioBuffer<float> bigger (2, under.getNumSamples());
+            bigger.clear();
+            for (int ch = 0; ch < 2 && mix.getNumSamples() > 0; ++ch)
+                bigger.copyFrom (ch, 0, mix, ch, 0, mix.getNumSamples());
+            mix = std::move (bigger);
+        }
+        for (int ch = 0; ch < 2; ++ch)
+            mix.addFrom (ch, 0, under, ch, 0, under.getNumSamples());
     }
     if (o.split != Split::everything && mix.getNumSamples() > 0)
     {
@@ -252,10 +324,38 @@ void RigBounce::convertRecorded (const juce::Array<juce::File>& wavs, const Opti
 {
     for (const auto& f : wavs)
     {
+        // Only the mix: the stems (and the MIDI, the Logic note) go.
+        if (o.mixOnly && ! f.getFileNameWithoutExtension().endsWithIgnoreCase (" Mix"))
+        {
+            f.deleteFile();
+            continue;
+        }
         if (! f.hasFileExtension ("wav"))
         {
             files.add (f.getFileName());
             continue;
+        }
+        if (o.leadSeconds > 0.0005)
+        {
+            // Starts at the same moment as his mixdown: written again with the time before his bar 1.
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (f.createInputStream().release(), true));
+            if (reader != nullptr)
+            {
+                juce::AudioBuffer<float> audio ((int) juce::jmax (1u, reader->numChannels), (int) reader->lengthInSamples);
+                reader->read (&audio, 0, (int) reader->lengthInSamples, 0, true, true);
+                const double rate = reader->sampleRate;
+                reader.reset();
+                auto padded = withLead (audio, o.leadSeconds, rate);
+                if (padded.getNumChannels() == 1)
+                {
+                    juce::AudioBuffer<float> stereo (2, padded.getNumSamples());
+                    stereo.copyFrom (0, 0, padded, 0, 0, padded.getNumSamples());
+                    stereo.copyFrom (1, 0, padded, 0, 0, padded.getNumSamples());
+                    padded = std::move (stereo);
+                }
+                writeWav24 (f, padded, rate);
+            }
         }
         if (o.wav)
             files.add (f.getFileName());
