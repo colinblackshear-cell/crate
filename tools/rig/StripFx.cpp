@@ -243,6 +243,11 @@ bool StripFx::isActive() const
         || micOn->load() > 0.5f || grainOn->load() > 0.5f;
 }
 
+bool StripFx::isActiveToSave() const
+{
+    return isActive() || (bypass->load() <= 0.5f && plugin.hasPluginToSave());
+}
+
 void StripFx::reset()
 {
     for (auto* p : getParameters())
@@ -930,8 +935,12 @@ void StripFx::getStateInformation (juce::MemoryBlock& data)
 {
     auto state = params.copyState();
     state.removeChild (state.getChildWithName ("Plugin"), nullptr);
-    if (plugin.isLoaded())
-        state.appendChild (plugin.toTree(), nullptr);
+    // The plugin as it is, or the show's own tree while it isn't in (loading, not installed).
+    juce::ValueTree pluginTree;
+    pluginSaveProblem = {};
+    plugin.treeForSave (pluginTree, pluginSaveProblem);
+    if (pluginTree.isValid())
+        state.appendChild (pluginTree, nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, data);
 }

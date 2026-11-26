@@ -39,6 +39,7 @@ target_sources(CrateTests PRIVATE
     RigSwitchTests.cpp
     RigVocoderWakeTests.cpp
     RigPluginSlotTests.cpp
+    RigPluginPersistTests.cpp
     RigPerformFxTests.cpp
     RigSynthScreenTests.cpp
     RigGuideTests.cpp
@@ -95,7 +96,8 @@ target_compile_definitions(CrateTests PRIVATE
     JucePlugin_Name="Sample Editor"
     JUCE_APPLICATION_NAME_STRING="CrateTests"
     JUCE_APPLICATION_VERSION_STRING="0.1.0"
-    KALEIDOBOX_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+    KALEIDOBOX_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    KALEIDOBOX_BUILD_DIR="${CMAKE_BINARY_DIR}")
 target_link_libraries(CrateTests PRIVATE
     crate_core
     crate_shine

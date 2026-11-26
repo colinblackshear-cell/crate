@@ -406,6 +406,11 @@ PluginSlot::PluginSlot (bool instrument) : isInstrument (instrument) { macros.fi
 PluginSlot::~PluginSlot()
 {
     *alive = false;
+    // A load still on its way when the slot goes (a show closed, the app quitting) didn't freeze:
+    // the next launch mustn't take it for one. (Its message may never come: the PluginHost can go
+    // too.) A real freeze or crash never gets here, so it's still caught.
+    for (const auto& d : stillOpening)
+        host->opening (d, false);
     closeWindow();
     releaseEmbeddedEditor();
 }
@@ -432,28 +437,101 @@ void PluginSlot::setPlayHead (juce::AudioPlayHead* p)
 
 void PluginSlot::load (const juce::PluginDescription& description, std::function<void (const juce::String&)> done)
 {
+    startLoad (description, {}, true, std::move (done));
+}
+
+namespace
+{
+// A show's settings for its plugin, before it's in (on the message thread, never live yet).
+// False if the plugin threw them back.
+bool putBackState (juce::AudioPluginInstance& p, const juce::ValueTree& tree)
+{
+    juce::MemoryBlock state;
+    if (state.fromBase64Encoding (tree.getProperty ("state").toString()) && ! state.isEmpty())
+    {
+        try
+        {
+            p.setStateInformation (state.getData(), (int) state.getSize());
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+}
+
+void PluginSlot::startLoad (const juce::PluginDescription& description, const juce::ValueTree& restore, bool byHand,
+                            std::function<void (const juce::String&)> done)
+{
     // Written down while it opens: if it freezes or crashes Kaleidobox now, the next launch knows.
     host->opening (description, true);
+    stillOpening.add (description);
+    // Only the newest request lands (anything asked for after this one moves it on).
+    const auto ticket = ++generation;
+    loadingByHand = byHand ? description.name : juce::String();
     host->formats.createPluginInstanceAsync (description, rate, block,
-                                            [this, weak = std::weak_ptr<bool> (alive), done, description] (std::unique_ptr<juce::AudioPluginInstance> made,
-                                                                                                            const juce::String& error)
+                                            [this, weak = std::weak_ptr<bool> (alive), done, description, ticket, restore] (std::unique_ptr<juce::AudioPluginInstance> made,
+                                                                                                                            const juce::String& error)
                                             {
+                                                // The slot went (its note went with it): `made` is deleted here.
                                                 if (weak.expired())
-                                                {
-                                                    juce::SharedResourcePointer<PluginHost>()->opening (description, false);
                                                     return;
-                                                }
                                                 host->opening (description, false);
-                                                if (made != nullptr)
+                                                for (int i = 0; i < stillOpening.size(); ++i)
+                                                    if (stillOpening.getReference (i).createIdentifierString() == description.createIdentifierString())
+                                                    {
+                                                        stillOpening.remove (i);
+                                                        break;
+                                                    }
+                                                // Something newer was asked for (another plugin, Remove, another show): this
+                                                // one is dropped, `made` deleted here.
+                                                if (ticket != generation && ! noGenerationForTests)
+                                                    return;
+                                                loadingByHand = {};
+                                                bool ok = made != nullptr;
+                                                auto result = ok ? (oldLoadResultForTests ? juce::String ("It didn't load") : juce::String())
+                                                                 : error.isNotEmpty() ? error : juce::String ("It didn't load");
+                                                // A show's plugin gets its settings before it plays (then its knobs). One that
+                                                // won't take them stays out: the show keeps its tree as it was.
+                                                const bool putBack = ok && restore.isValid() && result.isEmpty();
+                                                if (putBack)
+                                                    made->enableAllBuses();   // (its layout first, as setInstance has it)
+                                                if (putBack && ! putBackState (*made, restore))
+                                                {
+                                                    made.reset();
+                                                    ok = false;
+                                                    result = "It wouldn't take the show's settings";
+                                                }
+                                                if (ok)
+                                                {
                                                     setInstance (std::move (made));
+                                                    if (putBack)
+                                                    {
+                                                        juce::MemoryBlock state;
+                                                        hasHadState = state.fromBase64Encoding (restore.getProperty ("state").toString()) && ! state.isEmpty();
+                                                        if (const auto knobs = restore.getProperty ("macros").toString(); knobs.isNotEmpty())
+                                                        {
+                                                            const auto list = juce::StringArray::fromTokens (knobs, " ", {});
+                                                            for (int i = 0; i < kMacros; ++i)
+                                                                setMacro (i, i < list.size() ? list[i].getIntValue() : -1);
+                                                            if (onChange)
+                                                                onChange();
+                                                        }
+                                                    }
+                                                }
                                                 if (done)
-                                                    done (made == nullptr && error.isEmpty() ? juce::String ("It didn't load") : error);
+                                                    done (result);
                                             });
 }
 
 void PluginSlot::setInstance (std::unique_ptr<juce::AudioPluginInstance> made)
 {
-    leftClosed = {};
+    ++generation;   // a load still on its way doesn't land on top of this
+    loadingByHand = {};
+    hasHadState = false;
+    kept = {};
     closeWindow();
     releaseEmbeddedEditor();
     if (made != nullptr)
@@ -548,26 +626,73 @@ void PluginSlot::setProgram (int i)
 
 juce::ValueTree PluginSlot::toTree() const
 {
-    if (instance == nullptr && leftClosed.isValid())
-        return leftClosed.createCopy();   // as the show had it, settings and all
-    juce::ValueTree tree ("Plugin");
     if (instance == nullptr)
-        return tree;
+        return kept.isValid() ? kept.createCopy() : juce::ValueTree ("Plugin");   // as the show had it, settings and all
+    juce::ValueTree tree;
+    juce::String problem;
+    liveTree (tree, problem);
+    return tree;
+}
+
+bool PluginSlot::treeForSave (juce::ValueTree& tree, juce::String& problem) const
+{
+    tree = {};
+    if (instance == nullptr)
+    {
+        if (kept.isValid() && ! oldSavingForTests)
+            tree = kept.createCopy();   // byte for byte as the show had it
+        return true;
+    }
+    return liveTree (tree, problem);
+}
+
+bool PluginSlot::liveTree (juce::ValueTree& tree, juce::String& problem) const
+{
+    bool whole = true;
+    tree = juce::ValueTree ("Plugin");
     const auto description = instance->getPluginDescription();
     tree.setProperty ("id", description.createIdentifierString(), nullptr);
     tree.setProperty ("name", description.name, nullptr);
     if (auto xml = description.createXml())
         tree.setProperty ("description", xml->toString (juce::XmlElement::TextFormat().singleLine()), nullptr);
+    else
+    {
+        whole = false;
+        problem = "Kaleidobox couldn't write down which plugin " + description.name + " is.";
+    }
     juce::MemoryBlock state;
-    instance->getStateInformation (state);
-    tree.setProperty ("state", state.toBase64Encoding(), nullptr);
+    bool read = true;
+    try
+    {
+        instance->getStateInformation (state);
+    }
+    catch (...)
+    {
+        read = false;
+    }
+    if (! read)
+    {
+        whole = false;
+        problem = description.name + " couldn't give Kaleidobox its settings to save.";
+    }
+    else if (state.isEmpty() && hasHadState)
+    {
+        // It had settings (the show's, or saved before): none now would save it at its default.
+        whole = false;
+        problem = description.name + " gave Kaleidobox no settings to save, though it had some.";
+    }
+    else
+    {
+        hasHadState = hasHadState || ! state.isEmpty();
+        tree.setProperty ("state", state.toBase64Encoding(), nullptr);
+    }
     tree.setProperty ("bypassed", bypassed.load(), nullptr);
     tree.setProperty ("level", level.load(), nullptr);
     juce::StringArray knobs;
     for (int m : macros)
         knobs.add (juce::String (m));
     tree.setProperty ("macros", knobs.joinIntoString (" "), nullptr);
-    return tree;
+    return whole;
 }
 
 void PluginSlot::fromTree (const juce::ValueTree& tree)
@@ -577,38 +702,23 @@ void PluginSlot::fromTree (const juce::ValueTree& tree)
         clear();
         return;
     }
+    // The previous show's plugin goes now (never saved under this one), and this show's is kept
+    // as it is until it's in: still loading, or it doesn't load here (not installed, didn't open).
+    clear();
+    kept = tree.createCopy();
     juce::PluginDescription description;
     if (auto xml = juce::XmlDocument::parse (tree.getProperty ("description").toString()); xml == nullptr || ! description.loadFromXml (*xml))
-        return;
+        return;   // unreadable here: kept as it is
     if (host->frozeLastTime (description))
     {
         // It froze or crashed Kaleidobox last time it opened: left closed (the show keeps it, and
         // picking it again by hand opens it).
-        clear();
-        leftClosed = tree.createCopy();
         host->leftClosed (description.name);
         return;
     }
     bypassed = (bool) tree.getProperty ("bypassed", false);
     level = juce::jlimit (0.0f, 2.0f, (float) tree.getProperty ("level", 1.0f));
-    const auto stateText = tree.getProperty ("state").toString();
-    const auto knobs = tree.getProperty ("macros").toString();
-    load (description, [this, stateText, knobs, weak = std::weak_ptr<bool> (alive)] (const juce::String& error)
-          {
-              if (weak.expired() || error.isNotEmpty() || instance == nullptr)
-                  return;
-              juce::MemoryBlock state;
-              if (state.fromBase64Encoding (stateText) && ! state.isEmpty())
-                  instance->setStateInformation (state.getData(), (int) state.getSize());
-              if (knobs.isNotEmpty())
-              {
-                  const auto list = juce::StringArray::fromTokens (knobs, " ", {});
-                  for (int i = 0; i < kMacros; ++i)
-                      setMacro (i, i < list.size() ? list[i].getIntValue() : -1);
-                  if (onChange)
-                      onChange();
-              }
-          });
+    startLoad (description, kept, false, {});
 }
 
 bool PluginSlot::process (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
