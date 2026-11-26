@@ -203,6 +203,21 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect (addOpen && tool == Tool::pads, "Tool row: + ADD A LAYER didn't open the Add a layer sheet");
         addSheet.pick (pocket::AddLayerSheet::drums);
         expect (! addOpen && page == Page::tool && tool == Tool::drums, "Add a layer: DRUMS didn't open the drums");
+        {
+            // DRUMS STEPS: every sound in one grid. A box on the snare row puts a snare there; tap it again to take it off.
+            beats.setDrumMode (0);
+            expect (beats.everySoundGridShown(), "Drums: STEPS doesn't show every sound in one grid");
+            auto& pat = beats.drums().edited();
+            const int before = pat.hits[1][(size_t) (beats.getDrumPage() * 16 + 8 + 3)];
+            beats.tapEverySoundBox (0, 1, 1, 3);   // set 1, steps 9-16, row 2 (snare), box 4
+            const int after = beats.drums().edited().hits[1][(size_t) (beats.getDrumPage() * 16 + 8 + 3)];
+            expect ((before > 0) != (after > 0), "Drums: a tap on the snare row didn't put a snare on step 12");
+            expect (beats.drumVoice() == 1, "Drums: a tap on the snare row didn't pick the snare (the knobs follow it)");
+            beats.tapEverySoundBox (0, 1, 1, 3);
+            expect ((beats.drums().edited().hits[1][(size_t) (beats.getDrumPage() * 16 + 11)] > 0) == (before > 0), "Drums: a second tap didn't take the snare off");
+            beats.tapEverySoundBox (0, 0, 0, 0);
+            beats.tapEverySoundBox (0, 0, 0, 0);   // (back to the kick, as it was)
+        }
         openAddLayer();
         addSheet.pick (pocket::AddLayerSheet::synth);
         expect (! addOpen && tool == Tool::synth, "Add a layer: SYNTH didn't open the synth");

@@ -130,6 +130,9 @@ public:
     // and amber hints on steps of one voice (only drawn, never written).
     void setLessonLayout (bool on, int reservePx = 0);
     void setGuide (int voice, juce::uint32 stepMask);
+    // STEPS shows six sounds at once: a tap on row (0-5) box (0-7) of sound set 0/1, half bar 0/1 (the self-checks).
+    void tapEverySoundBox (int set, int half, int row, int box);
+    bool everySoundGridShown() const;
     void tapStep (int step);                    // what a tap on a step box does (the self-checks tap with it)
     juce::Rectangle<int> stepsBounds() const;   // the 16 big step buttons, in this screen's coordinates
     juce::String selfCheckLive();               // PLAY LIVE writes to the nearest step, the lesson hints write nothing, no double hits
