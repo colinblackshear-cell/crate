@@ -22,7 +22,11 @@
  #define CRATE_TEST_EFFECT_VST3 ""
 #endif
 
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#else
 namespace juce { namespace detail { bool dispatchNextMessageOnSystemQueue (bool); } }
+#endif
 
 using namespace dirtytest;
 
@@ -125,8 +129,15 @@ void pump (int ms)
 {
     const auto end = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
     while (juce::Time::getMillisecondCounter() < end)
+    {
+       #if JUCE_MAC
+        // (JUCE's messages ride the main run loop there.)
+        CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.002, true);
+       #else
         if (! juce::detail::dispatchNextMessageOnSystemQueue (true))
             juce::Thread::sleep (2);
+       #endif
+    }
 }
 
 juce::String descriptionXml (const juce::PluginDescription& d)
