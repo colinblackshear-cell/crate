@@ -20,6 +20,7 @@ target_sources(CrateTests PRIVATE
     OverdubUndoBench.cpp
     RigDirtyTests.cpp
     RigDirtyScenarioTests.cpp
+    RigDirtyPluginTests.cpp
     LoopShapeTests.cpp
     WarpTests.cpp
     RigLoopLabTests.cpp
@@ -104,6 +105,12 @@ target_link_libraries(CrateTests PRIVATE
     rig_hosting
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+# The hosted-plugin dirty tests also host the repo's own instrument (and effect) as real VST3s
+# when they've been built (the Mac's CI builds everything; Linux CI only the tests, and there
+# that part is skipped). No build dependency: the tests don't wait for the plugins.
+target_compile_definitions(CrateTests PRIVATE
+    "CRATE_TEST_INSTRUMENT_VST3=\"$<GENEX_EVAL:$<TARGET_PROPERTY:SampleInstrument_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>\""
+    "CRATE_TEST_EFFECT_VST3=\"$<GENEX_EVAL:$<TARGET_PROPERTY:SampleEditor_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>\"")
 add_test(NAME crate_tests COMMAND CrateTests)
 # A hung test fails the run instead of holding the runner for hours.
 set_tests_properties(crate_tests PROPERTIES TIMEOUT 900)

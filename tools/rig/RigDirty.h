@@ -148,6 +148,10 @@ public:
     bool fieldSlotForTests (Field, int index, float& authored, bool& active);
     Flat baselineForTests() const;
     static inline std::function<void()> afterBeforeTreeForTests;
+    // Tests only: a show's tree as the comparison sees it, and the old way of comparing a hosted
+    // plugin's description (with the time JUCE stamps on it), to show the tests catch it.
+    static Flat flattenForTests (const juce::ValueTree& show);
+    static inline bool comparePluginInfoTimeForTests = false;
 
     struct Stats
     {

@@ -42,6 +42,23 @@ std::string stored (int field, float v)
     return std::to_string (juce::roundToInt (v));
 }
 
+// A hosted plugin's description (PluginSlot::toTree writes juce::PluginDescription::createXml)
+// without "infoUpdateTime": JUCE sets that to the current time every time the description is
+// asked for (the VST3 and AU instances' fillInPluginDescription), so it would differ at every
+// check. It isn't part of the show's sound or the plugin's identity; the rest (name, format,
+// file, ids, manufacturer, version, ...) is compared as written. Only the comparison drops it:
+// the show file keeps the description as JUCE wrote it.
+juce::String descriptionForCompare (const juce::String& s)
+{
+    if (RigDirty::comparePluginInfoTimeForTests || ! s.contains ("<PLUGIN"))
+        return s;
+    auto xml = juce::XmlDocument::parse (s);
+    if (xml == nullptr || ! xml->hasTagName ("PLUGIN") || ! xml->hasAttribute ("infoUpdateTime"))
+        return s;
+    xml->removeAttribute ("infoUpdateTime");
+    return xml->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());
+}
+
 // Binary (a hosted plugin's own state, most often): every byte counts, a zero byte or bytes
 // that aren't text included (FNV-1a over the bytes, and their number).
 std::string bytesHash (const juce::MemoryBlock& m)
@@ -75,6 +92,11 @@ void collectText (const juce::XmlElement& e, juce::MemoryOutputStream& out)
 void flattenTree (const juce::ValueTree& t, const std::string& path, RigDirty::Flat& out, bool byPosition);
 void flattenValue (const std::string& path, const juce::String& name, const juce::String& s, RigDirty::Flat& out)
 {
+    if (name == "description")
+    {
+        out[path + "@" + name.toStdString()] = descriptionForCompare (s).toStdString();
+        return;
+    }
     if ((name == "state" || name == "fx" || name == "data") && s.length() > 16)
     {
         juce::MemoryBlock m;
@@ -712,6 +734,13 @@ bool RigDirty::lookupTake (juce::uint64 id, juce::uint64& hash)
 void RigDirty::flatten (const juce::ValueTree& show, Flat& out)
 {
     flattenTree (show, "Show", out, false);
+}
+
+RigDirty::Flat RigDirty::flattenForTests (const juce::ValueTree& show)
+{
+    Flat f;
+    flattenTree (show, "Show", f, false);
+    return f;
 }
 
 void RigDirty::playbackValues (Flat& f, int currentBank)
