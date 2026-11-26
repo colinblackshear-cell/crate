@@ -32,24 +32,26 @@ public:
         g.fillRoundedRectangle (face.reduced (1.5f), 16.5f);
         g.setColour (juce::Colours::white.withAlpha (0.35f));
         g.drawRoundedRectangle (face.reduced (0.7f), 18.0f, 1.0f);
-        auto in = face.reduced (14.0f, 10.0f);
+        auto in = face.reduced (12.0f, 8.0f);
         if (icon)
         {
             // the tool's icon in a dark round badge before the name (the line reads full width under them)
             const float d = 36.0f;
-            auto badge = juce::Rectangle<float> (face.getX() + 10.0f, face.getY() + 8.0f, d, d);
+            auto badge = juce::Rectangle<float> (in.getX(), in.getY(), d, d);
             g.setColour (col::onBright.withAlpha (0.82f));
             g.fillEllipse (badge);
             juce::Graphics::ScopedSaveState keep (g);
             g.addTransform (juce::AffineTransform::scale (1.05f, 1.05f, badge.getCentreX(), badge.getCentreY()));
             icon (g, badge.getCentre(), colour.brighter (0.15f));
-            in.removeFromRight (0);
         }
+        // the badge and the name share the top row; the line has its own rows under them, so nothing overlaps
+        auto head = in.removeFromTop (36.0f);
         g.setColour (col::onBright);
         g.setFont (condensedBold (23.0f));
-        g.drawText (name, in.removeFromTop (28.0f).withTrimmedLeft (icon ? 38.0f : 0.0f).toNearestInt(), juce::Justification::centredLeft);
+        g.drawFittedText (name, head.withTrimmedLeft (icon ? 44.0f : 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        in.removeFromTop (5.0f);
         g.setFont (small (13.5f));
-        g.drawFittedText (line, in.toNearestInt(), juce::Justification::bottomLeft, 2, 0.85f);
+        g.drawFittedText (line, in.toNearestInt(), juce::Justification::topLeft, 2, 1.0f);   // (1.0: wrap, never squeeze)
     }
     void mouseDown (const juce::MouseEvent&) override { down = true; repaint(); }
     void mouseUp (const juce::MouseEvent& e) override
@@ -203,7 +205,7 @@ void AddLayerSheet::paint (juce::Graphics& g)
 void AddLayerSheet::resized()
 {
     const int w = getWidth(), x0 = 16, iw = w - 32, gap = 10;
-    const int tileW = (iw - gap) / 2, tileH = 88;
+    const int tileW = (iw - gap) / 2, tileH = 98;
     for (int i = 0; i < tiles.size(); ++i)   // all the same size: no one choice is the most important
         tiles[i]->setBounds (x0 + (i % 2) * (tileW + gap), 94 + (i / 2) * (tileH + gap), tileW, tileH);
     const int setupY = 94 + 4 * tileH + 3 * gap + 12;

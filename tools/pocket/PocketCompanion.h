@@ -23,7 +23,7 @@ public:
     std::function<void()> onRecSetup;
     std::function<juce::String()> setupText;     // "4 bars \xc2\xb7 count in 1 bar"
 
-    int preferredHeight() const { return 640; }
+    int preferredHeight() const { return 680; }
     void refresh() { repaint(); }
     void paint (juce::Graphics&) override;
     void resized() override;
