@@ -73,11 +73,27 @@ void drawRaised (juce::Graphics& g, juce::Rectangle<float> r, Look look, bool pr
     const auto p = paletteFor (look);
     const float lift = pressed ? 1.0f : 3.0f;
     auto body = r.withTrimmedBottom (3.0f).translated (0, pressed ? 2.0f : 0.0f);
+    // depth (Colin 2026-11-26, "more dimensional"): a soft shadow under the key, then its edge, its face, a glow on top
+    if (! pressed)
+        for (int i = 1; i <= 3; ++i)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.10f));
+            g.fillRoundedRectangle (body.translated (0, lift + (float) i * 1.2f).expanded ((float) i * 0.6f, 0.0f), radius + (float) i * 0.6f);
+        }
     g.setColour (p.edge);
     g.fillRoundedRectangle (body.translated (0, lift), radius);
     g.setGradientFill (juce::ColourGradient (p.top, 0, body.getY(), p.bottom, 0, body.getBottom(), false));
     g.fillRoundedRectangle (body, radius);
-    g.setColour (juce::Colours::white.withAlpha (isBright (look) ? 0.40f : look == Look::dark ? 0.05f : 0.10f));
+    if (body.getHeight() > 14.0f)
+    {
+        // light from above: a sheen over the top of the face, fading out by the middle
+        const float sheen = isBright (look) ? 0.30f : look == Look::dark ? 0.06f : 0.10f;
+        auto top = body.reduced (1.5f).withHeight (body.getHeight() * 0.5f);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (pressed ? sheen * 0.4f : sheen), 0, top.getY(),
+                                                 juce::Colours::white.withAlpha (0.0f), 0, top.getBottom(), false));
+        g.fillRoundedRectangle (top, juce::jmax (1.0f, radius - 1.5f));
+    }
+    g.setColour (juce::Colours::white.withAlpha (isBright (look) ? 0.45f : look == Look::dark ? 0.07f : 0.12f));
     g.drawRoundedRectangle (body.reduced (0.7f), radius, 1.0f);
 }
 
@@ -85,8 +101,16 @@ void drawWell (juce::Graphics& g, juce::Rectangle<float> r, float radius)
 {
     g.setColour (col::wellEdge);                     // the brass rim
     g.fillRoundedRectangle (r, radius);
+    // a sheen on the rim's top edge, like polished brass
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0x66ffe7a8), 0, r.getY(), juce::Colour (0x00ffe7a8), 0, r.getY() + juce::jmin (24.0f, r.getHeight() * 0.5f), false));
+    g.fillRoundedRectangle (r, radius);
+    auto in = r.reduced (1.75f);
     g.setColour (col::well);
-    g.fillRoundedRectangle (r.reduced (1.75f), radius - 1.75f);
+    g.fillRoundedRectangle (in, radius - 1.75f);
+    // sunk in: a shadow along the inside top
+    g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.45f), 0, in.getY(), juce::Colours::black.withAlpha (0.0f), 0,
+                                             in.getY() + juce::jmin (14.0f, in.getHeight() * 0.4f), false));
+    g.fillRoundedRectangle (in, radius - 1.75f);
 }
 
 void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colour arc, bool active, bool onDark)

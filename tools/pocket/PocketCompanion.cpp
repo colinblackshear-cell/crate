@@ -9,20 +9,45 @@ class AddLayerSheet::Tile : public juce::Component
 public:
     Tile (juce::String n, juce::String l, juce::Colour c) : name (std::move (n)), line (std::move (l)), colour (c) {}
     std::function<void()> onClick;
+    std::function<void (juce::Graphics&, juce::Point<float>, juce::Colour)> icon;   // drawn in a badge, top right
 
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        auto r = getLocalBounds().toFloat().reduced (1.0f).withTrimmedBottom (4.0f);
         const float sink = down ? 3.0f : 0.0f;
+        if (! down)
+            for (int i = 1; i <= 4; ++i)   // a soft shadow under it
+            {
+                g.setColour (juce::Colours::black.withAlpha (0.09f));
+                g.fillRoundedRectangle (r.translated (0, 2.0f + (float) i * 1.3f).expanded ((float) i * 0.7f, 0), 18.0f + (float) i * 0.7f);
+            }
         g.setColour (colour.darker (0.55f));
         g.fillRoundedRectangle (r.withTrimmedTop (4.0f), 18.0f);
         auto face = r.withTrimmedBottom (4.0f).translated (0.0f, sink);
         g.setGradientFill (juce::ColourGradient (colour.brighter (0.12f), face.getX(), face.getY(), colour.darker (0.08f), face.getX(), face.getBottom(), false));
         g.fillRoundedRectangle (face, 18.0f);
+        // light from above: a sheen over the top half, and a bright hairline round the edge
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (down ? 0.10f : 0.26f), 0, face.getY(), juce::Colours::white.withAlpha (0.0f), 0,
+                                                 face.getCentreY(), false));
+        g.fillRoundedRectangle (face.reduced (1.5f), 16.5f);
+        g.setColour (juce::Colours::white.withAlpha (0.35f));
+        g.drawRoundedRectangle (face.reduced (0.7f), 18.0f, 1.0f);
         auto in = face.reduced (14.0f, 10.0f);
+        if (icon)
+        {
+            // the tool's icon in a dark round badge before the name (the line reads full width under them)
+            const float d = 36.0f;
+            auto badge = juce::Rectangle<float> (face.getX() + 10.0f, face.getY() + 8.0f, d, d);
+            g.setColour (col::onBright.withAlpha (0.82f));
+            g.fillEllipse (badge);
+            juce::Graphics::ScopedSaveState keep (g);
+            g.addTransform (juce::AffineTransform::scale (1.05f, 1.05f, badge.getCentreX(), badge.getCentreY()));
+            icon (g, badge.getCentre(), colour.brighter (0.15f));
+            in.removeFromRight (0);
+        }
         g.setColour (col::onBright);
         g.setFont (condensedBold (23.0f));
-        g.drawText (name, in.removeFromTop (28.0f).toNearestInt(), juce::Justification::centredLeft);
+        g.drawText (name, in.removeFromTop (28.0f).withTrimmedLeft (icon ? 38.0f : 0.0f).toNearestInt(), juce::Justification::centredLeft);
         g.setFont (small (13.5f));
         g.drawFittedText (line, in.toNearestInt(), juce::Justification::bottomLeft, 2, 0.85f);
     }
@@ -42,6 +67,69 @@ private:
     bool down = false;
 };
 
+static void giveIcon (PButton&, juce::String, std::function<void (juce::Graphics&, juce::Point<float>, juce::Colour)>, float);
+
+// The Add a layer icons: the tool's own, with MY VOICE a mic and its sound, BASS a long low wave, VOCODER a mic in waves,
+// RESAMPLE a loop arrow.
+static void drawChoiceIcon (juce::Graphics& g, int choice, Tool tool, juce::Point<float> c, juce::Colour ink)
+{
+    const juce::PathStrokeType stroke (2.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    g.setColour (ink);
+    switch (choice)
+    {
+        case AddLayerSheet::voice:
+        {
+            drawToolIcon (g, Tool::vocoder, c.translated (-3.0f, 0.0f), ink);   // the mic
+            for (int i = 1; i <= 2; ++i)   // its sound going out
+            {
+                juce::Path a;
+                const float r = 4.0f + 4.0f * (float) i;
+                a.addCentredArc (c.x + 3.0f, c.y - 2.0f, r, r, 0.0f, 0.55f, 2.55f, true);
+                g.strokePath (a, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+            return;
+        }
+        case AddLayerSheet::bass:
+        {
+            juce::Path p;
+            for (int i = 0; i <= 24; ++i)
+            {
+                const float x = c.x - 11.0f + (float) i * 22.0f / 24.0f;
+                const float y = c.y + 6.0f * std::sin ((float) i / 24.0f * juce::MathConstants<float>::twoPi);
+                i == 0 ? p.startNewSubPath (x, y) : p.lineTo (x, y);
+            }
+            g.strokePath (p, juce::PathStrokeType (3.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            return;
+        }
+        case AddLayerSheet::vocoder:
+        {
+            drawToolIcon (g, Tool::vocoder, c, ink);
+            for (float side : { -1.0f, 1.0f })
+                for (int i = 0; i < 2; ++i)
+                {
+                    const float x = c.x + side * (9.0f + 4.0f * (float) i), h = i == 0 ? 6.0f : 3.5f;
+                    g.drawLine (x, c.y - 2.0f - h, x, c.y - 2.0f + h, 2.0f);
+                }
+            return;
+        }
+        case AddLayerSheet::resample:
+        {
+            juce::Path a;
+            a.addCentredArc (c.x, c.y, 9.0f, 9.0f, 0.0f, 0.5f, juce::MathConstants<float>::twoPi - 0.2f, true);
+            g.strokePath (a, stroke);
+            juce::Path head;   // the arrow's head, at the arc's start
+            const float ax = c.x + 9.0f * std::sin (0.5f), ay = c.y - 9.0f * std::cos (0.5f);
+            head.addTriangle (ax - 1.0f, ay - 5.5f, ax + 5.5f, ay + 1.0f, ax - 3.0f, ay + 3.5f);
+            g.fillPath (head);
+            g.fillEllipse (c.x - 2.5f, c.y - 2.5f, 5.0f, 5.0f);
+            return;
+        }
+        default:
+            drawToolIcon (g, tool, c, ink);
+            return;
+    }
+}
+
 AddLayerSheet::AddLayerSheet()
 {
     struct Def { const char* name; const char* line; Tool colourOf; };
@@ -58,6 +146,7 @@ AddLayerSheet::AddLayerSheet()
     for (int i = 0; i < kChoices; ++i)
     {
         auto* t = tiles.add (new Tile (defs[i].name, defs[i].line, toolColour (defs[i].colourOf)));
+        t->icon = [i, tool = defs[i].colourOf] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawChoiceIcon (g, i, tool, c, ink); };
         t->onClick = [this, i] { pick (i); };
         addAndMakeVisible (t);
     }
@@ -69,6 +158,13 @@ AddLayerSheet::AddLayerSheet()
     {
         b->setFontHeight (15.0f);
         b->onClick = [this, t = t] { if (onMoreTool) onMoreTool (t); };
+        giveIcon (*b, toolName (t), [t = t] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink)
+        {
+            juce::Graphics::ScopedSaveState keep (g);
+            g.addTransform (juce::AffineTransform::scale (0.8f, 0.8f, c.x, c.y));
+            drawToolIcon (g, t, c, toolColour (t));
+            juce::ignoreUnused (ink);
+        }, 14.0f);
         addAndMakeVisible (b);
     }
     setDragZone (80);
@@ -120,6 +216,141 @@ void AddLayerSheet::resized()
         chips[i]->setBounds (x0 + i * (chipW + 8), chipY, chipW, 44);
 }
 
+// Small line icons for the after-take and vibe sheets (the same pen as the tool row's).
+static void drawVibeIcon (juce::Graphics& g, int v, juce::Point<float> c, juce::Colour ink)
+{
+    const juce::PathStrokeType pen (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    g.setColour (ink);
+    switch (v)
+    {
+        case TakeSheet::none:   // a circle with a line through it
+            g.drawEllipse (c.x - 7, c.y - 7, 14, 14, 2.0f);
+            g.drawLine (c.x - 5, c.y + 5, c.x + 5, c.y - 5, 2.0f);
+            break;
+        case TakeSheet::space:   // a big star and two small
+        {
+            auto star = [&g] (float x, float y, float r)
+            {
+                juce::Path p;
+                p.addStar ({ x, y }, 4, r * 0.35f, r);
+                g.fillPath (p);
+            };
+            star (c.x - 1, c.y + 1, 8.0f);
+            star (c.x + 7, c.y - 6, 3.5f);
+            star (c.x - 8, c.y - 6, 2.5f);
+            break;
+        }
+        case TakeSheet::echo:   // three dots, each fainter
+            for (int i = 0; i < 3; ++i)
+            {
+                g.setColour (ink.withAlpha (1.0f - 0.3f * (float) i));
+                const float r = 4.5f - (float) i;
+                g.fillEllipse (c.x - 8 + (float) i * 8 - r, c.y - r, r * 2, r * 2);
+            }
+            break;
+        case TakeSheet::radio:   // a little radio: body, dial and aerial
+            g.drawRoundedRectangle (c.x - 9, c.y - 3, 18, 11, 2.5f, 2.0f);
+            g.drawLine (c.x - 6, c.y - 3, c.x + 4, c.y - 10, 2.0f);
+            g.fillEllipse (c.x + 2, c.y - 0.5f, 5, 5);
+            g.drawLine (c.x - 6, c.y + 1, c.x - 1, c.y + 1, 1.6f);
+            g.drawLine (c.x - 6, c.y + 4, c.x - 1, c.y + 4, 1.6f);
+            break;
+        case TakeSheet::underwater:   // two waves and a bubble
+            for (int row = 0; row < 2; ++row)
+            {
+                juce::Path p;
+                const float y = c.y + 1 + (float) row * 6;
+                p.startNewSubPath (c.x - 9, y);
+                p.cubicTo (c.x - 6, y - 4, c.x - 3, y + 4, c.x, y);
+                p.cubicTo (c.x + 3, y - 4, c.x + 6, y + 4, c.x + 9, y);
+                g.strokePath (p, pen);
+            }
+            g.drawEllipse (c.x + 2, c.y - 10, 6, 6, 1.6f);
+            break;
+        case TakeSheet::crunch:   // a jagged line
+        {
+            juce::Path p;
+            p.startNewSubPath (c.x - 10, c.y + 2);
+            const float pts[][2] = { { -6, -6 }, { -2, 5 }, { 2, -7 }, { 6, 4 }, { 10, -3 } };
+            for (auto& q : pts)
+                p.lineTo (c.x + q[0], c.y + q[1]);
+            g.strokePath (p, juce::PathStrokeType (2.2f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
+            break;
+        }
+        default: break;
+    }
+}
+
+enum class ActionIcon { again, pad, keep, rec, knobs, board };
+static void drawActionIcon (juce::Graphics& g, ActionIcon a, juce::Point<float> c, juce::Colour ink)
+{
+    const juce::PathStrokeType pen (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    g.setColour (ink);
+    switch (a)
+    {
+        case ActionIcon::again:   // a circular arrow
+        {
+            juce::Path p;
+            p.addCentredArc (c.x, c.y, 7.5f, 7.5f, 0.0f, 0.6f, juce::MathConstants<float>::twoPi - 0.3f, true);
+            g.strokePath (p, pen);
+            const float ax = c.x + 7.5f * std::sin (0.6f), ay = c.y - 7.5f * std::cos (0.6f);
+            juce::Path h;
+            h.addTriangle (ax - 1, ay - 5, ax + 5, ay + 1, ax - 3, ay + 3);
+            g.fillPath (h);
+            break;
+        }
+        case ActionIcon::pad:   // four pads
+            for (int i = 0; i < 4; ++i)
+                g.fillRoundedRectangle (c.x - 8 + (float) (i % 2) * 9, c.y - 8 + (float) (i / 2) * 9, 7, 7, 1.8f);
+            break;
+        case ActionIcon::keep:   // a tick
+        {
+            juce::Path p;
+            p.startNewSubPath (c.x - 8, c.y);
+            p.lineTo (c.x - 2, c.y + 6);
+            p.lineTo (c.x + 9, c.y - 6);
+            g.strokePath (p, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            break;
+        }
+        case ActionIcon::rec:
+            g.setColour (col::red);
+            g.fillEllipse (c.x - 6, c.y - 6, 12, 12);
+            break;
+        case ActionIcon::knobs:   // two knobs
+            for (int i = 0; i < 2; ++i)
+            {
+                const float x = c.x - 5 + (float) i * 10;
+                g.drawEllipse (x - 4.5f, c.y - 4.5f, 9, 9, 2.0f);
+                g.drawLine (x, c.y, x + (i == 0 ? -2.5f : 2.5f), c.y - 3.5f, 2.0f);
+            }
+            break;
+        case ActionIcon::board:   // a pedal
+            g.drawRoundedRectangle (c.x - 7, c.y - 9, 14, 18, 3.0f, 2.0f);
+            g.fillEllipse (c.x - 2.5f, c.y - 6, 5, 5);
+            g.drawLine (c.x - 4, c.y + 4, c.x + 4, c.y + 4, 2.0f);
+            break;
+    }
+}
+
+// A button that shows an icon before its words (centred together, or left with the words after it).
+static void giveIcon (PButton& b, juce::String text, std::function<void (juce::Graphics&, juce::Point<float>, juce::Colour)> icon, float fontH)
+{
+    b.glyph = [text, icon, fontH] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour ink)
+    {
+        const auto font = spaced (condensed (fontH));
+        const auto label = text.toUpperCase();
+        const float tw = juce::GlyphArrangement::getStringWidth (font, label), iconW = 26.0f, gap = 6.0f;
+        const float total = juce::jmin (r.getWidth() - 8.0f, iconW + gap + tw);
+        const float x = r.getCentreX() - total * 0.5f;
+        icon (g, { x + iconW * 0.5f, r.getCentreY() }, ink);
+        g.setColour (ink);
+        g.setFont (font);
+        g.drawFittedText (label, juce::Rectangle<float> (x + iconW + gap, r.getY(), total - iconW - gap + 2.0f, r.getHeight()).toNearestInt(),
+                          juce::Justification::centredLeft, 1, 0.75f);
+    };
+    b.repaint();
+}
+
 //==============================================================================
 const char* TakeSheet::vibeName (int v)
 {
@@ -151,6 +382,7 @@ TakeSheet::TakeSheet()
     {
         vibes[i].setText (vibeName (i));
         vibes[i].setFontHeight (17.0f);
+        giveIcon (vibes[i], vibeName (i), [i] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawVibeIcon (g, i, c, ink); }, 16.0f);
         vibes[i].onClick = [this, i]
         {
             vibe = i;
@@ -169,6 +401,8 @@ TakeSheet::TakeSheet()
     again.onClick = [this] { if (onTryAgain) onTryAgain(); };
     makePad.onClick = [this] { if (onMakePad) onMakePad(); };
     keep.onClick = [this] { if (onKeep) onKeep(); };
+    giveIcon (again, "Try again", [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawActionIcon (g, ActionIcon::again, c, ink); }, 17.0f);
+    giveIcon (makePad, "Make it a pad", [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawActionIcon (g, ActionIcon::pad, c, ink); }, 17.0f);
     for (auto* b : { &more, &again, &makePad, &keep })
         addAndMakeVisible (b);
     setDragZone (80);
@@ -182,6 +416,7 @@ void TakeSheet::show (int l, const juce::String& what)
     takeName = what;
     vibe = none;
     keep.setText ("Keep it as layer " + juce::String (l + 1));
+    giveIcon (keep, "Keep it as layer " + juce::String (l + 1), [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawActionIcon (g, ActionIcon::keep, c, ink); }, 20.0f);
     refresh();
 }
 
@@ -282,6 +517,7 @@ VibeSheet::VibeSheet() : pad (std::make_unique<Pad> (*this))
     {
         vibes[i].setText (TakeSheet::vibeName (i));
         vibes[i].setFontHeight (16.0f);
+        giveIcon (vibes[i], TakeSheet::vibeName (i), [i] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawVibeIcon (g, i, c, ink); }, 15.0f);
         vibes[i].onClick = [this, i]
         {
             vibe = i;
@@ -302,6 +538,8 @@ VibeSheet::VibeSheet() : pad (std::make_unique<Pad> (*this))
     recButton.onClick = [this] { setRecording (! rec); if (onRecordMoves) onRecordMoves (rec); };
     knobs.onClick = [this] { if (onKnobs) onKnobs(); };
     board.onClick = [this] { if (onBoard) onBoard(); };
+    giveIcon (knobs, U8("Knobs \xe2\x80\xba"), [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawActionIcon (g, ActionIcon::knobs, c, ink); }, 15.0f);
+    giveIcon (board, U8("Full pedalboard \xe2\x80\xba"), [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawActionIcon (g, ActionIcon::board, c, ink); }, 15.0f);
     done.onClick = [this] { if (onDone) onDone(); };
     setDragZone (70);
 }
