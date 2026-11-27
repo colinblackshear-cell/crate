@@ -400,6 +400,7 @@ void LoopsEngine::prepare (double rate)
     for (auto* v : { &padsL, &padsR, &voiceL, &voiceR, &allL, &allR, &srcLoops, &srcMaster, &trackL, &trackR })
         v->assign ((size_t) kChunk, 0.0f);
     friendTrack.prepare (rate);
+    perform.prepare (rate);
     for (int l = 0; l < kLoopLayers; ++l)
     {
         layerL[(size_t) l].assign ((size_t) kChunk, 0.0f);
@@ -942,6 +943,24 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     if (needMaster && ! masterWet)
         for (int i = 0; i < n; ++i)
             srcMaster[(size_t) i] = (right != nullptr ? 0.5f * (left[i] + right[i]) : left[i]) - clickBuf[(size_t) i];
+
+    // MOVES on the whole mix, the click left out of it (and heard as it was)
+    if (right != nullptr)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] -= clickBuf[(size_t) i];
+            right[i] -= clickBuf[(size_t) i];
+        }
+        float* ch[2] = { left, right };
+        juce::AudioBuffer<float> mixBuf (ch, 2, n);
+        perform.process (mixBuf, blockBeat, beats.getBpm(), running);
+        for (int i = 0; i < n; ++i)
+        {
+            left[i] += clickBuf[(size_t) i];
+            right[i] += clickBuf[(size_t) i];
+        }
+    }
 
     // record (after the mix, so MASTER can be resampled)
     for (int l = 0; l < kLoopLayers; ++l)
