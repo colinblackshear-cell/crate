@@ -145,6 +145,47 @@ struct SixteenLevelsTests : juce::UnitTest
         f.stop();
         expect (peak (shortHit, 4410, 4000) < 1.0e-4f && peak (whole, 4410, 4000) > 0.4f);
 
+        beginTest ("Attack: instant on pad 1, a slow fade-in on pad 16");
+        expectEquals (levels::attackSeconds (levels::attack, 0), 0.0);
+        expect (std::abs (levels::attackSeconds (levels::attack, 2) - 0.008) < 1.0e-9, "doubles every two pads");
+        expect (std::abs (levels::attackSeconds (levels::attack, 15) - 0.004 * std::pow (2.0, 7.5)) < 1.0e-9);
+        expectEquals (levels::attackSeconds (levels::tune, 9), 0.0, "only the attack type fades in");
+        expectEquals (levels::stepText (levels::attack, 0), juce::String ("0 ms"));
+        expectEquals (levels::stepText (levels::attack, 2), juce::String ("8 ms"));
+        p.levelsType = levels::attack;
+        auto instant = run (p, 8, hit (0));
+        f.stop();
+        auto slow = run (p, 8, hit (15));
+        f.stop();
+        expect (peak (instant, 0, 400) > 0.3f, juce::String (peak (instant, 0, 400)));
+        expect (peak (slow, 0, 2000) < 0.1f && peak (slow, 3000, 1000) > peak (slow, 0, 1000),
+                juce::String (peak (slow, 0, 2000)));
+
+        beginTest ("In key: each pad climbs the song's scale, pad 1 the root");
+        expect (levels::majorScale == levels::Scale ({ 0, 2, 4, 5, 7, 9, 11 }));
+        const levels::Scale cMinor { 0, 2, 3, 5, 7, 8, 10 };
+        expectEquals (levels::inKeySemitones (0, cMinor), 0);
+        expectEquals (levels::inKeySemitones (2, cMinor), 3, "pad 3 of C minor is the flat third");
+        expectEquals (levels::inKeySemitones (7, cMinor), 12, "pad 8 is the root an octave up");
+        expectEquals (levels::inKeySemitones (9, cMinor), 15);
+        expectEquals (levels::inKeySemitones (2, levels::majorScale), 4, "C major until the Rig says otherwise");
+        expectEquals (levels::stepText (levels::inKey, 0, cMinor), juce::String ("Root"));
+        expectEquals (levels::stepText (levels::inKey, 2, cMinor), juce::String ("+3 st"));
+        expectEquals (levels::semitones (levels::tune, 2, cMinor), 2.0, "tune stays a semitone a pad");
+        for (int s = 0; s < 16; ++s)
+            expect (levels::pack (levels::inKey, s) <= 127 && levels::typeOf (levels::pack (levels::inKey, s)) == levels::inKey
+                    && levels::stepOf (levels::pack (levels::inKey, s)) == s);
+        expectEquals (levels::typeOf (levels::pack (levels::decay, 6)), (int) levels::decay, "saved variations keep their meaning");
+        p.setSongKey (0, cMinor);
+        p.levelsType = levels::inKey;
+        auto third = run (p, 20, hit (2));
+        f.stop();
+        auto octave = run (p, 20, hit (7));
+        f.stop();
+        expect (std::abs (frequency (third, 1000, 8000) - 441.0 * std::pow (2.0, 3.0 / 12.0)) < 12.0, juce::String (frequency (third, 1000, 8000)));
+        expect (std::abs (frequency (octave, 1000, 8000) - 882.0) < 15.0, juce::String (frequency (octave, 1000, 8000)));
+        p.setSongKey (0, levels::majorScale);
+
         beginTest ("letting go stops the hit even after 16 Levels is turned off");
         p.levelsType = levels::tune;
         f.pad (0).mode = PadMode::noteOff;
@@ -462,6 +503,61 @@ struct MpcPadToolsViewTests : juce::UnitTest
         expect (processor.getSequencer().noteRepeat.load());
         expect (processor.getSequencer().getRepeatGrid() == seq::Grid::thirtySecond);
         view->setNoteRepeat (false);
+
+        beginTest ("Make 16 pads bakes the steps onto the pads, and Cmd+Z puts them back");
+        {
+            expect (! processor.canUndoBankEdit());
+            view->makeSixteenPads();   // 16 Levels is off: nothing to bake
+            expect (! processor.canUndoBankEdit());
+
+            auto& bankPads = processor.getProject().currentBank().pads;
+            const auto kick = bankPads[0].audio;
+            const auto loop = bankPads[5].audio;
+            const auto originalNames = bankPads[1].name;
+            expect (bankPads[1].isEmpty() && kick != nullptr && loop != nullptr);
+
+            processor.setSongKey (0, { 0, 2, 3, 5, 7, 8, 10 });   // C minor
+            view->setSixteenLevels (levels::inKey);
+            expect (view->getMakePadsButton().isEnabled(), "on when a type is on");
+            view->makeSixteenPads();
+            expectEquals (processor.levelsType.load(), (int) levels::off, "16 Levels turns off");
+            expect (! view->getMakePadsButton().isEnabled());
+            for (int i = 0; i < 16; ++i)
+                expect (bankPads[(size_t) i].audio == loop && bankPads[(size_t) i].name == bankPads[5].name, "each pad shares the sound");
+            expectEquals (bankPads[0].tune, 0);
+            expectEquals (bankPads[2].tune, 30, "pad 3 of C minor: +3 st");
+            expectEquals (bankPads[7].tune, 120, "pad 8: an octave");
+            expectEquals (bankPads[15].tune, 120, "clamped to 12 st");
+            expect (processor.canUndoBankEdit());
+
+            expect (view->keyPressed (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)));
+            expect (bankPads[0].audio == kick && bankPads[5].audio == loop && bankPads[1].isEmpty(), "the pads are back");
+            expectEquals (bankPads[2].tune, 0);
+            expect (processor.canRedoBankEdit());
+            expect (processor.redoBankEdit() && bankPads[2].tune == 30);
+            expect (processor.undoBankEdit() && bankPads[1].isEmpty());
+
+            // Attack, decay, filter and velocity bake into the pad's own settings.
+            view->setSixteenLevels (levels::attack);
+            view->makeSixteenPads();
+            expectEquals (bankPads[0].attack, 0);
+            expect (std::abs (bankPads[15].attack - 724) <= 1, juce::String (bankPads[15].attack));
+            expect (processor.undoBankEdit());
+            view->setSixteenLevels (levels::decay);
+            view->makeSixteenPads();
+            expect (bankPads[0].decay >= 10 && bankPads[0].decay < 60 && bankPads[15].decay == 0, "whole sound on pad 16");
+            expect (processor.undoBankEdit());
+            view->setSixteenLevels (levels::filter);
+            view->makeSixteenPads();
+            expect (bankPads[0].cutoff < 200.0f && bankPads[15].cutoff > 15000.0f);
+            expect (processor.undoBankEdit());
+            view->setSixteenLevels (levels::velocity);
+            view->makeSixteenPads();
+            expect (bankPads[0].volume < 10 && bankPads[15].volume == 100, "velocity sets the pad's volume");
+            expect (processor.undoBankEdit());
+            expect (bankPads[1].isEmpty() && bankPads[0].audio == kick);
+            processor.setSongKey (0, levels::majorScale);
+        }
 
         if (auto* path = std::getenv ("CRATE_MPC_SNAPSHOT"))
         {

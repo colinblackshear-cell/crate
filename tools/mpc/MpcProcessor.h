@@ -60,6 +60,21 @@ public:
     std::atomic<int> levelsType { levels::off };
     std::atomic<int> levelsPad { 0 };
 
+    // The song's key, for 16 Levels' In key: the root (0 = C ... 11 = B) and the seven notes of
+    // the scale as semitones above it. The Rig sets it from its chord builder's key; thread-safe.
+    // Until it does, the song is in C major.
+    void setSongKey (int root, const levels::Scale& scale);
+    levels::Scale getSongScale() const;
+    int getSongRoot() const { return songRoot.load(); }
+
+    // Undo for edits to the bank on screen that touch many pads at once (Make 16 pads): call
+    // beginBankEdit() before changing the current bank; Cmd+Z in the MPC screen undoes it.
+    void beginBankEdit();
+    bool undoBankEdit();
+    bool redoBankEdit();
+    bool canUndoBankEdit() const { return ! bankUndoStack.empty() && bankUndoIndex == project.getCurrentIndex(); }
+    bool canRedoBankEdit() const { return ! bankRedoStack.empty() && bankUndoIndex == project.getCurrentIndex(); }
+
     // Undo for sequence edits: call beginEdit() before changing the current sequence.
     void beginEdit();
     bool undoEdit();
@@ -233,6 +248,11 @@ private:
 
     std::vector<seq::Sequence> undoStack, redoStack;
     int undoSequence = -1;
+
+    std::vector<Bank> bankUndoStack, bankRedoStack;
+    int bankUndoIndex = -1;
+    std::atomic<int> songRoot { 0 };
+    std::array<std::atomic<int>, 7> songScale { 0, 2, 4, 5, 7, 9, 11 };
 
     void advanceSong();
     void queueForSong();
