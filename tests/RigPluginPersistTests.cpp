@@ -190,6 +190,7 @@ struct RigPluginPersistTests final : juce::UnitTest
         format->missing.clear();
         format->failing.clear();
         FakeSound::throwOnGetState = FakeSound::emptyState = FakeSound::throwOnSetState = false;
+        FakeSound::resetOptions();
         rigshow::hooks().at = nullptr;
         pump (20);
     }
@@ -1055,16 +1056,54 @@ struct RigPluginPersistTests final : juce::UnitTest
 static RigPluginPersistTests rigPluginPersistTests;
 
 //==============================================================================
-// The main cases with a real plugin.
+// The main cases with a real plugin, then the same checks with a fake one made like an analog
+// model (a stepped control, a little free-running noise, its own bytes once restored), which
+// always runs, and a negative control: a plugin that takes nothing it's given is caught.
+//
+// What "restored" means for a real plugin: its state is the bytes a fresh instance makes of the
+// saved state given directly (the reference), every parameter is the reference's, and each
+// parameter the test edited reads what the plugin itself read back when it was set (before the
+// save), which isn't its default. Not what was asked for (a stepped control holds its nearest
+// step), and never by the sound alone: an analog model's oscillators and noise run free, so
+// sample-level sound can't tell restored from default. Its sound is compared only by a robust
+// feature (each block's loudness), and only when the saved sound and the default's differ by a
+// wide margin over how much either differs from itself run to run.
+namespace realpersist
+{
+// Each block's loudness in dB (stereo, interleaved per block as render makes it), from -80 dB.
+inline std::vector<double> blockDb (const std::vector<float>& v)
+{
+    std::vector<double> out;
+    const size_t n = (size_t) (2 * kBlock);
+    for (size_t k = 0; (k + 1) * n <= v.size(); ++k)
+    {
+        double q = 0;
+        for (size_t i = k * n; i < (k + 1) * n; ++i)
+            q += (double) v[i] * v[i];
+        out.push_back (10.0 * std::log10 (q / (double) n + 1.0e-8));
+    }
+    return out;
+}
+// The mean loudness difference (dB) over the blocks where either sounds (above -60 dB).
+inline double loudnessDistance (const std::vector<float>& a, const std::vector<float>& b)
+{
+    const auto x = blockDb (a), y = blockDb (b);
+    double sum = 0;
+    int n = 0;
+    for (size_t k = 0; k < juce::jmin (x.size(), y.size()); ++k)
+        if (juce::jmax (x[k], y[k]) > -60.0)
+            sum += std::abs (x[k] - y[k]), ++n;
+    return n > 0 ? sum / n : 0.0;
+}
+} // namespace realpersist
+
 struct RigRealPluginPersistTests final : juce::UnitTest
 {
     RigRealPluginPersistTests() : juce::UnitTest ("Rig plugin persistence (real plugin)", "Rig") {}
 
     juce::File folder;
-    bool isSampleInstrument = false;
-    juce::PluginDescription desc;
+    std::unique_ptr<juce::SharedResourcePointer<PluginHost>> hostRef;
 
-    bool findPlugin (juce::String& why) { return real::findPlugin (desc, isSampleInstrument, why); }
     static juce::MemoryBlock sampleInstrumentState() { return real::sampleInstrumentState(); }
     static void bundlePath (const juce::File& show) { real::bundlePath (show); }
 
@@ -1076,7 +1115,7 @@ struct RigRealPluginPersistTests final : juce::UnitTest
         return m;
     }
 
-    bool loadByHand (PluginSlot& s)
+    bool loadByHand (PluginSlot& s, const juce::PluginDescription& desc)
     {
         bool called = false;
         juce::String error;
@@ -1086,30 +1125,65 @@ struct RigRealPluginPersistTests final : juce::UnitTest
         return s.isLoaded();
     }
 
-    void runTest() override
+    // Each check by name, so a negative control can say which ones catch the fault.
+    struct Outcome
     {
-        beginTest ("a real plugin's settings, knobs and sound come back; saves while it loads or is missing keep it");
-        juce::String why;
-        if (! findPlugin (why))
+        struct Check { juce::String what, detail; bool ok; };
+        std::vector<Check> checks;
+        int strongParams = 0, steppedParams = 0;
+        bool audioDiscriminating = false;
+        void add (const juce::String& what, bool ok, const juce::String& detail = {}) { checks.push_back ({ what, detail, ok }); }
+        // False if any check whose name starts with `prefix` failed (true if there are none).
+        bool passed (const juce::String& prefix) const
         {
-            logMessage ("skipped: " + why);
-            return;
+            for (const auto& c : checks)
+                if (c.what.startsWith (prefix) && ! c.ok)
+                    return false;
+            return true;
         }
-        logMessage ("plugin: " + desc.pluginFormatName + " " + desc.name + " (" + desc.fileOrIdentifier + ")");
-        folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("KaleidoboxRealPluginPersistTests");
-        folder.deleteRecursively();
-        folder.createDirectory();
+        bool has (const juce::String& prefix) const
+        {
+            for (const auto& c : checks)
+                if (c.what.startsWith (prefix))
+                    return true;
+            return false;
+        }
+    };
+    void expectAll (const Outcome& o, const juce::String& tag)
+    {
+        for (const auto& c : o.checks)
+            expect (c.ok, "[" + tag + "] " + c.what + (c.detail.isNotEmpty() ? " -- " + c.detail : juce::String()));
+    }
 
-        const auto file = folder.getChildFile ("real.crateshow");
+    Outcome persist (const juce::PluginDescription& desc, bool isSampleInstrument, const juce::String& tag)
+    {
+        Outcome o;
+        auto say = [this, &tag] (const juce::String& t) { logMessage ("[" + tag + "] " + t.trimStart()); };
+        say ("plugin: " + desc.pluginFormatName + " " + desc.name + " " + desc.version + " (" + desc.fileOrIdentifier + ")");
+        const auto file = folder.getChildFile ("real " + juce::File::createLegalFileName (tag) + ".crateshow");
+        file.deleteFile();
+
+        // A fresh instance at its default (what a restore that did nothing would leave).
+        auto plain = freshEngine();
+        if (! loadByHand (plain->getSynthPlugin(), desc))
+        {
+            o.add ("loads", false, "it didn't load by hand");
+            return o;
+        }
+        pump (300);
+        const auto defaultState = stateOf (plain->getSynthPlugin());
+        const auto defaultValues = real::valuesOf (*plain->getSynthPlugin().getInstance());
+
         std::vector<float> savedAudio;
-        juce::MemoryBlock defaultState;
-        std::vector<std::pair<int, float>> params;
+        std::vector<real::ChosenParam> params;
         {
             auto e = freshEngine();
             auto& s = e->getSynthPlugin();
-            if (! loadByHand (s))
-                return;
-            defaultState = stateOf (s);
+            if (! loadByHand (s, desc))
+            {
+                o.add ("loads", false, "it didn't load by hand");
+                return o;
+            }
             if (isSampleInstrument)
             {
                 const auto st = sampleInstrumentState();
@@ -1117,79 +1191,155 @@ struct RigRealPluginPersistTests final : juce::UnitTest
             }
             else
             {
-                // Any other plugin: a few of its settings away from where they start.
-                auto& ps = s.getInstance()->getParameters();
-                for (int i = 0; i < ps.size() && params.size() < 6; ++i)
-                {
-                    auto* p = ps[i];
-                    const auto pname = p->getName (40);
-                    if (! p->isAutomatable() || p->isMetaParameter() || pname.containsIgnoreCase ("bypass") || pname.containsIgnoreCase ("volume")
-                        || pname.containsIgnoreCase ("MIDI CC"))
-                        continue;
-                    p->setValueNotifyingHost (std::abs (p->getValue() - 0.7f) > 0.1f ? 0.7f : 0.3f);
-                    params.push_back ({ i, p->getValue() });
-                }
+                params = real::chooseParams (*s.getInstance(), 0, 6, say);
             }
             pump (300);
+            // What it holds right before the save is what has to come back.
+            auto& ps = s.getInstance()->getParameters();
+            for (auto& c : params)
+            {
+                const float now = ps[c.index]->getValue();
+                if (std::abs (now - c.readBack) > 1.0e-6f)
+                    say ("'" + c.name + "' reads " + juce::String (now, 6) + " at the save (was " + juce::String (c.readBack, 6) + ")");
+                c.readBack = now;
+                if (std::abs (c.readBack - c.requested) > 1.0e-4f)
+                    ++o.steppedParams;
+            }
             for (int k = 0; k < PluginSlot::kMacros; ++k)
                 s.setMacro (k, -1);
             s.setMacro (5, 0);
             s.level = 0.7f;
-            savedAudio = render (s, 200);
-            expect (stateOf (s) != defaultState, "(its settings aren't its default)");
-            expect (e->saveShowFile (file, rigshow::SaveKind::document).ok);
+            savedAudio = render (s, 200);   // (the edited sound, as it played before the save)
+            o.add ("edited: its state isn't its default", stateOf (s) != defaultState);
+            if (! isSampleInstrument)
+                o.add ("edited: some of its parameters moved and hold", ! params.empty(),
+                       "no automatable continuous parameter moved and held a value other than its default (try KALEIDOBOX_TEST_PARAMS)");
+            o.add ("saved", e->saveShowFile (file, rigshow::SaveKind::document).ok);
             bundlePath (file);
         }
         const auto show = readShow (file);
         const auto savedXml = instrumentXml (show);
         const auto savedState = stateBytes (instrumentOf (show));
+        say ("saved state " + real::hashOf (savedState) + "; default " + real::hashOf (defaultState));
 
-        // 4: saved straight after opening, while it loads.
+        // Saved straight after opening, while it loads: byte for byte.
         auto e = openShow (file);
         auto& s = e->getSynthPlugin();
-        expect (! s.isLoaded(), "(still loading)");
+        o.add ("(still loading at open)", ! s.isLoaded());
         const auto during = folder.getChildFile ("during.crateshow");
-        expect (e->saveShowFile (during, rigshow::SaveKind::document).ok);
-        expectEquals (instrumentXml (readShow (during)), savedXml, "saved while loading: byte for byte");
-        expect (pumpUntil ([&] { return s.isLoaded(); }, 60000), "then it loads");
+        o.add ("saved while loading", e->saveShowFile (during, rigshow::SaveKind::document).ok);
+        o.add ("saved while loading: byte for byte", instrumentXml (readShow (during)) == savedXml);
+        if (! pumpUntil ([&] { return s.isLoaded(); }, 60000))
+        {
+            o.add ("then it loads", false);
+            return o;
+        }
         pump (300);
 
-        // 1: what the plugin made of the bytes the show gave it is what it makes of them given directly.
+        // The reference: a fresh instance given the saved bytes directly.
         auto direct = freshEngine();
-        if (loadByHand (direct->getSynthPlugin()))
+        if (! loadByHand (direct->getSynthPlugin(), desc))
         {
-            direct->getSynthPlugin().getInstance()->setStateInformation (savedState.getData(), (int) savedState.getSize());
-            pump (300);
-            expect (stateOf (s) == stateOf (direct->getSynthPlugin()), "the reopened plugin's settings are the saved bytes' (given directly)");
-            direct->getSynthPlugin().level = 0.7f;
+            o.add ("reference loads", false);
+            return o;
         }
-        // 2: settings, knobs, level.
-        for (auto [i, v] : params)
-            expectWithinAbsoluteError (s.getInstance()->getParameters()[i]->getValue(), v, 1.0e-4f, "parameter " + juce::String (i));
-        expectEquals (macrosOf (s), juce::String ("-1 -1 -1 -1 -1 0 -1 -1"));
-        expectWithinAbsoluteError (s.level.load(), 0.7f, 1.0e-6f);
-        // 3: its sound.
-        const auto again = render (s, 200);
+        direct->getSynthPlugin().getInstance()->setStateInformation (savedState.getData(), (int) savedState.getSize());
+        pump (300);
+        const auto reopenedState = stateOf (s), directState = stateOf (direct->getSynthPlugin());
+        say ("reopened state " + real::hashOf (reopenedState) + "; reference " + real::hashOf (directState)
+             + (reopenedState == savedState ? " (the saved bytes)" : " (its own bytes, not the saved ones)"));
+        o.add ("state==reference: the reopened plugin's state is the saved bytes' given directly", reopenedState == directState);
+        o.add ("state!=default: the reopened plugin's state isn't a fresh one's", reopenedState != defaultState);
+
+        // Every parameter is the reference's.
+        {
+            const auto now = real::valuesOf (*s.getInstance()), ref = real::valuesOf (*direct->getSynthPlugin().getInstance());
+            juce::StringArray off;
+            for (size_t i = 0; i < juce::jmin (now.size(), ref.size()); ++i)
+                if (std::abs (now[i] - ref[i]) > 1.0e-6f)
+                    off.add ("'" + s.getInstance()->getParameters()[(int) i]->getName (40) + "' " + juce::String (now[i], 6) + " vs " + juce::String (ref[i], 6));
+            say (juce::String ((int) now.size()) + " parameters; " + juce::String (off.size()) + " differ from the reference's");
+            o.add ("params==reference: every parameter is the reference's", now.size() == ref.size() && off.isEmpty(), off.joinIntoString ("; ").substring (0, 400));
+        }
+        // Each edited one: what it read back before the save (within float rounding: 1e-6 is a
+        // few steps of a float near 1), and not its default.
+        {
+            auto& ps = s.getInstance()->getParameters();
+            auto& rs = direct->getSynthPlugin().getInstance()->getParameters();
+            for (const auto& c : params)
+            {
+                const float got = ps[c.index]->getValue(), ref = rs[c.index]->getValue(), def = defaultValues[(size_t) c.index];
+                const juce::String what = "'" + c.name + "' read back " + juce::String (c.readBack, 6) + " before the save; reopened " + juce::String (got, 6)
+                                          + ", reference " + juce::String (ref, 6) + ", fresh " + juce::String (def, 6);
+                if (std::abs (ref - c.readBack) > 1.0e-6f)
+                {
+                    // The plugin's own restore puts it elsewhere: only the reference can say what it holds.
+                    say ("its own restore doesn't bring back " + what + " (the reference checks it)");
+                    continue;
+                }
+                o.add ("param==readback: " + what, std::abs (got - c.readBack) <= 1.0e-6f);
+                o.add ("param!=default: " + what, std::abs (got - def) >= 0.01f);
+                if (std::abs (got - c.readBack) <= 1.0e-6f && std::abs (got - def) >= 0.01f)
+                    ++o.strongParams;
+            }
+            if (! isSampleInstrument)
+                o.add ("strong: at least one edited parameter came back as read back, away from its default", o.strongParams > 0,
+                       juce::String (o.strongParams) + " of " + juce::String ((int) params.size()));
+        }
+        o.add ("macros", macrosOf (s) == "-1 -1 -1 -1 -1 0 -1 -1", macrosOf (s));
+        o.add ("level", std::abs (s.level.load() - 0.7f) <= 1.0e-6f, juce::String (s.level.load()));
+
+        // Its sound.
+        direct->getSynthPlugin().level = 0.7f;
         if (isSampleInstrument)
         {
             // It re-encodes its 24-bit sample on every save and load, so a reopened sound is within
             // a 24-bit step (1e-6 is below one: 2^-23 = 1.2e-7 per step at full scale) of the saved.
-            expect (rms (savedAudio) > 0.01, "it plays");
-            expectLessThan (maxDiff (again, savedAudio), 1.0e-6, "the same sound, within 24-bit rounding");
-            expectEquals (maxDiff (again, render (direct->getSynthPlugin(), 200)), 0.0, "and exactly what the saved bytes play given directly");
+            const auto again = render (s, 200);
+            o.add ("audio: it plays", rms (savedAudio) > 0.01);
+            o.add ("audio: the same sound, within 24-bit rounding", maxDiff (again, savedAudio) < 1.0e-6, juce::String (maxDiff (again, savedAudio)));
+            o.add ("audio: exactly what the saved bytes play given directly", maxDiff (again, render (direct->getSynthPlugin(), 200)) <= 0.0);
         }
         else
         {
-            // Analog models aren't sample-exact run to run: nearer the saved sound than the default's.
-            auto plain = freshEngine();
-            loadByHand (plain->getSynthPlugin());
-            plain->getSynthPlugin().level = 0.7f;
-            const auto fresh = render (plain->getSynthPlugin(), 200);
-            logMessage ("sound: max diff to the saved " + juce::String (maxDiff (again, savedAudio)) + ", to a fresh one " + juce::String (maxDiff (again, fresh)));
-            expect (maxDiff (again, savedAudio) <= maxDiff (again, fresh));
+            auto direct2 = freshEngine();
+            auto plain2 = freshEngine();
+            if (loadByHand (direct2->getSynthPlugin(), desc) && loadByHand (plain2->getSynthPlugin(), desc))
+            {
+                direct2->getSynthPlugin().getInstance()->setStateInformation (savedState.getData(), (int) savedState.getSize());
+                pump (300);
+                for (auto* x : { &plain, &plain2, &direct2 })
+                    (*x)->getSynthPlugin().level = 0.7f;
+                const auto ref = render (direct->getSynthPlugin(), 200), ref2 = render (direct2->getSynthPlugin(), 200);
+                const auto def = render (plain->getSynthPlugin(), 200), def2 = render (plain2->getSynthPlugin(), 200);
+                const auto again = render (s, 200);
+                using realpersist::loudnessDistance;
+                const double apart = loudnessDistance (ref, def), editedApart = loudnessDistance (savedAudio, def);
+                const double jitter = juce::jmax (loudnessDistance (ref, ref2), loudnessDistance (def, def2));
+                const double toRef = loudnessDistance (again, ref), toDefault = loudnessDistance (again, def);
+                say ("sound (mean block loudness difference): saved (the reference) vs default " + juce::String (apart, 2) + " dB (as edited, before the save: "
+                     + juce::String (editedApart, 2) + " dB), run to run " + juce::String (jitter, 2) + " dB; reopened to the reference " + juce::String (toRef, 2)
+                     + " dB, to a fresh one " + juce::String (toDefault, 2) + " dB");
+                o.audioDiscriminating = apart >= 3.0 && apart >= 4.0 * jitter;
+                if (! o.audioDiscriminating && editedApart >= 3.0 && editedApart >= 4.0 * jitter)
+                    say ("NOTE: the edited sound was " + juce::String (editedApart, 2) + " dB from the default's, but the saved bytes given directly to a fresh instance "
+                         + "sound like the default: the plugin's own restore doesn't bring its sound back (the state and parameter checks decide)");
+                if (o.audioDiscriminating)
+                {
+                    o.add ("audio: the reopened sound is the saved one's, not the default's", toRef < apart / 2 && toDefault > apart / 2,
+                           juce::String (toRef, 2) + " / " + juce::String (toDefault, 2) + " dB, apart " + juce::String (apart, 2));
+                }
+                else
+                {
+                    say ("the audio check is not discriminating for this plugin/patch (saved vs default " + juce::String (apart, 2) + " dB, needs 3 dB and 4x the run-to-run "
+                         + juce::String (jitter, 2) + " dB): it relies on the state and parameter checks above");
+                }
+            }
+            else
+                o.add ("audio: two more instances load", false);
         }
 
-        // 5: missing here (simulated in a copy of the show: never by moving a plugin).
+        // Missing here (simulated in a copy of the show: never by moving a plugin).
         {
             auto xml = juce::parseXML (file);
             for (auto* inst : xml->getChildWithTagNameIterator ("Instrument"))
@@ -1206,14 +1356,72 @@ struct RigRealPluginPersistTests final : juce::UnitTest
             const auto missingXml = instrumentXml (readShow (missing));
             auto m = openShow (missing);
             pump (1000);
-            expect (! m->getSynthPlugin().isLoaded());
+            o.add ("missing: not in", ! m->getSynthPlugin().isLoaded());
             const auto resaved = folder.getChildFile ("missing resaved.crateshow");
-            expect (m->saveShowFile (resaved, rigshow::SaveKind::document).ok);
-            expectEquals (instrumentXml (readShow (resaved)), missingXml, "kept while missing");
+            o.add ("missing: saved", m->saveShowFile (resaved, rigshow::SaveKind::document).ok);
+            o.add ("missing: kept byte for byte", instrumentXml (readShow (resaved)) == missingXml);
         }
         e.reset();
         direct.reset();
         pump (300);
+        return o;
+    }
+
+    void runTest() override
+    {
+        hostRef = std::make_unique<juce::SharedResourcePointer<PluginHost>>();
+        bool hasFake = false;
+        for (auto* f : hostRef->getObject().formats.getFormats())
+            hasFake = hasFake || dynamic_cast<FakeFormat*> (f) != nullptr;
+        if (! hasFake)
+            hostRef->getObject().formats.addFormat (std::make_unique<FakeFormat>());
+        folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("KaleidoboxRealPluginPersistTests");
+        folder.deleteRecursively();
+        folder.createDirectory();
+
+        beginTest ("a real plugin's settings, knobs and sound come back; saves while it loads or is missing keep it");
+        {
+            juce::PluginDescription desc;
+            bool isSampleInstrument = false;
+            juce::String why;
+            if (real::findPlugin (desc, isSampleInstrument, why))
+                expectAll (persist (desc, isSampleInstrument, desc.name), desc.name);
+            else
+                logMessage ("skipped: " + why);
+        }
+
+        beginTest ("the same with a fake analog-style plugin (a stepped control, free-running noise, its own bytes): always runs");
+        {
+            FakeSound::resetOptions();
+            FakeSound::rewritesState = FakeSound::steppedDrive = FakeSound::analogNoise = true;
+            const auto o = persist (FakeFormat::describe ("fake:Analog"), false, "fake analog");
+            FakeSound::resetOptions();
+            expectAll (o, "fake analog");
+            expect (o.steppedParams > 0, "a stepped control read back a value other than the one asked for (and that's what's expected back)");
+            if (real::paramsFromEnv().isEmpty())
+                expectEquals (o.strongParams, 2, "both its parameters came back exactly as read back");
+            expect (o.audioDiscriminating, "its sound check discriminates (the patch is loud enough apart)");
+            expect (o.has ("audio: the reopened sound"), "(so it was asserted)");
+        }
+
+        beginTest ("negative control: a plugin that takes nothing it's given is caught, though it matches a reference given the same bytes");
+        {
+            FakeSound::resetOptions();
+            FakeSound::rewritesState = FakeSound::steppedDrive = FakeSound::analogNoise = true;
+            FakeSound::ignoreSetState = true;
+            const auto o = persist (FakeFormat::describe ("fake:Analog"), false, "fake that ignores its settings");
+            FakeSound::resetOptions();
+            expect (o.passed ("state==reference"), "(the reference alone can't see it: it ignores them too)");
+            expect (o.passed ("params==reference"), "(nor every parameter against the reference)");
+            expect (! o.passed ("state!=default"), "caught: its state is a fresh one's");
+            expect (! o.passed ("strong"), "caught: no edited parameter came back");
+            expect (o.has ("audio: the reopened sound") ? ! o.passed ("audio: the reopened sound") : true, "and its sound, where asserted, is the default's");
+            logMessage ("  negative control: " + juce::String (o.passed ("state!=default") ? "missed" : "caught") + " by state, "
+                        + (o.passed ("strong") ? "missed" : "caught") + " by parameters, audio check "
+                        + (o.has ("audio: the reopened sound") ? (o.passed ("audio: the reopened sound") ? "missed" : "caught") : "not asserted (not discriminating)"));
+        }
+
+        hostRef.reset();
         folder.deleteRecursively();
     }
 };

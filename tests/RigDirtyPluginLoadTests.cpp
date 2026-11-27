@@ -152,6 +152,7 @@ struct RigDirtyPluginLoadTests final : juce::UnitTest
         FakeSound::throwOnGetState = FakeSound::emptyState = FakeSound::throwOnSetState = false;
         RigDirty::noLandingRebaseForTests = false;
         PluginSlot::keptLevelOverlayOffForTests = false;
+        FakeSound::rewritesOnlyWhenDriveMoved = FakeSound::steppedDrive = FakeSound::analogNoise = FakeSound::ignoreSetState = false;
         rigshow::hooks().at = nullptr;
         pump (20);
     }
@@ -823,131 +824,375 @@ static RigDirtyPluginLoadTests rigDirtyPluginLoadTests;
 
 //==============================================================================
 // The main cases with a real plugin (KALEIDOBOX_TEST_PLUGIN, or this build's Sample Editor
-// Instrument VST3): reopened unchanged, a tempo change while it loads, a parameter once it's in.
+// Instrument VST3), then the same with a fake that rewrites its state only for some patches
+// (always runs). For each patch tried (the default, then edited ones made at run time through
+// its parameters): reopened unchanged, clean once it has landed and over a sustained look (idle,
+// and with audio blocks played), its own reported state unchanged all the while; whether the
+// landing moved its entries ("rebased") or it handed back the show's bytes ("same"), with the
+// "plugin in (...)" log line; and the negative control: with the correction off, a plugin that
+// rewrote its state reads dirty once it's in (asserted). A patch it hands back byte for byte
+// doesn't exercise the correction and isn't counted as proof (the log says so). Then, with the
+// patch that does: a parameter after landing reads dirty, and a tempo change while it loads
+// stays dirty through the landing and for seconds after.
 struct RigDirtyRealPluginLoadTests final : juce::UnitTest
 {
     RigDirtyRealPluginLoadTests() : juce::UnitTest ("Rig dirty while a show's plugin loads (real plugin)", "Rig") {}
 
-    juce::PluginDescription desc;
-    bool isSampleInstrument = false;
+    std::unique_ptr<juce::SharedResourcePointer<PluginHost>> hostRef;
+    juce::File folder;
+
+    struct Timing
+    {
+        int observeMs, lookMs, tempoMs;
+    };
+    static constexpr Timing realTiming { 3000, 100, 5000 };
+    static constexpr Timing fakeTiming { 600, 20, 600 };
 
     void expectState (RigEngine& e, DS want, const juce::String& what)
     {
-        e.getDirty().waitUntilResolved (20000);
+        const bool resolved = e.getDirty().waitUntilResolved (20000);
         const auto got = e.getDirty().getState();
-        expect (got == want, what + ": want " + stateName (want) + ", got " + stateName (got));
+        expect (resolved && got == want, what + ": want " + stateName (want) + ", got " + stateName (got) + (resolved ? "" : " (unresolved)"));
         if (got != want)
             for (auto& d : e.getDirty().differences (6))
                 logMessage ("    differs: " + d.substring (0, 300));
     }
 
-    void runTest() override
+    static juce::MemoryBlock stateOf (PluginSlot& s)
     {
-        beginTest ("a real plugin: clean once a reopened show's plugin is in; a tempo change while it loads and a parameter after count");
-        juce::String why;
-        if (! pluginfakes::real::findPlugin (desc, isSampleInstrument, why))
+        juce::MemoryBlock m;
+        if (auto* i = s.getInstance())
+            i->getStateInformation (m);
+        return m;
+    }
+
+    // What RigDirty::log says (lines kept, said on the test's thread).
+    struct Said
+    {
+        juce::CriticalSection lock;
+        juce::StringArray lines;
+        void hook (RigEngine& e)
         {
-            logMessage ("skipped: " + why);
-            return;
+            e.getDirty().log = [this] (const juce::String& t) { const juce::ScopedLock l (lock); lines.add (t); };
         }
-        logMessage ("plugin: " + desc.pluginFormatName + " " + desc.name + " (" + desc.fileOrIdentifier + ")");
-        auto folder = tempFolder ("RigDirtyRealPluginLoadTests");
-        const auto file = folder.getChildFile ("real.crateshow");
+        juce::StringArray pluginIn()
         {
-            auto e = std::make_unique<RigEngine>();
-            e->prepare (kRate, kBlock);
-            auto& s = e->getSynthPlugin();
-            bool called = false;
-            juce::String error;
-            s.load (desc, [&] (const juce::String& x) { error = x; called = true; });
-            pumpUntil ([&] { return called; }, 60000);
-            expectEquals (error, juce::String(), "loaded by hand");
-            if (! s.isLoaded())
-                return;
+            const juce::ScopedLock l (lock);
+            juce::StringArray a;
+            for (const auto& t : lines)
+                if (t.startsWith ("plugin in ("))
+                    a.add (t);
+            return a;
+        }
+    };
+
+    struct Patch
+    {
+        juce::String name;
+        juce::File file;
+        juce::MemoryBlock saved;
+        std::vector<pluginfakes::real::ChosenParam> params;
+    };
+
+    // variant < 0: as it loads (the Sample Editor Instrument: its saw); else an edited patch.
+    bool makePatch (Patch& p, const juce::PluginDescription& desc, bool isSampleInstrument, int variant)
+    {
+        auto e = std::make_unique<RigEngine>();
+        e->prepare (kRate, kBlock);
+        auto& s = e->getSynthPlugin();
+        bool called = false;
+        juce::String error;
+        s.load (desc, [&] (const juce::String& x) { error = x; called = true; });
+        pumpUntil ([&] { return called; }, 60000);
+        expectEquals (error, juce::String(), "loaded by hand");
+        if (! s.isLoaded())
+            return false;
+        if (variant < 0)
+        {
+            p.name = isSampleInstrument ? "its saw (made by the test)" : "default";
             if (isSampleInstrument)
             {
                 const auto st = pluginfakes::real::sampleInstrumentState();
                 s.getInstance()->setStateInformation (st.getData(), (int) st.getSize());
             }
-            pump (300);
-            s.level = 0.7f;
-            expect (e->saveShowFile (file, rigshow::SaveKind::document).ok);
-            pluginfakes::real::bundlePath (file);
         }
-        const auto savedState = [&]
+        else
         {
-            juce::MemoryBlock m;
-            m.fromBase64Encoding (instrumentOf (readShow (file)).getProperty ("state").toString());
-            return m;
-        }();
-
-        // 1: reopened unchanged.
-        {
-            auto e = openSaved (file);
-            e->getDirty().resetStats();
-            const bool atOpen = e->getSynthPlugin().isLoaded();
-            if (! atOpen)
-                expectState (*e, DS::clean, "while it loads");
-            expect (pumpUntil ([&] { return e->getSynthPlugin().isLoaded(); }, 60000), "it loads");
-            pump (300);
-            juce::MemoryBlock now;
-            e->getSynthPlugin().getInstance()->getStateInformation (now);
-            logMessage ("  its state once it's in: " + juce::String (now == savedState ? "the bytes the show gave it" : "its own bytes (not the show's)"));
-            expectState (*e, DS::clean, "reopened, unchanged, plugin in");
-            const auto st = e->getDirty().getStats();
-            logMessage ("  landings: moved " + juce::String (st.pluginLandingsRebased) + ", same " + juce::String (st.pluginLandingsSame) + ", left "
-                        + juce::String (st.pluginLandingsLeft) + "; " + juce::String (st.lastPluginLandingMs, 2) + " ms");
-
-            // 8: a parameter that's in its state.
-            auto* plugin = e->getSynthPlugin().getInstance();
-            juce::MemoryBlock before;
-            plugin->getStateInformation (before);
-            juce::AudioProcessorParameter* p = nullptr;
-            for (auto* q : plugin->getParameters())
+            p.name = "edited " + juce::String (variant);
+            p.params = pluginfakes::real::chooseParams (*s.getInstance(), variant, 6, [this, &p] (const juce::String& t) { logMessage ("  [" + p.name + "] " + t.trimStart()); });
+            if (p.params.empty())
             {
+                logMessage ("  [" + p.name + "] no parameter moved and held: this patch is not tried");
+                return false;
+            }
+        }
+        pump (300);
+        s.level = 0.7f;
+        p.file = folder.getChildFile ("real " + p.name + ".crateshow");
+        const bool ok = e->saveShowFile (p.file, rigshow::SaveKind::document).ok;
+        expect (ok, p.name + ": saved");
+        pluginfakes::real::bundlePath (p.file);
+        p.saved.fromBase64Encoding (instrumentOf (readShow (p.file)).getProperty ("state").toString());
+        logMessage ("  [" + p.name + "] saved its state " + pluginfakes::real::hashOf (p.saved));
+        return ok;
+    }
+
+    // Opens it (dirty on) and waits until the show's plugin is in and its landing is counted.
+    std::unique_ptr<RigEngine> openAndLand (const Patch& p, Said& said, const juce::String& label, bool cleanWhileLoading = true)
+    {
+        auto e = openSaved (p.file);
+        said.hook (*e);
+        const bool atOpen = e->getSynthPlugin().isLoaded();
+        if (! atOpen && cleanWhileLoading)
+            expectState (*e, DS::clean, label + ": while it loads");
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        expect (pumpUntil ([&] { return e->getSynthPlugin().isLoaded() && landings (e->getDirty().getStats()) > 0; }, 60000), label + ": it loads and lands");
+        logMessage ("  [" + label + "] " + (atOpen ? juce::String ("in at open") : "landed " + juce::String (juce::Time::getMillisecondCounterHiRes() - t0, 1) + " ms after open"));
+        for (const auto& t : said.pluginIn())
+            logMessage ("    log: " + t);
+        return e;
+    }
+
+    // Looks every lookMs for ms (service cycles; with audio blocks played if asked): every look
+    // resolved and `want`, and the plugin's own reported state as it was at the start.
+    void observe (RigEngine& e, DS want, bool audio, const Timing& t, int ms, const juce::String& label)
+    {
+        auto& s = e.getSynthPlugin();
+        const auto atStart = stateOf (s);
+        Runner run { e };
+        int looks = 0, wrong = 0, unresolved = 0, stateChanges = 0;
+        double firstChange = -1;
+        juce::String lastHash = pluginfakes::real::hashOf (atStart);
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        while (juce::Time::getMillisecondCounterHiRes() - t0 < ms)
+        {
+            if (audio)
+                for (int i = 0; i < 10; ++i)
+                    run.block();
+            pump (t.lookMs);
+            e.getDirty().service();
+            unresolved += e.getDirty().waitUntilResolved (5000) ? 0 : 1;
+            wrong += e.getDirty().getState() == want ? 0 : 1;
+            const auto now = stateOf (s);
+            if (now != atStart)
+            {
+                ++stateChanges;
+                if (firstChange < 0)
+                    firstChange = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+                if (const auto h = pluginfakes::real::hashOf (now); h != lastHash)
+                {
+                    logMessage ("  [" + label + "] its reported state changed: " + h);
+                    lastHash = h;
+                }
+            }
+            ++looks;
+        }
+        logMessage ("  [" + label + "] " + juce::String (looks) + " looks over " + juce::String (ms / 1000.0, 1) + " s" + (audio ? ", " + juce::String (run.blocks) + " audio blocks" : juce::String (", idle"))
+                    + ": not " + stateName (want) + " " + juce::String (wrong) + ", unresolved " + juce::String (unresolved) + ", its state changed in " + juce::String (stateChanges));
+        expect (looks >= 5, label + ": looked enough (" + juce::String (looks) + ")");
+        expectEquals (unresolved, 0, label + ": every look resolved");
+        expectEquals (wrong, 0, label + ": every look " + stateName (want));
+        expect (stateChanges == 0, label + ": the plugin's own reported state changed by itself after it landed (first " + juce::String (firstChange, 2)
+                                       + " s in): a plugin that does this reads unsaved with no edit");
+    }
+
+    struct Landed
+    {
+        RigDirty::Stats st;
+        juce::StringArray lines;
+        bool rewrote() const { return st.pluginLandingKeysMoved > 0; }
+        juce::String text() const
+        {
+            return st.pluginLandingsRebased > 0 ? "rebased (" + juce::String (st.pluginLandingKeysMoved) + " key(s) moved)"
+                   : st.pluginLandingsSame > 0  ? juce::String ("same (it handed back the show's bytes)")
+                   : st.pluginLandingsNoBaseline > 0 ? juce::String ("no baseline yet (in at open)")
+                                                     : "left " + juce::String (st.pluginLandingsLeft);
+        }
+    };
+
+    // One patch: reopened unchanged, idle; then the negative control. True if it exercised the
+    // correction (its landing moved entries, and with the correction off it read dirty).
+    bool tryPatch (const Patch& p, const juce::String& tag, const Timing& t)
+    {
+        const auto label = tag + "/" + p.name;
+        Landed on;
+        {
+            Said said;
+            auto e = openAndLand (p, said, label + "/idle");
+            on.st = e->getDirty().getStats();
+            on.lines = said.pluginIn();
+            logMessage ("  [" + label + "] landing: " + on.text() + " in " + juce::String (on.st.lastPluginLandingMs, 2) + " ms");
+            expectEquals (landings (on.st), 1, label + ": one landing");
+            expectEquals (on.st.pluginLandingsLeft, 0, label + ": nothing left unmoved");
+            expectEquals (on.lines.size(), 1, label + ": one 'plugin in' line");
+            if (on.st.pluginLandingsRebased > 0)
+                expect (on.lines[0].contains ("of its entries now as it reports them"), label + ": the line says rebased: " + on.lines[0]);
+            else if (on.st.pluginLandingsSame > 0)
+                expect (on.lines[0].contains ("reports what the show had"), label + ": the line says same: " + on.lines[0]);
+            expectState (*e, DS::clean, label + ": reopened, unchanged, it landed");
+            observe (*e, DS::clean, false, t, t.observeMs, label + "/idle");
+            e->getDirty().log = nullptr;
+        }
+        {
+            // Negative control: the correction off.
+            struct Off { Off() { RigDirty::noLandingRebaseForTests = true; } ~Off() { RigDirty::noLandingRebaseForTests = false; } };
+            Said said;
+            std::unique_ptr<RigEngine> e;
+            {
+                Off off;
+                e = openAndLand (p, said, label + "/off");
+            }
+            const bool resolved = e->getDirty().waitUntilResolved (20000);
+            const auto got = e->getDirty().getState();
+            const auto st = e->getDirty().getStats();
+            const auto lines = said.pluginIn();
+            logMessage ("  [" + label + "] with the correction off: " + stateName (got) + " (landings same " + juce::String (st.pluginLandingsSame) + ", left "
+                        + juce::String (st.pluginLandingsLeft) + ")");
+            expect (resolved, label + "/off: resolved");
+            if (on.rewrote())
+            {
+                expect (got == DS::dirty, label + "/off: dirty (the plugin rewrote its state: the old fault is caught)");
+                expectEquals (st.pluginLandingsLeft, 1, label + "/off: its entries left as the show had them");
+                expect (lines.size() == 1 && lines[0].contains ("left (tests: switched off)"), label + "/off: the line says so: " + lines.joinIntoString (" | "));
+            }
+            else
+            {
+                expect (got == DS::clean && st.pluginLandingsLeft == 0, label + "/off: it handed back the show's bytes, so clean either way");
+                logMessage ("  [" + label + "] correction not exercised by this plugin/patch (it hands back the bytes it was given): not proof");
+            }
+            e->getDirty().log = nullptr;
+        }
+        return on.rewrote();
+    }
+
+    // The checks after landing, with the patch that exercised the correction (or the last tried).
+    void afterLanding (const Patch& p, const juce::String& tag, const Timing& t)
+    {
+        const auto label = tag + "/" + p.name;
+        {
+            Said said;
+            auto e = openAndLand (p, said, label + "/playing");
+            logMessage ("  [" + label + "/playing] landing: " + Landed { e->getDirty().getStats(), {} }.text());
+            expectState (*e, DS::clean, label + "/playing: it landed");
+            observe (*e, DS::clean, true, t, t.observeMs, label + "/playing");
+
+            // A parameter in its state, after landing: the edited ones first.
+            auto* plugin = e->getSynthPlugin().getInstance();
+            const auto before = stateOf (e->getSynthPlugin());
+            juce::AudioProcessorParameter* moved = nullptr;
+            std::vector<int> order;
+            for (const auto& c : p.params)
+                order.push_back (c.index);
+            for (int i = 0; i < plugin->getParameters().size(); ++i)
+                order.push_back (i);
+            for (const int i : order)
+            {
+                auto* q = plugin->getParameters()[i];
+                if (! q->isAutomatable() || q->isMetaParameter())
+                    continue;
                 const float was = q->getValue();
                 q->setValue (was > 0.5f ? 0.1f : 0.9f);
-                juce::MemoryBlock moved;
-                plugin->getStateInformation (moved);
+                const auto changed = stateOf (e->getSynthPlugin()) != before;
                 q->setValue (was);
-                if (moved != before)
+                if (changed)
                 {
-                    p = q;
+                    moved = q;
                     break;
                 }
             }
-            if (p != nullptr)
+            if (moved != nullptr)
             {
-                p->setValueNotifyingHost (p->getValue() > 0.5f ? 0.1f : 0.9f);
-                expectState (*e, DS::dirty, "its parameter '" + p->getName (30) + "' changed");
+                moved->setValueNotifyingHost (moved->getValue() > 0.5f ? 0.1f : 0.9f);
+                expectState (*e, DS::dirty, label + ": its parameter '" + moved->getName (30) + "' changed after it landed");
             }
             else
-                logMessage ("  (no parameter in its state: the parameter case is skipped)");
+                logMessage ("  [" + label + "] (no parameter in its state: the parameter case is skipped)");
+            e->getDirty().log = nullptr;
         }
-        // 2: tempo while it loads.
         {
-            auto e = openSaved (file);
+            // A tempo change while it loads: dirty while it loads, once it's in, and for seconds after.
+            auto e = openSaved (p.file);
+            Said said;
+            said.hook (*e);
             const bool atOpen = e->getSynthPlugin().isLoaded();
             e->getTransport().setBpm (e->getTransport().getBpm() + 5.0);
-            expectState (*e, DS::dirty, juce::String ("tempo changed ") + (atOpen ? "(it was in at once)" : "while it loads"));
-            expect (pumpUntil ([&] { return e->getSynthPlugin().isLoaded(); }, 60000));
-            pump (300);
-            expectState (*e, DS::dirty, "tempo: still dirty once it's in");
+            expectState (*e, DS::dirty, label + ": tempo changed " + (atOpen ? "(it was in at once)" : "while it loads"));
+            expect (pumpUntil ([&] { return e->getSynthPlugin().isLoaded() && landings (e->getDirty().getStats()) > 0; }, 60000), label + "/tempo: it lands");
+            for (const auto& l : said.pluginIn())
+                logMessage ("    log: " + l);
+            expectState (*e, DS::dirty, label + ": tempo: still dirty once it's in");
+            observe (*e, DS::dirty, false, t, t.tempoMs, label + "/tempo");
+            e->getDirty().log = nullptr;
         }
-        // Negative control: with the correction off, what this plugin reports reads as a change.
+    }
+
+    // Returns how many patches were tried before one exercised the correction (-1: none did).
+    int run (const juce::PluginDescription& desc, bool isSampleInstrument, const juce::String& tag, const Timing& t, bool mustExercise)
+    {
+        logMessage ("plugin: " + desc.pluginFormatName + " " + desc.name + " " + desc.version + " (" + desc.fileOrIdentifier + ")");
+        std::vector<int> variants { -1 };
+        if (! isSampleInstrument)
+            variants.insert (variants.end(), { 0, 1, 2 });
+        Patch last;
+        int tried = 0, exercisedAt = -1;
+        for (const int v : variants)
         {
-            RigDirty::noLandingRebaseForTests = true;
-            auto e = openSaved (file);
-            pumpUntil ([&] { return e->getSynthPlugin().isLoaded(); }, 60000);
-            pump (300);
-            e->getDirty().waitUntilResolved (20000);
-            const auto got = e->getDirty().getState();
-            RigDirty::noLandingRebaseForTests = false;
-            logMessage ("  with the correction off: " + stateName (got));
-            if (e->getDirty().getStats().pluginLandingsSame == 0)
-                expect (got == DS::dirty, "off: dirty (this plugin reports its own bytes)");
+            Patch p;
+            if (! makePatch (p, desc, isSampleInstrument, v))
+                continue;
+            last = p;
+            if (tryPatch (p, tag, t))
+            {
+                exercisedAt = tried;
+                logMessage ("  [" + tag + "] the correction is exercised by '" + p.name + "' (" + juce::String (tried) + " patch(es) before it didn't)");
+                break;
+            }
+            ++tried;
         }
-        pump (300);
+        if (exercisedAt < 0)
+            logMessage ("  [" + tag + "] correction not exercised by this plugin/patch: it handed back the bytes it was given for all " + juce::String (tried)
+                        + " patch(es) tried, so this run is NOT proof of the asynchronous baseline correction with this plugin");
+        if (mustExercise)
+            expect (exercisedAt >= 0, tag + ": this plugin rewrites its state, so some patch must exercise the correction");
+        if (last.file != juce::File())
+            afterLanding (last, tag, t);
+        else
+            expect (false, tag + ": no patch could be made");
+        return exercisedAt;
+    }
+
+    void runTest() override
+    {
+        hostRef = std::make_unique<juce::SharedResourcePointer<PluginHost>>();
+        bool hasFake = false;
+        for (auto* f : hostRef->getObject().formats.getFormats())
+            hasFake = hasFake || dynamic_cast<FakeFormat*> (f) != nullptr;
+        if (! hasFake)
+            hostRef->getObject().formats.addFormat (std::make_unique<FakeFormat>());
+        folder = tempFolder ("RigDirtyRealPluginLoadTests");
+
+        beginTest ("a real plugin: clean once a reopened show's plugin is in; a tempo change while it loads and a parameter after count");
+        {
+            juce::PluginDescription desc;
+            bool isSampleInstrument = false;
+            juce::String why;
+            if (pluginfakes::real::findPlugin (desc, isSampleInstrument, why))
+                // (This repo's Sample Editor Instrument re-encodes its sample: it must exercise it.)
+                run (desc, isSampleInstrument, desc.name, realTiming, isSampleInstrument);
+            else
+                logMessage ("skipped: " + why);
+        }
+
+        beginTest ("the same with a fake that rewrites its state only for an edited patch (always runs): the correction must be exercised and caught when off");
+        {
+            FakeSound::resetOptions();
+            FakeSound::rewritesState = FakeSound::rewritesOnlyWhenDriveMoved = true;
+            const int at = run (FakeFormat::describe ("fake:Rewrites"), false, "fake", fakeTiming, true);
+            FakeSound::resetOptions();
+            expectEquals (at, 1, "fake: the default patch (handed back byte for byte) didn't exercise it; the first edited one did");
+        }
+
+        hostRef.reset();
         folder.deleteRecursively();
     }
 };
