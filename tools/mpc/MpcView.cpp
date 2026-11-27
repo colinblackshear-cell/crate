@@ -158,7 +158,13 @@ MpcView::MpcView (MpcProcessor& p)
     for (int t = 0; t < levels::numTypes; ++t)
         levelsChoice.addItem (levels::typeName (t), t + 1);
     levelsChoice.setTooltip ("16 Levels: the picked pad's sound on all 16 pads, a step apart. Tune plays it as a scale "
-                             "(a semitone a pad), Filter opens up pad by pad, Velocity goes soft to loud, Decay short to long.");
+                             "(a semitone a pad), In key climbs the song's scale instead, Filter opens up pad by pad, "
+                             "Velocity goes soft to loud, Decay short to long, Attack instant to a slow fade-in.");
+    makePadsButton.setTooltip ("Make 16 pads: turn the 16 Levels on the pads into 16 real pads, each its own copy of the "
+                               "sound with its step's settings. Cmd+Z puts the pads back.");
+    makePadsButton.setWantsKeyboardFocus (false);
+    makePadsButton.setEnabled (false);
+    makePadsButton.onClick = [this] { makeSixteenPads(); };
     levelsChoice.onChange = [this] { setSixteenLevels (levelsChoice.getSelectedId() - 1); };
     noteRepeatButton.onContextMenu = [this] (juce::Point<int> at) { if (onNoteRepeatMenu) onNoteRepeatMenu (at); };
     sequencer.repeatButton().onContextMenu = noteRepeatButton.onContextMenu;
@@ -172,8 +178,8 @@ MpcView::MpcView (MpcProcessor& p)
         b->setColour (juce::TextButton::buttonOnColourId, Theme::accent);
         b->setColour (juce::TextButton::textColourOnId, Theme::background);
     }
-    for (auto* c : std::initializer_list<juce::Component*> { &levelsLabel, &levelsChoice, &noteRepeatButton, &repeatRates,
-                                                             &fullLevelButton, &browser })
+    for (auto* c : std::initializer_list<juce::Component*> { &levelsLabel, &levelsChoice, &makePadsButton, &noteRepeatButton,
+                                                             &repeatRates, &fullLevelButton, &browser })
         addAndMakeVisible (c);
     levelsLabel.setJustificationType (juce::Justification::centredRight);
     browser.targetPad = [this] { return grid.getSelectedPad(); };
@@ -304,6 +310,46 @@ void MpcView::setSixteenLevels (int type)
                    + ", pad 1 lowest to pad 16 highest. Hits you record keep their level. Pick Off to go back.");
 }
 
+void MpcView::makeSixteenPads()
+{
+    const int type = processor.levelsType.load();
+    const int source = juce::jlimit (0, mpc::kPadCount - 1, processor.levelsPad.load());
+    if (type == levels::off || project.currentBank().pads[(size_t) source].isEmpty())
+        return setStatus ("Pick a 16 Levels type first, then Make 16 pads bakes it onto the pads.", true);
+
+    processor.beginBankEdit();
+    const auto scale = processor.getSongScale();
+    auto& bank = project.currentBank();
+    const Pad sound = bank.pads[(size_t) source];   // a copy: the pad it comes from is one of the 16 too
+    const int first = juce::jlimit (0, 3, processor.padBankOnScreen.load()) * kPadsPerBank;
+
+    for (int step = 0; step < kPadsPerBank; ++step)
+    {
+        Pad pad = sound;   // the sound is shared (SharedAudio), not copied
+        if (const double semis = levels::semitones (type, step, scale); semis > 0.0)
+            pad.tune = juce::jlimit (-120, 120, sound.tune + juce::roundToInt (semis * 10.0));
+        if (const float c = levels::cutoff (type, step); c > 0.0f)
+            pad.cutoff = juce::jmin (sound.cutoff, c);
+        if (const double secs = levels::attackSeconds (type, step); secs > 0.0)
+            pad.attack = juce::jlimit (0, 2000, juce::jmax (sound.attack, juce::roundToInt (secs * 1000.0)));
+        if (const double secs = levels::decaySeconds (type, step); secs > 0.0)
+        {
+            const int ms = juce::jlimit (10, 5000, juce::roundToInt (secs * 1000.0));
+            pad.decay = sound.decay > 0 ? juce::jmin (sound.decay, ms) : ms;
+        }
+        if (type == levels::velocity)
+            pad.volume = juce::jlimit (1, 100, juce::roundToInt (sound.volume * levels::velocityFor (step) / 127.0f));
+        bank.pads[(size_t) (first + step)] = std::move (pad);
+    }
+
+    processor.levelsType = levels::off;
+    project.changed();
+    updatePadTools();
+    grid.repaint();
+    setStatus ("Made 16 pads from " + sound.name + " (" + levels::typeName (type) + "): pad 1 to pad 16 are each their own pad now. "
+               "Cmd+Z puts them back.");
+}
+
 void MpcView::setNoteRepeat (bool on, int gridChoice)
 {
     auto& engine = processor.getSequencer();
@@ -321,6 +367,7 @@ void MpcView::updatePadTools()
 {
     const int type = processor.levelsType.load();
     levelsChoice.setSelectedId (type + 1, juce::dontSendNotification);
+    makePadsButton.setEnabled (type != levels::off);
     fullLevelButton.setToggleState (processor.fullLevel.load(), juce::dontSendNotification);
     levelsLabel.setText (type == levels::off ? juce::String ("16 Levels")
                                              : "16 Levels of " + padLabel (juce::jlimit (0, mpc::kPadCount - 1, processor.levelsPad.load())),
@@ -329,7 +376,7 @@ void MpcView::updatePadTools()
 
 juce::String MpcView::levelText (int slot) const
 {
-    return levels::stepText (processor.levelsType.load(), slot);
+    return levels::stepText (processor.levelsType.load(), slot, processor.getSongScale());
 }
 
 void MpcView::setHosted (juce::LookAndFeel* look, std::function<void (juce::Graphics&)> paintBackground)
@@ -338,8 +385,8 @@ void MpcView::setHosted (juce::LookAndFeel* look, std::function<void (juce::Grap
     hostPaint = std::move (paintBackground);
     setLookAndFeel (look);
     // The host's screen has these.
-    for (auto* c : std::initializer_list<juce::Component*> { &grid, &browser, &levelsLabel, &levelsChoice, &noteRepeatButton,
-                                                             &repeatRates, &fullLevelButton })
+    for (auto* c : std::initializer_list<juce::Component*> { &grid, &browser, &levelsLabel, &levelsChoice, &makePadsButton,
+                                                             &noteRepeatButton, &repeatRates, &fullLevelButton })
         c->setVisible (false);
     for (auto& tab : bankTabs)
         tab.setVisible (false);
@@ -374,6 +421,19 @@ void MpcView::showSequencer (bool show)
 
 bool MpcView::keyPressed (const juce::KeyPress& key)
 {
+    // Cmd+Z / Cmd+Shift+Z: undo and redo of Make 16 pads (the Steps screen has its own buttons).
+    if (key == juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0) && processor.canUndoBankEdit())
+    {
+        processor.undoBankEdit();
+        setStatus ("Undone: the pads are back as they were.");
+        return true;
+    }
+    if (key == juce::KeyPress ('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0) && processor.canRedoBankEdit())
+    {
+        processor.redoBankEdit();
+        setStatus ("Redone.");
+        return true;
+    }
     if (key == juce::KeyPress::spaceKey)
     {
         auto& engine = processor.getSequencer();
@@ -543,11 +603,13 @@ void MpcView::resized()
     {
         auto tools = r.removeFromTop (34);
         // Narrow windows squeeze the row rather than lose any of it.
-        const float scale = juce::jmin (1.0f, (float) tools.getWidth() / 620.0f);
+        const float scale = juce::jmin (1.0f, (float) tools.getWidth() / 740.0f);
         auto take = [&tools, scale] (int width) { return tools.removeFromLeft (juce::roundToInt (width * scale)); };
         levelsLabel.setBounds (take (120));
         take (6);
         levelsChoice.setBounds (take (130));
+        take (6);
+        makePadsButton.setBounds (take (104));
         take (16);
         noteRepeatButton.setBounds (take (150));
         fullLevelButton.setBounds (tools.removeFromRight (juce::roundToInt (92 * scale)));

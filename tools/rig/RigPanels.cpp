@@ -454,7 +454,7 @@ Dock::Dock()
     }
     up.setTooltip ("Tempo up (hold Shift for a tenth).");
     down.setTooltip ("Tempo down (hold Shift for a tenth).");
-    for (auto* b : { &click, &countIn, &length, &undo, &recMoves, &moves, &quantize })
+    for (auto* b : { &click, &countIn, &length, &undo, &toLooper, &recMoves, &moves, &quantize })
     {
         b->fontSize = 17.0f;
         b->subSize = 10.5f;
@@ -477,6 +477,10 @@ Dock::Dock()
     undo.sub = "last take";
     undo.setTooltip ("Takes back the last take: clears the loop it recorded (or calls off one that hasn't started). With no take to undo, "
                      "the last Clear or overdub (Cmd+Z).");
+    toLooper.sub = "the part";
+    toLooper.setTooltip ("To looper: the picked instrument's part (the MPC's beat, the drum machine's or the bass's pattern, the synth, "
+                         "the sampler, the drone) goes onto the next empty loop layer from the next bar, as long as the part. Once it "
+                         "loops, the instrument switches off (its part is kept), so you don't hear it twice. Undo puts it back on.");
     recMoves.icon = PanelButton::Icon::rec;
     recMoves.setTooltip ("Records the knobs you turn while it plays, from the next bar: the bass's Cutoff sweeping, an effect's Mix, "
                          "any setting on any tool or its effects (on screen or with a learned knob). Press again to stop at the end of the bar. "
@@ -575,6 +579,11 @@ void Dock::resized()
     play.setBounds (centreY (r.removeFromLeft (box - 14), h));
     r.removeFromLeft (8);
     undo.setBounds (centreY (r.removeFromLeft (box), h));
+    if (toLooper.isVisible())
+    {
+        r.removeFromLeft (8);
+        toLooper.setBounds (centreY (r.removeFromLeft (box + 8), h));
+    }
     r.removeFromLeft (20);
     // The song's sections on the right: as many chips as there's room for, then +.
     {
@@ -1304,6 +1313,17 @@ RecSetup::RecSetup()
     click.fontSize = 16.0f;
     click.onClick = [this] { if (onClick) onClick(); };
     addAndMakeVisible (click);
+    toAClick.setTooltip ("My voice (the Vocoder or Line in): a click in your headphones with the count-in, and the take is as long as Length.");
+    singFreeButton.setTooltip ("My voice (the Vocoder or Line in): no click and no count-in. Sing your way, press Rec to stop; Kaleidobox "
+                               "finds your beat and fits the take to the song (stretched, pitch kept, hits pulled onto 1/8). "
+                               "Loop Lab's Warp shows it, with Original and Undo.");
+    for (auto* b : { &toAClick, &singFreeButton })
+    {
+        b->fontSize = 16.0f;
+        addAndMakeVisible (b);
+    }
+    toAClick.onClick = [this] { if (onSingFree) onSingFree (false); };
+    singFreeButton.onClick = [this] { if (onSingFree) onSingFree (true); };
 
     const char* titles[] = { "Next loop layer", "A take on the song", "Into the Sampler or next MPC pad", "The whole set, to stems",
                              "Pads into the MPC pattern" };
@@ -1328,8 +1348,10 @@ RecSetup::RecSetup()
     }
 }
 
-void RecSetup::setState (int countIn, int length, bool clickOn, int landsOn, bool toolMode)
+void RecSetup::setState (int countIn, int length, bool clickOn, int landsOn, bool toolMode, bool singFree)
 {
+    toAClick.lit = singFree ? Lit::none : Lit::next;
+    singFreeButton.lit = singFree ? Lit::next : Lit::none;
     const int countValues[] = { 0, 1, 2 }, lengthValues[] = { 1, 2, 4, 8, 16, 32, 64, 0 };
     for (int i = 0; i < countIns.size(); ++i)
         countIns[i]->lit = countValues[i] == countIn ? Lit::next : Lit::none;
@@ -1360,6 +1382,7 @@ void RecSetup::paint (juce::Graphics& g)
     engraved (g, juce::String::fromUTF8 ("Rec setup \xc2\xb7 the same as on the phone"), topLabel, juce::Justification::centredLeft, 12.0f, false, ink);
     engraved (g, "Count-in", countInLabel, juce::Justification::centredLeft, 13.0f, false, ink);
     engraved (g, "Length", lengthLabel, juce::Justification::centredLeft, 13.0f, false, ink);
+    engraved (g, "My voice", voiceLabel, juce::Justification::centredLeft, 13.0f, false, ink);
     if (whereShown)
     {
         g.setColour (ink.withAlpha (0.2f));
@@ -1397,6 +1420,12 @@ void RecSetup::resized()
             b->setBounds (line.removeFromLeft (w).withSizeKeepingCentre (w, 42));
             line.removeFromLeft (8);
         }
+    }
+    {
+        auto line = row (voiceLabel);
+        toAClick.setBounds (line.removeFromLeft (150).withSizeKeepingCentre (150, 42));
+        line.removeFromLeft (8);
+        singFreeButton.setBounds (line.removeFromLeft (150).withSizeKeepingCentre (150, 42));
     }
     if (! whereShown)
         return;

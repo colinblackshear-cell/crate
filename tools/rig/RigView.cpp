@@ -524,6 +524,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         updateDock();
     };
     dock.undo.onClick = [this] { undoLastTake(); };
+    dock.toLooper.onClick = [this] { pressToLooper(); };
     dock.recMoves.onClick = [this] { pressRecMoves(); };
     dock.moves.onClick = [this] { showAutomation(); };
     dock.quantize.onClick = [this] { showQuantize (quantizeTarget(), &dock.quantize); };
@@ -1532,9 +1533,17 @@ int RigView::pressRecTake()
             source = RigLooper::input;
         looper.getLayer (layer).source = source;
     }
-    // The bottom bar's length (0: until you press again) and count-in.
-    looper.getLayer (layer).bars = juce::jmax (0, recLength);
-    looper.getLayer (layer).countIn = juce::jlimit (0, 2, recCountIn);
+    // The bottom bar's length (0: until you press again) and count-in. My voice sung free: no
+    // click, no count-in, until you press again; fitted to the beat once it loops.
+    const bool free = singFree && isVoiceTrack (t);
+    looper.getLayer (layer).bars = free ? 0 : juce::jmax (0, recLength);
+    looper.getLayer (layer).countIn = free ? 0 : juce::jlimit (0, 2, recCountIn);
+    if (free)
+    {
+        freeFitLayer = layer;
+        freeFitClick = engine.getTransport().metronome.load();
+        engine.getTransport().metronome = false;
+    }
     looper.pressRecord (layer);
     takeLayer = layer;
     lastTakeLayer = layer;
@@ -1546,6 +1555,13 @@ int RigView::pressRecTake()
         note = " Your mic is off: switch it on (Mic, top right) to be heard.";
     else if (t == GrooveView::vocoder && ! engine.vocoderOn.load())
         note = " The vocoder is off: switch it on to be heard.";
+    if (free)
+    {
+        say ("Sing free: " + GrooveView::trackName (t) + " onto loop " + juce::String (layer + 1)
+             + " from the next bar, no click. Sing your way and press Rec to stop; it's fitted to the beat after." + note);
+        updateCaptureButtons();
+        return layer;
+    }
     const bool counting = recCountIn > (engine.getTransport().isPlaying() ? 1 : 0);
     say ("Rec: " + GrooveView::trackName (t) + " onto loop " + juce::String (layer + 1)
          + (counting ? " after " + juce::String (recCountIn) + (recCountIn == 1 ? " bar" : " bars") + " of count-in" : juce::String (" from the next bar"))
@@ -1589,6 +1605,219 @@ void RigView::pressRec()
     updateDock();
 }
 
+bool RigView::hasPart (int t)
+{
+    return t == GrooveView::drums || t == GrooveView::machine || t == GrooveView::bass || t == GrooveView::synth
+        || t == GrooveView::sampler || t == GrooveView::drone;
+}
+
+int RigView::partBars (int t) const
+{
+    const double bpb = juce::jmax (1, engine.getTransport().getBeatsPerBar());
+    const int fallback = recLength > 0 ? recLength : 4;
+    auto param = [] (juce::AudioProcessorValueTreeState& params, const char* id)
+    {
+        auto* v = params.getRawParameterValue (id);
+        return v != nullptr ? v->load() : 0.0f;
+    };
+    // The fewest whole bars a pattern of `beats` fits into a whole number of times (12 sixteenths:
+    // 3 bars), up to 8; past that, its length rounded up to whole bars.
+    auto barsFor = [bpb] (double beats)
+    {
+        if (beats <= 0)
+            return 1;
+        for (int bars = 1; bars <= 8; ++bars)
+        {
+            const double times = bars * bpb / beats;
+            if (std::abs (times - std::round (times)) < 1.0e-6)
+                return bars;
+        }
+        return juce::jlimit (1, RigLooper::kMaxBars, (int) std::ceil (beats / bpb - 1.0e-9));
+    };
+    switch (t)
+    {
+        case GrooveView::drums:
+            return juce::jlimit (1, RigLooper::kMaxBars, engine.getMpc().getProject().currentSequence().bars);
+        case GrooveView::machine:
+        {
+            auto& d = engine.getDrums();
+            if (param (d.params, "chain") > 0.5f)
+                return fallback;   // a chain of patterns: as long as the bottom bar's Length
+            const auto p = d.getPattern (d.getSelectedPattern(), d.editVariation);
+            return barsFor (p.length * crate::drums::stepBeats ((int) param (d.params, "stepRate")));
+        }
+        case GrooveView::bass:
+        {
+            auto& b = engine.getBass();
+            const auto p = b.getPattern (b.getSelectedPattern());
+            return barsFor (p.length * crate::synth::SyncRates::beats ((int) param (b.params, "stepRate")));
+        }
+        default:
+            return fallback;
+    }
+}
+
+int RigView::pressToLooper()
+{
+    auto& looper = engine.getLooper();
+    if (printLayer >= 0)
+    {
+        const int layer = std::exchange (printLayer, -1);
+        const auto st = looper.getState (layer);
+        endHandOff();
+        if (st == RigLooper::State::armed || (st == RigLooper::State::empty && ! printStarted))
+            looper.pressRecord (layer);   // not started: called off
+        else if (st == RigLooper::State::recording)
+            looper.clear (layer);
+        say ("To looper called off: nothing went onto loop " + juce::String (layer + 1) + ".");
+        updateDock();
+        return -1;
+    }
+    if (toolMode())
+        return -1;   // a tool plugin records itself for Logic (Rec)
+    const int t = getTrack();
+    if (! hasPart (t))
+    {
+        say ("To looper sends an instrument's part to the looper: pick the MPC, the drum machine, the bass, the synth, the sampler "
+             "or the drone. The Vocoder, Line in and the loops are recorded with Rec, as you play them.");
+        return -1;
+    }
+    if (takeLayer >= 0 || engine.getTakes().isActive() || engine.getRecorder().getState() != RigRecorder::State::idle)
+    {
+        say ("Something is recording: stop it first (Rec), then To looper.");
+        return -1;
+    }
+    int layer = -1;
+    for (int l = 0; l < RigLooper::kLayers && layer < 0; ++l)
+        if (looper.getState (l) == RigLooper::State::empty)
+            layer = l;
+    if (layer < 0)
+    {
+        say ("All 16 loops are full. Clear one (Loops on the left, then Edit), or keep them as a bank and start a new batch there.");
+        return -1;
+    }
+    const int source = takeSourceFor (t);
+    const int bars = partBars (t);
+    // The part has to play to be recorded: one that's stopped starts (and Kaleidobox with it).
+    // The synth and sampler without their arp or sound running are played on the keys instead.
+    bool playIt = false;
+    if (groove != nullptr && ! groove->isGoing (t))
+    {
+        if (t == GrooveView::synth || t == GrooveView::sampler)
+            playIt = true;
+        else
+            groove->pressTrackButton (t);
+    }
+    auto& l = looper.getLayer (layer);
+    l.source = source;
+    l.bars = bars;
+    l.countIn = 0;
+    looper.pressRecord (layer);
+    printLayer = layer;
+    printTrack = t;
+    printStarted = false;
+    endHandOff();
+    engine.handOffSource = source;
+    engine.handOffLayer = layer;
+    const auto name = GrooveView::trackName (t);
+    say ("To looper: the " + name + "'s part onto loop " + juce::String (layer + 1) + " from the next bar, "
+         + juce::String (bars) + (bars == 1 ? " bar" : " bars") + ". Then it loops and the " + name + " switches off, so you hear it once."
+         + (playIt ? " Play it on the keys now." : ""));
+    updateDock();
+    return layer;
+}
+
+void RigView::endHandOff()
+{
+    engine.handOffLayer = -1;
+    engine.handOffSource = -1;
+    handOffUntil = 0;
+}
+
+void RigView::tickToLooper()
+{
+    auto& looper = engine.getLooper();
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (freeFitLayer >= 0)
+    {
+        // Sing free: once the take loops, it's fitted to the beat (and the click comes back).
+        const int layer = freeFitLayer;
+        const auto st = looper.getState (layer);
+        const bool landed = st == RigLooper::State::playing || st == RigLooper::State::overdubbing;
+        const bool gone = st == RigLooper::State::empty && takeLayer != layer;
+        if (landed || gone)
+        {
+            freeFitLayer = -1;
+            engine.getTransport().metronome = freeFitClick;
+            if (landed)
+            {
+                const double heard = engine.getLoopLab().fitToBeat (layer);
+                const double beats = engine.getLoopLab().isOpen (layer) ? engine.getLoopLab().get (layer).plan.targetBeats : 0.0;
+                const int bars = (int) std::round (beats / juce::jmax (1, engine.getTransport().getBeatsPerBar()));
+                if (heard >= 0)
+                    say ("Fitted to the beat: loop " + juce::String (layer + 1)
+                         + (heard > 0 ? " was sung at about " + juce::String (juce::roundToInt (heard)) + " BPM;" : juce::String (" (no clear beat heard);"))
+                         + " it's " + juce::String (bars) + (bars == 1 ? " bar" : " bars") + " at the song's tempo now, pitch kept."
+                         + " Loop Lab's Warp shows it (Original plays it as sung, Undo takes the fit back).");
+            }
+        }
+    }
+    if (printLayer >= 0)
+    {
+        const auto st = looper.getState (printLayer);
+        if (st == RigLooper::State::armed || st == RigLooper::State::recording)
+            printStarted = true;
+        else if (st == RigLooper::State::playing || st == RigLooper::State::overdubbing)
+        {
+            const int layer = std::exchange (printLayer, -1), t = printTrack;
+            printedLayer = layer;
+            printedTrack = -1;
+            lastTakeLayer = layer;
+            if (juce::isPositiveAndBelow (t, (int) lastTake.size()))
+                lastTake[(size_t) t] = layer;
+            // The engine already keeps the instrument quiet from the loop's first beat; now it
+            // stops for real (its part kept), and the hand-off lets go once its tail has gone.
+            if (groove != nullptr && groove->isGoing (t))
+            {
+                groove->pressTrackButton (t);
+                printedTrack = t;
+            }
+            handOffUntil = now + 1500.0;
+            const auto name = GrooveView::trackName (t);
+            say ("The " + name + "'s part is on loop " + juce::String (layer + 1) + " and loops."
+                 + (printedTrack >= 0 ? " The " + name + " is off (its part is kept), so you hear it once. Undo puts it back on." : juce::String()));
+            updateDock();
+        }
+        else if (st == RigLooper::State::empty && printStarted)
+        {
+            const int layer = std::exchange (printLayer, -1);
+            endHandOff();
+            say ("To looper: loop " + juce::String (layer + 1) + " didn't record (the clock stopped before the part was done).");
+            updateDock();
+        }
+        return;
+    }
+    const int held = engine.handOffLayer.load();
+    if (held >= 0
+        && ((handOffUntil > 0 && now >= handOffUntil)
+            || (printedTrack >= 0 && groove != nullptr && groove->isGoing (printedTrack))
+            || looper.getState (held) == RigLooper::State::empty))
+        endHandOff();
+}
+
+bool RigView::isVoiceTrack (int t)
+{
+    return t == GrooveView::vocoder || t == GrooveView::lineIn;
+}
+
+void RigView::setSingFree (bool free)
+{
+    singFree = free;
+    saveRecSetup();
+    say (free ? "My voice: Sing free. Rec on the Vocoder or Line in records with no click until you press again, then fits the take to the beat."
+              : "My voice: To a click. Rec counts in with the click and records for Length.");
+}
+
 void RigView::setRecSetup (int countInBars, int lengthBars)
 {
     recCountIn = juce::jlimit (0, 2, countInBars);
@@ -1620,11 +1849,29 @@ bool RigView::undoLastTake()
         updateCaptureButtons();
         return true;
     }
+    if (printLayer >= 0)
+    {
+        pressToLooper();   // TO LOOPER that hasn't landed yet: called off
+        return true;
+    }
     if (juce::isPositiveAndBelow (lastTakeLayer, RigLooper::kLayers) && looper.getState (lastTakeLayer) != RigLooper::State::empty)
     {
         const int layer = lastTakeLayer;
         looper.clear (layer);
         forget (layer);
+        if (layer == printedLayer)
+        {
+            // What TO LOOPER sent: the instrument it switched off plays its part again.
+            const int t = std::exchange (printedTrack, -1);
+            printedLayer = -1;
+            endHandOff();
+            if (t >= 0 && groove != nullptr && ! groove->isGoing (t))
+                groove->pressTrackButton (t);
+            say ("Undo: loop " + juce::String (layer + 1) + " is cleared"
+                 + (t >= 0 ? " and the " + GrooveView::trackName (t) + " plays its part again." : juce::String (".")));
+            updateCaptureButtons();
+            return true;
+        }
         say ("Undo: the last take (loop " + juce::String (layer + 1) + ") is cleared. Rec records onto it again next.");
         updateCaptureButtons();
         return true;
@@ -1704,6 +1951,27 @@ void RigView::updateDock()
         dock.tempo.repaint();
     }
 
+    // To looper: shown for a track with a part; lit while it records.
+    {
+        const bool shown = ! toolMode() && hasPart (getTrack());
+        if (dock.toLooper.isVisible() != shown)
+        {
+            dock.toLooper.setVisible (shown);
+            dock.resized();
+        }
+        juce::String sub = "the part";
+        auto lit = vintage::Lit::none;
+        if (printLayer >= 0)
+        {
+            const bool recording = engine.getLooper().getState (printLayer) == RigLooper::State::recording;
+            sub = (recording ? "recording loop " : "next bar, loop ") + juce::String (printLayer + 1);
+            lit = recording ? vintage::Lit::arm : vintage::Lit::next;
+        }
+        else if (shown)
+            sub = "the " + GrooveView::trackName (getTrack()).toLowerCase();
+        setButton (dock.toLooper, "To looper", sub, lit);
+    }
+
     // Rec: what's recording from here, or where the next take goes.
     int state = 0;
     juce::String text = "Rec", sub = juce::String::fromUTF8 ("\xe2\x86\x92 ") + recTargetText();
@@ -1760,6 +2028,7 @@ void RigView::showRecMenu()
     recSetup = std::make_unique<rigpanels::RecSetup>();
     recSetup->onCountIn = [this] (int bars) { setRecSetup (bars, recLength); updateRecSetup(); };
     recSetup->onLength = [this] (int bars) { setRecSetup (recCountIn, bars); updateRecSetup(); };
+    recSetup->onSingFree = [this] (bool free) { setSingFree (free); updateRecSetup(); };
     recSetup->onClick = [this]
     {
         engine.getTransport().metronome = ! engine.getTransport().metronome.load();
@@ -1801,7 +2070,7 @@ void RigView::updateRecSetup()
     if (recSetup == nullptr)
         return;
     const int lands = recLands == RecLands::layer ? 0 : recLands == RecLands::song ? 1 : recLands == RecLands::sample ? 2 : recLands == RecLands::set ? 3 : 4;
-    recSetup->setState (recCountIn, recLength, engine.getTransport().metronome.load(), lands, toolMode());
+    recSetup->setState (recCountIn, recLength, engine.getTransport().metronome.load(), lands, toolMode(), singFree);
 }
 
 void RigView::closeRecSetup()
@@ -1823,6 +2092,7 @@ void RigView::loadRecSetup()
         return;
     recCountIn = juce::jlimit (0, 2, xml->getIntAttribute ("recCountIn", recCountIn));
     recLength = juce::jlimit (0, RigLooper::kMaxBars, xml->getIntAttribute ("recLength", recLength));
+    singFree = xml->getBoolAttribute ("singFree", singFree);
 }
 
 void RigView::saveRecSetup()
@@ -1835,6 +2105,7 @@ void RigView::saveRecSetup()
         xml = std::make_unique<juce::XmlElement> ("Timing");
     xml->setAttribute ("recCountIn", recCountIn);
     xml->setAttribute ("recLength", recLength);
+    xml->setAttribute ("singFree", singFree);
     file.getParentDirectory().createDirectory();
     xml->writeTo (file);
 }
@@ -3347,6 +3618,7 @@ void RigView::timerCallback()
     for (int i = 0; i < RigLooper::kLayers; ++i)
         if (const auto why = engine.getLooper().takeNoUndo (i); why != RigLooper::NoUndo::none)
             say ("Loop " + juce::String (i + 1) + ": " + RigLooper::noUndoMessage (why));
+    tickToLooper();
     updateCaptureButtons();
     checkCaughtIdea();
     if (phoneLink != nullptr)

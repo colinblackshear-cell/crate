@@ -2,6 +2,7 @@
 #include "core/TrackAnalysis.h"
 #include "RigSong.h"
 #include "FactoryKits.h"
+#include "dsp/Chords.h"   // the vocoder's scales, for the MPC's 16 Levels In key
 
 
 #include <algorithm>
@@ -858,7 +859,17 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     // (In a one-tool plugin only its tool runs; the others stay quiet and cost nothing.)
     mpcBlock.clear();
     if (runsStrip (mpcStrip))
+    {
+        // The MPC's 16 Levels "In key" climbs the song's scale: the chord builder's key and scale.
+        {
+            levels::Scale scale;
+            const auto& notes = vox::Chords::scales[juce::jlimit (0, vox::Chords::numScales - 1, chords.fillScale)];
+            for (size_t i = 0; i < scale.size(); ++i)
+                scale[i] = notes[i];
+            mpc.setSongKey (chords.fillKey, scale);
+        }
         mpc.processBlock (mpcBlock, mpcMidi);
+    }
     drumsBlock.clear();
     if (runsStrip (drumsStrip))
         drums.processBlock (drumsBlock, drumsMidi);
@@ -1069,6 +1080,36 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         drone.process (droneBlock, feed, droneMidi);
     }
     applyStrip (droneStrip, droneBlock);
+
+    // TO LOOPER's hand-off: from the beat the loop closes on, the tool it recorded is quiet here
+    // (a 4 ms fade, then silence), before anything hears it; the loop plays the part from there.
+    if (const int layer = handOffLayer.load(); juce::isPositiveAndBelow (layer, RigLooper::kLayers) && transport.isPlayingThisBlock())
+    {
+        juce::AudioBuffer<float>* block = nullptr;
+        switch (handOffSource.load())
+        {
+            case RigLooper::bass:    block = &bassBlock; break;
+            case RigLooper::synth:   block = &synthBlock; break;
+            case RigLooper::mpc:     block = &mpcBlock; break;
+            case RigLooper::sampler: block = &samplerBlock; break;
+            case RigLooper::drums:   block = &drumsBlock; break;
+            case RigLooper::drone:   block = &droneBlock; break;
+            default: break;
+        }
+        const double stopsAt = looper.getLayer (layer).stopsAt.load();
+        if (block != nullptr && stopsAt >= 0 && looper.getState (layer) != RigLooper::State::empty)
+        {
+            const double spb = sampleRate * 60.0 / juce::jmax (1.0, transport.getBpm());
+            const double from = (stopsAt - transport.getBlockPosition()) * spb;   // samples into this block
+            const double fade = juce::jmax (1.0, 0.004 * sampleRate);
+            for (int i = juce::jmax (0, (int) std::floor (from)); i < n; ++i)
+            {
+                const float gain = (float) juce::jlimit (0.0, 1.0, 1.0 - ((double) i - from) / fade);
+                for (int ch = 0; ch < block->getNumChannels(); ++ch)
+                    block->getWritePointer (ch)[i] *= gain;
+            }
+        }
+    }
 
     // Each tool's strip (in Stem order), for its own output in Logic.
     const std::array<juce::AudioBuffer<float>*, numStems> stems { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, nullptr, &drumsBlock };
