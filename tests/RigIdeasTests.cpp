@@ -223,6 +223,55 @@ public:
             expectWithinAbsoluteError (e3.getTransport().getBpm(), was, 1.0e-9);
         }
 
+        beginTest ("CATCH AN IDEA under way, then another show is opened: the opened show keeps its tempo and its loop");
+        {
+            auto dir = juce::File::createTempFile ("catch-then-open");
+            dir.deleteFile();
+            dir.createDirectory();
+            const auto file = dir.getChildFile ("Saved idea.crateshow");
+            const auto sung = ideatempo::jingle (96.0, 0.8, 16.0);
+            {
+                // A saved idea: one loop, on loop 1, at a tempo that isn't the one it was sung at.
+                RigEngine saved;
+                saved.prepare (48000.0, 480);
+                saved.getTransport().setBpm (120.0);
+                saved.getLooper().setLayerAudio (0, sung, 32.0);
+                expect (saved.saveShowFile (file, rigshow::SaveKind::document).ok);
+            }
+            auto openedAsSaved = [&] (RigEngine& engine, RigView& view, const juce::String& what)
+            {
+                expect (view.getCurrentShow() == file, what + ": opened");
+                expect (engine.getLooper().getState (0) == RigLooper::State::playing, what + ": its one loop plays (what a caught idea looks like)");
+                expect (! view.checkCaughtIdea(), what + ": the opened show isn't taken for the caught idea");
+                expectWithinAbsoluteError (engine.getTransport().getBpm(), 120.0, 1.0e-9, what + ": its tempo");
+                expectWithinAbsoluteError (engine.getLooper().getLayer (0).lengthBeats.load(), 32.0, 1.0e-9, what + ": its loop");
+            };
+            {
+                // Logic's window and the one-tool plugins (the old way of opening).
+                RigEngine engine;
+                engine.prepare (48000.0, 480);
+                RigView view (engine, nullptr);
+                view.setSize (1440, 960);
+                view.catchIdea();
+                view.openShowFile (file);
+                openedAsSaved (engine, view, "the old way");
+            }
+            {
+                // And Catch an idea itself still finds its tempo after a show was opened and a new idea caught.
+                RigEngine engine;
+                engine.prepare (48000.0, 480);
+                RigView view (engine, nullptr);
+                view.setSize (1440, 960);
+                view.openShowFile (file);
+                view.newSong (false, false);
+                view.catchIdea();
+                engine.getLooper().setLayerAudio (0, sung, 16.0 * engine.getTransport().getBpm() / 60.0);
+                expect (view.checkCaughtIdea(), "a new idea caught afterwards still sets the tempo");
+                expectWithinAbsoluteError (engine.getTransport().getBpm(), 96.0, 1.0);
+            }
+            dir.deleteRecursively();
+        }
+
         beginTest ("the Rig opens on My ideas; its ways in start a song");
         {
             RigEngine engine;

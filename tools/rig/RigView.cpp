@@ -113,6 +113,7 @@ struct RigView::DocHost final : RigDocFlow::Host
     juce::File showsFolder() const override { return theShowsFolder(); }
     void replaced (Replaced kind) override
     {
+        view.catchLayer = -1;   // (a Catch an idea take under way was the show before's)
         view.refresh();
         if (view.song != nullptr)
             view.song->forgetUndo();
@@ -4332,6 +4333,7 @@ void RigView::openShowFile (const juce::File& file)
     if (auto xml = juce::parseXML (file))
     {
         docFlow->abandon();   // (a show opened another way: what the flow had under way is over)
+        catchLayer = -1;      // (and a Catch an idea take under way was the show before's, not this one's)
         engine.loadShow (juce::ValueTree::fromXml (*xml));
         engine.readLoopAudio (file);
         currentShow = file;
@@ -5098,6 +5100,7 @@ juce::String RigView::importFromLogic (const juce::File& folder)
     if (song.layers.empty())
         return song.notes.joinIntoString (". ") + ".";
     docFlow->abandon();   // (imported another way: what the flow had under way is over)
+    catchLayer = -1;
     engine.getTransport().stop();
     const auto said = rigimport::apply (engine, std::move (song));
     refresh();
