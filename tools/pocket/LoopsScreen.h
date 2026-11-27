@@ -85,6 +85,14 @@ public:
     void stopVocoder();
     void leave();                           // another tab (not Beats) was opened: stop the clock and the loops
     void flush() { save(); }                // before switching ideas
+    // The app's UNDO history: every layer as it is (its take, mute, place, effects and board), and put back.
+    struct Snapshot { struct One { pocket::SharedTake take; bool mute = false; pocket::LayerFxState fx {}; double start = 0.0; juce::var board {}; int version = 0; };
+                      std::array<One, pocket::kLoopLayers> layers; };
+    Snapshot snapshot() const;
+    void restore (const Snapshot&);
+    static juce::String signature (const Snapshot&);
+    // A layer is about to be dubbed over (its take changes in place): a copy of it as it was, for the history.
+    std::function<void (int layer, pocket::SharedTake copy)> onBeforeDub;
     void reloadIdea();
     void sendToMac (bool onlyPicked);
     // A layer's loop as a sound at 44.1 kHz, with its effects and board when it has any (nullptr: no loop), its name

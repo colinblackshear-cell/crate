@@ -2650,3 +2650,47 @@ void BeatsScreen::resized()
     drumView->setBounds (getLocalBounds());
     padsView->setBounds (getLocalBounds());
 }
+
+//==============================================================================
+// UNDO history (PocketAppHistory.cpp): the beat and the kit as they are, put back as they were.
+BeatsScreen::Snapshot BeatsScreen::snapshot() const
+{
+    return { drumData.toVar(), padKit.pads, padKit.name };
+}
+
+juce::String BeatsScreen::signature (const Snapshot& s)
+{
+    juce::String t = juce::JSON::toString (s.drums, true) + "|" + s.kitName;
+    for (int i = 0; i < pocket::kPads; ++i)
+    {
+        const auto& p = s.pads[(size_t) i];
+        if (p.empty())
+            continue;
+        t << "|" << i << ":" << p.soundId << "," << p.from << "," << p.to << "," << p.volume << "," << p.pan << "," << p.tune << "," << (int) p.mode
+          << "," << (juce::pointer_sized_int) p.audio.get();
+    }
+    return t;
+}
+
+void BeatsScreen::restore (const Snapshot& s)
+{
+    const bool wasPlaying = beatsEngine.isPlaying();
+    drumData = DrumData::fromVar (s.drums);
+    beatsEngine.setDrums (drumData);
+    applyDrumSounds();
+    beatsEngine.setPadPattern (drumData.padPattern);
+    applyRepeatRate();
+    setBpm (drumData.bpm);
+    padKit.pads = s.pads;
+    padKit.name = s.kitName;
+    pushPads();
+    drumsDirty = kitDirty = true;
+    saveSoon();
+    if (beatsEngine.isPlaying() != wasPlaying)
+        beatsEngine.setPlaying (wasPlaying);
+    if (drumView != nullptr)
+        drumView->refresh();
+    if (padsView != nullptr)
+        padsView->refresh();
+    repaint();
+}

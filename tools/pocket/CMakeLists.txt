@@ -88,6 +88,7 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketAppEffects.cpp
     PocketAppNav.cpp
     PocketAppSong.cpp
+    PocketAppHistory.cpp
     PocketAppTrack.cpp
     PocketAppSampler.cpp
     ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp

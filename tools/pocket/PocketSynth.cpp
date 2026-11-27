@@ -707,7 +707,15 @@ void SynthEngine::renderAt (float* left, float* right, int n, bool running, doub
             else
                 ++i;
         const double from = playFrom.load();
-        if (liveCount > 0 && liveLength > 0)
+        const bool muted = patternMuted.load();
+        if (muted && ! wasMuted)
+        {
+            for (int i = 0; i < numSounding; ++i)
+                patMidi.addEvent (juce::MidiMessage::noteOff (1, sounding[(size_t) i].note), 0);
+            numSounding = 0;
+        }
+        wasMuted = muted;
+        if (! muted && liveCount > 0 && liveLength > 0)
         {
             for (int i = 0; i < liveCount; ++i)
             {
@@ -779,6 +787,7 @@ void SynthPart::reset()
     arpStyle = 0;
     arpRate = 1;
     arpHold = false;
+    live = true;
     pattern = {};
     stashed = false;
     takeOn = false;
@@ -814,6 +823,7 @@ void SynthPart::stepPreset (int delta)
 
 void SynthPart::apply()
 {
+    eng.setPatternMuted (! live);
     auto s = makeSynthSettings (preset, knobs, octave);
     s.arpOn = mode == arpMode;
     s.arpMode = arpStyle == 0 ? st::ArpMode::up : arpStyle == 1 ? st::ArpMode::down : st::ArpMode::upDown;
@@ -821,7 +831,7 @@ void SynthPart::apply()
     s.arpSync = true;
     s.arpGate = 0.6f;
     s.arpOctaves = 1;
-    s.latch = arpHold;
+    s.latch = arpHold && live;   // OFF lets a held arp go
     eng.setSettings (s);
     eng.setEcho (knobs.echo);
 }
@@ -866,6 +876,7 @@ juce::var SynthPart::toVar() const
     o->setProperty ("arpStyle", arpStyle);
     o->setProperty ("arpRate", arpRate);
     o->setProperty ("arpHold", arpHold);
+    o->setProperty ("live", live);
     o->setProperty ("pattern", pattern.toVar());
     return juce::var (o);
 }
@@ -890,14 +901,26 @@ void SynthPart::fromVar (const juce::var& v)
     arpStyle = juce::jlimit (0, 2, (int) v.getProperty ("arpStyle", 0));
     arpRate = juce::jlimit (0, 1, (int) v.getProperty ("arpRate", 1));
     arpHold = (bool) v.getProperty ("arpHold", false);
+    live = (bool) v.getProperty ("live", true);
     pattern = SynthPattern::fromVar (v.getProperty ("pattern", {}));
     apply();
     patternChanged();
 }
 
 //==============================================================================
+void SynthPart::setLive (bool on)
+{
+    live = on;
+    eng.setPatternMuted (! on);
+    if (! on)
+        eng.allKeysUp();
+    apply();
+}
+
 void SynthPart::startTake (int bars, double from, double to)
 {
+    if (! live)
+        setLive (true);   // REC: you hear what you play, and it plays round
     stash = pattern;
     stashed = true;
     pattern = {};

@@ -33,6 +33,7 @@ public:
         bool click = false, recBusy = false, recCounting = false, playing = false, visuals = false;
         bool undoPass = false;   // looping REC: UNDO takes back the last pass
         bool toLooper = false;   // VISUALS' place shows TO LOOPER: what this tool made can go on a layer
+        int power = -1;          // else, on an instrument: its ON / OFF (1 on, 0 off; -1 shows VISUALS)
     };
     std::function<State()> state;
     std::function<void (int)> onPress;   // a Button
@@ -55,6 +56,8 @@ public:
     int selected = -1;       // index into tools, -1 = none lit
     int bottomInset = 0;
     std::function<void (Tool)> onSelect;
+    // a small light on an instrument that is playing along by itself now (its ON / OFF is on its screen's thumb bar)
+    std::function<bool (Tool)> isLive;
     void flash();   // outline the tools in amber for a moment ("pick another tool"); it ends by the clock, whatever else happens
     bool flashing() const { return juce::Time::getMillisecondCounter() < glowUntil; }
     void stopFlash() { glowUntil = 0; repaint(); }

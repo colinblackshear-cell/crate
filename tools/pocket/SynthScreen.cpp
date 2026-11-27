@@ -250,6 +250,8 @@ void SynthScreen::keyDown (int source, int key)
         {
             part.pattern.setStep (global, note);
             part.patternChanged();
+            if (! part.live)
+                part.setLive (true);   // writing the pattern: you hear it again
             if (selectedStep < 15 && page * 16 + selectedStep + 1 < part.pattern.steps())
                 ++selectedStep;
             else if ((page + 1) * 16 < part.pattern.steps())

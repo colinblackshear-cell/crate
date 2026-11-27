@@ -214,6 +214,11 @@ private:
     // TO LOOPER (the thumb bar, where VISUALS sits, on DRUMS, PADS and SYNTH): what you've made goes on the next layer
     // from its next start, as it is. Shown only when there's something new to send.
     bool canSendToLooper();
+    // ON / OFF (VISUALS' place on an instrument when TO LOOPER isn't offered): whether the instrument plays along by
+    // itself (its pattern, progression or drone). Keys and pads played by hand always sound.
+    bool hasLiveSwitch (pocket::Tool);
+    bool instrumentOn (pocket::Tool);
+    void setInstrumentOn (pocket::Tool, bool on, bool say = true);
     void sendToLooper();
     juce::String sentFingerprint;   // what TO LOOPER last sent (cleared by UNDO), so it isn't offered twice
     juce::String looperFingerprint();
@@ -377,6 +382,7 @@ private:
     SynthScreen synthScreen;
     pocket::SynthPart bassPart;    // the BASS tool: the same synth, its own part, with the bass sounds
     SynthScreen bassScreen;
+    int shownLights = -1;          // the tool row's lights as last drawn
     bool bassActive = false;       // REC, TO LOOPER and UNDO work on BASS (true) or SYNTH
     pocket::SynthPart& sPart() { return bassActive ? bassPart : synthPart; }
     const pocket::SynthPart& sPart() const { return bassActive ? bassPart : synthPart; }
@@ -505,6 +511,34 @@ private:
     void openKeyMenu (juce::Component&, juce::Rectangle<int>);
     void loadSong();
     void saveSong();
+    juce::var songToVar();                 // what song.json holds
+    void loadSongVar (const juce::var&);
+
+    // UNDO: one history of everything you do in the song, in order (PocketAppHistory.cpp). A step is taken once what
+    // you changed has settled (a knob turn is one step), never in the middle of a recording. REDO is on UNDO's toast.
+    struct HistoryStep
+    {
+        juce::var song;
+        bool chordsMuted = false;
+        BeatsScreen::Snapshot beats;
+        LoopsScreen::Snapshot loops;
+        juce::String sig;
+    };
+    HistoryStep captureStep();
+    void historyTickNow();
+    void historyCommitNow();
+    void historyUndo();
+    void historyRedo();
+    void historyReset();                   // a song opened: a new history
+    void restoreStep (const HistoryStep&);
+    static juce::String describeChange (const HistoryStep& from, const HistoryStep& to);
+    bool historyCanRun();
+    std::vector<HistoryStep> historyPast, historyFuture;
+    HistoryStep historyNow;
+    bool historyValid = false;
+    juce::String historyPendingSig;
+    int historyPendingTicks = 0;
+    juce::TimedCallback historyTick { [this] { historyTickNow(); } };
 
     // A finger that starts within 22 px of the left edge and pulls right drags the drawer out (a watcher on every touch,
     // so nothing underneath loses its drag; the SYNTH keys and the sheets are left alone).

@@ -36,6 +36,11 @@ public:
     void leave();               // the tab was left: stop the drums and the pads
     void refreshPads();         // redraw the pad buttons' states (after LOCK BEAT)
     void flush();               // save anything waiting to be saved, now (before switching ideas)
+    // The app's UNDO history: the drum machine, the pad pattern and the kit as they are, and put back.
+    struct Snapshot { juce::var drums; std::array<pocket::KitPad, pocket::kPads> pads; juce::String kitName; };
+    Snapshot snapshot() const;
+    void restore (const Snapshot&);
+    static juce::String signature (const Snapshot&);
     void reloadIdea (const juce::String& ideaName);   // the library points at another idea: load its pads and beat
     juce::String summary() const;   // "92 BPM · 4 pads · beat recorded", for the Ideas list
 
