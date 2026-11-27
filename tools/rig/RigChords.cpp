@@ -409,9 +409,19 @@ void RigChords::copyMapToYourKeys()
 {
     if (mapLayout.load() == (int) MapLayout::yourKeys)
         return;
+    // Each key's chord where it plays, but without Octave and + Bass: those still apply on top of
+    // Your keys, so copying them in too would play the bass twice and move the octave twice.
     std::array<juce::Array<int>, 128> made;
     for (int n = 0; n < 128; ++n)
-        made[(size_t) n] = map[(size_t) n].kind == MapEntry::chord || map[(size_t) n].kind == MapEntry::padChord ? mapNotesFor (n) : juce::Array<int>();
+    {
+        if (map[(size_t) n].kind != MapEntry::chord && map[(size_t) n].kind != MapEntry::padChord)
+            continue;
+        std::array<int, kMaxNotes> out {};
+        double centre = -1;
+        const int count = voiceMapKey (n, out, centre, false);
+        for (int i = 0; i < count; ++i)
+            made[(size_t) n].add (out[(size_t) i]);
+    }
     keyChords = made;
     mapLayout = (int) MapLayout::yourKeys;
     rebuildMap();
@@ -658,7 +668,7 @@ juce::String RigChords::mapDegreeName (int note) const
     return numeral + rest;
 }
 
-int RigChords::voiceMapKey (int note, std::array<int, kMaxNotes>& out, double& centre) const
+int RigChords::voiceMapKey (int note, std::array<int, kMaxNotes>& out, double& centre, bool extras) const
 {
     if (note < 0 || note > 127)
         return 0;
@@ -694,7 +704,7 @@ int RigChords::voiceMapKey (int note, std::array<int, kMaxNotes>& out, double& c
         return 0;
 
     const auto voicing = (MapVoicing) juce::jlimit (0, 2, mapVoicing.load());
-    const int octaveShift = 12 * juce::jlimit (-2, 2, mapOctave.load());
+    const int octaveShift = extras ? 12 * juce::jlimit (-2, 2, mapOctave.load()) : 0;
     int shift = octaveShift + (voicing == MapVoicing::followKeys ? e.follow.load() : 0);
     for (int i = 0; i < count; ++i)
         base[(size_t) i] += shift;
@@ -749,7 +759,7 @@ int RigChords::voiceMapKey (int note, std::array<int, kMaxNotes>& out, double& c
     for (int i = 1; i < count; ++i)
         lowest = juce::jmin (lowest, base[(size_t) i]);
     int bass = -1;
-    if (mapBass.load())
+    if (extras && mapBass.load())
     {
         bass = lowest - ((lowest - root) % 12 + 12) % 12;
         if (lowest - bass < 12)
@@ -1426,6 +1436,19 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
         const double beatsPerSample = clock.bpm / 60.0 / juce::jmax (1.0, clock.sampleRate);
         const double start = juce::jmax (0.0, clock.beat);
         auto stepAt = [&] (double beat) { return (int) std::floor (beat / len + 1.0e-9); };
+        const double until = progressionUntil.load();
+        bool ended = false;
+        // The progression went onto a loop layer: at the end of the take it lets go and stops, so
+        // the loop's chords aren't played twice (nor old ones under new ones once you change a pad).
+        auto end = [&] (int at)
+        {
+            stopVoice (kProgressionSource, at, to);
+            progressionStepNow = -1;
+            playingStep = -1;
+            progressionOn = false;
+            progressionUntil = -1.0;
+            ended = true;
+        };
         auto change = [&] (int absolute, int at)
         {
             progressionStepNow = absolute;
@@ -1436,11 +1459,21 @@ void RigChords::process (const Clock& clock, int numSamples, int keysTo, std::ar
             if (pad >= 0 && pad < kPads && live[(size_t) pad][0].load() >= 0)
                 startVoice (kProgressionSource, pad, 0, 0.8f, dest, at, to, strumSamples);
         };
-        if (stepAt (start) != progressionStepNow)
+        if (until >= 0 && start >= until - 1.0e-9)
+            end (0);
+        else if (stepAt (start) != progressionStepNow)
             change (stepAt (start), 0);
-        for (int guard = 0; guard < 64; ++guard)
+        for (int guard = 0; guard < 64 && ! ended; ++guard)
         {
             const double boundary = (progressionStepNow + 1) * len;
+            if (until >= 0 && until <= boundary + 1.0e-9)
+            {
+                // The take ends before the next step starts (or on it): let go there.
+                const int endAt = (int) std::ceil ((until - start) / beatsPerSample - 1.0e-6);
+                if (endAt < numSamples)
+                    end (juce::jmax (0, endAt));
+                break;
+            }
             const int at = (int) std::ceil ((boundary - start) / beatsPerSample - 1.0e-6);
             if (at >= numSamples || at < 0)
                 break;
@@ -1580,6 +1613,7 @@ void RigChords::reset()
     shapePad = 0;
     stepLength = 2;
     progressionOn = false;
+    progressionUntil = -1.0;
     mapLayout = (int) MapLayout::scaleNotes;
     mapOffScale = (int) OffScale::snap;
     mapVoicing = (int) MapVoicing::followKeys;

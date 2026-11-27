@@ -320,11 +320,19 @@ public:
             view.showKeyMenu (note);
             return;
         }
-        if (mapOn() && ! e.mods.isAltDown() && view.chords.mapChordName (note).isNotEmpty())
+        if (mapOn() && ! e.mods.isAltDown())
         {
-            playingKey = note;
-            view.wakeVocoder();
-            view.chords.pressMapKey (note);
+            if (view.chords.mapChordName (note).isNotEmpty())
+            {
+                playingKey = note;
+                view.wakeVocoder();
+                view.chords.pressMapKey (note);
+                return;
+            }
+            // A key with no chord on the map: a plain click doesn't quietly add it to the pad
+            // (whose notes the map hides), so pads don't pile up notes you can't see.
+            view.say ("Key " + RigChords::noteName (note) + " has no chord on the map. Option-click to add it to pad "
+                      + juce::String (view.selected + 1) + ", or right-click to put a chord on it.");
             return;
         }
         view.clickKey (note);
@@ -564,6 +572,11 @@ ChordsView::ChordsView (RigEngine& e) : engine (e), chords (e.getChords())
     chordsOnButton.getProperties().set ("fontSize", 15.0f);
     vintage::setLit (chordsOnButton, Lit::play);
     addAndMakeVisible (chordsOnButton);
+
+    allOffButton.setTooltip ("All off: every chord stops right now, one Hold kept playing and the progression too. "
+                             "(Chords on/off turns chords into single notes; it stops the progression as well.)");
+    allOffButton.onClick = [this] { pressAllOff(); };
+    addAndMakeVisible (allOffButton);
 
     holdButton.setClickingTogglesState (false);
     holdButton.setTooltip ("Hold: a chord keeps playing after you let go, until you play the next (or the same one again).");
@@ -949,7 +962,13 @@ void ChordsView::timerCallback()
     {
         const auto state = engine.getLooper().getState (loopLayer);
         if (state != RigLooper::State::armed && state != RigLooper::State::recording)
+        {
+            if (loopHadProgression && (state == RigLooper::State::playing || state == RigLooper::State::overdubbing))
+                say ("The progression is on loop layer " + juce::String (loopLayer + 1)
+                     + " now, so it stopped playing live on top of the loop. Play it brings it back.");
+            loopHadProgression = false;
             loopLayer = -1;
+        }
     }
     updateControls();
     for (auto* p : padButtons)
@@ -1057,7 +1076,7 @@ void ChordsView::pressChordsOn()
 {
     chords.toggleChords();
     say (chords.areChordsOn() ? "Chords on: your keys and pads play chords."
-                              : "Chords off: your keys play plain single notes (pads: the chord's lowest note).");
+                              : "Chords off: your keys play plain single notes (pads: the chord's lowest note), and the progression stopped.");
     refresh();
 }
 
@@ -1083,6 +1102,14 @@ void ChordsView::showChordsOnMenu()
                    refresh();
                });
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&chordsOnButton));
+}
+
+void ChordsView::pressAllOff()
+{
+    const bool wasPlaying = chords.anySounding() || chords.progressionOn.load();
+    chords.stopEverything();
+    say (wasPlaying ? "All off: every chord stopped. Play a pad or a key to start again." : "Nothing was playing.");
+    refresh();
 }
 
 void ChordsView::pressHold()
@@ -1445,6 +1472,8 @@ void ChordsView::pressPlayProgression()
         return;
     }
     chords.progressionOn = ! chords.progressionOn.load();
+    if (chords.progressionOn.load() && loopLayer < 0)
+        chords.progressionUntil = -1.0;   // back on after it went onto a loop: it plays on
     if (chords.progressionOn.load())
     {
         wakeVocoder();
@@ -1456,6 +1485,11 @@ void ChordsView::pressPlayProgression()
 juce::String ChordsView::pressToLoop()
 {
     auto& looper = engine.getLooper();
+    if (loopLayer >= 0 && looper.getState (loopLayer) != RigLooper::State::armed && looper.getState (loopLayer) != RigLooper::State::recording)
+    {
+        loopLayer = -1;   // its take is in already (the timer hadn't seen it yet)
+        loopHadProgression = false;
+    }
     if (loopLayer >= 0)
     {
         const auto state = looper.getState (loopLayer);
@@ -1463,6 +1497,7 @@ juce::String ChordsView::pressToLoop()
             looper.pressRecord (loopLayer);
         const int layer = loopLayer;
         loopLayer = -1;
+        loopHadProgression = false;
         refresh();
         return "Looping it on layer " + juce::String (layer + 1) + ".";
     }
@@ -1478,6 +1513,10 @@ juce::String ChordsView::pressToLoop()
             const double beats = chords.progressionOn.load() ? chords.progressionBeats() : 0.0;
             layer.bars = beats > 0 ? juce::jmax (1, (int) std::ceil (beats / beatsPerBar - 1.0e-6)) : 0;
             looper.pressRecord (i);
+            // The progression stops at the end of the take, so the loop and the live progression
+            // don't both play the chords (and old ones under new ones once you change a pad).
+            engine.chordsOntoLayer (i);
+            loopHadProgression = chords.progressionOn.load();
             loopLayer = i;
             refresh();
             juce::String text = "Recording the " + RigRouting::destName (dest) + " onto loop layer " + juce::String (i + 1);
@@ -1832,6 +1871,8 @@ void ChordsView::resized()
         trigger.setBounds (top.removeFromLeft (spare * 34 / 100).reduced (0, 2));
         top.removeFromLeft (10);
         holdButton.setBounds (top.removeFromLeft (64).reduced (0, 1));
+        top.removeFromLeft (6);
+        allOffButton.setBounds (top.removeFromLeft (64).reduced (0, 1));
         top.removeFromLeft (8);
         strum.setBounds (top.reduced (0, 2));
     }

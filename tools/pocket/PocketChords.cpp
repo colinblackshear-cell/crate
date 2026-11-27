@@ -727,6 +727,12 @@ void ChordsTool::setChordsOn (bool on)
     if (live >= 0 && ! momentary)
         releaseAll();   // a latched chord stops (as on the Mac); one under your finger turns into its note
     eng.setChordsOn (on);
+    if (! on && progressionOn)
+    {
+        // Off is off: a progression that's playing stops too (as on the Mac); ON starts it again.
+        progressionOn = false;
+        apply();
+    }
 }
 
 int ChordsTool::usedBoxes() const
