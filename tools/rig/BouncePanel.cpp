@@ -30,9 +30,11 @@ BouncePanel::BouncePanel (RigEngine& e, RigBounce::Options start) : engine (e), 
     allButton.onClick = [this] { pickSplit (Split::everything); };
 
     wavButton.setTooltip ("24-bit WAV at the Rig's rate: for Logic");
-    wavButton.onClick = [this] { setFormats (! options.wav, options.mp3); };
+    wavButton.onClick = [this] { setFormats (! options.wav, options.aiff, options.mp3); };
+    aiffButton.setTooltip ("24-bit AIFF: for Logic, Pro Tools, anything on a Mac");
+    aiffButton.onClick = [this] { setFormats (options.wav, ! options.aiff, options.mp3); };
     mp3Button.setTooltip ("MP3, 320 kbps: to share, or for anywhere else");
-    mp3Button.onClick = [this] { setFormats (options.wav, ! options.mp3); };
+    mp3Button.onClick = [this] { setFormats (options.wav, options.aiff, ! options.mp3); };
     dryButton.setTooltip ("The loops without their effects and levels (as recorded)");
     dryButton.onClick = [this] { options.dry = ! options.dry; update(); };
 
@@ -70,7 +72,7 @@ BouncePanel::BouncePanel (RigEngine& e, RigBounce::Options start) : engine (e), 
     }
 
     for (auto* c : std::initializer_list<juce::Component*> { &songButton, &loopsButton, &sectionBox, &mixButton, &eachButton, &allButton, &wavButton,
-                                                             &mp3Button, &dryButton, &tailBox, &bounceButton })
+                                                             &aiffButton, &mp3Button, &dryButton, &tailBox, &bounceButton })
         addAndMakeVisible (c);
     if (! mp3::available())
         options.mp3 = false;
@@ -91,6 +93,7 @@ void BouncePanel::pickSendBack (SendBack s)
     {
         options.mp3 = true;
         options.wav = false;
+        options.aiff = false;
     }
     else if (s != SendBack::everythingToListen)
         options.wav = true;
@@ -126,13 +129,14 @@ void BouncePanel::pickSplit (Split s)
     update();
 }
 
-void BouncePanel::setFormats (bool wav, bool mp3)
+void BouncePanel::setFormats (bool wav, bool aiff, bool mp3)
 {
-    if (! wav && ! mp3)
+    if (! wav && ! aiff && ! mp3)
         return;   // one at least
     options.wav = wav;
+    options.aiff = aiff;
     options.mp3 = mp3 && mp3::available();
-    if (! options.wav && ! options.mp3)
+    if (! options.wav && ! options.aiff && ! options.mp3)
         options.wav = true;
     update();
 }
@@ -157,6 +161,7 @@ void BouncePanel::update()
     lit (eachButton, options.split == Split::eachLoop);
     lit (allButton, options.split == Split::everything);
     lit (wavButton, options.wav);
+    lit (aiffButton, options.aiff);
     lit (mp3Button, options.mp3);
     lit (dryButton, options.dry);
     allButton.setButtonText (options.split == Split::everything ? "Everything (real time)" : "Everything");
@@ -201,7 +206,7 @@ void BouncePanel::resized()
     };
     row (whatLabel, { { &songButton, 110 }, { &sectionBox, 200 }, { &loopsButton, 200 } });
     row (splitLabel, { { &mixButton, 110 }, { &eachButton, 180 }, { &allButton, 220 } });
-    row (formatLabel, { { &wavButton, 80 }, { &mp3Button, 80 }, { &dryButton, 80 }, { &tailBox, 120 } });
+    row (formatLabel, { { &wavButton, 80 }, { &aiffButton, 80 }, { &mp3Button, 80 }, { &dryButton, 80 }, { &tailBox, 120 } });
     if (trackRow)
         row (trackLabel, { { &eachPartButton, 160 }, { &mixedPartsButton, 160 }, { &listenButton, 160 } });
     statusArea = r.removeFromTop (44);

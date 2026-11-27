@@ -128,17 +128,16 @@ std::shared_ptr<NotePart> NotePart::fromVar (const juce::var& v)
     return p;
 }
 
-double quantizedBeat (double beat, const LoopQuantize& q, double length)
+double quantizedBeatOn (double beat, double g, float strength, bool swing, double length)
 {
-    const double g = q.gridBeats();
     double out = beat;
     if (g > 0.0)
     {
         const double line = std::round (beat / g);
         double target = line * g;
-        if (q.swing && (((long long) line) & 1) != 0)
+        if (swing && (((long long) line) & 1) != 0)
             target += g / 3.0;   // the off-beat at two thirds: a triplet swing
-        out = beat + (target - beat) * (double) juce::jlimit (0.0f, 1.0f, q.strength);
+        out = beat + (target - beat) * (double) juce::jlimit (0.0f, 1.0f, strength);
     }
     if (length > 0.0)
     {
@@ -149,6 +148,97 @@ double quantizedBeat (double beat, const LoopQuantize& q, double length)
             out = 0.0;
     }
     return out;
+}
+
+double quantizedBeat (double beat, const LoopQuantize& q, double length)
+{
+    return quantizedBeatOn (beat, q.gridBeats(), q.strength, q.swing, length);
+}
+
+double quantizeGridBeats (int grid)
+{
+    static constexpr double g[kQuantizeGrids] = { 1.0, 0.5, 0.25, 0.125, 1.0 / 3.0, 1.0 / 6.0 };
+    return g[juce::jlimit (0, kQuantizeGrids - 1, grid)];
+}
+
+const char* quantizeGridName (int grid)
+{
+    static const char* n[kQuantizeGrids] = { "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16T" };
+    return n[juce::jlimit (0, kQuantizeGrids - 1, grid)];
+}
+
+QuantizeResult quantizeSynthPattern (SynthPattern& pat, const QuantizeSpec& q)
+{
+    QuantizeResult r;
+    r.total = (int) pat.notes.size();
+    const double g = quantizeGridBeats (q.grid), len = pat.lengthBeats();
+    const bool swing = q.swing && q.grid < 4;
+    for (auto& n : pat.notes)
+    {
+        const double was = n.beat;
+        n.beat = quantizedBeatOn (n.beat, g, q.strength, swing, len);
+        n.skipUntil = -1;
+        if (std::abs (n.beat - was) > 1.0e-6)
+            ++r.moved;
+    }
+    // notes of one pitch on one spot become one note
+    std::stable_sort (pat.notes.begin(), pat.notes.end(), [] (const SynthNote& a, const SynthNote& b)
+                      { return a.note != b.note ? a.note < b.note : a.beat < b.beat; });
+    std::vector<SynthNote> out;
+    for (auto& n : pat.notes)
+    {
+        if (! out.empty() && out.back().note == n.note)
+        {
+            auto& p = out.back();
+            if (std::abs (p.beat - n.beat) < 1.0e-6)
+            {
+                p.velocity = juce::jmax (p.velocity, n.velocity);
+                p.length = juce::jmax (p.length, n.length);
+                ++r.merged;
+                continue;
+            }
+            if (p.beat + p.length > n.beat + 1.0e-9)
+                p.length = juce::jmax (0.02, n.beat - p.beat);   // it would still sound as the next one starts
+        }
+        out.push_back (n);
+    }
+    pat.notes = std::move (out);
+    std::stable_sort (pat.notes.begin(), pat.notes.end(), [] (const SynthNote& a, const SynthNote& b) { return a.beat < b.beat; });
+    return r;
+}
+
+QuantizeResult quantizePadPattern (PadPattern& pat, const QuantizeSpec& q)
+{
+    QuantizeResult r;
+    r.total = (int) pat.hits.size();
+    const double g = quantizeGridBeats (q.grid), len = pat.lengthBeats();
+    const bool swing = q.swing && q.grid < 4;
+    for (auto& h : pat.hits)
+    {
+        const double was = h.beat;
+        h.beat = quantizedBeatOn (h.beat, g, q.strength, swing, len);
+        h.skipRun = -1;
+        h.skipUntil = 0;
+        if (std::abs (h.beat - was) > 1.0e-6)
+            ++r.moved;
+    }
+    std::vector<PadHit> out;
+    for (auto& h : pat.hits)
+    {
+        bool merged = false;
+        for (auto& o : out)
+            if (o.pad == h.pad && o.mods == h.mods && std::abs (o.beat - h.beat) < 1.0e-6)
+            {
+                o.velocity = juce::jmax (o.velocity, h.velocity);
+                merged = true;
+                ++r.merged;
+                break;
+            }
+        if (! merged)
+            out.push_back (h);
+    }
+    pat.hits = std::move (out);
+    return r;
 }
 
 std::vector<float> renderPart (const NotePart& part, const LoopQuantize& q, double bpm, double sampleRate, int lengthSamples)

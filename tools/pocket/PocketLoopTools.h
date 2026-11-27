@@ -56,6 +56,30 @@ struct NotePart
 
 // Where a note at `beat` goes (wrapped into [0, length)).
 double quantizedBeat (double beat, const LoopQuantize&, double length);
+// The same maths on any grid (in beats): where a note at `beat` goes, `strength` of the way (0..1), with swing
+// (every second grid line later by a third of a step). A phone layer's QUANTIZE and the instruments' agree.
+double quantizedBeatOn (double beat, double gridBeats, float strength, bool swing, double length);
+
+// QUANTIZE on an instrument's own part (SYNTH, BASS, PADS): the notes or hits already in it move onto the grid.
+// grid: 0 1/4, 1 1/8, 2 1/16, 3 1/32, 4 1/8 triplet, 5 1/16 triplet (swing only on the straight ones).
+constexpr int kQuantizeGrids = 6;
+double quantizeGridBeats (int grid);
+const char* quantizeGridName (int grid);   // "1/16"
+struct QuantizeSpec
+{
+    int grid = 2;
+    float strength = 1.0f;   // 0.5 or 1
+    bool swing = false;
+};
+struct QuantizeResult
+{
+    int total = 0, moved = 0, merged = 0;
+};
+// Notes keep their length (the end moves with the start); two notes of one pitch that land on one step merge (the
+// louder, the longer); a note running into the same pitch's next one is cut short where that starts.
+QuantizeResult quantizeSynthPattern (SynthPattern&, const QuantizeSpec&);
+// Hits keep their velocity and 16 LEVELS values; the same pad (and values) landing on one spot merge (the louder).
+QuantizeResult quantizePadPattern (PadPattern&, const QuantizeSpec&);
 // The part's notes, re-timed, as the looper would have recorded them: mono, `lengthSamples` long, with the tails
 // of the pass before wrapped in so it loops cleanly.
 std::vector<float> renderPart (const NotePart&, const LoopQuantize&, double bpm, double sampleRate, int lengthSamples);

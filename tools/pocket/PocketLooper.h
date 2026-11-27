@@ -9,6 +9,7 @@
 #include "core/Warp.h"
 #include "PocketSong.h"
 #include "RigFriendTrack.h"
+#include "PerformFx.h"
 
 #include <array>
 #include <atomic>
@@ -120,6 +121,8 @@ public:
     // bars (the song's bars while the SONG plays, the clock's otherwise). Heard, never recorded into a layer
     // (MASTER resamples without it): a bounce adds it itself. Message thread, but its level and mute any time.
     RigFriendTrack& track() { return friendTrack; }
+    // MOVES: the Mac FX pad's performance effects on the whole mix (not the click), touched from the MOVES pad.
+    PerformFx& moves() { return perform; }
     const RigFriendTrack& track() const { return friendTrack; }
     // The song's REC LIVE count-in: the click counts until this beat (-1: none).
     void setSongCountIn (double untilBeat) { songCountIn = untilBeat; }
@@ -294,7 +297,9 @@ private:
     DroneVoice* drone = nullptr;
     PocketSong* song = nullptr;
     RigFriendTrack friendTrack;
+    PerformFx perform;
     std::vector<float> trackL, trackR;
+    std::vector<float> moveL, moveR;   // MOVES works on a copy of the mix without the click
     std::atomic<double> songCountIn { -1.0 };
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;

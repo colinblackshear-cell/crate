@@ -321,8 +321,8 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         auto run = [&] (int item, const juce::String& what)
         {
             loopsScreen.holdLayer (0);
-            if (! holdCard.isOpen() || holdCard.itemCount() != 9)
-                return problems.add ("Hold menu on a layer: " + what + ": the menu didn't open with its 9 rows");
+            if (! holdCard.isOpen() || holdCard.itemCount() != 10)
+                return problems.add ("Hold menu on a layer: " + what + ": the menu didn't open with its 10 rows");
             holdCard.choose (item);
             if (holdCard.isOpen())
                 problems.add ("Hold menu on a layer: " + what + ": the menu stayed open after a pick");
@@ -332,9 +332,9 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect (loopsScreen.selectedLayer() == 0, "Hold menu on a layer: the layer isn't picked, so its panel doesn't show it");
         const auto spec = holdCard.current();
         holdCard.close();
-        expect (spec.items.size() == 9 && spec.items[0].text.startsWith ("IN / OUT") && spec.items[1].text == "FIT" && spec.items[2].text == "EFFECTS"
+        expect (spec.items.size() == 10 && spec.items[0].text.startsWith ("IN / OUT") && spec.items[1].text == "FIT" && spec.items[2].text == "EFFECTS"
                     && spec.items[3].text == "WARP" && spec.items[4].text == "DUB OVER IT" && spec.items[5].text.startsWith ("OPEN") && spec.items[6].text == "TO SONG PART"
-                    && spec.items[7].text == "SEND TO MAC" && spec.items[8].text == "CLEAR" && spec.items[8].danger, "Hold menu on a layer: the rows are not the agreed ones");
+                    && spec.items[7].text == "EXPORT" && spec.items[8].text == "SEND TO MAC" && spec.items[9].text == "CLEAR" && spec.items[9].danger, "Hold menu on a layer: the rows are not the agreed ones");
         run (0, "IN / OUT");
         expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::shapePage, "Hold menu on a layer: IN / OUT didn't open the editor");
         loopsScreen.closeEditor();
@@ -363,7 +363,10 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         run (5, "OPEN");
         expect (page == Page::tool && tool == Tool::drums, "Hold menu on a layer: OPEN DRUMS didn't open DRUMS");
         showTool (Tool::loops, false);
-        run (7, "SEND TO MAC");
+        run (7, "EXPORT");
+        expect (exportOpen && exportSheet.settings.what == SongScreen::Bounce::loops, "Hold menu on a layer: EXPORT didn't open the export sheet on LOOPER NOW");
+        closeExport();
+        run (8, "SEND TO MAC");
         expect (sendOpen, "Hold menu on a layer: SEND TO MAC didn't open the Send to Mac sheet");
         closeSendSheet();
         run (4, "DUB OVER IT");
@@ -374,7 +377,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         holdCard.choose (4);
         pump (500);
         expect (L.state (0) == LoopState::playing, "Hold menu on a layer: STOP DUB didn't end the dub");
-        run (8, "CLEAR");
+        run (9, "CLEAR");
         pump (4);
         expect (L.state (0) == LoopState::empty, "Hold menu on a layer: CLEAR didn't clear the layer");
         loopsScreen.undo();
@@ -438,7 +441,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         // EDIT THIS SLICE first, then the rows as they were (the checks below count from SOUND PAGE)
         const bool rowsOk = spec.items.size() >= 8 && spec.items[0].text == "EDIT THIS SLICE";
         auto row = [&] (int i) -> const pocket::HoldItem& { return spec.items[(size_t) i + 1]; };
-        expect (rowsOk && (spec.items.size() == 8 || (spec.items.size() == 9 && row (7).text == "FACTORY SOUND BACK")) && row (0).text == "SOUND PAGE" && row (1).text.startsWith ("SWAP SOUND") && row (2).text == "RECORD A NEW SOUND"
+        expect (rowsOk && (spec.items.size() == 8 || (spec.items.size() == 10 && row (7).text == "FACTORY SOUND BACK")) && row (0).text == "SOUND PAGE" && row (1).text.startsWith ("SWAP SOUND") && row (2).text == "RECORD A NEW SOUND"
                     && row (3).text.startsWith ("PITCH") && row (4).text == "16 LEVELS" && row (5).text == "COPY TO ANOTHER PAD"
                     && row (6).text == "REMOVE SOUND" && row (6).danger && spec.title.startsWith ("PAD A10"), "Hold menu on a pad: the rows are not the agreed ones");
         auto choose = [&] (int item)
@@ -482,6 +485,47 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         beats.testLiftPad();
         beats.endPadMode();
         expect (beats.levelsPad() < 0, "16 LEVELS: EXIT didn't leave it");
+        // 16 LEVELS on the phone, as the MPC2000XL has it: PITCH first, the types as thumb-sized buttons, MAKE 16 PADS and UNDO,
+        // and the kit name opens the factory kits
+        {
+            beats.startLevels (9);
+            bool shown = true;
+            for (int b = 0; b < 8; ++b)
+                shown = shown && beats.testLevelsButtonShown (b);
+            expect (shown, "16 LEVELS: a type button or MAKE 16 PADS is missing or smaller than 44 pt");
+            expect (beats.levelsKind() == pocket::padlevels::pitch, "16 LEVELS: PITCH isn't the default");
+            beats.testPressLevelsButton (pocket::padlevels::inKey);
+            expect (beats.levelsKind() == pocket::padlevels::inKey, "16 LEVELS: the IN KEY button didn't pick IN KEY");
+            beats.testPressLevelsButton (pocket::padlevels::pitch);
+            for (int k = 0; k < pocket::padlevels::numKinds; ++k)
+            {
+                beats.testPressLevelsButton (k);
+                expect (beats.levelsKind() == k, juce::String ("16 LEVELS: the ") + pocket::padlevels::name (k) + " button didn't pick it");
+            }
+            beats.testPressLevelsButton (pocket::padlevels::pitch);
+            std::array<pocket::KitPad, 16> bankBefore;
+            for (int i = 0; i < 16; ++i)
+                bankBefore[(size_t) i] = kit.pads[(size_t) (beats.currentBank() * 16 + i)];
+            const auto source9 = kit.pads[9];
+            beats.testPressLevelsButton (7);   // MAKE 16 PADS
+            bool tuned = beats.levelsPad() < 0;
+            for (int i = 0; i < 16; ++i)
+                tuned = tuned && kit.pads[(size_t) (beats.currentBank() * 16 + i)].tune == source9.tune + 10 * i && kit.pads[(size_t) (beats.currentBank() * 16 + i)].audio == source9.audio;
+            expect (tuned, "MAKE 16 PADS: the 16 pads aren't the sound a semitone apart");
+            expect (toastHasAction(), "MAKE 16 PADS: no UNDO on the note");
+            pressToastAction();
+            bool back = true;
+            for (int i = 0; i < 16; ++i)
+                back = back && kit.pads[(size_t) (beats.currentBank() * 16 + i)].soundId == bankBefore[(size_t) i].soundId
+                       && kit.pads[(size_t) (beats.currentBank() * 16 + i)].tune == bankBefore[(size_t) i].tune;
+            expect (back, "MAKE 16 PADS: UNDO didn't put the bank back");
+            beats.padsChanged();
+            beats.testTapKitName();
+            expect (bankOpen, "The kit name didn't open the factory kits");
+            closeSoundBank();
+            expect (soundBank.kitCount() >= 10, "The factory kit list has too few kits");
+            report << "16 LEVELS: PITCH is the default, all seven types and MAKE 16 PADS are 44 pt buttons that work (MAKE 16 PADS tunes the bank a semitone a pad, UNDO puts it back), and tapping the kit name opens the " << soundBank.kitCount() << " factory kits\n";
+        }
         // COPY TO ANOTHER PAD, then UNDO
         const auto before = kit.pads[12].soundId, source = kit.pads[9].soundId;
         choose (5);

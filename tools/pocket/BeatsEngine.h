@@ -22,11 +22,26 @@ enum class PadMode { oneShot, mono, noteOff };
 
 // The pads played into a pattern (REC PADS): each hit is a pad at a beat inside the pattern.
 constexpr int kMaxPadHits = 512;
+// How one hit differs from its pad's own settings (16 LEVELS, as on the MPC2000XL): its pitch, its filter, its decay and
+// its attack. All zero = the pad as it is. tune is tenths of a semitone added to the pad's tune; cutoff (Hz) opens the low-pass
+// filter (0 = no filter); decay (seconds) fades the sound out after that long (0 = the whole sound); attack (seconds) fades it in.
+struct PadMods
+{
+    int tune = 0;
+    float cutoff = 0.0f, decay = 0.0f, attack = 0.0f;
+    bool any() const { return tune != 0 || cutoff > 0.0f || decay > 0.0f || attack > 0.0f; }
+    bool operator== (const PadMods& o) const
+    {
+        return tune == o.tune && std::abs (cutoff - o.cutoff) < 1.0e-4f && std::abs (decay - o.decay) < 1.0e-6f && std::abs (attack - o.attack) < 1.0e-6f;
+    }
+};
+
 struct PadHit
 {
     int pad = 0;
     double beat = 0;          // from the pattern's start
     float velocity = 1.0f;
+    PadMods mods;             // 16 LEVELS: how this hit differs from its pad (none = the pad as it is)
     int skipRun = -1;         // just played by hand: not played again by the pattern in this run of the clock
     double skipUntil = 0;     // ... before this beat
 };
@@ -71,6 +86,7 @@ struct PadSetup
     int pan = 50;               // 0..100
     int tune = 0;               // tenths of a semitone
     PadMode mode = PadMode::oneShot;
+    float cutoff = 0.0f, decay = 0.0f, attack = 0.0f;   // the pad's own filter (Hz, 0 = none), decay and attack (seconds, 0 = none)
 };
 
 class BeatsEngine : public PocketAudio::Renderer
@@ -104,7 +120,7 @@ public:
     double clockBeat() const { return clockPpq.load(); }   // beats at the start of the last block rendered
 
     void setPad (int pad, const PadSetup&);
-    void padOn (int pad, float velocity = 1.0f);
+    void padOn (int pad, float velocity = 1.0f, PadMods mods = {});
     void padOff (int pad);
     void stopPads();
     juce::uint64 soundingPads() const { return sounding.load(); }
@@ -119,7 +135,7 @@ public:
     int repeatsPlayed() const { return repeatCount.load(); }   // how many repeats have sounded (for the self-check)
     // The repeats that sounded while the clock ran, for REC PADS to write into the pattern (the screen calls this on the
     // message thread; the audio thread writes them into a lock-free queue). `beat` is where on the clock each one fell.
-    struct RepeatReport { int pad = 0; float velocity = 1.0f; double beat = 0; };
+    struct RepeatReport { int pad = 0; float velocity = 1.0f; double beat = 0; PadMods mods; };
     int takeRepeats (RepeatReport* dest, int max);
 
     // The pad pattern: plays on the shared clock (and runs it) while on. REC adds a click on each beat.
@@ -145,7 +161,7 @@ public:
 
 private:
     struct Event { enum Kind { drum, padOn, padOff, stopPads, skip } kind = drum; int index = 0; float velocity = 0; bool accent = false;
-                   int slot = 0, cell = 0; double until = 0; };
+                   int slot = 0, cell = 0; double until = 0; PadMods mods; };
     struct Skip { int voice = 0, slot = 0, cell = 0; bool b = false; double until = -1; std::uint8_t kept = 0; };
     std::array<Skip, 8> skips {};
     int numSkips = 0;
@@ -155,6 +171,7 @@ private:
         std::atomic<const juce::AudioBuffer<float>*> audio { nullptr };
         std::atomic<float> left { 1.0f }, right { 1.0f };
         std::atomic<int> tune { 0 }, mode { 0 };
+        std::atomic<float> cutoff { 0.0f }, decay { 0.0f }, attack { 0.0f };
     };
 
     struct Voice
@@ -165,12 +182,16 @@ private:
         int pad = -1;
         bool releasing = false;
         juce::uint32 age = 0;
+        // 16 LEVELS: this hit's low-pass filter (two one-poles a channel), fade-in and fade-out, in samples
+        bool shaped = false;
+        float lpCoef = 0.0f, lp1L = 0, lp2L = 0, lp1R = 0, lp2R = 0;
+        double played = 0, attackLen = 0, decayLen = 0;
     };
 
     void push (const Event&);
     void handle (const Event&);
     void renderClick (float* left, float* right, float* clickOut, int n, double startBeat, double beatsPerSample);
-    void startPad (int pad, float velocity);
+    void startPad (int pad, float velocity, const PadMods& mods = {});
     void renderPads (float* left, float* right, int n);
 
     // drums
@@ -202,10 +223,10 @@ private:
     juce::SpinLock patternLock;
     std::atomic<int> patternVersion { 0 };
     int livePatternVersion = -1;
-    struct Trigger { int offset; int pad; float velocity; bool repeat; };
+    struct Trigger { int offset; int pad; float velocity; bool repeat; PadMods mods; };
     std::array<Trigger, 64> triggers {};
     // note repeat: the pads held down now, as the audio thread sees them
-    struct Held { bool down = false; float velocity = 1.0f; double pressPpq = -1; long long pressSample = 0; };
+    struct Held { bool down = false; float velocity = 1.0f; double pressPpq = -1; long long pressSample = 0; PadMods mods; };
     std::array<Held, kPads> heldPads {};
     long long sampleClock = 0;
     std::atomic<bool> repeatOn { false };
