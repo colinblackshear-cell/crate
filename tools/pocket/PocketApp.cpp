@@ -77,7 +77,7 @@ public:
         g.setColour (col::inkFaint);
         g.setFont (spaced (condensedBold (12.0f), 0.14f));
         g.drawText ("ON THIS IPHONE", box.withTrimmedLeft (16).withHeight (28), juce::Justification::bottomLeft);
-        g.setColour (juce::Colour (0xfff1e7d6));
+        g.setColour (juce::Colour (0xfff3eadb));
         g.setFont (small (16.0f));
         g.drawFittedText (summary ? summary() : juce::String(), box.reduced (16, 0).withTrimmedTop (30).toNearestInt(), juce::Justification::topLeft, 2);
     }
@@ -160,9 +160,9 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (1);
-        g.setColour (juce::Colour (0xf0201c18));
+        g.setColour (juce::Colour (0xf00f0c15));
         g.fillRoundedRectangle (r, 14.0f);
-        g.setColour (juce::Colour (0xfff1e7d6));
+        g.setColour (juce::Colour (0xfff3eadb));
         g.setFont (small (15.0f));
         if (action == nullptr)
             return g.drawFittedText (text, r.reduced (14, 4).toNearestInt(), juce::Justification::centred, 2);
@@ -170,7 +170,7 @@ public:
         auto b = buttonRect();
         g.setColour (col::amber);
         g.fillRoundedRectangle (b, 10.0f);
-        g.setColour (col::ink);
+        g.setColour (col::onBright);
         g.setFont (spaced (condensedBold (16.0f), 0.08f));
         g.drawText (actionLabel, b, juce::Justification::centred);
     }
@@ -201,6 +201,8 @@ PocketApp::PocketApp (Options o)
       singScreen (static_cast<PocketHost&> (*this), loopsScreen, vocoderScreen.engine(), chordsTool, appSettings),
       synthPart (beats.engine()),
       synthScreen (synthPart, beats.engine()),
+      bassPart (beats.engine(), pocket::bassFamily),
+      bassScreen (bassPart, beats.engine()),
       chordsScreen (chordsTool),
       droneTool (beats.engine()),
       droneScreen (droneTool),
@@ -253,6 +255,7 @@ PocketApp::PocketApp (Options o)
         holdMenu (songHoldSpec (id), source, at, highlight);
     };
     drawer.onTile = [this] (int tile) { drawerTile (tile); };
+    drawer.onGetMac = [this] { closeDrawer(); openInBrowser (juce::URL (kMacDownloadUrl)); };
     drawer.currentLayers = [this] { return loopsScreen.layerCount(); };
     drawer.currentBpm = [this] { return beats.drums().bpm; };
     holdCard.onClosed = [this] { repaint(); };
@@ -273,17 +276,34 @@ PocketApp::PocketApp (Options o)
     dim->onTap = [this] { closeAllSheets(); };
 
     // The frame: the thumb bar, the tool row (stage 1: the tools that exist) and the count-in panel.
-    toolRow.tools = { Tool::loops, Tool::song, Tool::drums, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone, Tool::effects };
+    // The companion row: the layers, the two tools most ideas start with, + ADD A LAYER in the middle (every other tool is
+    // in its sheet, in plain words), and the synth.
+    // (Colin 2026-11-26: the looper, the sampler and the effects are the heart of it; drums and synth are in + ADD A LAYER)
+    // (Colin 2026-11-26 evening: "I want to see the other instruments at the bottom... move freely between instruments")
+    toolRow.tools = { Tool::loops, Tool::sampler, Tool::drums, Tool::bass, Tool::add, Tool::synth, Tool::pads, Tool::more };
     // EFFECTS from a tool opens on that tool's board
-    toolRow.onSelect = [this] (Tool t) { if (t == Tool::effects) openEffects (page == Page::tool ? boardForTool (tool) : -1); else showTool (t); };
+    toolRow.onSelect = [this] (Tool t)
+    {
+        if (t == Tool::add)
+            openAddLayer();
+        else if (t == Tool::more)
+            openMoreTools();
+        else if (t == Tool::effects)
+            openEffects (page == Page::tool ? boardForTool (tool) : -1);
+        else
+            showTool (t);
+    };
+    setupCompanion();
     thumb.state = [this]
     {
         ThumbBar::State s;
         s.bpm = beats.drums().bpm;
         s.click = appSettings.click;
         s.recBusy = recBusy();
+        s.undoPass = undoPassNow();
         s.playing = beats.engine().clockRunning();
         s.visuals = visualsShown();
+        s.toLooper = canSendToLooper();
         return s;
     };
     thumb.onPress = [this] (int b) { thumbPressed (b); };
@@ -388,12 +408,15 @@ PocketApp::PocketApp (Options o)
             sounds[(size_t) v] = beats.engine().getDrumSample (v);
         return sounds;
     };
-    synthScreen.songKey = [this] { return songKey; };
-    synthScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
-    synthScreen.toast = [this] (const juce::String& t) { toast (t); };
-    synthScreen.onChanged = [this] { saveSong(); };
-    synthScreen.nextLayer = [this] { return loopsScreen.nextLayer(); };
-    synthScreen.recBusy = [this] { return synthLock() && ! lockArmed; };
+    for (auto* sc : { &synthScreen, &bassScreen })
+    {
+        sc->songKey = [this] { return songKey; };
+        sc->onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
+        sc->toast = [this] (const juce::String& t) { toast (t); };
+        sc->onChanged = [this] { saveSong(); };
+        sc->nextLayer = [this] { return loopsScreen.nextLayer(); };
+        sc->recBusy = [this, sc] { return synthLock() && ! lockArmed && &sScreen() == sc; };
+    }
     singScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
     singScreen.onOpenChords = [this] { showTool (Tool::chords); };
     singScreen.onChanged = [this] { saveSong(); };
@@ -468,6 +491,7 @@ PocketApp::PocketApp (Options o)
     };
     chordsTool.engine().setVocoder (&vocoderScreen.engine().processor());
     loopsScreen.engine().setInstrument (0, &synthPart.engine());
+    loopsScreen.engine().setInstrument (2, &bassPart.engine());
     loopsScreen.engine().setInstrument (1, &chordsTool.engine());
     loopsScreen.engine().setDrone (&droneTool);
     setupSong();
@@ -499,6 +523,18 @@ PocketApp::PocketApp (Options o)
     padSheet.onClear = [this] (int) { beats.padsChanged(); };
     padSheet.onUndoClear = [this] (int) { beats.padsChanged(); };
     padSheet.onTrim = [this] (int pad) { openSamplePage (pad); };
+    padSheet.onPlayAsKeys = [this] (int pad)
+    {
+        closePadSheet();
+        beats.playAsKeys (pad);
+    };
+    padSheet.onMore = [this] (int pad)
+    {
+        closePadSheet();
+        juce::Component::SafePointer<PocketApp> safe (this);
+        juce::Timer::callAfterDelay (280, [safe, pad] { if (safe != nullptr) safe->beats.holdPad (pad); });
+    };
+    beats.songKey = [this] { return songKey; };
     padSheet.onChop = [this] (int pad)
     {
         const auto id = beats.kit().pads[(size_t) pad].soundId;
@@ -516,7 +552,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (record);
     addAndMakeVisible (*ideasScreen);
     addChildComponent (sounds);
-    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &droneScreen, songScreen.get(), &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &bassScreen, &chordsScreen, &droneScreen, songScreen.get(), &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         addChildComponent (c);
     addChildComponent (countPanel);
     addChildComponent (thumb);
@@ -529,6 +565,9 @@ PocketApp::PocketApp (Options o)
     addChildComponent (tempoSheet);
     addChildComponent (trackSheet);
     addChildComponent (recSetup);
+    addChildComponent (addSheet);
+    addChildComponent (takeSheet);
+    addChildComponent (vibeSheet);
     addChildComponent (headphones);
     addChildComponent (soundBank);
     addChildComponent (*sendSheet);
@@ -588,7 +627,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet, &vibeSheet })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -850,7 +889,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen || vibeOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -858,7 +897,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
     if (p.y >= (float) bottom)
         return false;
     const auto pi = p.toInt();
-    if (page == Page::tool && tool == Tool::synth && getLocalArea (&synthScreen, synthScreen.keysBounds()).expanded (0, 6).contains (pi))
+    if (page == Page::tool && (tool == Tool::synth || tool == Tool::bass) && getLocalArea (&sScreen(), sScreen().keysBounds()).expanded (0, 6).contains (pi))
         return false;
     if (page == Page::tool && tool == Tool::sampler && getLocalArea (&sampler, sampler.waveBounds()).contains (pi))
         return false;   // (its IN and OUT handles)
@@ -912,6 +951,7 @@ void PocketApp::showPage (Page p, int morePage)
     loopsScreen.setVisible (onTool && tool == Tool::loops);
     singScreen.setVisible (onTool && tool == Tool::vocoder);
     synthScreen.setVisible (onTool && tool == Tool::synth);
+    bassScreen.setVisible (onTool && tool == Tool::bass);
     chordsScreen.setVisible (onTool && tool == Tool::chords);
     droneScreen.setVisible (onTool && tool == Tool::drone);
     songScreen->setVisible (onTool && tool == Tool::song);
@@ -935,6 +975,8 @@ void PocketApp::showPage (Page p, int morePage)
 void PocketApp::showTool (Tool t, bool askMic)
 {
     tool = t;
+    if ((t == Tool::synth || t == Tool::bass) && ! synthLock())
+        bassActive = t == Tool::bass;   // which part REC, TO LOOPER and UNDO work on (kept while one records)
     showPage (Page::tool);
     if (t == Tool::vocoder && askMic && ! micOn)
         askForMic ({});
@@ -980,7 +1022,7 @@ juce::String PocketApp::phoneSummary() const
         for (auto& f : lib.getRoot().getChildFile (folder).findChildFiles (juce::File::findFiles, true))
             bytes += f.getSize();
     const int n = (int) lib.items().size(), layers = loopsScreen.layerCount();
-    return juce::String (n) + (n == 1 ? " sound" : " sounds") + U8(" Â· ") + juce::String (layers) + (layers == 1 ? " loop layer" : " loop layers")
+    return juce::String (n) + (n == 1 ? " sound" : " sounds") + U8(" \xc2\xb7 ") + juce::String (layers) + (layers == 1 ? " loop layer" : " loop layers")
            + U8(" in this song Â· ") + juce::String (juce::roundToInt ((double) bytes / 1048576.0)) + " MB";
 }
 
@@ -988,10 +1030,116 @@ void PocketApp::refreshToolRow()
 {
     toolRow.selected = -1;
     if (page == Page::tool || page == Page::vocoderSettings)
+    {
+        const Tool on = page == Page::vocoderSettings ? Tool::vocoder : tool;
         for (int i = 0; i < (int) toolRow.tools.size(); ++i)
-            if (toolRow.tools[(size_t) i] == (page == Page::vocoderSettings ? Tool::vocoder : tool))
+            if (toolRow.tools[(size_t) i] == on)
                 toolRow.selected = i;
+        if (toolRow.selected < 0)   // a tool from MORE: MORE is lit
+            for (int i = 0; i < (int) toolRow.tools.size(); ++i)
+                if (toolRow.tools[(size_t) i] == Tool::more)
+                    toolRow.selected = i;
+    }
     toolRow.repaint();
+}
+
+void PocketApp::layerToSong (int layer)
+{
+    if (! loopsScreen.hasLayer (layer))
+        return;
+    HoldSpec s;
+    s.title = "LAYER " + juce::String (layer + 1) + U8(" \xc2\xb7 TO SONG PART");
+    s.spotlight = false;
+    const auto secs = song->markers.empty() ? std::vector<pocket::PocketSong::Section>() : song->sections();
+    for (int i = 0; i < (int) secs.size(); ++i)
+    {
+        const auto& sec = secs[(size_t) i];
+        juce::StringArray in;
+        bool here = false;
+        for (int l = 0; l < pocket::PocketSong::kLayers; ++l)
+            for (const auto& b : song->blocks)
+                if (b.layer == l && b.start < sec.end - 1.0e-6 && b.end() > sec.start + 1.0e-6)
+                {
+                    in.addIfNotAlreadyThere (juce::String (l + 1));
+                    here = here || l == layer;
+                }
+        const juce::String detail = (in.isEmpty() ? juce::String ("empty") : "layers " + in.joinIntoString (", ")) + U8(" \xc2\xb7 ")
+                                  + juce::String (juce::roundToInt (sec.end - sec.start)) + " bars";
+        s.items.push_back ({ (here ? U8("\xe2\x9c\x93 ") : juce::String()) + "PART " + sec.name.toUpperCase() + (here ? "  (take it out)" : ""), detail, false, true,
+                             [this, layer, i] { toggleLayerInPart (layer, i); } });
+    }
+    s.items.push_back ({ "+ NEW PART " + partName ((int) song->markers.size()), "after the others", false, true, [this, layer] { toggleLayerInPart (layer, -1); } });
+    s.items.push_back ({ "PLAY THE SONG", "the parts in order", false, ! song->markers.empty(), [this] { showTool (Tool::song); } });
+    holdMenu (s, *this, getLocalBounds().getCentre().toFloat(), {});
+}
+
+void PocketApp::toggleLayerInPart (int layer, int part)
+{
+    auto take = loopsScreen.engine().takeOf (layer);
+    if (take == nullptr)
+        return;
+    const double loopBars = juce::jmax (1.0, std::ceil (take->lengthBeats.load() / 4.0 - 1.0e-6));
+    double from = 0, to = 0;
+    juce::String name;
+    if (part < 0 || song->markers.empty())
+    {
+        // a new part at the song's end, as long as this layer's loop
+        from = std::ceil (song->lengthBars() - 1.0e-6);
+        if (! song->markers.empty())
+            from = juce::jmax (from, song->sections().back().end);
+        to = from + loopBars;
+        name = partName ((int) song->markers.size());
+        song->markers.push_back ({ from, name });
+    }
+    else
+    {
+        const auto secs = song->sections();
+        if (! juce::isPositiveAndBelow (part, (int) secs.size()))
+            return;
+        from = secs[(size_t) part].start;
+        to = secs[(size_t) part].end;
+        name = secs[(size_t) part].name;
+        bool here = false;
+        for (const auto& b : song->blocks)
+            here = here || (b.layer == layer && b.start < to - 1.0e-6 && b.end() > from + 1.0e-6);
+        if (here)
+        {
+            // take it out of the part
+            auto& bl = song->blocks;
+            bl.erase (std::remove_if (bl.begin(), bl.end(), [&] (const pocket::SongBlock& b) { return b.layer == layer && b.start >= from - 1.0e-6 && b.end() <= to + 1.0e-6; }), bl.end());
+            song->changed();
+            saveSong();
+            return toast ("Layer " + juce::String (layer + 1) + " is out of part " + name + ".");
+        }
+    }
+    pocket::SongBlock b;
+    b.layer = layer;
+    b.start = from;
+    b.length = to - from;
+    song->blocks.push_back (b);
+    song->changed();
+    saveSong();
+    toastAction ("Layer " + juce::String (layer + 1) + " is in part " + name + " (bars " + juce::String (juce::roundToInt (from) + 1) + "-" + juce::String (juce::roundToInt (to))
+                 + U8("). Pick another layer for this part or the next, then play the song."), "PLAY SONG", [this] { showTool (Tool::song); });
+}
+
+// MORE: the tools that don't fit the row, in a menu over it. Each opens its screen.
+void PocketApp::openMoreTools()
+{
+    HoldSpec s;
+    s.title = "MORE TOOLS";
+    s.spotlight = false;
+    s.items.push_back ({ "EFFECTS", "pedals on any tool or layer", false, true, [this] { openEffects (page == Page::tool ? boardForTool (tool) : -1); } });
+    s.items.push_back ({ "MY VOICE", "sing onto a layer", false, true, [this] { showTool (Tool::loops, false); loopsScreen.setSource ((int) LoopSource::mic); openAddLayer(); addSheet.showVoicePage (true); } });
+    s.items.push_back ({ "CHORDS", "chord pads in the song's key", false, true, [this] { showTool (Tool::chords); } });
+    s.items.push_back ({ "VOCODER", "your voice as a robot choir", false, true, [this] { showTool (Tool::vocoder); } });
+    s.items.push_back ({ "DRONE", "a deep tone under it all", false, true, [this] { showTool (Tool::drone); } });
+    s.items.push_back ({ "SONG", "put the parts in order", false, true, [this] { showTool (Tool::song); } });
+    int at = 0;
+    for (int i = 0; i < (int) toolRow.tools.size(); ++i)
+        if (toolRow.tools[(size_t) i] == Tool::more)
+            at = i;
+    holdMenu (s, toolRow, toolRow.cellRect (at).getCentre(), toolRow.cellRect (at));
 }
 
 // page: -1 = not on one of them. 1 Sounds, 2 Remote, 3 Mac link, 4 Settings
@@ -1016,7 +1164,7 @@ void PocketApp::noteStep()
     if (page == Page::recorder)
         s = sheetOpen ? stepShape : stepRecord;
     else if (page == Page::tool)
-        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::chords || tool == Tool::drone || tool == Tool::effects || tool == Tool::song ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
+        s = tool == Tool::loops || tool == Tool::synth || tool == Tool::bass || tool == Tool::chords || tool == Tool::drone || tool == Tool::effects || tool == Tool::song ? stepSong : tool == Tool::vocoder ? stepSing : tool == Tool::drums ? stepBeat
           : beats.drums().padPattern.hits.empty() ? stepPads : stepBeat;
     if (page == Page::tool && tool == Tool::sampler)
         s = stepShape;
@@ -1030,6 +1178,7 @@ void PocketApp::stopEverything()
     lockKind = LockKind::none;
     finishSynthTake();
     synthScreen.leave();
+    bassScreen.leave();
     chordsScreen.leave();
     chordsTool.releaseAll();
     beats.leave();
@@ -1066,6 +1215,9 @@ void PocketApp::closeAllSheets()
     closePadPicker();
     closeChordEdit();
     closeDrumKit();
+    closeAddLayer();
+    closeTakeSheet();
+    closeVibeSheet();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -1469,6 +1621,7 @@ void PocketApp::switchIdea (const juce::String& id)
     lockKind = LockKind::none;
     finishSynthTake();
     synthScreen.leave();
+    bassScreen.leave();
     chordsScreen.leave();
     chordsTool.releaseAll();
     if (sheetOpen)
@@ -1753,7 +1906,8 @@ void PocketApp::togglePlay()
 
 void PocketApp::applyClick()
 {
-    beats.engine().setClick (appSettings.click || beats.recordingPads() || beats.recordingDrums() || lessonClick || (synthLock() && ! lockArmed));
+    beats.engine().setClick (appSettings.click || beats.recordingPads() || beats.recordingDrums() || lessonClick || (synthLock() && ! lockArmed)
+                             || (voiceTakeClick && loopsScreen.busyLayer() >= 0));
 }
 
 //==============================================================================
@@ -2103,17 +2257,29 @@ void PocketApp::thumbPressed (int button)
             break;
         case ThumbBar::rec: recPressed(); break;
         case ThumbBar::play: togglePlay(); break;
-        case ThumbBar::visuals: showVisuals (! visualsShown()); break;
+        case ThumbBar::visuals:
+            if (canSendToLooper())
+                sendToLooper();
+            else
+                showVisuals (! visualsShown());
+            break;
         case ThumbBar::undo:
         {
+            if (undoPassNow())
+            {
+                undoPass();   // looping REC: the last pass comes off, the recording goes on
+                break;
+            }
+            sentFingerprint = {};   // what TO LOOPER sent can be sent again
+            sentDrumsValid = false;
             // the last take; a SYNTH part comes back into the pattern with its layer taken off
             const int top = loopsScreen.lastTakeUndoLayer();
             loopsScreen.undo();
-            if (top >= 0 && top == synthUndoLayer && synthPart.hasStash())
+            if (top >= 0 && top == synthUndoLayer && synthUndoPart != nullptr && synthUndoPart->hasStash())
             {
-                synthPart.restoreStash();
+                synthUndoPart->restoreStash();
                 synthUndoLayer = -1;
-                synthScreen.partChanged();
+                (synthUndoPart == &bassPart ? bassScreen : synthScreen).partChanged();
                 saveSong();
                 toast ("Layer " + juce::String (top + 1) + U8(" is off. The synth part is back in its pattern: REC puts it on again."));
             }
@@ -2147,7 +2313,7 @@ void PocketApp::recPressed()
     if (page != Page::tool)
         return;
     const bool needsMic = recTool() == Tool::vocoder
-                       || (tool == Tool::drone && droneTool.feed.load() == (int) pocket::DroneFeed::voice && droneTool.resonate.load() > 0.0f)
+                       || (recTool() == Tool::drone && droneTool.feed.load() == (int) pocket::DroneFeed::voice && droneTool.resonate.load() > 0.0f)
                        || (tool == Tool::loops && (loopsScreen.source() == (int) LoopSource::mic || loopsScreen.source() == (int) LoopSource::vocoder))
                        || (tool == Tool::effects && effects->source() == pocket::boardVoice);
     if (needsMic && ! micOn)
@@ -2159,7 +2325,8 @@ void PocketApp::recPressed()
         case Tool::pads: recPads(); break;
         case Tool::sampler: sampler.startRecording(); break;   // a one-shot from the mic, at once (no count-in, no layer)
         case Tool::vocoder: recVocoder(); break;
-        case Tool::synth: recSynth(); break;
+        case Tool::synth:
+        case Tool::bass: recSynth(); break;
         case Tool::chords: recChords(); break;
         case Tool::drone: recDrone(); break;
         case Tool::effects: recEffects(); break;
@@ -2176,6 +2343,8 @@ void PocketApp::stopRec()
         return songScreen->pressRecLive();   // STOP + KEEP
     if (sampler.isRecording())
         return sampler.stopRecording();
+    if (playingIn() && lockUntilStop && ! lockClosing && closeLoopRec())
+        return;   // looping until STOP: it goes on a layer from the loop's next top
     if (playingIn())
     {
         // Still playing hits into the pattern: stop there. What's in the pattern stays.
@@ -2186,7 +2355,7 @@ void PocketApp::stopRec()
         if (synth)
         {
             applyClick();
-            synthScreen.partChanged();
+            sScreen().partChanged();
             saveSong();
             toast ("Stopped. What you played stays in the SYNTH pattern; REC in PATTERN puts it on a layer.");
             return;
@@ -2201,10 +2370,186 @@ void PocketApp::stopRec()
         loopsScreen.stopTake (l);   // recording: ends at the bar line; waiting: called off
 }
 
+PocketApp::PassSnap PocketApp::takePassSnap()
+{
+    PassSnap p;
+    if (lockKind == LockKind::pads)
+        p.pads = beats.drums().padPattern;
+    else if (lockKind == LockKind::drumsLive)
+        p.drums = beats.drums().edited();
+    else if (lockKind == LockKind::synthLive)
+    {
+        sPart().serviceTake();
+        p.synth = sPart().pattern;
+    }
+    return p;
+}
+
+bool PocketApp::sameAsPassSnap (const PassSnap& p)
+{
+    if (lockKind == LockKind::pads)
+        return juce::JSON::toString (beats.drums().padPattern.toVar(), true) == juce::JSON::toString (p.pads.toVar(), true);
+    if (lockKind == LockKind::drumsLive)
+        return beats.drums().edited() == p.drums;
+    if (lockKind == LockKind::synthLive)
+    {
+        sPart().serviceTake();
+        return juce::JSON::toString (sPart().pattern.toVar(), true) == juce::JSON::toString (p.synth.toVar(), true);
+    }
+    return true;
+}
+
+void PocketApp::restorePassSnap (const PassSnap& p)
+{
+    if (lockKind == LockKind::pads)
+    {
+        beats.drums().padPattern = p.pads;
+        beats.patternChanged();
+    }
+    else if (lockKind == LockKind::drumsLive)
+    {
+        beats.drums().edited() = p.drums;
+        beats.drumsChanged();
+    }
+    else if (lockKind == LockKind::synthLive)
+    {
+        sPart().serviceTake();   // (what's already played is read first, so it doesn't come back after)
+        sPart().pattern = p.synth;
+        sPart().patternChanged();
+        sScreen().repaint();
+    }
+}
+
+void PocketApp::startPassUndo()
+{
+    passSnaps.clear();
+    passSnaps.push_back (takePassSnap());
+    nextPassAt = std::ceil ((padsFrom + 1.0e-3) / lockLen) * lockLen;   // the loop's next top
+}
+
+// At each loop top: what the pass added is kept as a step UNDO can go back to.
+void PocketApp::watchPasses()
+{
+    auto& b = beats.engine();
+    if (! b.clockRunning() || b.clockBeat() < nextPassAt)
+        return;
+    while (nextPassAt <= b.clockBeat())
+        nextPassAt += lockLen;
+    if (! passSnaps.empty() && sameAsPassSnap (passSnaps.back()))
+        return;
+    passSnaps.push_back (takePassSnap());
+    if (passSnaps.size() > 32)
+        passSnaps.erase (passSnaps.begin() + 1);   // (the first, what you started from, always stays)
+}
+
+void PocketApp::undoPass()
+{
+    if (passSnaps.empty())
+        return toast ("Nothing to undo yet");
+    if (! sameAsPassSnap (passSnaps.back()))
+    {
+        restorePassSnap (passSnaps.back());   // this pass's notes come off
+        toast (U8("Took back what you just played. It keeps recording: UNDO again goes back a pass."));
+    }
+    else if (passSnaps.size() > 1)
+    {
+        passSnaps.pop_back();
+        restorePassSnap (passSnaps.back());
+        toast (U8("Took back a pass. It keeps recording."));
+    }
+    else
+        toast ("Back to the start of this recording. Keep playing, or STOP.");
+    thumb.repaint();
+}
+
+bool PocketApp::closeLoopRec()
+{
+    auto& b = beats.engine();
+    bool any = false;
+    if (lockKind == LockKind::synthLive)
+    {
+        sPart().serviceTake();
+        any = ! sPart().pattern.empty();
+    }
+    else if (lockKind == LockKind::pads)
+        any = ! beats.drums().padPattern.hits.empty();
+    else if (lockKind == LockKind::drumsLive)
+    {
+        auto& data = beats.drums();
+        any = ! data.patterns[(size_t) data.slot][0].isEmpty() || ! data.patterns[(size_t) data.slot][1].isEmpty();
+    }
+    if (! any || ! b.clockRunning())
+        return false;
+    // the loop's next top (the tick moves it on a pass when it's too close to arm in time)
+    const double now = b.clockBeat();
+    lockStart = std::ceil ((juce::jmax (now, padsFrom) + 0.3) / lockLen - 1.0e-9) * lockLen;
+    if (lockKind == LockKind::pads && lockStart - now < 0.5)
+        lockStart += lockLen;
+    if (lockKind == LockKind::synthLive)
+        sPart().setTakeEnd (lockStart);   // what you play until the layer starts still goes in
+    lockClosing = true;
+    toast ("Got it. It goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + U8(" from the top of the loop. STOP again calls it off."));
+    headerTickNow();
+    return true;
+}
+
 void PocketApp::recLoops()
 {
-    // The source picked on the LOOPS screen. A take that starts the song counts in first.
+    // The source picked on the LOOPS screen. A take that starts the song counts in first. The mic goes the way the
+    // last MY VOICE take went: to a click, or free (fitted to the beat after).
+    if (loopsScreen.source() == (int) LoopSource::mic)
+        return startVoiceTake (appSettings.voiceFree);
     loopsScreen.recordTake (appSettings.recBars());
+}
+
+void PocketApp::startVoiceTake (bool free)
+{
+    if (appSettings.voiceFree != free)
+    {
+        appSettings.voiceFree = free;
+        appSettings.save();
+    }
+    if (page != Page::tool || tool != Tool::loops)
+        showTool (Tool::loops, false);
+    loopsScreen.setSource ((int) LoopSource::mic);
+    if (! micOn)
+        return askForMic ([this, free] { startVoiceTake (free); });
+    if (recBusy())
+        return;
+    voiceTakeClick = ! free;
+    const int layer = loopsScreen.recordFrom ((int) LoopSource::mic, free ? 0 : appSettings.recBars());
+    if (layer < 0)
+    {
+        voiceTakeClick = false;
+        return;
+    }
+    voiceFitLayer = free ? layer : -1;
+    applyClick();
+    headerTickNow();
+    thumb.repaint();
+    if (free)
+        toast (U8("Sing your way, no click. Tap STOP when you\xe2\x80\x99re done: Pocket finds your beat and fits it to the song."));
+    else
+        toast (route == pocket::Route::none ? U8("The click plays to the beat. With headphones on it stays out of your take.")
+                                            : U8("The click is in your headphones. Sing on the beat: it lands on layer ") + juce::String (layer + 1) + ".");
+}
+
+void PocketApp::voiceTakeLanded (int layer)
+{
+    voiceTakeClick = false;
+    applyClick();
+    if (layer != voiceFitLayer)
+        return;
+    voiceFitLayer = -1;
+    const double heard = loopsScreen.fitToBeat (layer);
+    if (heard < 0.0)
+        return;
+    const int bpm = juce::roundToInt (beats.drums().bpm);
+    if (heard > 0.0 && std::abs (heard - bpm) >= 1.0)
+        toast ("Found your beat: you sang at about " + juce::String (juce::roundToInt (heard)) + " BPM. It's fitted to the song's " + juce::String (bpm)
+               + " and pulled onto the beat. UNDO puts it back as you sang it.");
+    else
+        toast (U8("Found your beat and pulled your take onto it. UNDO puts it back as you sang it."));
 }
 
 void PocketApp::recVocoder()
@@ -2219,7 +2564,7 @@ void PocketApp::recDrums()
     auto& b = beats.engine();
     const int layer = loopsScreen.nextLayer();
     if (layer < 0)
-        return toast ("All 8 layers are used. Clear one in LOOPS to record.");
+        return toast ("All 8 layers are used. Clear one in the LOOPER to record.");
     auto& data = beats.drums();
     const bool live = beats.drumMode() == 1;
 
@@ -2254,23 +2599,40 @@ void PocketApp::recDrums()
     lockStart = std::ceil ((padsFrom + lockLen + 1.0) / lockLen - 1.0e-9) * lockLen;
     if (! b.isPlaying())
         b.setPlaying (true);
+    const bool made = ! data.patterns[(size_t) data.slot][0].isEmpty() || ! data.patterns[(size_t) data.slot][1].isEmpty();
+    if (made)
+        lockStart = std::ceil ((now + 0.3) / lockLen - 1.0e-9) * lockLen;   // a beat that's already made: to the looper from its next start
     beats.setRecordingDrums (true, padsFrom);
     lockKind = LockKind::drumsLive;
     lockArmed = false;
     lockLayer = -1;
+    lockClosing = false;
+    lockUntilStop = loopUntilStop && ! made;
     lockWatch.startTimer (20);
-    toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in") + ": they go in the pattern. Then it goes on layer "
-           + juce::String (layer + 1) + " and keeps looping.");
+    if (lockUntilStop)
+    {
+        lockStart = 1.0e15;   // until STOP
+        startPassUndo();
+        toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in")
+               + U8(". It loops and keeps recording, so each pass adds. Press STOP when it\xe2\x80\x99s right: it goes on layer ")
+               + juce::String (layer + 1) + ".");
+        return;
+    }
+    if (made)
+        toast ("Your beat goes on layer " + juce::String (layer + 1) + U8(" in the looper from its next start. Hits you play before then go in too."));
+    else
+        toast ("Hit the pads " + juce::String (running ? "now" : "after the count-in") + ": they go in the pattern. Then it goes on layer "
+               + juce::String (layer + 1) + " and keeps looping.");
 }
 
-void PocketApp::recPads()
+void PocketApp::recPads (bool toLooper)
 {
     // Pads: hits you play go into the pattern (snapped), and when it has gone round it is locked onto the
     // next layer from its start, so it keeps looping. A pattern that's already there just locks.
     auto& b = beats.engine();
-    const bool patternOnly = appSettings.padsRecTo == 1;   // Rec setup > PADS RECORD INTO > THE PAD PATTERN
+    const bool patternOnly = ! toLooper && appSettings.padsRecTo == 1;   // Rec setup > PADS RECORD INTO > THE PAD PATTERN
     if (! patternOnly && loopsScreen.nextLayer() < 0)
-        return toast ("All 8 layers are used. Clear one in LOOPS to record.");
+        return toast ("All 8 layers are used. Clear one in the LOOPER to record.");
     auto& p = beats.drums().padPattern;
     const bool empty = p.hits.empty();
     // The pattern grows to the take's length up to 8 bars; a longer take (16, 32, 64 bars) plays the pattern
@@ -2291,7 +2653,18 @@ void PocketApp::recPads()
     lockKind = LockKind::pads;
     lockArmed = false;
     lockLayer = -1;
+    lockClosing = false;
+    lockUntilStop = loopUntilStop && ! patternOnly && empty;   // a beat that's already made goes straight to the looper
     lockWatch.startTimer (20);
+    if (lockUntilStop)
+    {
+        lockStart = 1.0e15;   // until STOP
+        startPassUndo();
+        toast ("Play the pads " + juce::String (running ? "now" : "after the count-in")
+               + U8(". It loops and keeps recording, so each pass adds. Press STOP when it\xe2\x80\x99s right: it goes on layer ")
+               + juce::String (loopsScreen.nextLayer() + 1) + ".");
+        return;
+    }
     if (patternOnly)
     {
         lockStart = 1.0e15;   // never locked onto a layer: the pattern loops, taking every pass, until REC stops it
@@ -2303,7 +2676,96 @@ void PocketApp::recPads()
         toast ("Play the pads " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (lockBars).toLowerCase()
                + ". Then it goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + " and keeps looping.");
     else
-        toast ("The pattern goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + U8(" from its next start. Hits you play before then go in too."));
+        toast ("Your beat goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + U8(" in the looper from its next start. Hits you play before then go in too."));
+}
+
+// TO LOOPER: what DRUMS, PADS or SYNTH holds right now, said as text, so the button hides once it's sent.
+juce::String PocketApp::looperFingerprint()
+{
+    if (tool == Tool::drums)
+    {
+        auto& d = beats.drums();
+        const auto& a = d.patterns[(size_t) d.slot][0];
+        const auto& b = d.patterns[(size_t) d.slot][1];
+        if (a.isEmpty() && b.isEmpty())
+            return {};
+        if (sentDrumsValid && sentDrumSlot == d.slot && sentDrums[0] == a && sentDrums[1] == b)
+            return sentFingerprint;   // the same beat as was sent
+        return "d" + juce::String (d.slot) + "." + juce::String ((juce::int64) juce::Time::getHighResolutionTicks());
+    }
+    if (tool == Tool::pads)
+        return beats.drums().padPattern.hits.empty() ? juce::String() : "p" + juce::JSON::toString (beats.drums().padPattern.toVar(), true);
+    if (tool == Tool::synth || tool == Tool::bass)
+        return sPart().pattern.empty() ? juce::String() : (bassActive ? "b" : "s") + juce::JSON::toString (sPart().pattern.toVar(), true);
+    if (tool == Tool::chords)   // the progression (a held chord is played in with REC)
+        return chordsTool.progressionOn && chordsTool.usedBoxes() > 0 && (chordsTool.playsSynth || chordsTool.playsPad) && ! chordsTool.engine().progressionMuted()
+                 ? "c" + juce::JSON::toString (chordsTool.toVar(), true) : juce::String();
+    if (tool == Tool::drone)
+        return droneTool.on.load() ? "r" + juce::JSON::toString (droneTool.toVar(), true) : juce::String();
+    if (tool == Tool::sampler)
+        return sampler.hasSound() && ! sampler.isRecording()
+                 ? "a" + sampler.soundId() + "." + juce::String (sampler.selection().getStart()) + "." + juce::String (sampler.selection().getEnd()) + "."
+                       + juce::String ((juce::pointer_sized_int) sampler.sound().get())
+                 : juce::String();
+    return {};
+}
+
+bool PocketApp::canSendToLooper()
+{
+    if (page != Page::tool || recBusy() || lockKind != LockKind::none || loopsScreen.nextLayer() < 0)
+        return false;
+    if (tool != Tool::drums && tool != Tool::pads && tool != Tool::synth && tool != Tool::bass && tool != Tool::chords && tool != Tool::drone
+        && tool != Tool::sampler)
+        return false;
+    const auto f = looperFingerprint();
+    return f.isNotEmpty() && f != sentFingerprint;
+}
+
+void PocketApp::sendToLooper()
+{
+    const int layer = loopsScreen.nextLayer();
+    sentFingerprint = looperFingerprint();
+    if (tool == Tool::drums)
+    {
+        auto& d = beats.drums();
+        sentDrums[0] = d.patterns[(size_t) d.slot][0];
+        sentDrums[1] = d.patterns[(size_t) d.slot][1];
+        sentDrumSlot = d.slot;
+        sentDrumsValid = true;
+    }
+    switch (tool)
+    {
+        case Tool::drums: recDrums(); break;
+        case Tool::pads: recPads (true); break;
+        case Tool::synth:
+        case Tool::bass: recSynth (true); break;
+        case Tool::chords: recChords(); break;
+        case Tool::drone: recDrone(); break;
+        case Tool::sampler:
+        {
+            const int l = loopsScreen.putSound (*sampler.sound(), sampler.selection());
+            if (l < 0)
+            {
+                sentFingerprint = {};
+                return toast ("Couldn't put that sound on a layer.");
+            }
+            saveSong();
+            thumb.repaint();
+            return toastAction ("Your sound is on layer " + juce::String (l + 1) + U8(" in the looper, from bar 1. Keep going, or add another layer."),
+                                "SEE IT", [this] { showTool (Tool::loops, false); });
+        }
+        default: return;
+    }
+    if (lockKind == LockKind::none && loopsScreen.busyLayer() < 0)
+    {
+        sentFingerprint = {};   // it didn't go (it said why)
+        sentDrumsValid = false;
+        return;
+    }
+    applyClick();
+    headerTickNow();
+    toastAction ("On its way to layer " + juce::String (layer + 1) + U8(" in the looper, from the loop\xe2\x80\x99s next start. Keep going, or add another layer."),
+                 "SEE IT", [this] { showTool (Tool::loops, false); });
 }
 
 void PocketApp::startClockForRec()
@@ -2318,34 +2780,34 @@ void PocketApp::startClockForRec()
 
 void PocketApp::finishSynthTake()
 {
-    if (synthPart.taking())
-        synthPart.endTake();
-    synthPart.engine().setPlayFrom (-1.0e9);
+    if (sPart().taking())
+        sPart().endTake();
+    sPart().engine().setPlayFrom (-1.0e9);
 }
 
 // SYNTH: in KEYS or ARP, a count-in (from stopped), then what you play goes into the synth's pattern for the
 // take's length, snapped by REC SNAP; it loops, and from its next start it is locked onto the next layer. In
 // PATTERN, the pattern is locked as it is from its next start. Once the layer plays the pattern is cleared.
-void PocketApp::recSynth()
+void PocketApp::recSynth (bool toLooper)
 {
     auto& b = beats.engine();
     const int layer = loopsScreen.nextLayer();
     if (layer < 0)
-        return toast ("All 8 layers are used. Clear one in LOOPS to record.");
+        return toast ("All 8 layers are used. Clear one in the LOOPER to record.");
     const bool running = b.clockRunning();
     const double now = running ? b.clockBeat() : 0.0;
     padsFrom = running ? now : appSettings.countInBars * 4.0;   // the clock starts at 0: the count-in comes first
-    synthScreen.leave();
+    sScreen().leave();
 
-    if (synthPart.mode == SynthPart::patternMode)
+    if (toLooper || sPart().mode == SynthPart::patternMode)
     {
-        if (synthPart.pattern.empty())
+        if (sPart().pattern.empty())
             return toast ("The pattern is empty. Tap a step, then a key. Or switch to KEYS and press REC to play it in.");
-        lockLen = synthPart.pattern.lengthBeats();
-        const int patBars = synthPart.pattern.bars, want = appSettings.recBars();
+        lockLen = sPart().pattern.lengthBeats();
+        const int patBars = sPart().pattern.bars, want = appSettings.recBars();
         lockBars = want > patBars ? (int) std::ceil ((double) want / patBars - 1.0e-9) * patBars : patBars;
         lockStart = std::ceil (juce::jmax (now + 0.3, padsFrom) / lockLen - 1.0e-9) * lockLen;
-        synthPart.engine().setPlayFrom (-1.0e9);
+        sPart().engine().setPlayFrom (-1.0e9);
         lockKind = LockKind::synthPattern;
         toast ("The pattern goes on layer " + juce::String (layer + 1) + U8(" from its next start (") + lengthLabel (lockBars).toLowerCase() + ").");
     }
@@ -2353,21 +2815,33 @@ void PocketApp::recSynth()
     {
         int bars = appSettings.recBars();
         if (bars <= 0)
-            bars = synthPart.pattern.bars;   // FREE: the pattern's own length
+            bars = sPart().pattern.bars;   // FREE: the pattern's own length
         bars = bars <= 1 ? 1 : bars <= 2 ? 2 : bars <= 4 ? 4 : 8;
         lockLen = bars * 4.0;
         lockBars = bars;
         lockStart = std::ceil ((padsFrom + lockLen) / lockLen - 1.0e-9) * lockLen;
-        synthPart.startTake (bars, padsFrom, padsFrom + lockLen);
+        sPart().startTake (bars, padsFrom, padsFrom + lockLen);
         lockKind = LockKind::synthLive;
+        if (loopUntilStop)
+        {
+            lockStart = 1.0e15;   // until STOP: every pass adds
+            sPart().setTakeEnd (1.0e15);
+            toast ("Play " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (bars).toLowerCase()
+                   + U8(" that loops and keeps recording, so each pass adds. Press STOP when it\xe2\x80\x99s right: it goes on layer ") + juce::String (layer + 1) + ".");
+        }
+        else
         toast ("Play " + juce::String (running ? "now" : "after the count-in") + ": " + lengthLabel (bars).toLowerCase()
                + U8(". It loops, then goes on layer ") + juce::String (layer + 1) + ".");
     }
     startClockForRec();
     lockArmed = false;
     lockLayer = -1;
+    lockClosing = false;
+    lockUntilStop = loopUntilStop && lockKind == LockKind::synthLive;
+    if (lockUntilStop)
+        startPassUndo();
     lockWatch.startTimer (20);
-    synthScreen.partChanged();
+    sScreen().partChanged();
 }
 
 // CHORDS: the chords source goes onto the next layer for the take's length, in time (a count-in first from a
@@ -2387,7 +2861,7 @@ void PocketApp::recChords()
 {
     auto& b = beats.engine();
     if (loopsScreen.nextLayer() < 0)
-        return toast ("All 8 layers are used. Clear one in LOOPS to record.");
+        return toast ("All 8 layers are used. Clear one in the LOOPER to record.");
     if (! chordsTool.playsSynth && ! chordsTool.playsPad)
         return toast ("The chords only play the vocoder's notes: pick SYNTH or MY PAD SOUND to record them.");
     const bool running = b.clockRunning();
@@ -2419,7 +2893,7 @@ void PocketApp::recDrone()
 {
     auto& b = beats.engine();
     if (loopsScreen.nextLayer() < 0)
-        return toast ("All 8 layers are used. Clear one in LOOPS to record.");
+        return toast ("All 8 layers are used. Clear one in the LOOPER to record.");
     if (! droneTool.on.load() && droneTool.resonate.load() <= 0.0f)
         return toast ("The drone is off. Tap ON (or turn RESONATE up), then REC.");
     const bool running = b.clockRunning();
@@ -2474,13 +2948,15 @@ void PocketApp::lockWatchTick()
         return cancel ({});
 
     // SYNTH: what's played goes into the pattern until the pass ends (also after the layer is armed)
-    if (synthPart.taking())
+    if (sPart().taking())
     {
-        synthPart.serviceTake();
-        if (b.clockRunning() && b.clockBeat() >= padsFrom + lockLen)
+        sPart().serviceTake();
+        if (b.clockRunning() && b.clockBeat() >= sPart().takeEndBeat())
             finishSynthTake();
-        synthScreen.repaint();
+        sScreen().repaint();
     }
+    if (lockUntilStop && ! lockArmed)
+        watchPasses();
     if (! lockArmed && synthLock())
     {
         if (! b.clockRunning())
@@ -2492,25 +2968,25 @@ void PocketApp::lockWatchTick()
         else if (live ? beat >= lockStart - 1.0 : beat > lockStart - 3.95)
         {
             // the beat (or bar) before the pattern's start: arm, so the layer starts on the pattern's start
-            if (synthPart.pattern.empty())
+            if (sPart().pattern.empty())
             {
-                if (live && synthPart.taking() && beat < padsFrom + lockLen - 1.0e-3)
+                if (live && sPart().taking() && beat < padsFrom + lockLen - 1.0e-3)
                     return;   // still in the pass: wait for the start after
-                return cancel (live ? "No notes went in. Press REC and play the SYNTH keys after the count-in." : "The pattern is empty.");
+                return cancel (live ? juce::String ("No notes went in. Press REC and play the ") + (bassActive ? "BASS" : "SYNTH") + " keys after the count-in." : juce::String ("The pattern is empty."));
             }
             const int layer = loopsScreen.nextLayer();
             if (layer < 0)
-                return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
-            if (! loopsScreen.armLayer (layer, (int) LoopSource::synth, lockBars))
+                return cancel ("All 8 layers are used. Clear one in the LOOPER to record.");
+            if (! loopsScreen.armLayer (layer, (int) (bassActive ? LoopSource::bass : LoopSource::synth), lockBars))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
             loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
             auto part = std::make_shared<pocket::NotePart>();
             part->kind = pocket::NotePart::synth;
-            part->notes = synthPart.pattern;
-            part->preset = synthPart.preset;
-            part->knobs = synthPart.knobs;
-            part->octave = synthPart.octave;
-            part->board = loopsScreen.engine().board (pocket::boardSynth).settings();   // recorded through it: QUANTIZE keeps it
+            part->notes = sPart().pattern;
+            part->preset = sPart().preset;
+            part->knobs = sPart().knobs;
+            part->octave = sPart().octave;
+            part->board = loopsScreen.engine().board (bassActive ? pocket::boardBass : pocket::boardSynth).settings();   // recorded through it: QUANTIZE keeps it
             part->lengthBeats = lockBars * 4.0;
             part->startBeat = lockStart;
             lockPart = part;
@@ -2538,7 +3014,7 @@ void PocketApp::lockWatchTick()
                 return cancel ("No drum hits went in. Press REC and hit the pads after the count-in.");
             const int layer = loopsScreen.nextLayer();
             if (layer < 0)
-                return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
+                return cancel ("All 8 layers are used. Clear one in the LOOPER to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
             loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
@@ -2565,7 +3041,7 @@ void PocketApp::lockWatchTick()
                 return cancel ("No pad hits went in. Press REC and play the pads after the count-in.");
             const int layer = loopsScreen.nextLayer();
             if (layer < 0)
-                return cancel ("All 8 layers are used. Clear one in LOOPS to record.");
+                return cancel ("All 8 layers are used. Clear one in the LOOPER to record.");
             if (! loopsScreen.armLayer (layer, (int) LoopSource::drums, lockBars, (int) pocket::LayerTool::pads))
                 return cancel ("Couldn't arm layer " + juce::String (layer + 1));
             loops.keepOwnTop (layer);   // printed from a pattern: keeps the pattern's top
@@ -2658,17 +3134,20 @@ void PocketApp::lockWatchTick()
         loops.setTransport (true);
         loopsScreen.attachPart (lockLayer, lockPart);
         lockPart = nullptr;
-        synthPart.clearKeepingUndo();
+        sPart().clearKeepingUndo();
         synthUndoLayer = lockLayer;
-        if (synthPart.knobs.echo > 0.0f)
+        synthUndoPart = &sPart();
+        if (sPart().knobs.echo > 0.0f)
         {
-            loops.setKnob (lockLayer, fxDelay, echoToDelay (synthPart.knobs.echo));
-            loops.setKnob (lockLayer, fxReverb, echoToReverb (synthPart.knobs.echo));
+            loops.setKnob (lockLayer, fxDelay, echoToDelay (sPart().knobs.echo));
+            loops.setKnob (lockLayer, fxReverb, echoToReverb (sPart().knobs.echo));
         }
         applyClick();
-        synthScreen.partChanged();
+        sScreen().partChanged();
         saveSong();
-        toast ("Synth on layer " + juce::String (lockLayer + 1) + U8(". It keeps looping; the synth is free for a new part. UNDO gives this one back."));
+        toast (juce::String (bassActive ? "Bass" : "Synth") + " on layer " + juce::String (lockLayer + 1) + U8(". It keeps looping; the ") + (bassActive ? "bass" : "synth")
+               + U8(" is free for a new part. UNDO gives this one back."));
+        bassActive = recTool() == Tool::bass;   // (the lock kept it while it ran: back to the tool on screen)
         return;
     }
     if (st == pocket::LoopState::playing)
@@ -2723,10 +3202,10 @@ PocketApp::RecView PocketApp::recView() const
         bars = lockBars;
     else if (page == Page::tool && recTool() == Tool::chords)
         bars = chordsRecBars();
-    else if (page == Page::tool && recTool() == Tool::synth)
+    else if (page == Page::tool && (recTool() == Tool::synth || recTool() == Tool::bass))
     {
-        const int patBars = synthPart.pattern.bars, want = appSettings.recBars();
-        if (synthPart.mode == SynthPart::patternMode)
+        const int patBars = sPart().pattern.bars, want = appSettings.recBars();
+        if (sPart().mode == SynthPart::patternMode)
             bars = want > patBars ? (int) std::ceil ((double) want / patBars - 1.0e-9) * patBars : patBars;
         else
             bars = want <= 0 ? patBars : want <= 1 ? 1 : want <= 2 ? 2 : want <= 4 ? 4 : 8;
@@ -2745,7 +3224,7 @@ PocketApp::RecView PocketApp::recView() const
         if (padsPass && lockKind == LockKind::synthPattern)
             v.after = U8("THEN THE PATTERN \xc2\xb7 ") + lengthLabel (lockBars) + U8(" ON LAYER ") + juce::String (layer + 1);
         else if (padsPass && lockKind == LockKind::synthLive)
-            v.after = U8("THEN PLAY THE SYNTH \xc2\xb7 ") + lengthLabel (lockBars) + U8(" \xc2\xb7 THEN LAYER ") + juce::String (layer + 1);
+            v.after = (bassActive ? U8("THEN PLAY THE BASS \xc2\xb7 ") : U8("THEN PLAY THE SYNTH \xc2\xb7 ")) + lengthLabel (lockBars) + U8(" \xc2\xb7 THEN LAYER ") + juce::String (layer + 1);
         else if (padsPass)
             v.after = (lockKind == LockKind::drumsLive ? U8("THEN HIT THE PADS \xc2\xb7 ") : U8("THEN PLAY THE PADS \xc2\xb7 ")) + lengthLabel (lockBars) + U8(" \xc2\xb7 THEN LAYER ") + juce::String (layer + 1);
         else
@@ -2760,7 +3239,7 @@ PocketApp::RecView PocketApp::recView() const
     else if (padsPass)
     {
         v.kind = RecView::padsPass;
-        v.left = (lockKind == LockKind::drumsLive ? juce::String ("DRUMS ") : synthLock() ? juce::String ("SYNTH ") : juce::String ("PADS "))
+        v.left = (lockKind == LockKind::drumsLive ? juce::String ("DRUMS ") : synthLock() ? juce::String (bassActive ? "BASS " : "SYNTH ") : juce::String ("PADS "))
                  + barText (std::fmod (juce::jmax (0.0, beat), lockLen));
     }
     else if (busy >= 0)
@@ -2796,10 +3275,12 @@ void PocketApp::setSongKey (SongKey k)
     saveSong();
     synthScreen.leave();
     synthScreen.repaint();
+    bassScreen.leave();
+    bassScreen.repaint();
     chordsScreen.repaint();
     singScreen.repaint();
     if (changed)
-        toast ("The song is in " + k.label() + ". SYNTH, CHORDS and the vocoder follow it.");
+        toast ("The song is in " + k.label() + ". SYNTH, BASS, CHORDS, DRONE and the vocoder follow it.");
 }
 
 void PocketApp::openKeyMenu (juce::Component& c, juce::Rectangle<int> r)
@@ -2817,7 +3298,15 @@ void PocketApp::loadSong()
     auto& voc = vocoderScreen.engine();
     songKey = SongKey::fromVar (v.getProperty ("key", {}), SongKey { voc.key(), voc.minor() });   // older songs: the vocoder's key
     synthPart.fromVar (v.getProperty ("synth", {}));
+    bassPart.fromVar (v.getProperty ("bass", {}));
+    if (! v.hasProperty ("bass") && pocket::familyOfKind (synthPart.kind()) == pocket::bassFamily)
+    {
+        // a song from before BASS had its own tool: its bass part moves there, and SYNTH starts fresh
+        bassPart.fromVar (v.getProperty ("synth", {}));
+        synthPart.reset();
+    }
     synthUndoLayer = -1;
+    synthUndoPart = nullptr;
     chordsTool.fromVar (v.getProperty ("chords", {}));
     chordsTool.setKey (songKey);
     applyChordsPadSound();
@@ -2833,6 +3322,7 @@ void PocketApp::loadSong()
     if (voc.key() != songKey.root || voc.minor() != songKey.minor)
         voc.setKey (songKey.root, songKey.minor);
     synthScreen.partChanged();
+    bassScreen.partChanged();
     boardsFromVar (v.getProperty ("boards", {}));   // older songs: none, every board neutral
 }
 
@@ -2841,6 +3331,7 @@ void PocketApp::saveSong()
     auto* o = new juce::DynamicObject();
     o->setProperty ("key", songKey.toVar());
     o->setProperty ("synth", synthPart.toVar());
+    o->setProperty ("bass", bassPart.toVar());
     o->setProperty ("chords", chordsTool.toVar());
     o->setProperty ("drone", droneTool.toVar());
     if (! song->blocks.empty() || ! song->takes().empty() || ! song->markers.empty())
@@ -2867,6 +3358,7 @@ void PocketApp::headerTickNow()
             droneTool.setSongKey (songKey.root);
             saveSong();
             synthScreen.repaint();
+            bassScreen.repaint();
             chordsScreen.repaint();
         }
     }
@@ -2967,7 +3459,15 @@ void PocketApp::swipeTool (int direction)
     for (int i = 0; i < (int) toolRow.tools.size(); ++i)
         if (toolRow.tools[(size_t) i] == tool)
             at = i;
-    const int to = at + direction;
+    if (at < 0)   // a tool from MORE: it swipes from MORE's place
+        for (int i = 0; i < (int) toolRow.tools.size(); ++i)
+            if (toolRow.tools[(size_t) i] == Tool::more)
+                at = i;
+    int to = at + direction;
+    if (juce::isPositiveAndBelow (to, (int) toolRow.tools.size()) && toolRow.tools[(size_t) to] == Tool::add)
+        to += direction;   // (+ ADD A LAYER is a sheet: a swipe goes past it)
+    if (juce::isPositiveAndBelow (to, (int) toolRow.tools.size()) && toolRow.tools[(size_t) to] == Tool::more)
+        return;            // (and MORE is a menu: a swipe stops before it)
     if (at < 0 || to < 0 || to >= (int) toolRow.tools.size() || ! toolRow.onSelect)
         return;
     toolRow.onSelect (toolRow.tools[(size_t) to]);
@@ -3004,9 +3504,9 @@ void PocketApp::paint (juce::Graphics& g)
 
     const int top = insets.getTop();
     const bool dark = remoteShowing();
-    const auto paper = juce::Colour (0xfff1e7d6);
+    const auto paper = juce::Colour (0xfff3eadb);
     if (dark)
-        g.fillAll (juce::Colour (0xff1f1b17));
+        g.fillAll (juce::Colour (0xff17131f));
     const bool subPage = page == Page::more || page == Page::recorder;
     {
         auto back = backRect();
@@ -3067,8 +3567,8 @@ void PocketApp::paint (juce::Graphics& g)
             x += w;
         };
         part (v.left, leftColour);
-        part (sep, juce::Colour (0xff8a7d6a));
-        part (v.right, juce::Colour (0xffcdbfa5));
+        part (sep, juce::Colour (0xff8e7fa0));
+        part (v.right, juce::Colour (0xffb7a9c2));
     }
 
     // the link to the Mac: green when linked; tap it for Link to your Mac
@@ -3078,7 +3578,7 @@ void PocketApp::paint (juce::Graphics& g)
     const bool dotOnly = page != Page::songs;
     if (dark && ! dotOnly)
     {
-        g.setColour (juce::Colour (0xff332c26));
+        g.setColour (juce::Colour (0xff3a2f4f));
         g.fillRoundedRectangle (chip, 9.0f);
     }
     auto dot = dotOnly ? juce::Rectangle<float> (chip.getCentreX() - 5.5f, chip.getCentreY() - 5.5f, 11, 11)
@@ -3101,7 +3601,7 @@ void PocketApp::paint (juce::Graphics& g)
         g.drawFittedText (text, chip.withTrimmedLeft (30).withTrimmedRight (4).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
     }
 
-    g.setColour (dark ? juce::Colour (0xff3a332c) : col::rule);
+    g.setColour (dark ? juce::Colour (0xff3a2f4f) : col::rule);
     g.fillRect (0, top + 44, getWidth(), 2);
 }
 
@@ -3137,7 +3637,7 @@ void PocketApp::resized()
     thumb.setVisible (thumbShown());
 
     const auto content = contentBounds();
-    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &chordsScreen, &droneScreen, songScreen.get(), &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { &record, ideasScreen.get(), &sounds, &beats, &loopsScreen, &vocoderScreen, &singScreen, &synthScreen, &bassScreen, &chordsScreen, &droneScreen, songScreen.get(), &sampler, effects.get(), remote.get(), macLink.get(), settings.get() })
         c->setBounds (content);
     padPicker.setBounds (padPickOpen ? padPickerBounds() : padPickerBounds().withY (h));
     chordEdit.bottomInset = insets.getBottom();
@@ -3156,6 +3656,9 @@ void PocketApp::resized()
     tempoSheet.setBounds (tempoOpen ? tempoBounds() : tempoBounds().withY (h));
     trackSheet.setBounds (trackOpen ? trackBounds() : trackBounds().withY (h));
     recSetup.setBounds (recSetupOpen ? recSetupBounds() : recSetupBounds().withY (h));
+    addSheet.setBounds (addOpen ? addLayerBounds() : addLayerBounds().withY (h));
+    takeSheet.setBounds (takeOpen ? takeSheetBounds() : takeSheetBounds().withY (h));
+    vibeSheet.setBounds (vibeOpen ? vibeBounds() : vibeBounds().withY (h));
     headphones.setBounds (phonesOpen ? headphonesBounds() : headphonesBounds().withY (h));
     soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - 560 - insets.getBottom()) : tempoBounds().withTop (h - 560 - insets.getBottom()).withY (h));
     toastBox->setBounds (24, content.getBottom() - 60, w - 48, 52);
@@ -3373,6 +3876,7 @@ void PocketApp::savePng (const juce::File& file)
 
 void PocketApp::writeSnapshots (const juce::File& folder)
 {
+    loopUntilStop = false;   // (the self-checks test one pass and its lock; runRecChecks tests looping until STOP on its own)
     folder.createDirectory();
     animate = false;
     applyAnimate();
@@ -3524,10 +4028,26 @@ void PocketApp::writeSnapshots (const juce::File& folder)
             return 0.0f;
         };
         toolRow.slideStart (cellX (Tool::loops));
-        toolRow.slideTo (cellX (Tool::chords));
+        toolRow.slideTo (cellX (Tool::pads));
         savePng (folder.getChildFile ("25-toolrow-slide.png"));
-        toolRow.slideEnd (cellX (Tool::chords), -200.0f);   // (called off: it stays on LOOPS)
+        toolRow.slideEnd (cellX (Tool::drums), -200.0f);   // (called off: it stays on LOOPS)
     }
+    // the companion flow: + ADD A LAYER, and the sheet after a take (on the synth layer)
+    openAddLayer();
+    savePng (folder.getChildFile ("50-add-a-layer.png"));
+    addSheet.showVoicePage (true);
+    savePng (folder.getChildFile ("50b-add-my-voice.png"));
+    closeAddLayer();
+    showTool (Tool::synth, false);
+    openTakeSheet (1, true);
+    takeSheet.setVibe (pocket::TakeSheet::space);
+    savePng (folder.getChildFile ("51-take-sheet.png"));
+    closeTakeSheet();
+    showTool (Tool::loops, false);
+    openVibeSheet (1, pocket::TakeSheet::echo);
+    vibeSheet.moveDot ({ 0.68f, 0.62f });
+    savePng (folder.getChildFile ("52-layer-vibes.png"));
+    closeVibeSheet();
     showIdeasList();
     openDrawer();
     savePng (folder.getChildFile ("20b-drawer-on-home.png"));
@@ -3645,11 +4165,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     closePadPicker();
     sampler.clear();
 
-    // SYNTH: KEYS (Rubber Funk with C held, as in the design), PATTERN (a line, step 5 picked), ARP, CHROMATIC
+    // SYNTH: KEYS (Electric Piano with C held), PATTERN (a line, step 5 picked), ARP, CHROMATIC; then BASS
     {
         setSongKey ({ 9, true });
         synthPart.reset();
-        synthPart.setPreset (synthPresetIndex ("Rubber Funk"));
+        synthPart.setPreset (synthPresetIndex ("Electric Piano"));
         synthPart.knobs.tone = 0.62f;
         synthPart.knobs.echo = 0.15f;
         synthPart.apply();
@@ -3672,6 +4192,12 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         synthScreen.setMode (SynthPart::arpMode);
         synthScreen.setDemoHeld ({ 0, 2, 4 });
         savePng (folder.getChildFile ("14c-synth-arp.png"));
+        synthPart.arpHold = false;
+        synthPart.chords = true;
+        synthScreen.setMode (SynthPart::keysMode);
+        synthScreen.setDemoHeld ({ 3, 11 });
+        savePng (folder.getChildFile ("14e-synth-chords.png"));
+        synthPart.chords = false;
         synthScreen.setDemoHeld ({ 4, 9 });
         synthPart.chromatic = true;
         synthScreen.setMode (SynthPart::keysMode);
@@ -3679,6 +4205,19 @@ void PocketApp::writeSnapshots (const juce::File& folder)
         synthScreen.setDemoHeld ({});
         synthPart.reset();
         synthScreen.partChanged();
+        // BASS: its own tool, the bass sounds (Rubber Funk with its line)
+        bassPart.reset();
+        bassPart.setPreset (synthPresetIndex ("Rubber Funk"));
+        bassPart.pattern.setBars (1);
+        for (auto& n : line)
+            bassPart.pattern.setStep (n[0], n[1] - 12);
+        bassPart.patternChanged();
+        showTool (Tool::bass);
+        bassScreen.setDemoHeld ({ 0 });
+        savePng (folder.getChildFile ("14f-tool-bass.png"));
+        bassScreen.setDemoHeld ({});
+        bassPart.reset();
+        bassScreen.partChanged();
     }
 
     // CHORDS in A minor: a chord held, then the progression playing its second bar, then 8 boxes
@@ -4280,6 +4819,182 @@ juce::String PocketApp::runRecChecks (juce::String& report)
         problems.add ("UNDO did not take the last take off");
     else
         report << "UNDO: took layer 5 off\n";
+
+    // PADS, looping until STOP (Colin 2026-11-26): a hit in the first pass and one in the second both go in; no layer
+    // until STOP; then it goes on the next layer from the loop's top.
+    {
+        loopUntilStop = true;
+        showTool (Tool::pads, false);
+        // a beat that's already made goes straight to the looper (no STOP needed)
+        beats.fillDemoPattern();
+        want = loopsScreen.nextLayer();
+        recPressed();
+        if (lockUntilStop || ! waitPlaying (want, 10))
+            problems.add ("REC on PADS with a beat made: it didn't go straight to the looper");
+        else
+            report << "a beat already made: REC sent it straight to layer " << (want + 1) << "\n";
+        loopsScreen.undo();
+        pump (2048);
+        // TO SONG (Colin 2026-11-26): layer 1 to a new part A, layer 2 to a new part B, then layer 3 into B too
+        {
+            juce::Array<int> have;
+            for (int l = 0; l < kLoopLayers; ++l)
+                if (loopsScreen.hasLayer (l))
+                    have.add (l);
+            if (have.size() < 3)
+                problems.add ("TO SONG: the check needs 3 layers, found " + juce::String (have.size()));
+            else
+            {
+                const auto keepBlocks = song->blocks;
+                const auto keepMarkers = song->markers;
+                song->blocks.clear();
+                song->markers.clear();
+                toggleLayerInPart (have[0], -1);
+                toggleLayerInPart (have[1], -1);
+                toggleLayerInPart (have[2], 1);
+                const auto secs = song->sections();
+                int inB = 0;
+                for (const auto& b : song->blocks)
+                    inB += secs.size() == 2 && b.start >= secs[1].start - 1.0e-6 && b.end() <= secs[1].end + 1.0e-6 ? 1 : 0;
+                const bool ok = secs.size() == 2 && secs[0].name == "A" && secs[1].name == "B" && song->blocks.size() == 3 && inB == 2 && secs[1].start >= secs[0].start + 1.0;
+                toggleLayerInPart (have[2], 1);   // tapped again: out of B
+                const bool out = song->blocks.size() == 2;
+                report << "TO SONG: parts " << (int) secs.size() << ", blocks " << (int) song->blocks.size() + 1 << ", in B " << inB << ", out again " << (out ? "yes" : "no") << "\n";
+                if (! ok || ! out)
+                    problems.add ("TO SONG: parts " + juce::String ((int) secs.size()) + ", in part B " + juce::String (inB) + " (2 expected), taken out " + juce::String (out ? "yes" : "no"));
+                song->blocks = keepBlocks;
+                song->markers = keepMarkers;
+                song->changed();
+                hideToast();
+            }
+        }
+        // TO LOOPER (Colin 2026-11-26 "I want the push to loop"): shown with a beat made, sends it, then hides
+        {
+            sentFingerprint = {};
+            sentDrumsValid = false;
+            const bool shown = canSendToLooper();
+            want = loopsScreen.nextLayer();
+            thumbPressed (ThumbBar::visuals);
+            const bool landed = waitPlaying (want, 10);
+            const bool hidden = ! canSendToLooper();
+            report << "TO LOOPER on PADS: shown " << (shown ? "yes" : "no") << ", landed on layer " << (want + 1) << " " << (landed ? "yes" : "no")
+                   << ", hidden after " << (hidden ? "yes" : "no") << "\n";
+            if (! shown || ! landed || ! hidden)
+                problems.add ("TO LOOPER on PADS: shown " + juce::String (shown ? "yes" : "no") + ", landed " + juce::String (landed ? "yes" : "no")
+                              + ", hidden after " + juce::String (hidden ? "yes" : "no"));
+            thumbPressed (ThumbBar::undo);
+            pump (2048);
+            if (! canSendToLooper())
+                problems.add ("TO LOOPER on PADS: not offered again after UNDO");
+            // SYNTH in KEYS with notes in its pattern: TO LOOPER sends the pattern (REC there would record a new take)
+            synthPart.reset();
+            synthPart.mode = SynthPart::keysMode;
+            synthPart.pattern.setBars (1);
+            synthPart.pattern.setStep (0, 45);
+            synthPart.pattern.setStep (8, 48);
+            synthPart.patternChanged();
+            showTool (Tool::synth, false);
+            want = loopsScreen.nextLayer();
+            const bool sShown = canSendToLooper();
+            thumbPressed (ThumbBar::visuals);
+            const bool sLanded = waitPlaying (want, 10);
+            report << "TO LOOPER on SYNTH (KEYS): shown " << (sShown ? "yes" : "no") << ", landed " << (sLanded ? "yes" : "no") << "\n";
+            if (! sShown || ! sLanded)
+                problems.add ("TO LOOPER on SYNTH (KEYS): shown " + juce::String (sShown ? "yes" : "no") + ", landed " + juce::String (sLanded ? "yes" : "no"));
+            thumbPressed (ThumbBar::undo);
+            pump (2048);
+            synthPart.reset();
+            synthScreen.partChanged();
+            // BASS: its own part; TO LOOPER puts it on a BASS layer, and SYNTH's part is left alone
+            synthPart.pattern.setBars (1);
+            synthPart.pattern.setStep (4, 64);
+            synthPart.patternChanged();
+            bassPart.reset();
+            bassPart.pattern.setBars (1);
+            bassPart.pattern.setStep (0, 33);
+            bassPart.pattern.setStep (8, 36);
+            bassPart.patternChanged();
+            showTool (Tool::bass, false);
+            want = loopsScreen.nextLayer();
+            const bool bShown = canSendToLooper();
+            thumbPressed (ThumbBar::visuals);
+            const bool bLanded = waitPlaying (want, 10);
+            auto bt = loopsScreen.engine().takeOf (want);
+            const bool bassLayer = bt != nullptr && bt->tool == (int) LayerTool::bass;
+            const bool synthKept = synthPart.pattern.notes.size() == 1 && bassPart.pattern.empty();
+            report << "TO LOOPER on BASS: shown " << (bShown ? "yes" : "no") << ", landed " << (bLanded ? "yes" : "no") << ", a BASS layer "
+                   << (bassLayer ? "yes" : "no") << ", the synth's part left alone " << (synthKept ? "yes" : "no") << "\n";
+            if (! bShown || ! bLanded || ! bassLayer || ! synthKept)
+                problems.add ("TO LOOPER on BASS: shown " + juce::String (bShown ? "yes" : "no") + ", landed " + juce::String (bLanded ? "yes" : "no")
+                              + ", bass layer " + juce::String (bassLayer ? "yes" : "no") + ", synth kept " + juce::String (synthKept ? "yes" : "no"));
+            thumbPressed (ThumbBar::undo);
+            pump (2048);
+            if (bassPart.pattern.empty())
+                problems.add ("BASS: UNDO didn't give the bass part back");
+            bassPart.reset();
+            bassScreen.partChanged();
+            synthPart.reset();
+            synthScreen.partChanged();
+            // SAMPLER: a 3-second sound goes on a layer fitted to whole bars
+            {
+                juce::AudioBuffer<float> snd (1, (int) (3.0 * 44100.0));
+                for (int i = 0; i < snd.getNumSamples(); ++i)
+                    snd.setSample (0, i, 0.3f * (float) std::sin (i * 0.03));
+                sampler.useTake (crate::share (std::move (snd)), "Check sound");
+                showTool (Tool::sampler, false);
+                want = loopsScreen.nextLayer();
+                const bool aShown = canSendToLooper();
+                thumbPressed (ThumbBar::visuals);
+                auto at = loopsScreen.engine().takeOf (want);
+                const double beatsOn = at != nullptr ? at->lengthBeats.load() : 0.0;
+                report << "TO LOOPER on SAMPLER: shown " << (aShown ? "yes" : "no") << ", layer " << (want + 1) << " " << juce::String (beatsOn, 2) << " beats\n";
+                if (! aShown || at == nullptr || std::fmod (beatsOn, 4.0) > 1.0e-6 || beatsOn < 4.0 || canSendToLooper())
+                    problems.add ("TO LOOPER on SAMPLER: shown " + juce::String (aShown ? "yes" : "no") + ", " + juce::String (beatsOn, 2) + " beats on the layer");
+                thumbPressed (ThumbBar::undo);
+                pump (2048);
+                sampler.clear();
+            }
+            showTool (Tool::pads, false);
+        }
+        beats.clearPattern();
+        want = loopsScreen.nextLayer();
+        recPressed();
+        pump (barSamples / 2);
+        beats.recordHit (12, 1.0f);
+        pump (barSamples * 3);   // past the end of the first pass (2 bars)
+        const bool stillOpen = L.state (want) == pocket::LoopState::empty && playingIn();
+        beats.recordHit (14, 1.0f);   // the second pass: it still goes in
+        pump (barSamples / 8);
+        thumbPressed (ThumbBar::undo);   // a mistake: UNDO takes back this pass's hit, the first pass's stays
+        const int afterUndo = (int) beats.drums().padPattern.hits.size();
+        const bool stillRecording = playingIn() && L.state (want) == pocket::LoopState::empty;
+        if (afterUndo != 1 || ! stillRecording)
+            problems.add ("REC on PADS (loop until STOP): UNDO in the second pass left " + juce::String (afterUndo) + " hits (1 expected)"
+                          + (stillRecording ? juce::String() : juce::String (" and stopped the recording")));
+        else
+            report << "loop until STOP: UNDO took back the second pass's hit and kept recording\n";
+        beats.recordHit (14, 1.0f);   // played again, right this time
+        pump (barSamples / 8);
+        recPressed();                 // STOP
+        const bool closing = lockClosing && playingIn();
+        if (! stillOpen)
+            problems.add ("REC on PADS (loop until STOP): it stopped recording after one pass");
+        else if (! closing)
+            problems.add ("REC on PADS (loop until STOP): STOP didn't close the loop onto a layer");
+        else if (! waitPlaying (want, 12))
+            problems.add ("REC on PADS (loop until STOP): no take landed after STOP");
+        else
+        {
+            checkTake ("PADS (loop until STOP)", want, 8.0, 8.0);
+            if (beats.drums().padPattern.hits.size() != 2)
+                problems.add ("REC on PADS (loop until STOP): the pattern has " + juce::String ((int) beats.drums().padPattern.hits.size())
+                              + " hits, not the 2 played across two passes");
+            report << "loop until STOP: a hit in pass 1 and one in pass 2 both went in; the layer started after STOP\n";
+        }
+        loopsScreen.undo();
+        pump (2048);
+        loopUntilStop = false;
+    }
     togglePlay();   // stop
     pump (2048);
 
@@ -4427,6 +5142,42 @@ juce::String PocketApp::runRecChecks (juce::String& report)
             if (! synthPart.pattern.empty())
                 problems.add ("REC on SYNTH (PATTERN): the pattern wasn't cleared after the lock");
         }
+
+        // KEYS, looping until STOP: a note in the first pass and one in the second both go in, then STOP locks it
+        loopUntilStop = true;
+        appSettings.recLength = 0;   // 1 bar
+        synthPart.reset();
+        synthPart.setPreset (synthPresetIndex ("Pluck"));
+        synthPart.mode = SynthPart::keysMode;
+        synthPart.quantize = 0;
+        synthPart.apply();
+        want = loopsScreen.nextLayer();
+        recPressed();
+        const double from = padsFrom;
+        playKey (from + 1.02, 0, 0.3);   // pass 1
+        playKey (from + 6.02, 4, 0.3);   // pass 2, a beat later in the loop
+        const bool open = playingIn() && L.state (want) == pocket::LoopState::empty;
+        recPressed();                    // STOP
+        const bool landedLoop = open && waitPlaying (want, 12);
+        juce::String got;
+        for (auto& n : synthPart.stash.notes)
+            got << (got.isEmpty() ? "" : ", ") << SongKey::noteName (n.note) << "@" << juce::String (n.beat, 2);
+        report << "synth loop until STOP: from " << juce::String (from, 3) << ", notes " << got << ", layer " << (want + 1) << (landedLoop ? " playing" : " NOT playing") << "\n";
+        if (! open)
+            problems.add ("REC on SYNTH (loop until STOP): it stopped recording after one pass");
+        else if (! landedLoop)
+            problems.add ("REC on SYNTH (loop until STOP): no take landed after STOP");
+        else
+        {
+            checkTake ("SYNTH (loop until STOP)", want, 4.0, 4.0);
+            const auto& ns = synthPart.stash.notes;
+            auto loopBeat = [] (double clock) { return std::fmod (std::round (clock / 0.25) * 0.25, 4.0); };   // snapped to 1/16, in the 1-bar loop
+            auto near = [] (double a, double b) { const double d = std::abs (a - b); return juce::jmin (d, 4.0 - d) < 0.26; };
+            const bool both = ns.size() == 2 && near (ns[0].beat, loopBeat (from + 1.02)) && near (ns[1].beat, loopBeat (from + 6.02));
+            if (! both)
+                problems.add ("REC on SYNTH (loop until STOP): the pattern got " + got + " (a note from each pass expected)");
+        }
+        loopUntilStop = false;
     }
     togglePlay();
     pump (2048);
@@ -5129,4 +5880,296 @@ juce::String PocketApp::runLoopEditChecks (juce::String& report)
         L.setLayer (l, nullptr, false);
     pump (2048);
     return problems.joinIntoString ("\n");
+}
+
+// The companion flow: + ADD A LAYER (the tool row's middle button) and the sheet after each take.
+
+void PocketApp::setupCompanion()
+{
+    addSheet.onPick = [this] (int choice) { pickLayerSource (choice); };
+    addSheet.onMoreTool = [this] (Tool t)
+    {
+        closeAddLayer();
+        if (toolRow.onSelect)
+            toolRow.onSelect (t);
+    };
+    addSheet.onRecSetup = [this]
+    {
+        closeAddLayer();
+        openRecSetup();
+    };
+    addSheet.setupText = [this]
+    {
+        const int bars = appSettings.recBars();
+        const juce::String length = bars <= 0 ? juce::String ("Free length") : juce::String (bars) + (bars == 1 ? " bar" : " bars");
+        const int count = appSettings.countInBars;
+        return length + U8(" \xc2\xb7 ") + (count == 0 ? juce::String ("no count-in") : "count in " + juce::String (count) + (count == 1 ? " bar" : " bars"));
+    };
+    addSheet.onDismiss = [this] { closeAddLayer(); };
+
+    takeSheet.onVibe = [this] (int vibe)
+    {
+        const int l = takeSheet.layer();
+        if (! loopsScreen.hasLayer (l))
+            return closeTakeSheet();
+        auto& engine = loopsScreen.engine();
+        engine.setFx (l, pocket::TakeSheet::withVibe (engine.fxOf (l), vibe));
+        loopsScreen.boardsChanged();
+        loopsScreen.repaint();
+    };
+    takeSheet.onKeep = [this] { closeTakeSheet(); };
+    takeSheet.onDismiss = [this] { closeTakeSheet(); };
+    takeSheet.onTryAgain = [this]
+    {
+        const int l = takeSheet.layer();
+        closeTakeSheet();
+        if (loopsScreen.lastTakeUndoLayer() == l)
+            loopsScreen.undo();
+        if (page != Page::tool || tool != takeTool)
+            showTool (takeTool, false);
+        recPressed();
+    };
+    takeSheet.onMakePad = [this]
+    {
+        const int l = takeSheet.layer();
+        closeTakeSheet();
+        sampleLayer (l);
+    };
+    takeSheet.onMoreEffects = [this]
+    {
+        const int l = takeSheet.layer(), vibe = takeSheet.currentVibe();
+        closeTakeSheet();
+        openVibeSheet (l, vibe);
+    };
+    loopsScreen.onTakeLanded = [this] (int layer) { voiceTakeLanded (layer); openTakeSheet (layer); };
+    loopsScreen.onToSong = [this] (int layer) { layerToSong (layer); };
+    addSheet.onVoice = [this] (bool free) { closeAddLayer(); startVoiceTake (free); };
+    addSheet.wearingPhones = [this] { return route != pocket::Route::none; };
+    loopsScreen.onEffects = [this] (int layer) { openVibeSheet (layer); };
+
+    auto applyVibe = [this] (int vibe, juce::Point<float> xy)
+    {
+        const int l = vibeSheet.layer();
+        if (! loopsScreen.hasLayer (l))
+            return closeVibeSheet();
+        layerVibe[(size_t) l] = vibe;
+        layerXY[(size_t) l] = xy;
+        auto& engine = loopsScreen.engine();
+        const auto fx = pocket::VibeSheet::fxFor (engine.fxOf (l), vibe, xy);
+        for (int k : { (int) pocket::fxFilter, (int) pocket::fxDelay, (int) pocket::fxReverb, (int) pocket::fxDrive })
+            engine.setKnob (l, k, fx.knob[(size_t) k]);   // (knob by knob: recorded moves stay)
+        loopsScreen.boardsChanged();
+        loopsScreen.repaint();
+    };
+    vibeSheet.onChange = applyVibe;
+    vibeSheet.onTouch = [this] (bool down)
+    {
+        const int l = vibeSheet.layer();
+        if (! loopsScreen.hasLayer (l))
+            return;
+        for (int k : { (int) pocket::fxFilter, (int) pocket::fxDelay, (int) pocket::fxReverb, (int) pocket::fxDrive })
+            loopsScreen.engine().touchKnob (l, k, down);
+    };
+    vibeSheet.onRecordMoves = [this] (bool on)
+    {
+        const int l = vibeSheet.layer();
+        if (loopsScreen.hasLayer (l))
+            loopsScreen.engine().setRecMoves (l, on);
+        if (on)
+            toast ("Recording moves: drag the dot while the loop plays. Tap again to stop.");
+    };
+    vibeSheet.onKnobs = [this]
+    {
+        const int l = vibeSheet.layer();
+        closeVibeSheet();
+        showTool (Tool::loops, false);
+        loopsScreen.selectLayer (l);
+        loopsScreen.openEditor (l, LoopEditSheet::effectsPage);
+    };
+    vibeSheet.onBoard = [this]
+    {
+        const int l = vibeSheet.layer();
+        closeVibeSheet();
+        openEffects (pocket::layerBoardId (l));
+    };
+    vibeSheet.onDone = [this] { closeVibeSheet(); };
+    vibeSheet.onDismiss = [this] { closeVibeSheet(); };
+}
+
+juce::Rectangle<int> PocketApp::addLayerBounds() const
+{
+    const int h = addSheet.preferredHeight() + insets.getBottom();
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+juce::Rectangle<int> PocketApp::takeSheetBounds() const
+{
+    const int h = takeSheet.preferredHeight() + insets.getBottom();
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::openAddLayer()
+{
+    if (addOpen)
+        return;
+    closeAllSheets();
+    addOpen = true;
+    addSheet.showVoicePage (false);
+    addSheet.refresh();
+    dim->setVisible (true);
+    addSheet.setBounds (addLayerBounds().withY (getHeight()));
+    addSheet.setVisible (true);
+    addSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (addSheet, addLayerBounds(), true);
+}
+
+void PocketApp::closeAddLayer()
+{
+    if (! addOpen)
+        return;
+    addOpen = false;
+    dim->setVisible (false);
+    slide (addSheet, addLayerBounds(), false);
+    if (! animate)
+        addSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->addOpen)
+                safe->addSheet.setVisible (false);
+        });
+    repaint();
+}
+
+// A tile on + ADD A LAYER. MY VOICE starts recording at once (the mic asks first, as ever); the instruments open ready
+// to play, with REC under the thumb.
+void PocketApp::pickLayerSource (int choice)
+{
+    using C = pocket::AddLayerSheet;
+    closeAddLayer();
+    switch (choice)
+    {
+        case C::voice:
+            showTool (Tool::loops, false);
+            loopsScreen.setSource ((int) LoopSource::mic);
+            recPressed();
+            return;
+        case C::sampler:
+            showTool (Tool::sampler);
+            toast ("Record or pick a sound, then chop it, pitch it and send it to a pad or a layer.");
+            return;
+        case C::pads:
+            showTool (Tool::pads);
+            beats.setPadEdit (false);
+            toast ("Play the pads. Press REC to record them as a new layer.");
+            return;
+        case C::drums:
+            showTool (Tool::drums);
+            toast ("Tap boxes for hits, press PLAY to hear them. REC puts the beat on a new layer.");
+            return;
+        case C::bass:
+            showTool (Tool::bass);
+            toast ("Pick a bass sound and play: every key fits the song. REC records it as a new layer, or tap steps in PATTERN.");
+            return;
+        case C::synth:
+            showTool (Tool::synth);
+            toast ("Every key fits the song. Press REC, then play: it records onto a new layer.");
+            return;
+        case C::vocoder:
+            showTool (Tool::vocoder);
+            return;
+        case C::resample:
+            showTool (Tool::sampler, false);
+            if (sampler.onSampleTool)
+                sampler.onSampleTool();
+            return;
+        default:
+            return;
+    }
+}
+
+// After a take lands on a layer: the sheet comes up while it loops. Not in the screenshots, the lesson or the tour.
+void PocketApp::openTakeSheet (int layer, bool force)
+{
+    if (! loopsScreen.hasLayer (layer))
+        return;
+    if (! force && (! animate || lessonOn || page != Page::tool || title->isVisible() || tour->isVisible()))
+        return;
+    if (takeOpen || sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen
+        || drumKitOpen || addOpen || holdCard.isOpen())
+        return;
+    takeTool = tool;
+    const juce::String what = tool == Tool::loops && loopsScreen.source() == (int) LoopSource::mic ? juce::String ("My voice")
+                            : juce::String (toolName (tool)).toLowerCase().replaceSection (0, 1, juce::String (toolName (tool)).substring (0, 1));
+    takeOpen = true;
+    takeSheet.show (layer, what);
+    takeSheet.setBounds (takeSheetBounds().withY (getHeight()));
+    takeSheet.setVisible (true);
+    takeSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (takeSheet, takeSheetBounds(), true);
+}
+
+void PocketApp::closeTakeSheet()
+{
+    if (! takeOpen)
+        return;
+    takeOpen = false;
+    slide (takeSheet, takeSheetBounds(), false);
+    if (! animate)
+        takeSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->takeOpen)
+                safe->takeSheet.setVisible (false);
+        });
+    repaint();
+}
+
+juce::Rectangle<int> PocketApp::vibeBounds() const
+{
+    const int h = juce::jmin (getHeight() - insets.getTop() - 20, vibeSheet.preferredHeight() + insets.getBottom());
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+// EFFECTS on a layer: the vibe sheet (no dim: the layers stay in view and keep looping)
+void PocketApp::openVibeSheet (int layer, int vibe)
+{
+    if (! loopsScreen.hasLayer (layer))
+        return;
+    closeAllSheets();
+    if (vibe >= 0)
+        layerVibe[(size_t) layer] = vibe;
+    juce::String name;
+    loopsScreen.layerSound (layer, &name);
+    name = "Layer " + juce::String (layer + 1);
+    vibeOpen = true;
+    vibeSheet.show (layer, name, layerVibe[(size_t) layer], layerXY[(size_t) layer], loopsScreen.engine().recMoves (layer));
+    vibeSheet.setBounds (vibeBounds().withY (getHeight()));
+    vibeSheet.setVisible (true);
+    vibeSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (vibeSheet, vibeBounds(), true);
+}
+
+void PocketApp::closeVibeSheet()
+{
+    if (! vibeOpen)
+        return;
+    vibeOpen = false;
+    const int l = vibeSheet.layer();
+    if (loopsScreen.hasLayer (l) && loopsScreen.engine().recMoves (l))
+        loopsScreen.engine().setRecMoves (l, false);
+    slide (vibeSheet, vibeBounds(), false);
+    if (! animate)
+        vibeSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->vibeOpen)
+                safe->vibeSheet.setVisible (false);
+        });
+    repaint();
 }

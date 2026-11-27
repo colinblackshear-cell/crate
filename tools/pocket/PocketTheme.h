@@ -2,23 +2,29 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-// Kaleidobox Pocket's look: a cream panel with raised buttons, dark wells for the LCD and
-// the waveform, amber for what's picked, green for play, red for record. Drawn in code so it
-// matches the Mac app's vintage panel and Colin's phone design.
+// Kaleidobox Pocket's look: the Kaleidobox night sky. A deep plum page with raised violet-grey
+// buttons, still-darker wells with a brass rim for the LCD and the waveform, gold for what's
+// picked, teal for play, magenta for record, violet for the alternate. Light text on the page,
+// dark text (col::onBright) on anything bright. Drawn in code to match the app icon.
 #define U8(text) juce::String (juce::CharPointer_UTF8 (text))
 
 namespace pocket
 {
 namespace col
 {
-    inline const juce::Colour cream { 0xffefe7d6 }, creamDeep { 0xffe4dac3 }, creamLight { 0xfffaf6ec };
-    inline const juce::Colour ink { 0xff2b2418 }, inkDim { 0xff6e6455 }, inkFaint { 0xffa59a85 };
-    inline const juce::Colour rule { 0xffcfc4ab };
-    inline const juce::Colour amber { 0xfff5b13d }, amberDark { 0xffe59a22 };
-    inline const juce::Colour green { 0xff4cd07a }, red { 0xffe8432f }, blue { 0xff4aa8c8 };
-    inline const juce::Colour well { 0xff1a1613 }, wellEdge { 0xff2c2620 };
-    inline const juce::Colour lcdText { 0xfff0795f }, lcdAmber { 0xfff5b13d };
-    inline const juce::Colour grey { 0xff9a917f };
+    // The names keep their old "cream" spelling so every screen picks up the new look: cream is the page,
+    // creamLight the raised chip, creamDeep the sunken track. ink is LIGHT text on the page and panels;
+    // onBright is dark text/glyphs for anything sitting on gold, teal, violet, orange or the pale buttons.
+    inline const juce::Colour cream { 0xff17131f }, creamDeep { 0xff0f0c15 }, creamLight { 0xff2e2540 };
+    inline const juce::Colour ink { 0xfff3eadb }, inkDim { 0xffb7a9c2 }, inkFaint { 0xff8e7fa0 };
+    inline const juce::Colour onBright { 0xff0f0c15 };
+    inline const juce::Colour rule { 0xff3a2f4f };
+    inline const juce::Colour amber { 0xfff7c04a }, amberDark { 0xffd9a233 };
+    inline const juce::Colour green { 0xff2fc6a8 }, red { 0xffec4e8a }, blue { 0xffa877f5 };
+    inline const juce::Colour well { 0xff0f0c15 }, wellEdge { 0xff8e7433 }, wellCard { 0xff221b2d };
+    inline const juce::Colour brass { 0xffc9a54e };
+    inline const juce::Colour lcdText { 0xfff59a2a }, lcdAmber { 0xfff7c04a };
+    inline const juce::Colour grey { 0xff8e7fa0 };
 }
 
 juce::Font fraunces (float height);                    // wordmark and sheet titles
@@ -92,5 +98,26 @@ private:
     double dragStart = 0;
     std::function<juce::String (double)> format;
     std::function<bool (double)> isActive;
+};
+
+// PITCH as a wide strip: -12..+12 semitones, the original in the middle. Drag along it (whole semitones), double-tap
+// for the original. The value reads "+3 · HIGHER". Owners put - and + buttons beside it.
+class PitchStrip : public juce::Component
+{
+public:
+    int getValue() const { return value; }
+    void setValue (int semitones, bool notify = false);
+    std::function<void (int)> onChange;
+    static juce::String describe (int semitones);   // "+3 · higher", "original", "-2 · lower"
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent& e) override { setFromX (e.position.x); }
+    void mouseDrag (const juce::MouseEvent& e) override { setFromX (e.position.x); }
+    void mouseDoubleClick (const juce::MouseEvent&) override { setValue (0, true); }
+
+private:
+    juce::Rectangle<float> track() const;
+    void setFromX (float x);
+    int value = 0;
 };
 }

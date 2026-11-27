@@ -8,7 +8,7 @@ using namespace pocket;
 namespace
 {
 constexpr float kPedalPitch = 85.6f;
-const juce::Colour kLedRed { 0xffe8432f }, kLedOff { 0xff2b2622 }, kLcdOrange { 0xffe8a24a }, kWellText { 0xffd9cfb8 }, kWellDim { 0xff6b6155 };
+const juce::Colour kLedRed { 0xffec4e8a }, kLedOff { 0xff221b2d }, kLcdOrange { 0xfff59a2a }, kWellText { 0xffe4dbee }, kWellDim { 0xff8e7fa0 };
 
 void drawLed (juce::Graphics& g, juce::Point<float> c, bool on, juce::Colour colour = kLedRed)
 {
@@ -31,7 +31,7 @@ void drawLed (juce::Graphics& g, juce::Point<float> c, bool on, juce::Colour col
 void drawButton (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, Look look, bool down, float font = 16.0f)
 {
     drawRaised (g, r, look, down, 12.0f);
-    g.setColour (look == Look::red ? juce::Colours::white : col::ink);
+    g.setColour (look == Look::red ? juce::Colours::white : (look == Look::cream || look == Look::dark || look == Look::pad || look == Look::ghost) ? col::ink : col::onBright);
     g.setFont (spaced (condensed (font), 0.08f));
     g.drawText (text, r.withTrimmedBottom (3).translated (0, down ? 2.0f : 0.0f), juce::Justification::centred);
 }
@@ -373,8 +373,8 @@ void VocoderScreen::paint (juce::Graphics& g)
         drawWell (g, r, 14.0f);
         drawRaised (g, prevRect(), Look::dark, pressed == prev, 9.0f);
         drawRaised (g, nextRect(), Look::dark, pressed == next, 9.0f);
-        drawChevron (g, prevRect().withTrimmedBottom (3), false, juce::Colour (0xfff1e7d1));
-        drawChevron (g, nextRect().withTrimmedBottom (3), true, juce::Colour (0xfff1e7d1));
+        drawChevron (g, prevRect().withTrimmedBottom (3), false, juce::Colour (0xfff3eadb));
+        drawChevron (g, nextRect().withTrimmedBottom (3), true, juce::Colour (0xfff3eadb));
 
         const int idx = voc.preset();
         g.setColour (kLcdOrange);
@@ -397,7 +397,7 @@ void VocoderScreen::paint (juce::Graphics& g)
         for (int i = 0; i < 3; ++i)
         {
             const bool lit = outLevel > from[i];
-            g.setColour (lit ? (i == 2 ? col::lcdAmber : juce::Colour (0xff4cd07a)) : juce::Colour (0xff3a342c));
+            g.setColour (lit ? (i == 2 ? col::lcdAmber : juce::Colour (0xff2fc6a8)) : juce::Colour (0xff3a2f4f));
             g.fillRoundedRectangle (m.getX() + (float) i * 12.0f, m.getBottom() - heights[i], 7.5f, heights[i], 1.5f);
         }
     }
@@ -492,9 +492,9 @@ void VocoderScreen::drawPedal (juce::Graphics& g, int i)
     g.drawText (name, body.withTrimmedTop (30).withHeight (28), juce::Justification::centred);
 
     auto sw = juce::Rectangle<float> (body.getCentreX() - 19.0f, body.getY() + 69.0f, 38.0f, 22.0f);
-    g.setColour (juce::Colour (0xff6e6455).withAlpha (0.8f));
+    g.setColour (juce::Colour (0xff8e7fa0).withAlpha (0.8f));
     g.fillRoundedRectangle (sw.translated (0, 2), 8.0f);
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffaf5e8), 0, sw.getY(), juce::Colour (0xffc4b99f), 0, sw.getBottom(), false));
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff3eadb), 0, sw.getY(), juce::Colour (0xffc9bcd6), 0, sw.getBottom(), false));
     g.fillRoundedRectangle (sw, 8.0f);
     g.setColour (juce::Colours::white.withAlpha (0.5f));
     g.drawRoundedRectangle (sw.reduced (0.6f), 8.0f, 1.0f);

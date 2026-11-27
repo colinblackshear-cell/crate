@@ -155,7 +155,7 @@ void BeatLesson::paint (juce::Graphics& g)
     const float sw = (dots.getWidth() - 3.0f * 6.0f) / 4.0f;
     for (int s = 0; s < 4; ++s)
     {
-        g.setColour (current == landed || s < current ? juce::Colour (0xfff0846c) : s == current ? col::amber : col::creamDeep);
+        g.setColour (current == landed || s < current ? juce::Colour (0xfff59a2a) : s == current ? col::amber : col::creamDeep);
         g.fillRoundedRectangle (dots.getX() + (float) s * (sw + 6.0f), dots.getY(), sw, 6.0f, 3.0f);
     }
 }

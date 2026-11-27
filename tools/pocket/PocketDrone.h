@@ -14,7 +14,7 @@
 namespace pocket
 {
 // What the strings ring to (the Mac's "Rings to", the sources the phone has).
-enum class DroneFeed { voice, vocoder, drums, synth, chords, count };
+enum class DroneFeed { voice, vocoder, drums, synth, chords, bass, count };
 const char* droneFeedName (DroneFeed);
 
 class DroneTool : public DroneVoice

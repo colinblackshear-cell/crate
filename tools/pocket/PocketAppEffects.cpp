@@ -21,7 +21,8 @@ int PocketApp::boardForTool (Tool t) const
             return l >= 0 ? layerBoardId (l) : -1;
         }
         case Tool::effects: return effects != nullptr ? effects->source() : -1;
-        case Tool::drone: return -1;   // (no board of its own yet: EFFECTS opens on its picker)
+        case Tool::bass: return boardBass;
+        case Tool::drone: return boardDrone;
         default: return -1;
     }
 }
@@ -36,6 +37,8 @@ Tool PocketApp::recTool() const
         case boardPads: return Tool::pads;
         case boardSynth: return Tool::synth;
         case boardChords: return Tool::chords;
+        case boardBass: return Tool::bass;
+        case boardDrone: return Tool::drone;
         default: return Tool::effects;   // VOICE, VOCODER and the resamples: EFFECTS' own
     }
 }
@@ -93,7 +96,12 @@ void PocketApp::recEffects()
     {
         case boardDrums: return recDrums();
         case boardPads: return recPads();
-        case boardSynth: return recSynth();
+        case boardSynth:
+        case boardBass:
+            if (! synthLock())
+                bassActive = id == boardBass;   // which part REC records
+            return recSynth();
+        case boardDrone: return recDrone();
         case boardChords: return recChords();
         case boardVoice:
         case boardVocoder:
@@ -127,7 +135,8 @@ namespace
 {
 struct SongBoard { int id; const char* key; };
 const SongBoard songBoards[] = { { boardDrums, "drums" }, { boardPads, "pads" }, { boardSynth, "synth" }, { boardChords, "chords" },
-                                 { boardVoice, "voice" }, { boardVocoder, "vocoder" }, { boardAll, "all" }, { boardMaster, "master" } };
+                                 { boardVoice, "voice" }, { boardVocoder, "vocoder" }, { boardAll, "all" }, { boardMaster, "master" },
+                                 { boardBass, "bass" }, { boardDrone, "drone" } };
 }
 
 juce::var PocketApp::boardsToVar() const

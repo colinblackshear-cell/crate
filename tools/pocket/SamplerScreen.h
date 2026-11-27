@@ -91,7 +91,12 @@ private:
     PocketWave wave;
     pocket::PButton soundsButton { "Sounds" }, allButton { "All" }, undoButton { "Undo" }, moreButton { U8("More edits \xe2\x80\xba") },
         hearButton { "Hear", pocket::Look::green }, trimButton { "Trim" }, sendButton { "Send to pad", pocket::Look::amber },
-        pickButton, clearButton { "Clear" }, chopButton { U8("Chop to pads\xe2\x80\xa6") }, toolButton { "A tool" }, steps[5];
+        pickButton, clearButton { "Clear" }, chopButton { U8("Chop to pads\xe2\x80\xa6") }, toolButton { "A tool" }, steps[5],
+        pitchDown { U8("\xe2\x88\x92") }, pitchUp { "+" };
+    // PITCH: how the sound plays on the pad (HEAR plays it so; SEND TO PAD sets the pad's pitch). On the pad it came
+    // from, a change is heard on the pad at once.
+    pocket::PitchStrip pitch;
+    void setPitch (int semitones);
     bool chopped = false;   // the sound on the page went onto the pads (CHOP TO PADS)
     std::vector<State> undoStack;
     juce::String currentId, name;
@@ -100,6 +105,8 @@ private:
     juce::File takeFile;
     float level = 0.0f;
     juce::Rectangle<float> titleArea, infoArea;
+public:
+    int pitchSemitones() const { return pitch.getValue(); }
 };
 
 //==============================================================================

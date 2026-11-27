@@ -52,17 +52,19 @@ static Palette paletteFor (Look l)
 {
     switch (l)
     {
-        case Look::amber: return { juce::Colour (0xfffcca64), juce::Colour (0xffeea02a), juce::Colour (0xffb9741a), col::ink };
-        case Look::green: return { juce::Colour (0xff78e6a2), juce::Colour (0xff35bc6b), juce::Colour (0xff1f8348), col::ink };
-        case Look::red:   return { juce::Colour (0xfff58b78), juce::Colour (0xffd8452f), juce::Colour (0xff922a1c), juce::Colours::white };
-        case Look::blue:  return { juce::Colour (0xff7cc6e0), juce::Colour (0xff3a95b8), juce::Colour (0xff22627a), col::ink };
-        case Look::dark:  return { juce::Colour (0xff3d362e), juce::Colour (0xff27221c), juce::Colour (0xff100d0a), juce::Colour (0xfff1e7d1) };
-        case Look::pad:   return { juce::Colour (0xff6a5d50), juce::Colour (0xff3a322a), juce::Colour (0xff0d0b09), juce::Colour (0xfff1e7d1) };
+        case Look::amber: return { juce::Colour (0xfffbd36f), juce::Colour (0xffeeb236), juce::Colour (0xff9a7418), col::onBright };
+        case Look::green: return { juce::Colour (0xff55dfc3), juce::Colour (0xff27b89b), juce::Colour (0xff167a66), col::onBright };
+        case Look::red:   return { juce::Colour (0xffd0427c), juce::Colour (0xffb22c5e), juce::Colour (0xff7a1a42), juce::Colours::white };
+        case Look::blue:  return { juce::Colour (0xffc19cf8), juce::Colour (0xff9f6aee), juce::Colour (0xff5e3aa6), col::onBright };
+        case Look::dark:  return { juce::Colour (0xff17121f), juce::Colour (0xff0f0c15), juce::Colour (0xff050408), col::ink };
+        case Look::pad:   return { juce::Colour (0xff4b3e66), juce::Colour (0xff3a2f4f), juce::Colour (0xff08060c), col::ink };
         case Look::ghost: return { juce::Colours::transparentBlack, juce::Colours::transparentBlack, juce::Colours::transparentBlack, col::ink };
         case Look::cream: break;
     }
-    return { juce::Colour (0xfff8f2e4), juce::Colour (0xffe6dcc4), juce::Colour (0xffb7ab91), col::ink };
+    return { juce::Colour (0xff382e4d), juce::Colour (0xff2e2540), juce::Colour (0xff08060c), col::ink };
 }
+
+static bool isBright (Look l) { return l == Look::amber || l == Look::green || l == Look::red || l == Look::blue; }
 
 void drawRaised (juce::Graphics& g, juce::Rectangle<float> r, Look look, bool pressed, float radius)
 {
@@ -71,20 +73,44 @@ void drawRaised (juce::Graphics& g, juce::Rectangle<float> r, Look look, bool pr
     const auto p = paletteFor (look);
     const float lift = pressed ? 1.0f : 3.0f;
     auto body = r.withTrimmedBottom (3.0f).translated (0, pressed ? 2.0f : 0.0f);
+    // depth (Colin 2026-11-26, "more dimensional"): a soft shadow under the key, then its edge, its face, a glow on top
+    if (! pressed)
+        for (int i = 1; i <= 3; ++i)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.10f));
+            g.fillRoundedRectangle (body.translated (0, lift + (float) i * 1.2f).expanded ((float) i * 0.6f, 0.0f), radius + (float) i * 0.6f);
+        }
     g.setColour (p.edge);
     g.fillRoundedRectangle (body.translated (0, lift), radius);
     g.setGradientFill (juce::ColourGradient (p.top, 0, body.getY(), p.bottom, 0, body.getBottom(), false));
     g.fillRoundedRectangle (body, radius);
-    g.setColour (juce::Colours::white.withAlpha (look == Look::dark ? 0.08f : 0.45f));
+    if (body.getHeight() > 14.0f)
+    {
+        // light from above: a sheen over the top of the face, fading out by the middle
+        const float sheen = isBright (look) ? 0.30f : look == Look::dark ? 0.06f : 0.10f;
+        auto top = body.reduced (1.5f).withHeight (body.getHeight() * 0.5f);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (pressed ? sheen * 0.4f : sheen), 0, top.getY(),
+                                                 juce::Colours::white.withAlpha (0.0f), 0, top.getBottom(), false));
+        g.fillRoundedRectangle (top, juce::jmax (1.0f, radius - 1.5f));
+    }
+    g.setColour (juce::Colours::white.withAlpha (isBright (look) ? 0.45f : look == Look::dark ? 0.07f : 0.12f));
     g.drawRoundedRectangle (body.reduced (0.7f), radius, 1.0f);
 }
 
 void drawWell (juce::Graphics& g, juce::Rectangle<float> r, float radius)
 {
-    g.setColour (col::wellEdge);
+    g.setColour (col::wellEdge);                     // the brass rim
     g.fillRoundedRectangle (r, radius);
+    // a sheen on the rim's top edge, like polished brass
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0x66ffe7a8), 0, r.getY(), juce::Colour (0x00ffe7a8), 0, r.getY() + juce::jmin (24.0f, r.getHeight() * 0.5f), false));
+    g.fillRoundedRectangle (r, radius);
+    auto in = r.reduced (1.75f);
     g.setColour (col::well);
-    g.fillRoundedRectangle (r.reduced (1.5f), radius - 1.0f);
+    g.fillRoundedRectangle (in, radius - 1.75f);
+    // sunk in: a shadow along the inside top
+    g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.45f), 0, in.getY(), juce::Colours::black.withAlpha (0.0f), 0,
+                                             in.getY() + juce::jmin (14.0f, in.getHeight() * 0.4f), false));
+    g.fillRoundedRectangle (in, radius - 1.75f);
 }
 
 void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colour arc, bool active, bool onDark)
@@ -97,7 +123,7 @@ void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colou
     const float arcR = R - 2.5f;
     juce::Path track;
     track.addCentredArc (c.x, c.y, arcR, arcR, 0, a0, a1, true);
-    g.setColour (onDark ? juce::Colour (0xff3a332b) : col::creamDeep.darker (0.12f));
+    g.setColour (onDark ? juce::Colour (0xff2a2038) : col::creamDeep);
     g.strokePath (track, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     if (active)
     {
@@ -109,9 +135,9 @@ void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colou
 
     // the dark ridged ring
     const float ringR = R - 8.0f;
-    g.setColour (juce::Colour (0xff201c18));
+    g.setColour (juce::Colour (0xff0f0c15));
     g.fillEllipse (c.x - ringR, c.y - ringR, ringR * 2, ringR * 2);
-    g.setColour (juce::Colour (0xff4a423a));
+    g.setColour (juce::Colour (0xff4a3d63));
     for (int i = 0; i < 48; ++i)
     {
         const float a = juce::MathConstants<float>::twoPi * (float) i / 48.0f;
@@ -119,17 +145,17 @@ void drawKnob (juce::Graphics& g, juce::Rectangle<float> b, float v, juce::Colou
                     c.x + std::sin (a) * (ringR - 0.8f), c.y - std::cos (a) * (ringR - 0.8f), 1.3f);
     }
 
-    // the cream cap
+    // the brass cap
     const float capR = ringR * 0.66f;
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffaf5e8), c.x - capR * 0.4f, c.y - capR * 0.6f,
-                                              juce::Colour (0xffb9ad95), c.x + capR * 0.5f, c.y + capR, true));
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xffeed99a), c.x - capR * 0.4f, c.y - capR * 0.6f,
+                                              juce::Colour (0xff9a7d36), c.x + capR * 0.5f, c.y + capR, true));
     g.fillEllipse (c.x - capR, c.y - capR, capR * 2, capR * 2);
     g.setColour (juce::Colour (0x33000000));
     g.drawEllipse (c.x - capR, c.y - capR, capR * 2, capR * 2, 1.0f);
 
     // a small pointer dot
     const float a = a0 + (a1 - a0) * v;
-    g.setColour (col::ink.withAlpha (0.55f));
+    g.setColour (col::onBright.withAlpha (0.75f));
     g.fillEllipse (c.x + std::sin (a) * capR * 0.62f - 2.2f, c.y - std::cos (a) * capR * 0.62f - 2.2f, 4.4f, 4.4f);
 }
 
@@ -145,7 +171,7 @@ void PButton::paint (juce::Graphics& g)
     if (lamp)
     {
         auto lampBox = inner.withSizeKeepingCentre (9, 9).withX (inner.getX() + 12);
-        g.setColour (lampLit ? juce::Colour (0xff3fd16a) : juce::Colour (0xff6c7a63));
+        g.setColour (lampLit ? juce::Colour (0xff2fc6a8) : juce::Colour (0xff5a4d70));
         g.fillEllipse (lampBox);
         g.setColour (juce::Colours::black.withAlpha (0.35f));
         g.drawEllipse (lampBox, 1.0f);
@@ -160,7 +186,7 @@ void PButton::paint (juce::Graphics& g)
 
     if (detail.isNotEmpty())
     {
-        g.setColour (col::inkDim);
+        g.setColour (isBright (look) ? col::onBright.withAlpha (0.75f) : col::inkDim);
         g.setFont (small (13.0f));
         g.drawText (detail, inner.withTrimmedRight (14), juce::Justification::centredRight);
     }
@@ -235,5 +261,64 @@ void KnobView::paint (juce::Graphics& g)
     g.setColour (active() ? col::ink : col::inkDim);
     g.setFont (lcdFont (21.0f));
     g.drawText (format (value), valueArea, juce::Justification::centred);
+}
+
+//==============================================================================
+juce::String PitchStrip::describe (int st)
+{
+    if (st == 0)
+        return "original";
+    return (st > 0 ? "+" : U8("\xe2\x88\x92")) + juce::String (std::abs (st)) + (st > 0 ? U8(" \xc2\xb7 higher") : U8(" \xc2\xb7 lower"));
+}
+
+void PitchStrip::setValue (int st, bool notify)
+{
+    st = juce::jlimit (-12, 12, st);
+    if (st == value)
+        return;
+    value = st;
+    repaint();
+    if (notify && onChange)
+        onChange (value);
+}
+
+juce::Rectangle<float> PitchStrip::track() const
+{
+    auto r = getLocalBounds().toFloat();
+    return r.withTrimmedTop (22.0f).reduced (14.0f, 0.0f);
+}
+
+void PitchStrip::setFromX (float x)
+{
+    const auto t = track();
+    const float n = juce::jlimit (0.0f, 1.0f, (x - t.getX()) / juce::jmax (1.0f, t.getWidth()));
+    setValue (juce::roundToInt (n * 24.0f) - 12, true);
+}
+
+void PitchStrip::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (col::ink);
+    g.setFont (spaced (condensedBold (16.0f), 0.08f));
+    g.drawText ("PITCH", r.withHeight (20.0f), juce::Justification::centredLeft);
+    g.setColour (value == 0 ? col::inkDim : col::amberDark);
+    g.setFont (spaced (condensedBold (16.0f), 0.04f));
+    g.drawText (describe (value).toUpperCase(), r.withHeight (20.0f), juce::Justification::centredRight);
+
+    const auto t = track();
+    const float cy = t.getCentreY(), x0 = t.getX(), w = t.getWidth();
+    auto xOf = [&] (int st) { return x0 + w * (float) (st + 12) / 24.0f; };
+    auto bar = juce::Rectangle<float> (x0, cy - 5.0f, w, 10.0f);
+    drawWell (g, bar.expanded (0.0f, 1.0f), 5.0f);
+    const float cx = xOf (0), vx = xOf (value);
+    g.setColour (col::amber);
+    g.fillRoundedRectangle (juce::Rectangle<float> (juce::jmin (cx, vx), cy - 4.0f, std::abs (vx - cx), 8.0f), 4.0f);
+    for (int st = -12; st <= 12; st += 12)
+    {
+        g.setColour (col::inkFaint);
+        g.fillRect (juce::Rectangle<float> (xOf (st) - 1.0f, cy + 9.0f, 2.0f, 6.0f));
+    }
+    const float knob = 30.0f;
+    drawRaised (g, juce::Rectangle<float> (vx - knob * 0.5f, cy - knob * 0.5f, knob, knob), Look::dark, false, knob * 0.5f);
 }
 }

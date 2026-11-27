@@ -18,6 +18,7 @@ int pocket::toolForSource (int source)
         case LoopSource::mix: return (int) LayerTool::mix;
         case LoopSource::synth: return (int) LayerTool::synth;
         case LoopSource::chords: return (int) LayerTool::chords;
+        case LoopSource::bass: return (int) LayerTool::bass;
         case LoopSource::drone: return (int) LayerTool::drone;
         case LoopSource::loops:
         case LoopSource::master:
@@ -710,7 +711,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         std::fill (vocR.begin(), vocR.begin() + n, 0.0f);
         inst->render (vocL.data(), vocR.data(), n);
         if (stereo)
-            boards[(size_t) (boardSynth + k)].process (vocL.data(), vocR.data(), n);   // SYNTH, CHORDS
+            boards[(size_t) (k == 0 ? boardSynth : k == 1 ? boardChords : boardBass)].process (vocL.data(), vocR.data(), n);   // SYNTH, CHORDS, BASS
         const float echo = inst->echoSend();
         const float toDelay = echo * 0.55f, toReverb = echo * 0.3f;   // pocket::echoToDelay / echoToReverb
         for (int i = 0; i < n; ++i)
@@ -778,6 +779,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
             case 2: feed = srcDrums.data(); break;
             case 3: feed = srcInst[0].data(); break;
             case 4: feed = srcInst[1].data(); break;
+            case 5: feed = srcInst[2].data(); break;
             default: break;
         }
         std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
@@ -785,6 +787,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         drone->setFeed (feed);
         drone->render (vocL.data(), vocR.data(), n);
         drone->setFeed (nullptr);
+        if (stereo)
+            boards[(size_t) boardDrone].process (vocL.data(), vocR.data(), n);
         for (int i = 0; i < n; ++i)
         {
             left[i] += vocL[(size_t) i];
@@ -1072,6 +1076,7 @@ void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps
         case LoopSource::both: src = srcBoth.data(); break;
         case LoopSource::synth: src = srcInst[0].data(); break;
         case LoopSource::chords: src = srcInst[1].data(); break;
+        case LoopSource::bass: src = srcInst[2].data(); break;
         case LoopSource::drone: src = srcDrone.data(); break;
         case LoopSource::loops: src = srcLoops.data(); break;
         case LoopSource::master: src = srcMaster.data(); break;

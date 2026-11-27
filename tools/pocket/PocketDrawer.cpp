@@ -4,7 +4,7 @@ using namespace pocket;
 
 namespace
 {
-constexpr int kRowH = 64, kRowGap = 8, kTileH = 48, kTileGap = 8, kMargin = 12;
+constexpr int kRowH = 64, kRowGap = 8, kTileH = 48, kTileGap = 8, kMargin = 12, kMacH = 78;
 }
 
 //==============================================================================
@@ -74,9 +74,9 @@ public:
             auto pb = playButton (i);
             const bool playing = owner.isPlaying && owner.isPlaying (row.id);
             auto disc = pb.withSizeKeepingCentre (38, 38).translated (0, pressedPlay == i ? 1.0f : 0.0f);
-            g.setColour (playing ? col::red : col::ink);
+            g.setColour (playing ? col::red : col::green);
             g.fillEllipse (disc);
-            g.setColour (juce::Colours::white);
+            g.setColour (playing ? juce::Colours::white : col::onBright);
             const auto c = disc.getCentre();
             if (playing)
                 g.fillRoundedRectangle (c.x - 6, c.y - 6, 12, 12, 2.0f);
@@ -152,6 +152,56 @@ public:
 };
 
 //==============================================================================
+// KALEIDOBOX FOR MAC: the desktop app in one card. The whole card is the button (GET IT opens its download page).
+class SongDrawer::MacCard : public juce::Component
+{
+public:
+    explicit MacCard (SongDrawer& o) : owner (o) {}
+
+    SongDrawer& owner;
+    bool down = false;
+
+    juce::Rectangle<float> pill() const { auto r = getLocalBounds().toFloat().reduced (10.0f); return r.removeFromRight (78.0f).withSizeKeepingCentre (78.0f, 40.0f); }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (col::creamLight);
+        g.fillRoundedRectangle (r, 14.0f);
+        g.setColour (col::amber.withAlpha (0.7f));
+        g.drawRoundedRectangle (r.reduced (1.0f), 14.0f, 1.4f);
+        if (down)
+        {
+            g.setColour (col::ink.withAlpha (0.06f));
+            g.fillRoundedRectangle (r, 14.0f);
+        }
+        auto in = r.reduced (14.0f, 9.0f).withTrimmedRight (88.0f);
+        g.setColour (col::ink);
+        g.setFont (fraunces (19.0f));
+        g.drawFittedText ("Kaleidobox for Mac", in.removeFromTop (24.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        g.setColour (col::inkDim);
+        g.setFont (small (12.0f));
+        g.drawFittedText ("The full studio and live rig: Logic plugins, a bigger looper, the vocoder pedalboard. Send ideas from this phone.",
+                          in.toNearestInt(), juce::Justification::topLeft, 3, 0.85f);
+        drawRaised (g, pill().translated (0.0f, down ? 1.0f : 0.0f), Look::amber, down, 12.0f);
+        g.setColour (col::onBright);
+        g.setFont (spaced (condensedBold (15.0f)));
+        g.drawText ("GET IT", pill().translated (0.0f, down ? 1.0f : 0.0f), juce::Justification::centred);
+    }
+
+    void mouseDown (const juce::MouseEvent&) override { down = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { down = false; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const bool tap = down && getLocalBounds().contains (e.getPosition()) && e.getDistanceFromDragStart() < 10;
+        down = false;
+        repaint();
+        if (tap)
+            owner.tapGetMac();
+    }
+};
+
+//==============================================================================
 class SongDrawer::Panel : public juce::Component
 {
 public:
@@ -166,6 +216,9 @@ public:
         newButton.setFontHeight (22.0f);
         newButton.onClick = [this] { if (owner.onNew) owner.onNew(); };
         addAndMakeVisible (newButton);
+
+        mac = std::make_unique<MacCard> (o);
+        addAndMakeVisible (*mac);
 
         const juce::String names[kTiles] = { "SOUNDS", "RECORD A SOUND", "MAC LINK", "REMOTE", "SETTINGS", U8("TOUR \xc2\xb7 LESSON") };
         for (int i = 0; i < kTiles; ++i)
@@ -200,7 +253,8 @@ public:
     }
 
     // The three zones, top to bottom: the wordmark and + NEW SONG, the songs, the grid.
-    int gridTop() const { return getHeight() - owner.insets.getBottom() - kMargin - (3 * kTileH + 2 * kTileGap); }
+    int gridTop() const { return macRect().getY() - kTileGap - (3 * kTileH + 2 * kTileGap); }
+    juce::Rectangle<int> macRect() const { return { kMargin, getHeight() - owner.insets.getBottom() - kMargin - kMacH, getWidth() - 2 * kMargin, kMacH }; }
     int listTop() const { return owner.insets.getTop() + 154; }
     juce::Rectangle<int> tileRect (int i) const
     {
@@ -216,6 +270,7 @@ public:
         list->setSize (getWidth(), juce::jmax (view.getHeight(), (int) owner.rows.size() * (kRowH + kRowGap) + 6));
         for (int i = 0; i < kTiles; ++i)
             tiles[i].setBounds (tileRect (i));
+        mac->setBounds (macRect());
     }
 
     void paint (juce::Graphics& g) override
@@ -244,6 +299,7 @@ public:
     PButton tiles[kTiles];
     juce::Viewport view;
     std::unique_ptr<List> list;
+    std::unique_ptr<MacCard> mac;
 };
 
 //==============================================================================
@@ -431,6 +487,17 @@ void SongDrawer::holdRow (int row)
 juce::Rectangle<int> SongDrawer::tileBounds (int tile) const
 {
     return panel->tileRect (tile).translated (panel->getX(), 0);
+}
+
+juce::Rectangle<int> SongDrawer::macCardBounds() const
+{
+    return panel->macRect().translated (panel->getX(), 0);
+}
+
+void SongDrawer::tapGetMac()
+{
+    if (onGetMac)
+        onGetMac();
 }
 
 juce::Rectangle<int> SongDrawer::songRowBounds (int row) const

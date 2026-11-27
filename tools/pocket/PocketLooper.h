@@ -29,8 +29,8 @@ constexpr int kLoopLayers = 8;
 
 // both = your voice and the vocoder (Sing). loops = every layer (after the ALL board), master = the whole mix (after the
 // MASTER board), layerTap = one layer after its board: the EFFECTS tool's resample takes.
-enum class LoopSource { mic, drums, vocoder, mix, both, synth, chords, loops, master, layerTap, drone, count };
-constexpr int kInstruments = 2;   // the SYNTH and CHORDS tools' sound, each its own source
+enum class LoopSource { mic, drums, vocoder, mix, both, synth, chords, loops, master, layerTap, drone, bass, count };
+constexpr int kInstruments = 3;   // the SYNTH, CHORDS and BASS tools' sound, each its own source
 
 // A tool that plays notes inside the looper (SYNTH, CHORDS): always heard, recorded as its own source, and
 // sending echoSend() of itself to the shared delay and reverb.
@@ -48,7 +48,7 @@ struct DroneVoice : public Instrument
 enum class LoopState { empty, waiting, recording, playing, overdubWait, overdubbing };
 
 // The tool that made a layer (what the Loops rows show): set when the take is armed.
-enum class LayerTool { mic, drums, pads, synth, chords, vocoder, mix, drone, count };
+enum class LayerTool { mic, drums, pads, synth, chords, vocoder, mix, drone, bass, count };
 int toolForSource (int source);   // a LoopSource's usual maker (DRUMS for the drums source: PADS says so itself)
 
 // QUANTIZE on a layer that came from notes: the grid (0 = as played, 1 = 1/4, 2 = 1/8, 3 = 1/16), how far the
@@ -160,6 +160,7 @@ public:
     // A copy of the layer's loop, to put back with setLayer later (overdub's undo).
     SharedTake copyOf (int layer) const;
     static SharedTake makeTake (int samples, double sampleRate);
+    double rate() const { return sampleRate; }
 
     // The clock, for loops that start it themselves: running until stopped here.
     void setTransport (bool on);

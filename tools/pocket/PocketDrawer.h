@@ -8,7 +8,8 @@
 
 // The song drawer: a panel about 78% of the width that slides in from the left over a dimmed app. The Kaleidobox
 // wordmark, + NEW SONG, YOUR SONGS (tap one to switch to it and stay on the tool you are on; hold one to rename or
-// delete it), and at the bottom a 2-column grid: SOUNDS, RECORD A SOUND, MAC LINK, REMOTE, SETTINGS, TOUR · LESSON.
+// delete it), and at the bottom a 2-column grid: SOUNDS, RECORD A SOUND, MAC LINK, REMOTE, SETTINGS, TOUR · LESSON,
+// then the KALEIDOBOX FOR MAC card (what the desktop app adds, and GET IT: its download page in Safari).
 // It opens from the header's menu icon, a tap on the song name, or a swipe from the left edge, and closes with a swipe
 // left, a tap on the dim, or by picking something. The component covers the whole app; it is only visible while open.
 class SongDrawer : public juce::Component, private juce::Timer
@@ -24,6 +25,7 @@ public:
     std::function<bool (const juce::String& id)> isPlaying;
     std::function<void (const juce::String& id, juce::Component& source, juce::Point<float> at, juce::Rectangle<float> highlight)> onHoldSong;
     std::function<void (int tile)> onTile;
+    std::function<void()> onGetMac;        // the KALEIDOBOX FOR MAC card
     std::function<int()> currentLayers;    // the open song's layers (what is on screen, not yet saved)
     std::function<double()> currentBpm;
     std::function<void()> onClosed;
@@ -38,6 +40,8 @@ public:
     bool isOpen() const { return goal > 0.5f && isVisible(); }
     int panelWidth() const { return juce::roundToInt ((float) getWidth() * 0.78f); }
     juce::Rectangle<int> tileBounds (int tile) const;   // in the app's coordinates, with the panel open
+    juce::Rectangle<int> macCardBounds() const;         // the same, for the KALEIDOBOX FOR MAC card
+    void tapGetMac();                                   // what a tap on the card does (the self-checks)
     juce::Rectangle<int> songRowBounds (int row) const; // the same, for the self-checks
     int songRows() const { return (int) rows.size(); }
     juce::String songIdAt (int row) const { return rows[(size_t) row].id; }
@@ -56,6 +60,7 @@ private:
     struct Row { juce::String id, name, meta; bool current = false; };
     class List;
     class Panel;
+    class MacCard;
 
     void timerCallback() override;
     void layoutPanel();

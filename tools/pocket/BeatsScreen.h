@@ -2,6 +2,7 @@
 
 #include "BeatsEngine.h"
 #include "PocketHost.h"
+#include "PocketKey.h"
 #include "PocketKit.h"
 #include "PocketLibrary.h"
 #include "PocketTheme.h"
@@ -60,6 +61,14 @@ public:
     int copySource() const { return copyFrom; }
     void endPadMode();                                       // leaves 16 LEVELS or COPY
     void holdPad (int pad);                                  // what a long press on a pad does (also for the self-checks)
+    // PLAY / EDIT on the pads. In PLAY a pad only plays: holding it keeps it sounding and nothing pops up. In EDIT a
+    // tap opens the pad's sheet (pitch first), and a hold opens the full pad menu.
+    void setPadEdit (bool on);
+    bool padEditing() const { return padEdit; }
+    // PLAY AS KEYS: the pad's sound on all 16 pads of its bank, each a step of the song's key higher (the original in
+    // the middle, A08 and A16). UNDO (the note's button) puts the bank back.
+    void playAsKeys (int pad);
+    std::function<pocket::SongKey()> songKey;
     // The self-checks: a finger lands on a pad of the bank, the hold time passes, the finger lifts.
     void testTouchPad (int pad);
     void testHoldElapsed();
@@ -121,6 +130,9 @@ public:
     // and amber hints on steps of one voice (only drawn, never written).
     void setLessonLayout (bool on, int reservePx = 0);
     void setGuide (int voice, juce::uint32 stepMask);
+    // STEPS shows six sounds at once: a tap on row (0-5) box (0-7) of sound set 0/1, half bar 0/1 (the self-checks).
+    void tapEverySoundBox (int set, int half, int row, int box);
+    bool everySoundGridShown() const;
     void tapStep (int step);                    // what a tap on a step box does (the self-checks tap with it)
     juce::Rectangle<int> stepsBounds() const;   // the 16 big step buttons, in this screen's coordinates
     juce::String selfCheckLive();               // PLAY LIVE writes to the nearest step, the lesson hints write nothing, no double hits
@@ -189,6 +201,7 @@ private:
     int levelsOf = -1, copyFrom = -1, removedPad = -1, copiedTo = -1;
     pocket::KitPad removed, copiedWas;
     bool haveRemoved = false, haveCopied = false;
+    bool padEdit = false;              // PLAY / EDIT on the pads
    #if JUCE_IOS || JUCE_ANDROID
     juce::ScopedMessageBox sharing;
    #endif

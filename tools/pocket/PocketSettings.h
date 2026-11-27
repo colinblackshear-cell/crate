@@ -23,6 +23,7 @@ public:
             singMode = juce::jlimit (0, 2, (int) p.getWithDefault ("singMode", 1));
             singHold = (bool) p.getWithDefault ("singHold", true);
             singPadSound = (bool) p.getWithDefault ("singPadSound", false);
+            voiceFree = (bool) p.getWithDefault ("voiceFree", false);
         }
     }
 
@@ -40,6 +41,9 @@ public:
     // picked pad's sound
     int singMode = 1;
     bool singHold = true, singPadSound = false;
+    // MY VOICE: how the last voice take was sung (and how LOOPER's REC on the mic records): false = to a click (in the
+    // headphones, with a count-in), true = free (no click; the take is fitted to the beat after).
+    bool voiceFree = false;
 
     // The take's length in bars, 0 = FREE (until stopped, or the first layer's length).
     static constexpr int kLengthChoices = 8;
@@ -63,6 +67,7 @@ public:
         o->setProperty ("singMode", singMode);
         o->setProperty ("singHold", singHold);
         o->setProperty ("singPadSound", singPadSound);
+        o->setProperty ("voiceFree", voiceFree);
         root.createDirectory();
         root.getChildFile ("settings.json").replaceWithText (juce::JSON::toString (juce::var (o)));
     }

@@ -96,6 +96,11 @@ SharedTake originalTake (const LoopTake&, double bpm);
 // The hits in the recording (in its beats), and the tempo they sound like (0 = can't tell).
 std::vector<double> warpHits (const WarpSource&, double sampleRate, float sensitivity);
 double warpSoundsLike (const WarpSource&, const std::vector<double>& hits, double sampleRate, double songBpm);
+// FIT TO THE BEAT (a take sung free, no click): the hits are found, the tempo it was sung at read from them (near the
+// song's), the take stretched (keeping its pitch) to the whole bars it was sung over at the song's tempo, and each hit
+// pulled most of the way onto the nearest 1/8. `soundsLike` says the tempo it heard (0: couldn't tell; then it's only
+// rounded to whole bars and snapped).
+crate::Warp::Plan fitToBeatPlan (const WarpSource&, double sampleRate, double songBpm, double& soundsLike);
 // The tempo a take plays at its own pitch.
 double nativeBpm (const LoopTake&);
 

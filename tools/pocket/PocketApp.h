@@ -10,6 +10,7 @@
 #include "PocketDrawer.h"
 #include "PocketHold.h"
 #include "PocketAudio.h"
+#include "PocketCompanion.h"
 #include "PocketFrame.h"
 #include "PocketHost.h"
 #include "PocketIdeas.h"
@@ -159,6 +160,12 @@ private:
     bool toolRowShown() const { return page != Page::songs; }
     juce::Rectangle<int> contentBounds() const;
     void refreshToolRow();
+    void openMoreTools();
+    // TO SONG (the looper): a layer goes into song part A, B, C... A part is a section of the SONG tool (a marker), the
+    // layers in it play over its bars. A new part goes on the song's end, as long as the layer's loop.
+    void layerToSong (int layer);
+    void toggleLayerInPart (int layer, int part);   // part: a section index; -1 = a new part
+    static juce::String partName (int index) { return juce::String::charToString ((juce::juce_wchar) ('A' + juce::jlimit (0, 25, index))); }
     void noteStep();   // keeps Your songs' progress picture (pocket::Ideas steps) up to date
     void stopEverything();
 
@@ -181,6 +188,10 @@ private:
     void pickSong (const juce::String& id);          // a song in the drawer: switch to it and stay on the tool
     void playFromDrawer (const juce::String& id);
     void drawerTile (int tile);
+    // KALEIDOBOX FOR MAC in the drawer: the desktop app's download page in Safari (kaleidobox.app once that site is
+    // live). The self-checks swap openInBrowser out so nothing opens.
+    static constexpr const char* kMacDownloadUrl = "https://colinblackshear-cell.github.io/crate/get/";
+    std::function<void (const juce::URL&)> openInBrowser = [] (const juce::URL& u) { u.launchInDefaultBrowser(); };
     pocket::HoldSpec songHoldSpec (const juce::String& id);
     void swipeTool (int direction);                   // the header bar: the previous (-1) or next (+1) tool
     bool edgeSwipeAllowed (juce::Point<float> inApp) const;
@@ -197,9 +208,23 @@ private:
     void stopRec();
     void recLoops();
     void recDrums();
-    void recPads();
+    void recPads (bool toLooper = false);
     void recVocoder();
-    void recSynth();
+    void recSynth (bool toLooper = false);
+    // TO LOOPER (the thumb bar, where VISUALS sits, on DRUMS, PADS and SYNTH): what you've made goes on the next layer
+    // from its next start, as it is. Shown only when there's something new to send.
+    bool canSendToLooper();
+    void sendToLooper();
+    juce::String sentFingerprint;   // what TO LOOPER last sent (cleared by UNDO), so it isn't offered twice
+    juce::String looperFingerprint();
+    // MY VOICE: to a click (heard while the take counts in and records) or free (fitted to the beat once it lands).
+    bool voiceTakeClick = false;
+    int voiceFitLayer = -1;
+    void startVoiceTake (bool free);
+    void voiceTakeLanded (int layer);
+    crate::drums::Pattern sentDrums[2];
+    int sentDrumSlot = -1;
+    bool sentDrumsValid = false;
     void recChords();
     void recDrone();
     // SAMPLER (PocketAppSampler.cpp): the pads that play a sound after it was trimmed or the trim undone (`shift`: how far
@@ -261,6 +286,23 @@ private:
     std::shared_ptr<pocket::NotePart> lockPart;   // the notes of the take being locked (PADS, SYNTH), for QUANTIZE
     double lockStart = 0, lockLen = 8, padsFrom = 0;
     bool lockArmed = false;
+    // REC on PADS, DRUMS PLAY LIVE and SYNTH KEYS/ARP keeps looping and recording, each pass adding, until STOP; then
+    // it goes on a layer from the loop's next top (Colin 2026-11-26). The self-checks turn it off to test one pass.
+    bool loopUntilStop = true;
+    bool lockUntilStop = false;   // this REC is waiting for STOP (lockStart is far away until then)
+    bool lockClosing = false;     // STOP pressed: the layer starts at lockStart
+    bool closeLoopRec();          // STOP while looping: lock it from the next top (false: nothing went in)
+    // UNDO while looping: what each pass added can be taken back, pass by pass (a snapshot at each loop top).
+    struct PassSnap { pocket::PadPattern pads; crate::drums::Pattern drums; pocket::SynthPattern synth; };
+    std::vector<PassSnap> passSnaps;
+    double nextPassAt = 0;
+    PassSnap takePassSnap();
+    bool sameAsPassSnap (const PassSnap&);
+    void restorePassSnap (const PassSnap&);
+    void startPassUndo();
+    void watchPasses();
+    bool undoPassNow() const { return playingIn() && lockUntilStop && ! lockClosing; }
+    void undoPass();
     // What the header and the count-in panel show.
     struct RecView
     {
@@ -333,6 +375,14 @@ private:
     SingScreen singScreen;
     pocket::SynthPart synthPart;   // the SYNTH tool's sound and pattern, also inside the renderer
     SynthScreen synthScreen;
+    pocket::SynthPart bassPart;    // the BASS tool: the same synth, its own part, with the bass sounds
+    SynthScreen bassScreen;
+    bool bassActive = false;       // REC, TO LOOPER and UNDO work on BASS (true) or SYNTH
+    pocket::SynthPart& sPart() { return bassActive ? bassPart : synthPart; }
+    const pocket::SynthPart& sPart() const { return bassActive ? bassPart : synthPart; }
+    SynthScreen& sScreen() { return bassActive ? bassScreen : synthScreen; }
+    const SynthScreen& sScreen() const { return bassActive ? bassScreen : synthScreen; }
+    pocket::SynthPart* synthUndoPart = nullptr;   // whose part UNDO gives back
     ChordsScreen chordsScreen;
     pocket::DroneTool droneTool;   // the DRONE tool, inside the renderer
     DroneScreen droneScreen;
@@ -378,6 +428,24 @@ private:
     TrackInSheet trackSheet;
     SoundBankSheet soundBank;
     pocket::RecSetupSheet recSetup;
+    pocket::AddLayerSheet addSheet;   // + ADD A LAYER
+    pocket::TakeSheet takeSheet;      // after a take: vibe, keep, try again, make it a pad
+    pocket::VibeSheet vibeSheet;      // EFFECTS on a layer: vibes + one-finger pad
+    bool addOpen = false, takeOpen = false, vibeOpen = false;
+    std::array<int, 8> layerVibe {};  // the vibe last picked on each layer (shown again when its sheet opens)
+    std::array<juce::Point<float>, 8> layerXY { { { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f } } };
+    juce::Rectangle<int> vibeBounds() const;
+    void openVibeSheet (int layer, int vibe = -1);
+    void closeVibeSheet();
+    Tool takeTool = Tool::loops;      // what made the take the sheet is about (TRY AGAIN records with it again)
+    void setupCompanion();
+    juce::Rectangle<int> addLayerBounds() const;
+    juce::Rectangle<int> takeSheetBounds() const;
+    void openAddLayer();
+    void closeAddLayer();
+    void pickLayerSource (int choice);
+    void openTakeSheet (int layer, bool force = false);   // force: the screenshots
+    void closeTakeSheet();
     pocket::HeadphonesSheet headphones;
     pocket::ThumbBar thumb;
     pocket::ToolRow toolRow;

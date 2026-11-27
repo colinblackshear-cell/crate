@@ -10,7 +10,7 @@
 namespace pocket
 {
 // Every tool the row can show, in the row's order (PocketApp's tools list has them all).
-enum class Tool { loops, drums, pads, sampler, synth, chords, vocoder, drone, effects, song };
+enum class Tool { loops, drums, pads, sampler, synth, chords, vocoder, drone, effects, song, add, bass, more };   // more: the row's MORE menu   // add: + ADD A LAYER (a sheet, not a screen)
 const char* toolName (Tool);
 juce::Colour toolColour (Tool);
 void drawToolIcon (juce::Graphics&, Tool, juce::Point<float> centre, juce::Colour);
@@ -31,6 +31,8 @@ public:
     {
         double bpm = 97.0;
         bool click = false, recBusy = false, recCounting = false, playing = false, visuals = false;
+        bool undoPass = false;   // looping REC: UNDO takes back the last pass
+        bool toLooper = false;   // VISUALS' place shows TO LOOPER: what this tool made can go on a layer
     };
     std::function<State()> state;
     std::function<void (int)> onPress;   // a Button
