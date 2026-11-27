@@ -324,6 +324,65 @@ juce::String PocketApp::runEffectsChecks (juce::String& report)
         if (! fresh)
             problems.add ("Effects: another song kept this song's boards");
     }
+        // 4. the sound picker: every sound visible at once, big enough, and each chip does its job
+    {
+        const int sizes[2][2] = { { 390, 844 }, { 440, 956 } };
+        const int oldW = getWidth(), oldH = getHeight();
+        int emptyLayer = -1;
+        for (int l = 0; l < kLayerBoards && emptyLayer < 0; ++l)
+            if (! loopsScreen.hasLayer (l))
+                emptyLayer = l;
+        int fullLayer = -1;
+        for (int l = 0; l < kLayerBoards && fullLayer < 0; ++l)
+            if (loopsScreen.hasLayer (l))
+                fullLayer = l;
+        const int ids[] = { boardDrums, boardPads, boardBass, boardSynth, boardChords, boardVoice, boardVocoder, boardDrone,
+                            layerBoardId (0), layerBoardId (1), layerBoardId (2), layerBoardId (3), layerBoardId (4), layerBoardId (5),
+                            layerBoardId (6), layerBoardId (7), boardAll, boardMaster };
+        for (auto& sz : sizes)
+        {
+            setSize (sz[0], sz[1]);
+            openEffects (boardSynth);
+            const auto screen = effects->getBounds().toFloat();
+            for (int id : ids)
+            {
+                const auto r = effects->chipRect (id);
+                if (r.isEmpty() || ! screen.withZeroOrigin().contains (r) || r.getHeight() < 44.0f || r.getWidth() < 34.0f)
+                    problems.add ("Effects picker at " + juce::String (sz[0]) + "x" + juce::String (sz[1]) + ": the chip for " + boardLabel (id) + " is missing, off screen or too small");
+                else if (id < boardLayer1 && r.getWidth() < 44.0f)
+                    problems.add ("Effects picker: the " + boardLabel (id) + " chip is under 44pt wide");
+            }
+            if (effects->getBottom() > getHeight())
+                problems.add ("Effects picker: the screen runs off the bottom");
+        }
+        setSize (oldW, oldH);
+        openEffects (boardSynth);
+        if (fullLayer >= 0)
+        {
+            effects->tapChip (layerBoardId (fullLayer));
+            if (effects->source() != layerBoardId (fullLayer))
+                problems.add ("Effects picker: tapping layer " + juce::String (fullLayer + 1) + " (it has a loop) didn't pick its board");
+        }
+        effects->setSource (boardSynth);
+        if (emptyLayer >= 0)
+        {
+            lastToast = {};
+            effects->tapChip (layerBoardId (emptyLayer));
+            if (effects->source() != boardSynth)
+                problems.add ("Effects picker: tapping an empty layer picked it");
+            if (! lastToast.contains ("Record a loop on layer " + juce::String (emptyLayer + 1) + " first"))
+                problems.add ("Effects picker: tapping an empty layer didn't say to record a loop first (said \"" + lastToast + "\")");
+        }
+        for (int id : { boardDrums, boardPads, boardBass, boardChords, boardVoice, boardVocoder, boardDrone, boardAll, boardMaster })
+        {
+            effects->tapChip (id);
+            if (effects->source() != id)
+                problems.add ("Effects picker: the " + boardLabel (id) + " chip didn't pick its board");
+        }
+        effects->setSource (boardSynth);
+        report << "sound picker: 8 instruments + layers 1-8 + ALL + MIX on screen at 390x844 and 440x956, layer with a loop "
+               << (fullLayer >= 0 ? juce::String (fullLayer + 1) : juce::String ("none")) << ", empty layer " << (emptyLayer >= 0 ? juce::String (emptyLayer + 1) : juce::String ("none")) << "\n";
+    }
     loopsScreen.setSyncJobs (false);
     loopsScreen.setDemoMode (wasDemo);
     return problems.joinIntoString ("; ");
@@ -385,6 +444,11 @@ void PocketApp::writeEffectsSnapshots (const juce::File& folder)
     effects->selectPedal (pedalboard::delay);
     effects->refresh();
     savePng (folder.getChildFile ("17-effects-synth-delay.png"));
+    setSize (440, 956);   // an iPhone 17 Pro Max
+    openEffects (boardSynth);
+    savePng (folder.getChildFile ("17-effects-synth-delay-440.png"));
+    setSize (390, 844);
+    openEffects (boardSynth);
 
     // VOICE: the mic banner, a guitar board, the amp picked
     micOn = micHear = true;
@@ -401,12 +465,22 @@ void PocketApp::writeEffectsSnapshots (const juce::File& folder)
     effects->pollTuner();
     savePng (folder.getChildFile ("17f-effects-tuner.png"));
     effects->showTuner (false);
+    setSize (440, 956);
+    openEffects (boardVoice);
+    savePng (folder.getChildFile ("17b-effects-voice-banner-440.png"));
+    setSize (390, 844);
+    openEffects (boardVoice);
 
     // LAYER 2, chorus picked
     pick (L.board (layerBoardId (1)), layerBoardId (1), "Shimmer pad");
     openEffects (layerBoardId (1));
     effects->selectPedal (pedalboard::chorus);
     savePng (folder.getChildFile ("17c-effects-layer.png"));
+    setSize (440, 956);
+    openEffects (layerBoardId (1));
+    savePng (folder.getChildFile ("17c-effects-layer-440.png"));
+    setSize (390, 844);
+    openEffects (layerBoardId (1));
 
     // the board list, with a board of your own
     effects->saveBoardAs ("My wide pad");

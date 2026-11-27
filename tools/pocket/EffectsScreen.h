@@ -5,8 +5,9 @@
 #include "PocketTheme.h"
 
 // The EFFECTS tool: the Mac's Effects screen in a phone's height. From the top:
-//  - ON: the sound whose board is shown (DRUMS, PADS, SYNTH, CHORDS, VOICE, VOCODER, each layer that holds a loop,
-//    ALL loops, MASTER), a row that scrolls sideways; a dot on a chip says its board is in use.
+//  - ON, two rows, nothing hidden: INSTRUMENTS (DRUMS, PADS, BASS, SYNTH, CHORDS, VOICE, VOCODER, DRONE, each an icon
+//    chip) and LOOPS (layers 1-8, ALL, MIX); a layer without a loop is dim and toasts when tapped. A dot on a chip
+//    says its board is in use.
 //  - VOICE only: the slim mic banner (the same rules as the VOCODER tool) and the TUNER.
 //  - The board's display: its name, < > through the ready-made boards that suit the sound (tap the name for the
 //    list, with your own saved boards, which can be deleted there), SAVE (name it) and BYPASS (the whole board).
@@ -40,6 +41,8 @@ public:
     int source() const { return src; }
     void selectPedal (int pedal);   // a pedalboard::PedalId, or pocket::kGainIn
     int selectedPedal() const { return sel; }
+    juce::Rectangle<float> chipRect (int boardId) const;   // a sound's chip (empty if it has none)
+    void tapChip (int boardId) { press (chipBase + boardId); }   // as a tap on it (checks)
     void showList (bool);
     bool listShown() const { return mode == listMode; }
     void showPad (bool);
@@ -85,6 +88,7 @@ private:
     void setNorm (const char* id, float n);
     void edited();
     std::vector<int> sources() const;
+    bool shownLayer (int boardId) const;   // a layer's loop is there (any other board: true)
     void reloadChoices();
     void openCopyMenu();
     void deleteChoice (int index);
@@ -118,8 +122,7 @@ private:
     // the layout
     juce::Rectangle<float> chipsR, bannerR, lcdR, saveR, bypassR, middleR, gridR, panelR, bottomR, padR, copyR, hintR;
     juce::Rectangle<float> micR, hearR, tunerR;
-    std::vector<std::pair<int, juce::Rectangle<float>>> chipRects;   // board id, rect before scrolling
-    float chipScroll = 0.0f, chipsWidth = 0.0f;
+    std::vector<std::pair<int, juce::Rectangle<float>>> chipRects;   // board id, rect
     std::array<juce::Rectangle<float>, pocket::kGridPedals> tiles;
     juce::Rectangle<float> gainTile;
     std::vector<juce::Rectangle<float>> knobRects;
@@ -130,7 +133,7 @@ private:
     // gestures
     int dragKnob = -1;
     float dragStartValue = 0.0f;
-    bool draggingChips = false, draggingList = false, moved = false;
+    bool draggingList = false, moved = false;
     float dragStartScroll = 0.0f;
     // the pad: the board as it was when the finger went down
     bool padDown = false;

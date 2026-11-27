@@ -657,6 +657,7 @@ PocketApp::~PocketApp()
 
 void PocketApp::toast (const juce::String& t)
 {
+    lastToast = t;
     toastBox->show (t);
 }
 
