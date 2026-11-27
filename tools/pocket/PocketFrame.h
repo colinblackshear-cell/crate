@@ -33,6 +33,7 @@ public:
         bool click = false, recBusy = false, recCounting = false, playing = false, visuals = false;
         bool undoPass = false;   // looping REC: UNDO takes back the last pass
         bool toLooper = false;   // VISUALS' place shows TO LOOPER: what this tool made can go on a layer
+        bool moves = false, movesOpen = false;   // LOOPER and SONG: VISUALS' place shows MOVES (the FX pad over the mix)
         int power = -1;          // else, on an instrument: its ON / OFF (1 on, 0 off; -1 shows VISUALS)
     };
     std::function<State()> state;

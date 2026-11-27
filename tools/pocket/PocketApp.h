@@ -21,6 +21,7 @@
 #include "SoundsScreen.h"
 #include "TempoSheet.h"
 #include "ExportSheet.h"
+#include "MovesSheet.h"
 #include "QuantizeSheet.h"
 #include "TrackInSheet.h"
 #include "SoundBankSheet.h"
@@ -443,6 +444,13 @@ private:
     bool addOpen = false, takeOpen = false, vibeOpen = false, exportOpen = false;
     // QUANTIZE on an instrument (SYNTH, BASS, PADS): the notes or hits already in its part move onto a grid
     QuantizeSheet quantSheet;
+    MovesSheet movesSheet;            // MOVES: the FX pad over the whole mix (LOOPER and SONG: the thumb bar's slot; MORE)
+    bool movesOpen = false;
+    juce::Rectangle<int> movesBounds() const;
+    void openMoves();
+    void closeMoves();
+    bool movesSlot() const { return page == Page::tool && (tool == Tool::loops || tool == Tool::song); }
+    juce::String runMovesChecks (juce::String& report, const juce::File& folder);   // PocketAppMoves.cpp
     bool quantOpen = false;
     int quantTarget = 0;              // 0 SYNTH, 1 BASS, 2 PADS
     juce::Rectangle<int> quantBounds() const;

@@ -60,6 +60,7 @@ target_sources(KaleidoboxPocket PRIVATE
     DrumKitSheet.cpp
     TempoSheet.cpp
     ExportSheet.cpp
+    MovesSheet.cpp
     QuantizeSheet.cpp
     IdeasScreen.cpp
     PocketTheme.cpp
@@ -90,6 +91,7 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketAppEffects.cpp
     PocketAppNav.cpp
     PocketAppSong.cpp
+    PocketAppMoves.cpp
     PocketAppHistory.cpp
     PocketAppTrack.cpp
     PocketAppSampler.cpp

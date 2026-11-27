@@ -304,6 +304,8 @@ PocketApp::PocketApp (Options o)
         s.playing = beats.engine().clockRunning();
         s.visuals = visualsShown();
         s.toLooper = canSendToLooper();
+        s.movesOpen = movesOpen;
+        s.moves = movesSlot() && ! s.toLooper;
         if (! s.toLooper && page == Page::tool && ! recBusy() && hasLiveSwitch (recTool()))
             s.power = instrumentOn (recTool()) ? 1 : 0;
         return s;
@@ -601,6 +603,11 @@ PocketApp::PocketApp (Options o)
     addChildComponent (takeSheet);
     addChildComponent (exportSheet);
     addChildComponent (quantSheet);
+    addChildComponent (movesSheet);
+    movesSheet.fx = &loopsScreen.engine().moves();
+    loopsScreen.engine().moves().beatsPerBar = 4;
+    movesSheet.onDismiss = [this] { closeMoves(); };
+    movesSheet.refresh();
     addChildComponent (vibeSheet);
     addChildComponent (headphones);
     addChildComponent (soundBank);
@@ -767,6 +774,49 @@ juce::String PocketApp::quantizePart (int target, const pocket::QuantizeSpec& sp
     return s;
 }
 
+juce::Rectangle<int> PocketApp::movesBounds() const
+{
+    const int h = movesSheet.preferredHeight() + insets.getBottom();
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::openMoves()
+{
+    if (movesOpen)
+        return;
+    closeAllSheets();
+    movesOpen = true;
+    movesSheet.fx = &loopsScreen.engine().moves();
+    movesSheet.refresh();
+    dim->setVisible (true);
+    movesSheet.setBounds (movesBounds().withY (getHeight()));
+    movesSheet.setVisible (true);
+    movesSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (movesSheet, movesBounds(), true);
+    thumb.repaint();
+}
+
+void PocketApp::closeMoves()
+{
+    if (! movesOpen)
+        return;
+    movesOpen = false;
+    movesSheet.releasePad();   // lets go, unless HOLD
+    dim->setVisible (false);
+    slide (movesSheet, movesBounds(), false);
+    if (! animate)
+        movesSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->movesOpen)
+                safe->movesSheet.setVisible (false);
+        });
+    thumb.repaint();
+    repaint();
+}
+
 void PocketApp::toastAction (const juce::String& text, const juce::String& button, std::function<void()> then)
 {
     toastBox->showAction (text, button, std::move (then));
@@ -775,7 +825,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet, &vibeSheet, &exportSheet, &quantSheet })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet, &vibeSheet, &exportSheet, &quantSheet, &movesSheet })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -1037,7 +1087,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen || vibeOpen || exportOpen || quantOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen || vibeOpen || exportOpen || quantOpen || movesOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -1283,6 +1333,8 @@ void PocketApp::openMoreTools()
     s.items.push_back ({ "VOCODER", "your voice as a robot choir", false, true, [this] { showTool (Tool::vocoder); } });
     s.items.push_back ({ "DRONE", "a deep tone under it all", false, true, [this] { showTool (Tool::drone); } });
     s.items.push_back ({ "SONG", "put the parts in order", false, true, [this] { showTool (Tool::song); } });
+    s.items.push_back ({ "MOVES", "filter, repeat, tape stop... over the whole mix", false, true, [this] { openMoves(); } });
+    s.items.push_back ({ "VISUALS", "the light show", false, true, [this] { showVisuals (! visualsShown()); } });
     int at = 0;
     for (int i = 0; i < (int) toolRow.tools.size(); ++i)
         if (toolRow.tools[(size_t) i] == Tool::more)
@@ -1368,6 +1420,7 @@ void PocketApp::closeAllSheets()
     closeVibeSheet();
     closeExport();
     closeQuantize();
+    closeMoves();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -2409,7 +2462,9 @@ void PocketApp::thumbPressed (int button)
         case ThumbBar::rec: recPressed(); break;
         case ThumbBar::play: togglePlay(); break;
         case ThumbBar::visuals:
-            if (canSendToLooper())
+            if (movesSlot() && ! canSendToLooper())
+                movesOpen ? closeMoves() : openMoves();
+            else if (canSendToLooper())
                 sendToLooper();
             else if (page == Page::tool && ! recBusy() && hasLiveSwitch (recTool()))
             {
@@ -3907,6 +3962,7 @@ void PocketApp::resized()
     takeSheet.setBounds (takeOpen ? takeSheetBounds() : takeSheetBounds().withY (h));
     exportSheet.setBounds (exportOpen ? exportBounds() : exportBounds().withY (h));
     quantSheet.setBounds (quantOpen ? quantBounds() : quantBounds().withY (h));
+    movesSheet.setBounds (movesOpen ? movesBounds() : movesBounds().withY (h));
     vibeSheet.setBounds (vibeOpen ? vibeBounds() : vibeBounds().withY (h));
     headphones.setBounds (phonesOpen ? headphonesBounds() : headphonesBounds().withY (h));
     soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - SoundBankSheet::kHeight - insets.getBottom()) : tempoBounds().withTop (h - SoundBankSheet::kHeight - insets.getBottom()).withY (h));
@@ -4965,6 +5021,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = runOwnChordChecks (ownChordReport, folder); why.isNotEmpty())
         problems.add ("Own chords: " + why);
 
+    // MOVES: the FX pad over the mix, from the looper's thumb slot
+    juce::String movesReport;
+    if (const auto why = runMovesChecks (movesReport, folder); why.isNotEmpty())
+        problems.add ("Moves: " + why);
+
     // SONG: REC LIVE through the app (in and out on the bar, MARK, STOP + KEEP), played back, edited, punched, saved
     juce::String songReport;
     if (const auto why = runSongChecks (songReport, folder); why.isNotEmpty())
@@ -5057,6 +5118,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nDeleting songs (the open one, the last one):\n" + deleteReport
                           + "\nSampler (trim onto a pad, save, reopen):\n" + samplerReport
                           + "\nOwn chords (EDIT CHORD, save, reopen, key change):\n" + ownChordReport
+                          + "\nMoves (the FX pad over the mix):\n" + movesReport
                           + "\nSong (REC LIVE, play, edit, punch, save; 120 BPM):\n" + songReport
                           + "\nFriend's track (100 BPM, bar 1 at 0.5 s):\n" + trackReport);
     for (auto& line : problems)
@@ -6568,7 +6630,7 @@ void PocketApp::openTakeSheet (int layer, bool force)
     if (! force && (! animate || lessonOn || page != Page::tool || title->isVisible() || tour->isVisible()))
         return;
     if (takeOpen || sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen
-        || drumKitOpen || addOpen || exportOpen || quantOpen || holdCard.isOpen())
+        || drumKitOpen || addOpen || exportOpen || quantOpen || movesOpen || holdCard.isOpen())
         return;
     takeTool = tool;
     const juce::String what = tool == Tool::loops && loopsScreen.source() == (int) LoopSource::mic ? juce::String ("My voice")

@@ -344,6 +344,24 @@ void ThumbBar::paint (juce::Graphics& g)
         g.setFont (spaced (condensedBold (11.0f), 0.04f));
         g.drawFittedText ("TO LOOPER", body.withTrimmedTop (body.getHeight() * 0.6f).reduced (2, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
     }
+    else if (s.moves)
+    {
+        // MOVES: the FX pad over the whole mix (a pad with a finger on it); red while its sheet is open
+        auto r = buttonRect (visuals);
+        drawRaised (g, r, s.movesOpen ? Look::red : Look::cream, pressed == visuals, 12.0f);
+        auto body = r.withTrimmedBottom (3).translated (0, pressed == visuals ? 2.0f : 0.0f);
+        const auto c = body.getCentre().translated (0, -7.0f);
+        const auto ink = s.movesOpen ? col::onBright : col::ink;
+        g.setColour (ink);
+        g.drawRoundedRectangle (c.x - 11.0f, c.y - 10.0f, 22.0f, 20.0f, 4.0f, 2.0f);
+        g.setColour (ink.withAlpha (0.45f));
+        g.drawLine (c.x - 11.0f, c.y + 2.0f, c.x + 11.0f, c.y + 2.0f, 1.2f);
+        g.drawLine (c.x + 3.0f, c.y - 10.0f, c.x + 3.0f, c.y + 10.0f, 1.2f);
+        g.setColour (ink);
+        g.fillEllipse (c.x + 3.0f - 3.5f, c.y + 2.0f - 3.5f, 7.0f, 7.0f);
+        g.setFont (spaced (condensedBold (11.0f), 0.06f));
+        g.drawText ("MOVES", body.withTrimmedTop (body.getHeight() * 0.62f), juce::Justification::centredTop);
+    }
     else if (s.power >= 0)
     {
         // ON / OFF: the instrument plays along by itself (lit teal), or stays quiet with its part kept

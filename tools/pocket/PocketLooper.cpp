@@ -947,19 +947,25 @@ void LoopsEngine::chunk (float* left, float* right, int n)
     // MOVES on the whole mix, the click left out of it (and heard as it was)
     if (right != nullptr)
     {
-        for (int i = 0; i < n; ++i)
-        {
-            left[i] -= clickBuf[(size_t) i];
-            right[i] -= clickBuf[(size_t) i];
-        }
+        // (the click's arithmetic only while it sounds: x - 0 + 0 turns a -0.0 into +0.0, and an untouched mix stays bit for bit)
+        bool clicking = false;
+        for (int i = 0; i < n && ! clicking; ++i)
+            clicking = clickBuf[(size_t) i] != 0.0f;
+        if (clicking)
+            for (int i = 0; i < n; ++i)
+            {
+                left[i] -= clickBuf[(size_t) i];
+                right[i] -= clickBuf[(size_t) i];
+            }
         float* ch[2] = { left, right };
         juce::AudioBuffer<float> mixBuf (ch, 2, n);
         perform.process (mixBuf, blockBeat, beats.getBpm(), running);
-        for (int i = 0; i < n; ++i)
-        {
-            left[i] += clickBuf[(size_t) i];
-            right[i] += clickBuf[(size_t) i];
-        }
+        if (clicking)
+            for (int i = 0; i < n; ++i)
+            {
+                left[i] += clickBuf[(size_t) i];
+                right[i] += clickBuf[(size_t) i];
+            }
     }
 
     // record (after the mix, so MASTER can be resampled)
