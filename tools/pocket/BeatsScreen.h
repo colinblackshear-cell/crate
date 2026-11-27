@@ -5,6 +5,7 @@
 #include "PocketKey.h"
 #include "PocketKit.h"
 #include "PocketLevels.h"
+#include "PocketLoopTools.h"
 #include "PocketLibrary.h"
 #include "PocketTheme.h"
 #include "RepeatHold.h"
@@ -102,6 +103,11 @@ public:
     void togglePatternPlay();
     void setPatternBars (int bars);
     void cycleQuantize();
+    // QUANTIZE (the button beside Snap): the hits already in the pattern move onto a grid (PocketApp's sheet asks for it).
+    std::function<void()> onQuantize;
+    int padPatternHits() const { return (int) drumData.padPattern.hits.size(); }
+    pocket::QuantizeResult quantizePads (const pocket::QuantizeSpec&);
+    void pressQuantize();                     // the button, for the self-checks too
     void undoPatternHit();
     void clearPattern();
     void patternChanged();

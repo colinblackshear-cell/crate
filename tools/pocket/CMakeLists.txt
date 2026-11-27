@@ -60,6 +60,7 @@ target_sources(KaleidoboxPocket PRIVATE
     DrumKitSheet.cpp
     TempoSheet.cpp
     ExportSheet.cpp
+    QuantizeSheet.cpp
     IdeasScreen.cpp
     PocketTheme.cpp
     PocketWave.cpp

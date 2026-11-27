@@ -1035,7 +1035,7 @@ public:
         };
         addAndMakeVisible (toMac);
 
-        for (auto* b : { &barsButton, &quantButton, &undoButton, &recordSound })
+        for (auto* b : { &barsButton, &quantButton, &quantizeButton, &undoButton, &recordSound })
         {
             b->setFontHeight (15.0f);
             addAndMakeVisible (*b);
@@ -1063,6 +1063,7 @@ public:
         makeButton.onClick = [this] { owner.makeSixteenPads(); };
         addChildComponent (makeButton);
         quantButton.onClick = [this] { owner.cycleQuantize(); };
+        quantizeButton.onClick = [this] { owner.pressQuantize(); };
         undoButton.onClick = [this]
         {
             juce::PopupMenu m;
@@ -1087,7 +1088,7 @@ public:
         modeExit.setVisible (owner.levelsOf >= 0 || owner.copyFrom >= 0);
         modeExit.setText (owner.copyFrom >= 0 ? "Cancel" : "Exit");
         const bool lv = owner.levelsOf >= 0;
-        for (auto* b : { &barsButton, &quantButton, &undoButton, &recordSound })
+        for (auto* b : { &barsButton, &quantButton, &quantizeButton, &undoButton, &recordSound })
             b->setVisible (! lv);
         chipView.setVisible (! lv);
         makeButton.setVisible (lv);
@@ -1283,10 +1284,18 @@ public:
         for (int i = 0; i < 4; ++i)
             banks[i].setBounds (16 + i * 44, 60, 42, 44);
         editPads.setBounds (w - 16 - 88, 60, 88, 44);
-        barsButton.setBounds (16, 166, 70, 44);
-        quantButton.setBounds (92, 166, 84, 44);
-        undoButton.setBounds (182, 166, 60, 44);
-        recordSound.setBounds (248, 166, w - 16 - 248, 44);
+        {
+            // the pattern's row: bars, REC SNAP, QUANTIZE (what's in it now), UNDO, SAMPLE
+            const int wts[5] = { 56, 76, 84, 50, 76 }, gap = 4, total = 56 + 76 + 84 + 50 + 76, usable = w - 32 - 4 * gap;
+            juce::Component* row[5] = { &barsButton, &quantButton, &quantizeButton, &undoButton, &recordSound };
+            int x = 16;
+            for (int i = 0; i < 5; ++i)
+            {
+                const int bw = i == 4 ? 16 + (w - 32) - x : usable * wts[i] / total;
+                row[i]->setBounds (x, 166, bw, 44);
+                x += bw + gap;
+            }
+        }
         modeExit.setBounds (w - 16 - 84, 112, 84, 46);
         {
             // 16 LEVELS: four types, then three more and MAKE 16 PADS (each at least 44 pt tall)
@@ -1465,7 +1474,7 @@ private:
     BeatsScreen& owner;
     PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit" }, toMac { "To mac" };
     PButton kindButtons[padlevels::numKinds], makeButton { "Make 16 pads", Look::cream };
-    PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Sample a sound") },
+    PButton barsButton { "2 bars" }, quantButton { "1/16" }, quantizeButton { "Quantize" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Sample") },
             modeExit { "Exit", Look::amber };
     pocket::HoldDetector hold { [this] { holdFired(); } };
     bool wasPlaying = false;
@@ -2166,6 +2175,29 @@ void BeatsScreen::cycleQuantize()
     q = q == 4 ? 2 : q == 2 ? 0 : 4;
     host.toast (q == 4 ? "New hits snap to 1/16 notes" : q == 2 ? "New hits snap to 1/8 notes" : "New hits land where you play them");
     patternChanged();
+}
+
+pocket::QuantizeResult BeatsScreen::quantizePads (const pocket::QuantizeSpec& spec)
+{
+    auto copy = drumData.padPattern;
+    const auto r = pocket::quantizePadPattern (copy, spec);
+    if (r.moved > 0 || r.merged > 0)
+    {
+        patternUndo.push_back (drumData.padPattern);   // the Undo button takes it back too (and so does UNDO)
+        if (patternUndo.size() > 64)
+            patternUndo.erase (patternUndo.begin());
+        drumData.padPattern = std::move (copy);
+        patternChanged();
+    }
+    return r;
+}
+
+void BeatsScreen::pressQuantize()
+{
+    if (recPads)
+        return host.toast ("Stop recording first, then QUANTIZE");
+    if (onQuantize)
+        onQuantize();
 }
 
 void BeatsScreen::undoPatternHit()

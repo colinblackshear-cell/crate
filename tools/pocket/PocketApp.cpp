@@ -437,7 +437,17 @@ PocketApp::PocketApp (Options o)
         sc->onChanged = [this] { saveSong(); };
         sc->nextLayer = [this] { return loopsScreen.nextLayer(); };
         sc->recBusy = [this, sc] { return synthLock() && ! lockArmed && &sScreen() == sc; };
+        sc->onQuantize = [this, sc] { openQuantize (sc == &bassScreen ? 1 : 0); };
     }
+    beats.onQuantize = [this] { openQuantize (2); };
+    quantSheet.onApply = [this] (const pocket::QuantizeSpec& spec)
+    {
+        const auto said = quantizePart (quantTarget, spec);
+        closeQuantize();
+        toast (said);
+    };
+    quantSheet.onCancel = [this] { closeQuantize(); };
+    quantSheet.onDismiss = [this] { closeQuantize(); };
     singScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
     singScreen.onOpenChords = [this] { showTool (Tool::chords); };
     singScreen.onChanged = [this] { saveSong(); };
@@ -590,6 +600,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (addSheet);
     addChildComponent (takeSheet);
     addChildComponent (exportSheet);
+    addChildComponent (quantSheet);
     addChildComponent (vibeSheet);
     addChildComponent (headphones);
     addChildComponent (soundBank);
@@ -681,6 +692,81 @@ void PocketApp::closeExport()
     repaint();
 }
 
+juce::Rectangle<int> PocketApp::quantBounds() const
+{
+    const int h = quantSheet.preferredHeight() + insets.getBottom();
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::openQuantize (int target)
+{
+    if (quantOpen)
+        return;
+    const int notes = target == 2 ? (int) beats.padPatternHits() : (int) (target == 1 ? bassPart : synthPart).pattern.notes.size();
+    if (notes == 0)
+        return toast (target == 2 ? "No hits in the pattern yet. Press REC and play the pads." : "No notes yet. Play some with REC, or tap steps in PATTERN.");
+    closeAllSheets();
+    quantTarget = target;
+    quantOpen = true;
+    quantSheet.show (target == 2 ? "PADS" : target == 1 ? "BASS" : "SYNTH", target == 2 ? "hit" : "note", notes);
+    dim->setVisible (true);
+    quantSheet.setBounds (quantBounds().withY (getHeight()));
+    quantSheet.setVisible (true);
+    quantSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (quantSheet, quantBounds(), true);
+}
+
+void PocketApp::closeQuantize()
+{
+    if (! quantOpen)
+        return;
+    quantOpen = false;
+    dim->setVisible (false);
+    slide (quantSheet, quantBounds(), false);
+    if (! animate)
+        quantSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->quantOpen)
+                safe->quantSheet.setVisible (false);
+        });
+    repaint();
+}
+
+// Moves what's in the part onto the grid and saves it (UNDO's history sees the change by itself). Returns what to say.
+juce::String PocketApp::quantizePart (int target, const pocket::QuantizeSpec& spec)
+{
+    QuantizeResult r;
+    if (target == 2)
+        r = beats.quantizePads (spec);
+    else
+    {
+        auto& part = target == 1 ? bassPart : synthPart;
+        r = quantizeSynthPattern (part.pattern, spec);
+        if (r.moved > 0 || r.merged > 0)
+        {
+            part.patternChanged();
+            (target == 1 ? bassScreen : synthScreen).partChanged();
+            saveSong();
+        }
+    }
+    const juce::String noun = target == 2 ? "hit" : "note", grid = quantizeGridName (spec.grid);
+    if (r.total == 0)
+        return "Nothing to quantize yet";
+    if (r.moved == 0 && r.merged == 0)
+        return "Already on the " + grid + " grid";
+    juce::String s = "Quantized " + juce::String (r.moved) + " " + noun + (r.moved == 1 ? "" : "s") + " to " + grid;
+    if (spec.strength < 0.99f)
+        s += ", 50%";
+    if (spec.swing && spec.grid < 4)
+        s += " with swing";
+    if (r.merged > 0)
+        s += " (" + juce::String (r.merged) + " merged)";
+    return s;
+}
+
 void PocketApp::toastAction (const juce::String& text, const juce::String& button, std::function<void()> then)
 {
     toastBox->showAction (text, button, std::move (then));
@@ -689,7 +775,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet, &vibeSheet, &exportSheet })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet, &vibeSheet, &exportSheet, &quantSheet })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -951,7 +1037,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen || vibeOpen || exportOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen || vibeOpen || exportOpen || quantOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -1281,6 +1367,7 @@ void PocketApp::closeAllSheets()
     closeTakeSheet();
     closeVibeSheet();
     closeExport();
+    closeQuantize();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -3819,6 +3906,7 @@ void PocketApp::resized()
     addSheet.setBounds (addOpen ? addLayerBounds() : addLayerBounds().withY (h));
     takeSheet.setBounds (takeOpen ? takeSheetBounds() : takeSheetBounds().withY (h));
     exportSheet.setBounds (exportOpen ? exportBounds() : exportBounds().withY (h));
+    quantSheet.setBounds (quantOpen ? quantBounds() : quantBounds().withY (h));
     vibeSheet.setBounds (vibeOpen ? vibeBounds() : vibeBounds().withY (h));
     headphones.setBounds (phonesOpen ? headphonesBounds() : headphonesBounds().withY (h));
     soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - SoundBankSheet::kHeight - insets.getBottom()) : tempoBounds().withTop (h - SoundBankSheet::kHeight - insets.getBottom()).withY (h));
@@ -4609,6 +4697,181 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = chordsSelfCheck (chordsReport); why.isNotEmpty())
         problems.add ("Chords: " + why);
 
+    // QUANTIZE on the instruments: off-grid BASS notes and pad hits land on 1/16 at 100% and halfway at 50%, notes of one
+    // pitch landing on one step merge, lengths and velocities and 16 LEVELS values are kept, the button is there only
+    // when there are notes, and the sheet applies it and says what it did.
+    juce::String quantReport;
+    {
+        auto fail = [&] (const juce::String& why) { problems.add ("Quantize: " + why); };
+        auto onGrid = [] (double beat, double g) { return std::abs (beat / g - std::round (beat / g)) < 1.0e-6; };
+        bassPart.reset();
+        bassPart.setPreset (synthPresetIndex ("Rubber Funk"));
+        bassPart.pattern.setBars (1);
+        bassPart.patternChanged();
+        bassScreen.partChanged();
+        showTool (Tool::bass);
+        if (bassScreen.quantizeShown())
+            fail ("QUANTIZE is shown on BASS with no notes in it");
+        const double offGrid[7][2] = { { 0.07, 36 }, { 0.03, 36 }, { 0.62, 36 }, { 1.05, 38 }, { 1.49, 36 }, { 2.18, 41 }, { 3.08, 43 } };
+        for (auto& o : offGrid)
+        {
+            SynthNote n;
+            n.beat = o[0];
+            n.note = (int) o[1];
+            n.length = 0.2;
+            n.velocity = o[0] < 0.5 ? 0.9f : 0.6f;
+            bassPart.pattern.notes.push_back (n);
+        }
+        bassPart.patternChanged();
+        bassScreen.partChanged();
+        if (! bassScreen.quantizeShown())
+            fail ("QUANTIZE isn't shown on BASS with notes in it");
+        const auto original = bassPart.pattern;
+        {
+            auto p = original;
+            QuantizeSpec s;   // 1/16, 100%
+            const auto r = quantizeSynthPattern (p, s);
+            bool allOn = true;
+            for (auto& n : p.notes)
+                allOn = allOn && onGrid (n.beat, 0.25);
+            if (! allOn || (int) p.notes.size() != 6 || r.merged != 1 || r.total != 7)
+                fail ("off-grid bass notes didn't all snap to 1/16 at 100% (" + juce::String ((int) p.notes.size()) + " left, " + juce::String (r.merged) + " merged)");
+            bool lengths = true;
+            for (auto& n : p.notes)
+                lengths = lengths && std::abs (n.length - 0.2) < 1.0e-9;
+            if (! lengths)
+                fail ("quantize changed a note's length");
+            bool velKept = false;
+            for (auto& n : p.notes)
+                velKept = velKept || (std::abs (n.beat) < 1.0e-9 && n.note == 36 && std::abs (n.velocity - 0.9f) < 1.0e-6);
+            if (! velKept)
+                fail ("merged notes didn't keep the louder velocity");
+            quantReport << "bass at 100% 1/16: 7 notes -> " << (int) p.notes.size() << " (" << r.merged << " merged, " << r.moved << " moved), beats";
+            for (auto& n : p.notes)
+                quantReport << " " << juce::String (n.beat, 3);
+            quantReport << "\n";
+        }
+        {
+            auto p = original;
+            QuantizeSpec s;
+            s.strength = 0.5f;
+            quantizeSynthPattern (p, s);
+            bool halfway = true;
+            for (auto& n : p.notes)   // each note is halfway between a played beat and its grid line
+            {
+                bool found = false;
+                for (auto& o : original.notes)
+                    if (o.note == n.note)
+                    {
+                        const double target = std::round (o.beat / 0.25) * 0.25;
+                        found = found || std::abs (n.beat - (o.beat + (target - o.beat) * 0.5)) < 1.0e-6;
+                    }
+                halfway = halfway && found;
+            }
+            if (! halfway)
+                fail ("50% didn't move the bass notes halfway to the 1/16 grid");
+            quantReport << "bass at 50% 1/16: each note halfway to its line: " << (halfway ? "yes" : "NO") << "\n";
+        }
+        {
+            auto p = original;
+            QuantizeSpec s;
+            s.grid = 4;   // 1/8T
+            quantizeSynthPattern (p, s);
+            bool trip = true;
+            for (auto& n : p.notes)
+                trip = trip && onGrid (n.beat, 1.0 / 3.0);
+            if (! trip)
+                fail ("1/8T didn't put the notes on triplet lines");
+            auto q = original;
+            s.grid = 2;
+            s.swing = true;
+            quantizeSynthPattern (q, s);
+            bool swung = false;
+            for (auto& n : q.notes)
+                swung = swung || std::abs (n.beat - 2.25 - 0.25 / 3.0) < 1.0e-6;   // (the 2.18 note: line 9, an off-beat)
+            if (! swung)
+                fail ("SWING didn't put the off-beat grid lines a little late");
+        }
+        // the sheet, on BASS in KEYS and PATTERN
+        savePng (folder.getChildFile ("21a-bass-quantize-button-keys.png"));
+        bassScreen.setMode (SynthPart::patternMode);
+        savePng (folder.getChildFile ("21b-bass-quantize-button-pattern.png"));
+        bassScreen.pressQuantize();
+        if (! quantOpen || quantTarget != 1)
+            fail ("the QUANTIZE button on BASS didn't open the sheet");
+        quantSheet.press (QuantizeSheet::gridBase + 2);
+        quantSheet.press (QuantizeSheet::full);
+        savePng (folder.getChildFile ("21c-bass-quantize-sheet.png"));
+        quantSheet.press (QuantizeSheet::applyId);
+        if (quantOpen)
+            fail ("APPLY left the sheet open");
+        bool applied = bassPart.pattern.notes.size() == 6;
+        for (auto& n : bassPart.pattern.notes)
+            applied = applied && onGrid (n.beat, 0.25);
+        if (! applied)
+            fail ("APPLY on BASS didn't quantize the part");
+        savePng (folder.getChildFile ("21d-bass-quantized.png"));
+        // (the history takes the change as a step of its own: UNDO brings the played timing back)
+        bassScreen.setMode (SynthPart::keysMode);
+        bassPart.reset();
+        bassScreen.partChanged();
+
+        // PADS
+        auto& pp = beats.drums().padPattern;
+        pp = PadPattern();
+        pp.bars = 1;
+        auto hit = [&] (int pad, double beat, float vel, int tune) { PadHit h; h.pad = pad; h.beat = beat; h.velocity = vel; h.mods.tune = tune; pp.hits.push_back (h); };
+        hit (3, 0.07, 0.9f, 0);
+        hit (3, 0.03, 0.5f, 0);
+        hit (3, 0.62, 0.7f, 50);     // 16 LEVELS: a pitched hit
+        hit (5, 1.05, 0.6f, 0);
+        hit (3, 1.49, 0.8f, -30);
+        beats.patternChanged();
+        const auto padOriginal = pp;
+        {
+            auto p = padOriginal;
+            const auto r = quantizePadPattern (p, QuantizeSpec());
+            bool allOn = true, modsKept = true;
+            for (auto& h : p.hits)
+                allOn = allOn && onGrid (h.beat, 0.25);
+            for (auto& h : p.hits)
+                if (std::abs (h.beat - 0.5) < 1.0e-9 && h.mods.tune != 50)
+                    modsKept = false;
+            if (! allOn || (int) p.hits.size() != 4 || r.merged != 1 || ! modsKept)
+                fail ("pad hits didn't snap to 1/16 at 100% and keep their 16 LEVELS values");
+            auto q = padOriginal;
+            QuantizeSpec s;
+            s.strength = 0.5f;
+            quantizePadPattern (q, s);
+            bool halfway = std::abs (q.hits[0].beat - 0.035) < 1.0e-6 && std::abs (q.hits[2].beat - 0.56) < 1.0e-6;
+            if (! halfway)
+                fail ("50% didn't move the pad hits halfway");
+            quantReport << "pads at 100% 1/16: 5 hits -> " << (int) p.hits.size() << ", 16 LEVELS kept: " << (modsKept ? "yes" : "NO") << "; at 50%: halfway " << (halfway ? "yes" : "NO") << "\n";
+        }
+        showTool (Tool::pads);
+        beats.pressQuantize();
+        if (! quantOpen || quantTarget != 2)
+            fail ("QUANTIZE on PADS didn't open the sheet");
+        quantSheet.press (QuantizeSheet::gridBase + 2);
+        quantSheet.press (QuantizeSheet::full);
+        savePng (folder.getChildFile ("21e-pads-quantize-sheet.png"));
+        quantSheet.press (QuantizeSheet::applyId);
+        bool padsApplied = beats.drums().padPattern.hits.size() == 4;
+        for (auto& h : beats.drums().padPattern.hits)
+            padsApplied = padsApplied && onGrid (h.beat, 0.25);
+        if (! padsApplied)
+            fail ("APPLY on PADS didn't quantize the pattern");
+        if (quantizePart (2, QuantizeSpec()) != "Already on the 1/16 grid")
+            fail ("quantizing twice didn't say it was already on the grid");
+        savePng (folder.getChildFile ("21f-pads-quantized.png"));
+        beats.undoPatternHit();
+        if (beats.drums().padPattern.hits.size() != 5)
+            fail ("the pads' Undo didn't bring the played timing back after QUANTIZE");
+        beats.drums().padPattern = PadPattern();
+        beats.patternChanged();
+        quantReport << "sheet on BASS and PADS: grid + strength + APPLY quantize the part and say so\n";
+    }
+
     // Ideas: each keeps its own pads and beat
     {
         const auto first = ideas.current().id;
@@ -4776,10 +5039,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     }
 
     auto note = folder.getChildFile ("selfcheck.txt");
-    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: + NEW SONG makes an empty song open on LOOPS, SET IN / SET OUT at the playhead and TRIM give a loop of the snapped length that plays gap-free in time (a 7-beat trim pads to 2 bars), FIT TO n BARS is exact and keeps the pitch, QUANTIZE moves loosely played pad hits and synth notes onto the grid in the re-rendered layer and UNDO brings the original back, effects and moves survive trim, fit and quantize, a BPM change keeps every layer's pitch, each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, the mic is silent in the speaker until it's allowed, an untouched song renders bit for bit as before the effect boards, each pedal changes the sound when on and is bit-transparent when off, a SYNTH board changes only the synth, REC on EFFECTS records through the board with the layer's own board left empty, QUANTIZE keeps the board, boards come back with the song, and the tempo-synced delay follows the BPM, the song drawer opens from the menu icon, the song name and the left edge (not over the SYNTH keys, the thumb bar or the tool row) and closes on a swipe left or a tap on the dim, picking a song there switches to it on the same tool with its own layers, the drawer reaches Sounds, the sound recorder, Mac link, Remote, Settings, the tour and the lesson, a hold on a layer, a pad, a chord pad or a song opens its menu and each row runs its action (CLEAR, REMOVE SOUND and COPY undo), a touch on a pad or chord sounds before and during the hold, sliding along the tool row or swiping the header changes tool, every bottom sheet closes on a downward drag or flick, and the tool row's amber outline can't stay on\n")
+    note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: + NEW SONG makes an empty song open on LOOPS, SET IN / SET OUT at the playhead and TRIM give a loop of the snapped length that plays gap-free in time (a 7-beat trim pads to 2 bars), FIT TO n BARS is exact and keeps the pitch, QUANTIZE on the instruments moves off-grid BASS and SYNTH notes and pad hits onto 1/16 (all the way, or halfway at 50%) keeping lengths, velocities and 16 LEVELS values, QUANTIZE moves loosely played pad hits and synth notes onto the grid in the re-rendered layer and UNDO brings the original back, effects and moves survive trim, fit and quantize, a BPM change keeps every layer's pitch, each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, the mic is silent in the speaker until it's allowed, an untouched song renders bit for bit as before the effect boards, each pedal changes the sound when on and is bit-transparent when off, a SYNTH board changes only the synth, REC on EFFECTS records through the board with the layer's own board left empty, QUANTIZE keeps the board, boards come back with the song, and the tempo-synced delay follows the BPM, the song drawer opens from the menu icon, the song name and the left edge (not over the SYNTH keys, the thumb bar or the tool row) and closes on a swipe left or a tap on the dim, picking a song there switches to it on the same tool with its own layers, the drawer reaches Sounds, the sound recorder, Mac link, Remote, Settings, the tour and the lesson, a hold on a layer, a pad, a chord pad or a song opens its menu and each row runs its action (CLEAR, REMOVE SOUND and COPY undo), a touch on a pad or chord sounds before and during the hold, sliding along the tool row or swiping the header changes tool, every bottom sheet closes on a downward drag or flick, and the tool row's amber outline can't stay on\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nPLAY LIVE early hit: " + beats.liveReport + "\n"
                           + "\n16 LEVELS and the new kits:\n" + beats.levelsReport
+                          + "\nQUANTIZE on the instruments:\n" + quantReport
                           + "\nSynth self-check (120 BPM, 44.1 kHz):\n" + synthReport
                           + "\nChords self-check (120 BPM, 44.1 kHz):\n" + chordsReport
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
@@ -6304,7 +6568,7 @@ void PocketApp::openTakeSheet (int layer, bool force)
     if (! force && (! animate || lessonOn || page != Page::tool || title->isVisible() || tour->isVisible()))
         return;
     if (takeOpen || sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen
-        || drumKitOpen || addOpen || exportOpen || holdCard.isOpen())
+        || drumKitOpen || addOpen || exportOpen || quantOpen || holdCard.isOpen())
         return;
     takeTool = tool;
     const juce::String what = tool == Tool::loops && loopsScreen.source() == (int) LoopSource::mic ? juce::String ("My voice")

@@ -21,6 +21,7 @@
 #include "SoundsScreen.h"
 #include "TempoSheet.h"
 #include "ExportSheet.h"
+#include "QuantizeSheet.h"
 #include "TrackInSheet.h"
 #include "SoundBankSheet.h"
 #include "VocoderScreen.h"
@@ -440,6 +441,14 @@ private:
     pocket::VibeSheet vibeSheet;      // EFFECTS on a layer: vibes + one-finger pad
     ExportSheet exportSheet;          // EXPORT (SONG chip, the looper's hold menu): what, split, format, tail
     bool addOpen = false, takeOpen = false, vibeOpen = false, exportOpen = false;
+    // QUANTIZE on an instrument (SYNTH, BASS, PADS): the notes or hits already in its part move onto a grid
+    QuantizeSheet quantSheet;
+    bool quantOpen = false;
+    int quantTarget = 0;              // 0 SYNTH, 1 BASS, 2 PADS
+    juce::Rectangle<int> quantBounds() const;
+    void openQuantize (int target);
+    void closeQuantize();
+    juce::String quantizePart (int target, const pocket::QuantizeSpec&);   // does it; what to say (also for the self-checks)
     juce::Rectangle<int> exportBounds() const;
     void openExport (SongScreen::Bounce::What what);
     void closeExport();

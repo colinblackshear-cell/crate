@@ -72,6 +72,16 @@ void SynthScreen::timerCallback()
         shownStep = s;
         repaint();
     }
+    if (laidOutWithNotes != ! part.pattern.empty())
+    {
+        layout();   // QUANTIZE comes and goes with the notes
+        repaint();
+    }
+}
+
+bool SynthScreen::quantizeShown() const
+{
+    return part.mode != SynthPart::arpMode && ! part.pattern.empty();
 }
 
 //==============================================================================
@@ -144,10 +154,19 @@ void SynthScreen::layout()
             x += c.first * scale + gap;
         }
     };
+    laidOutWithNotes = ! part.pattern.empty();
+    const bool withQuant = quantizeShown();
     if (part.mode == SynthPart::keysMode)
-        row ({ { 84, scaleId }, { 76, chordsId }, { 64, chromaticId }, { 96, snapId } });
+    {
+        if (withQuant)
+            row ({ { 76, scaleId }, { 66, chordsId }, { 58, chromaticId }, { 80, snapId }, { 84, quantId } });
+        else
+            row ({ { 84, scaleId }, { 76, chordsId }, { 64, chromaticId }, { 96, snapId } });
+    }
     else if (part.mode == SynthPart::arpMode)
         row ({ { 50, arpBase }, { 56, arpBase + 1 }, { 56, arpBase + 2 }, { 46, rateBase }, { 50, rateBase + 1 }, { 56, holdId } });
+    else if (withQuant)
+        row ({ { 68, lenId }, { 38, pagePrevId }, { 44, 0 }, { 38, pageNextId }, { 44, tieId }, { 56, clearId }, { 82, quantId } });
     else
         row ({ { 84, lenId }, { 38, pagePrevId }, { 62, 0 }, { 38, pageNextId }, { 52, tieId }, { 62, clearId } });
     y += 44.0f + 8.0f;
@@ -536,6 +555,17 @@ void SynthScreen::press (int id)
             say ("Pattern cleared");
         }
     }
+    else if (id == quantId)
+    {
+        leave();
+        if (recBusy && recBusy())
+            return say ("Stop recording first, then QUANTIZE");
+        if (part.pattern.empty())
+            return say ("No notes yet to quantize");
+        if (onQuantize)
+            onQuantize();
+        return;
+    }
     else if (id == stripId)
         return setMode (SynthPart::patternMode);
     else if (id >= stepBase && id < stepBase + 16)
@@ -819,6 +849,7 @@ void SynthScreen::paint (juce::Graphics& g)
         else if (id == pagePrevId) text = U8("\xe2\x80\xb9");
         else if (id == pageNextId) text = U8("\xe2\x80\xba");
         else if (id == tieId) text = "TIE";
+        else if (id == quantId) text = "QUANTIZE";
         else if (id == clearId) text = "CLEAR";
         else
             continue;
