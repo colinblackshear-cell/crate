@@ -1103,6 +1103,7 @@ struct RigDirtyRealPluginLoadTests final : juce::UnitTest
             if (moved != nullptr)
             {
                 moved->setValueNotifyingHost (moved->getValue() > 0.5f ? 0.1f : 0.9f);
+                logMessage ("  [" + label + "] after landing: moved its parameter '" + moved->getName (30) + "'");
                 expectState (*e, DS::dirty, label + ": its parameter '" + moved->getName (30) + "' changed after it landed");
             }
             else

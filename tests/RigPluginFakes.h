@@ -460,8 +460,11 @@ inline std::vector<ChosenParam> chooseParams (juce::AudioPluginInstance& inst, i
             if (! any)
                 log ("  KALEIDOBOX_TEST_PARAMS: no usable parameter's name has '" + w + "'");
         }
+        // (None of them is this plugin's: the always-running fake, say. Its own choice then.)
+        if (order.empty())
+            log ("  KALEIDOBOX_TEST_PARAMS names none of this plugin's parameters: choosing as usual");
     }
-    else
+    if (order.empty())
     {
         // (In their order: on the Mac this picked the patches Mini V4 and Jup-8 V4 rewrite.)
         if (variant == 0)
