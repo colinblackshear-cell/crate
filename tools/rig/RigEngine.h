@@ -259,6 +259,12 @@ public:
     juce::String loopMpcPads (int bars);
     // The layer recording (or waiting to record) the pads, or -1.
     int getPadLoopLayer() const;
+    // TO LOOPER's hand-off (the message thread sets it, the audio thread reads it): while loop
+    // `handOffLayer` records a tool's part with a set length, the tool's own sound (`handOffSource`,
+    // a RigLooper::Source) fades out over 4 ms from the beat the take closes on, and stays out, so
+    // the new loop and the tool never play the part twice, not even for a block. The window turns
+    // the tool off once the loop plays, then lets go (-1). Nothing changes before that beat.
+    std::atomic<int> handOffLayer { -1 }, handOffSource { -1 };
     RigRouting& getRouting() { return routing; }
     // Your MIDI controllers (Settings > Audio & MIDI > MIDI controllers): what each one is, so a
     // Launchpad, an MPD or any keyboard plays the Rig the way a Launchkey does. They belong to

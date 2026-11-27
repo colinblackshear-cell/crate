@@ -150,6 +150,38 @@ void RigLoopLab::fitTo (int layer, double targetBeats)
     edit (layer, p);
 }
 
+double RigLoopLab::fitToBeat (int layer)
+{
+    if (! open (layer))
+        return -1.0;
+    auto& l = layers[(size_t) layer];
+    const double songBpm = transport.getBpm();
+    auto p = l.plan;
+    p.settings.style = Warp::Style::voice;
+    // How long the take lasts, in seconds: its beats at the tempo it plays at as it is.
+    const double seconds = l.originalBeats * 60.0 / juce::jmax (1.0, l.originalBpm);
+    // The same hits and tempo the phone reads (sensitivity 0.5), whatever the lab's knob is at.
+    const auto hits = Warp::findHits (l.original, l.originalBeats, 0.5f);
+    double soundsLike = 0.0;
+    if (hits.size() >= 4)
+    {
+        std::vector<double> s;
+        for (double h : hits)
+            s.push_back (h / l.originalBeats * seconds);
+        soundsLike = Warp::soundsLikeBpm (s, songBpm);
+    }
+    const double sungBeats = soundsLike > 0.0 ? seconds * soundsLike / 60.0 : l.originalBeats;
+    Warp::setLength (p, juce::jmax (4.0, std::round (sungBeats / 4.0) * 4.0));
+    Warp::snap (p, hits, 0.5, 0.85f);
+    l.hits = hits;
+    l.sensitivity = 0.5f;
+    l.snapOn = true;
+    l.grid = 0.5;
+    l.strength = 0.85f;
+    edit (layer, p);
+    return soundsLike;
+}
+
 void RigLoopLab::moveMarker (int layer, int index, double targetBeat)
 {
     if (! stillOurs (layer))

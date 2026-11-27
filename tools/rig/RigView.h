@@ -91,6 +91,21 @@ public:
     // loop from the next bar; again stops it at the end of that bar. Returns the loop (-1: none).
     int pressRecTake();
     int getTakeLayer() const { return takeLayer; }
+    // TO LOOPER (the bottom bar, as on the phone): the picked instrument's part onto the next empty
+    // loop layer from the next bar, as long as the part. Once that loop plays, the instrument
+    // switches off (its part is kept) so the part isn't heard twice; Undo clears the loop and
+    // switches it back on. Pressed again before the loop closes: called off. Returns the loop
+    // (-1: none). hasPart: the tracks with a part to send (not the Vocoder, Loops or Line in,
+    // which Rec records as you play them).
+    int pressToLooper();
+    int getPrintLayer() const { return printLayer; }
+    // The window's timer: switches the instrument off once its loop plays (the tests call it).
+    void tickToLooper();
+    static bool hasPart (int track);
+    // The bars TO LOOPER records for `track`: the MPC sequence's bars; for a pattern, the fewest
+    // whole bars that hold it a whole number of times (up to 8, else rounded up); otherwise the
+    // bottom bar's Length (4 when it's free).
+    int partBars (int track) const;
     // The last take of a track (-1: none yet).
     int lastTakeOf (int track) const;
     // To Song: the menu (into a section, every section, a new one; the take too). toSong does one:
@@ -132,6 +147,12 @@ public:
     rigpanels::RecSetup* getRecSetup() const { return recSetup.get(); }
     // Count-in bars (0-2) and length in bars (0: until pressed again) for the next take.
     void setRecSetup (int countInBars, int lengthBars);
+    // My voice, as on the phone: To a click (false) or Sing free (true): Rec on a voice track (the
+    // Vocoder, Line in) records with no click or count-in until pressed again, then the take is
+    // fitted to the song's beat (RigLoopLab::fitToBeat). Kept with the count-in and length.
+    void setSingFree (bool);
+    bool isSingFree() const { return singFree; }
+    static bool isVoiceTrack (int track);
     int getRecCountIn() const { return recCountIn; }
     int getRecLength() const { return recLength; }
     // Undo last take: throws away the take recording, or the last one recorded (its loop is
@@ -277,6 +298,15 @@ private:
     void say (const juce::String&);
     juce::File currentShow;
     int takeLayer = -1, takeTrack = -1;
+    // TO LOOPER: the loop it's recording (or waiting to) and for which track; then what it sent
+    // last and the track it switched off (-1: none, or it wasn't playing), and when the engine's
+    // hand-off lets go of that track's sound (a millisecond counter; 0 while it holds).
+    int printLayer = -1, printTrack = -1, printedLayer = -1, printedTrack = -1;
+    bool printStarted = false;
+    double handOffUntil = 0;
+    bool singFree = false, freeFitClick = false;
+    int freeFitLayer = -1;   // a Sing free take waiting to be fitted to the beat
+    void endHandOff();
     bool takeStarted = false;   // the take's layer has been seen armed or recording
     bool takeKeptSaid = false;  // told you the song left the take alone
     int tourStop = 0;   // the walkthrough's stop you were on

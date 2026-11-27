@@ -1242,6 +1242,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 layer.startsAt = layer.startBeat;
                 const int bars = layer.bars.load();
                 layer.stopBeat = bars > 0 ? layer.startBeat + bars * bpb : -1.0;
+                layer.stopsAt = layer.stopBeat;
                 layer.writeIndex = 0;
                 layer.recorded = 0;
                 layer.lengthBeats = 0;
@@ -1263,6 +1264,7 @@ void RigLooper::handleRequests (Layer& layer, int index, const Clock& clock, boo
                 const double barsDone = juce::jmax (1.0, std::ceil (done / bpb - 1.0e-9));
                 const double stop = layer.startBeat + barsDone * bpb;
                 layer.stopBeat = layer.stopBeat < 0 ? stop : juce::jmin (layer.stopBeat, stop);
+                layer.stopsAt = layer.stopBeat;
                 break;
             }
             case State::playing:
@@ -1698,6 +1700,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                                     layer.audio.clear (ch, layer.writeIndex, to - layer.writeIndex);
                             layer.writeIndex = to;
                             layer.stopBeat = layer.startBeat + keep * bpb;
+                            layer.stopsAt = layer.stopBeat;
                             peakOps += finishRecording (layer);
                             layer.ending = (int) Ending::clockStopped;
                             break;
@@ -1739,6 +1742,7 @@ bool RigLooper::process (const Clock& clock, const std::array<const juce::AudioB
                         break;
                     }
                     layer.stopBeat = layer.startBeat + bars * bpb;
+                    layer.stopsAt = layer.stopBeat;
                     layer.writeIndex = juce::jmin (capacity, (int) std::round (bars * bpb * spb));
                     peakOps += finishRecording (layer);
                     layer.ending = (int) Ending::full;

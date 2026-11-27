@@ -1070,6 +1070,36 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     }
     applyStrip (droneStrip, droneBlock);
 
+    // TO LOOPER's hand-off: from the beat the loop closes on, the tool it recorded is quiet here
+    // (a 4 ms fade, then silence), before anything hears it; the loop plays the part from there.
+    if (const int layer = handOffLayer.load(); juce::isPositiveAndBelow (layer, RigLooper::kLayers) && transport.isPlayingThisBlock())
+    {
+        juce::AudioBuffer<float>* block = nullptr;
+        switch (handOffSource.load())
+        {
+            case RigLooper::bass:    block = &bassBlock; break;
+            case RigLooper::synth:   block = &synthBlock; break;
+            case RigLooper::mpc:     block = &mpcBlock; break;
+            case RigLooper::sampler: block = &samplerBlock; break;
+            case RigLooper::drums:   block = &drumsBlock; break;
+            case RigLooper::drone:   block = &droneBlock; break;
+            default: break;
+        }
+        const double stopsAt = looper.getLayer (layer).stopsAt.load();
+        if (block != nullptr && stopsAt >= 0 && looper.getState (layer) != RigLooper::State::empty)
+        {
+            const double spb = sampleRate * 60.0 / juce::jmax (1.0, transport.getBpm());
+            const double from = (stopsAt - transport.getBlockPosition()) * spb;   // samples into this block
+            const double fade = juce::jmax (1.0, 0.004 * sampleRate);
+            for (int i = juce::jmax (0, (int) std::floor (from)); i < n; ++i)
+            {
+                const float gain = (float) juce::jlimit (0.0, 1.0, 1.0 - ((double) i - from) / fade);
+                for (int ch = 0; ch < block->getNumChannels(); ++ch)
+                    block->getWritePointer (ch)[i] *= gain;
+            }
+        }
+    }
+
     // Each tool's strip (in Stem order), for its own output in Logic.
     const std::array<juce::AudioBuffer<float>*, numStems> stems { &mpcBlock, &vocoderBlock, &bassBlock, &synthBlock, &inputBlock, &samplerBlock, nullptr, &drumsBlock };
 

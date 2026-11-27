@@ -88,7 +88,7 @@ private:
 // Along the bottom of every screen, as the phone's thumb bar: the tempo (click to tap, drag or
 // scroll to change, the arrows for a tenth with Shift), the click, the count-in and length for
 // the next take, one big Rec (its arrow: where Rec lands, and the rest of the record options),
-// Play, Undo last take, then Rec moves (and Automation) and Quantize.
+// Play, Undo last take, To looper, then Rec moves (and Automation) and Quantize.
 class Dock : public juce::Component
 {
 public:
@@ -133,6 +133,9 @@ public:
     PanelButton click { "Click" }, countIn { "Count-in" }, length { "Length" };
     RecButton rec;
     PanelButton play { "Play" }, undo { "Undo" };
+    // TO LOOPER, as on the phone: the picked instrument's part onto the next empty loop layer, then
+    // that instrument off so it doesn't play twice (hidden for tracks that have no part to send).
+    PanelButton toLooper { "To looper" };
     PanelButton recMoves { "Rec moves" }, moves { juce::String::fromUTF8 ("Automation \xe2\x80\xba") }, quantize { "Quantize" };
 
     // The song's sections on the right, as on the phone (keys 1-8 play them): a click plays one from
@@ -299,18 +302,22 @@ public:
     void resized() override;
 
     // What it shows. lands: 0 layer, 1 song, 2 sample, 3 set, 4 MPC pattern; tool mode has no "where".
-    void setState (int countIn, int length, bool click, int lands, bool toolMode);
-    int preferredHeight() const { return whereShown ? 624 : 250; }
+    // singFree: My voice is Sing free (no click; fitted to the beat after) rather than To a click.
+    void setState (int countIn, int length, bool click, int lands, bool toolMode, bool singFree = false);
+    int preferredHeight() const { return whereShown ? 682 : 308; }
     static constexpr int kWidth = 640;
 
     std::function<void (int bars)> onCountIn, onLength;
     std::function<void()> onClick;
+    std::function<void (bool singFree)> onSingFree;
     std::function<void (int lands)> onLands;
     // 0 To Song, 1 Rec into, 2 Takes, 3 Automation lanes (each opens its menu by `from`).
     std::function<void (int extra, juce::Component& from)> onExtra;
 
     juce::OwnedArray<PanelButton> countIns, lengths, extras;
     PanelButton click { "Click" };
+    // My voice, as on the phone: To a click, or Sing free.
+    PanelButton toAClick { "To a click" }, singFreeButton { "Sing free" };
     // A "where Rec lands" choice: a radio, its name and what it does.
     class LandRow : public juce::Button
     {
@@ -327,6 +334,6 @@ public:
 
 private:
     bool whereShown = true;
-    juce::Rectangle<int> countInLabel, lengthLabel, whereLabel, extrasLabel, topLabel;
+    juce::Rectangle<int> countInLabel, lengthLabel, voiceLabel, whereLabel, extrasLabel, topLabel;
 };
 }

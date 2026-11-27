@@ -89,6 +89,10 @@ public:
         // The clock beat it starts recording on, while armed (-1 otherwise), for the window's
         // count-in and the click.
         std::atomic<double> startsAt { -1.0 };
+        // The clock beat this take closes on, while armed or recording with a set length (-1: free,
+        // until pressed again). Kept after it closes, until the next take. Any thread may read it:
+        // TO LOOPER's hand-off fades the tool's own sound out from exactly this beat.
+        std::atomic<double> stopsAt { -1.0 };
 
     private:
         friend class RigLooper;

@@ -68,6 +68,12 @@ public:
     void setSensitivity (int layer, float);                         // finds the hits again (and re-snaps)
     void setSnap (int layer, bool on, double gridBeats, float strength);
     void fitTo (int layer, double targetBeats);
+    // FIT TO THE BEAT, as the phone's Sing free does: a take sung with no click. The tempo it was
+    // sung at is read from its hits (near the song's); it's stretched (keeping its pitch) to the
+    // whole bars it was sung over at the song's tempo, a multiple of 4 beats, and each hit pulled
+    // most of the way (85%) onto the nearest 1/8. Opens the layer first. Returns the tempo it heard
+    // (0: couldn't tell, then it's only rounded to whole bars and snapped; -1: no loop to fit).
+    double fitToBeat (int layer);
     void moveMarker (int layer, int index, double targetBeat);
     int addMarker (int layer, double targetBeat);
     void removeMarker (int layer, int index);
