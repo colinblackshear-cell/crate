@@ -8,8 +8,10 @@
 #include "SynthEngine.h"
 #include "DrumEngine.h"
 #include "RigLooper.h"
+#include "RigHistory.h"
 
 #include <array>
+#include <functional>
 #include <vector>
 
 class RigEngine;
@@ -101,6 +103,17 @@ public:
     bool canUndo() const { return undoTarget != none; }
     juce::String undo();
     int getUndoTarget() const { return undoTarget; }
+    // Does again what undo took back (if nothing has changed it since).
+    bool canRedo() const { return redoTarget != none; }
+    juce::String redo();
+    // Undo's history (RigHistory): a quantize that can be taken back was just made (by apply,
+    // or a new loop by itself), with the token it had before. Each quantize, undo and redo
+    // changes the token.
+    std::function<void (int target, int tokenBefore)> onUndoable;
+    // The Quantize panel's Undo goes through Undo's history while its step is the newest there
+    // (the window sets it; true when it did).
+    std::function<bool()> undoThroughHistory;
+    RigHistorySite historySite;
 
     // Often (the engine's timer): quantizes loops that just finished recording, when settings.newLoops.
     // Returns what to say, or empty.
@@ -108,10 +121,11 @@ public:
     juce::String lastAutoMessage;
 
     juce::ValueTree toTree() const { return settings.toTree(); }
-    void fromTree (const juce::ValueTree& t) { settings = quantize::Settings::fromTree (t); undoTarget = none; }
+    void fromTree (const juce::ValueTree& t) { settings = quantize::Settings::fromTree (t); undoTarget = redoTarget = none; historySite.touch(); }
 
 private:
     juce::String applyLoop (int layer, bool keepUndo);
+    juce::String applyNow (int target);
     double stepBeatsOf (int target) const;
     void forgetUndo();
 
@@ -132,5 +146,15 @@ private:
         int version = -1;   // the layer's version after quantizing
     };
     std::vector<LoopUndo> undoLoops;
+    // What undo took away, for redo.
+    int redoTarget = none;
+    seq::Sequence redoSequence;
+    crate::drums::Pattern redoDrums;
+    crate::bass::Pattern redoBass;
+    crate::synthtool::Rhythm redoRhythm;
+    std::vector<LoopUndo> redoLoops;
+    // Puts back `from` (what undo or redo keeps), keeping what's there now in `keep`.
+    juce::String swapBack (int target, bool undoing);
+    int keptSerial = 0;   // counts the undos kept (apply and service)
     std::array<int, RigLooper::kLayers> lastStates {};
 };

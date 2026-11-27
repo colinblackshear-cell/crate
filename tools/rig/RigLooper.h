@@ -244,6 +244,9 @@ public:
     // Returns the swap's serial (never reused), which getAppliedSwap names once it's done.
     int queueLayerAudio (int layer, juce::AudioBuffer<float> audio, double beats, double beat, float level, bool mute);
     bool isSwapPending (int layer) const { return layers[(size_t) layer].swapPending.load(); }
+    // Whether a new loop is still to be turned round onto the shared bars (maintain() does it,
+    // and its version changes then though it sounds the same). Any thread.
+    bool isSyncShiftPending (int layer) const { return layers[(size_t) layer].syncShift.load() != 0.0; }
     // Any thread: the last swap done on a layer (its serial, 0 for none) and the version it left,
     // read together: while the version is still that, the layer holds exactly the swapped-in sound.
     int getSwapVersion (int layer) const { return (int) (juce::uint32) layers[(size_t) layer].swapApplied.load (std::memory_order_acquire); }

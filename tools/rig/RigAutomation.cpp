@@ -231,9 +231,14 @@ int RigAutomation::findLane (int tool, int parameter) const
 
 void RigAutomation::snapshotForUndo()
 {
+    const int before = historySite.token;
     undoStack.push_back (getLanes());
     if (undoStack.size() > kUndoSteps)
         undoStack.erase (undoStack.begin());
+    redoStack.clear();
+    historySite.touch();
+    if (onUndoable)
+        onUndoable (before);
 }
 
 void RigAutomation::undo()
@@ -242,7 +247,20 @@ void RigAutomation::undo()
         return;
     auto back = std::move (undoStack.back());
     undoStack.pop_back();
+    redoStack.push_back (getLanes());
+    historySite.touch();
     install (std::move (back));
+}
+
+void RigAutomation::redo()
+{
+    if (redoStack.empty())
+        return;
+    auto again = std::move (redoStack.back());
+    redoStack.pop_back();
+    undoStack.push_back (getLanes());
+    historySite.touch();
+    install (std::move (again));
 }
 
 void RigAutomation::install (std::vector<Lane> newLanes)
@@ -508,6 +526,8 @@ void RigAutomation::fromTree (const juce::ValueTree& tree)
             list.push_back (std::move (lane));
     }
     undoStack.clear();
+    redoStack.clear();
+    historySite.touch();
     install (std::move (list));
 }
 

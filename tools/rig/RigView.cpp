@@ -116,6 +116,7 @@ struct RigView::DocHost final : RigDocFlow::Host
         view.refresh();
         if (view.song != nullptr)
             view.song->forgetUndo();
+        view.forgetHistory();
         if (kind == Replaced::opened)
             view.restoreWindows();
         else
@@ -524,6 +525,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
         updateDock();
     };
     dock.undo.onClick = [this] { undoLastTake(); };
+    dock.redo.onClick = [this] { historyRedo(); };
     dock.toLooper.onClick = [this] { pressToLooper(); };
     dock.recMoves.onClick = [this] { pressRecMoves(); };
     dock.moves.onClick = [this] { showAutomation(); };
@@ -1137,6 +1139,7 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     footer.tick();          // the song bar's sections (thin until there's a song)
     updateCaptureButtons(); // the bottom bar, from the start
     updateHeader();
+    wireHistory();
     startTimerHz (30);
     // Put popped-out tools back on their screens, once this window is up.
     juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<RigView> (this)]
@@ -1145,6 +1148,14 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
 
 RigView::~RigView()
 {
+    // Nothing reaches this window's history once it's going.
+    engine.onLoopCleared = nullptr;
+    engine.onAllLoopsCleared = nullptr;
+    engine.getQuantizer().onUndoable = nullptr;
+    engine.getQuantizer().undoThroughHistory = nullptr;
+    engine.getAutomation().onUndoable = nullptr;
+    engine.getAutomation().undoThroughHistory = nullptr;
+    history.onChange = nullptr;
     visualsWindow.reset();
     visualsView.reset();
     if (activity != nullptr)
@@ -1738,6 +1749,8 @@ void RigView::tickToLooper()
 {
     auto& looper = engine.getLooper();
     const double now = juce::Time::getMillisecondCounterHiRes();
+    // Takes that just landed go into the history first (To looper's below, as its own step).
+    tickHistory();
     if (freeFitLayer >= 0)
     {
         // Sing free: once the take loops, it's fitted to the beat (and the click comes back).
@@ -1751,7 +1764,31 @@ void RigView::tickToLooper()
             engine.getTransport().metronome = freeFitClick;
             if (landed)
             {
-                const double heard = engine.getLoopLab().fitToBeat (layer);
+                auto& lab = engine.getLoopLab();
+                const int labBefore = lab.historySites[(size_t) layer].token;
+                const double heard = lab.fitToBeat (layer);
+                if (heard >= 0 && lab.isOpen (layer))
+                {
+                    // Undo takes the fit back (the Loop Lab's own undo), Redo fits it again.
+                    auto plan = std::make_shared<crate::Warp::Plan> (lab.get (layer).plan);
+                    history.push (RigHistory::siteStep (lab.historySites[(size_t) layer], "lab " + juce::String (layer + 1),
+                                                        "fit to the beat on loop " + juce::String (layer + 1), labBefore,
+                        [this, layer]
+                        {
+                            engine.getLoopLab().undo (layer);
+                            loopHistory->expectChange (layer);
+                        },
+                        [this, layer, plan]
+                        {
+                            engine.getLoopLab().setPlan (layer, *plan);
+                            loopHistory->expectChange (layer);
+                        },
+                        [this, layer] (bool undoing)
+                        {
+                            auto& l = engine.getLoopLab();
+                            return undoing ? l.canUndo (layer) : l.isOpen (layer);
+                        }));
+                }
                 const double beats = engine.getLoopLab().isOpen (layer) ? engine.getLoopLab().get (layer).plan.targetBeats : 0.0;
                 const int bars = (int) std::round (beats / juce::jmax (1, engine.getTransport().getBeatsPerBar()));
                 if (heard >= 0)
@@ -1784,6 +1821,30 @@ void RigView::tickToLooper()
             }
             handOffUntil = now + 1500.0;
             const auto name = GrooveView::trackName (t);
+            {
+                // Its step: Undo clears the loop and switches the instrument back on, Redo puts
+                // the loop back and switches it off again.
+                const int switched = printedTrack;
+                loopHistory->pushTake (layer, "To looper: the " + name + " onto loop " + juce::String (layer + 1),
+                    [this, layer, switched]
+                    {
+                        if (printedLayer == layer)
+                        {
+                            printedLayer = -1;
+                            printedTrack = -1;
+                        }
+                        endHandOff();
+                        if (switched >= 0 && groove != nullptr && ! groove->isGoing (switched))
+                            groove->pressTrackButton (switched);
+                        updateDock();
+                    },
+                    [this, switched]
+                    {
+                        if (switched >= 0 && groove != nullptr && groove->isGoing (switched))
+                            groove->pressTrackButton (switched);
+                        updateDock();
+                    });
+            }
             say ("The " + name + "'s part is on loop " + juce::String (layer + 1) + " and loops."
                  + (printedTrack >= 0 ? " The " + name + " is off (its part is kept), so you hear it once. Undo puts it back on." : juce::String()));
             updateDock();
@@ -1854,32 +1915,229 @@ bool RigView::undoLastTake()
         pressToLooper();   // TO LOOPER that hasn't landed yet: called off
         return true;
     }
-    if (juce::isPositiveAndBelow (lastTakeLayer, RigLooper::kLayers) && looper.getState (lastTakeLayer) != RigLooper::State::empty)
+    // Otherwise a step back in the history (a take, an overdub, a Clear, To looper, a song edit...).
+    return historyUndo();
+}
+
+//==============================================================================
+void RigView::wireHistory()
+{
+    loopHistory = std::make_unique<RigLoopHistory> (engine, history);
+    history.onChange = [this] { updateUndoButtons(); };
+    // To looper's take is its own step (it switches the instrument too).
+    loopHistory->isClaimed = [this] (int layer) { return layer == printLayer; };
+    loopHistory->onTakeUndone = [this] (int layer)
     {
-        const int layer = lastTakeLayer;
-        looper.clear (layer);
-        forget (layer);
-        if (layer == printedLayer)
-        {
-            // What TO LOOPER sent: the instrument it switched off plays its part again.
-            const int t = std::exchange (printedTrack, -1);
-            printedLayer = -1;
-            endHandOff();
-            if (t >= 0 && groove != nullptr && ! groove->isGoing (t))
-                groove->pressTrackButton (t);
-            say ("Undo: loop " + juce::String (layer + 1) + " is cleared"
-                 + (t >= 0 ? " and the " + GrooveView::trackName (t) + " plays its part again." : juce::String (".")));
-            updateCaptureButtons();
-            return true;
-        }
-        say ("Undo: the last take (loop " + juce::String (layer + 1) + ") is cleared. Rec records onto it again next.");
+        for (auto& l : lastTake)
+            if (l == layer)
+                l = -1;
+        if (lastTakeLayer == layer)
+            lastTakeLayer = -1;
         updateCaptureButtons();
-        return true;
+    };
+    engine.onLoopCleared = [this] (int layer, std::shared_ptr<const RigEngine::KeptLoop> kept)
+    {
+        if (loopHistory != nullptr)
+            loopHistory->pushCleared (layer, std::move (kept));
+    };
+    engine.onAllLoopsCleared = [this]
+    {
+        if (loopHistory != nullptr)
+            loopHistory->pushClearedAll();
+    };
+    auto through = [this] (const juce::String& site) { return undoThroughHistory (site); };
+    if (groove != nullptr)
+    {
+        groove->history = &history;
+        groove->undoThrough = through;
     }
-    if (undoLast())
-        return true;
-    say ("Nothing to undo yet.");
-    return false;
+    if (song != nullptr)
+    {
+        song->history = &history;
+        song->undoThrough = through;
+    }
+    if (looper != nullptr)
+        looper->undoThrough = through;
+    if (samplerScreen != nullptr)
+    {
+        samplerScreen->history = &history;
+        samplerScreen->undoThrough = through;
+    }
+    auto& q = engine.getQuantizer();
+    q.onUndoable = [this] (int target, int before)
+    {
+        // A take it quantized by itself lands first.
+        if (loopHistory != nullptr)
+            loopHistory->tick (true);
+        auto& qz = engine.getQuantizer();
+        history.push (RigHistory::siteStep (qz.historySite, "quantize", "quantize " + RigQuantizer::targetName (target), before,
+            [this]
+            {
+                engine.getQuantizer().undo();
+                if (loopHistory != nullptr)
+                    loopHistory->syncAll();
+            },
+            [this]
+            {
+                engine.getQuantizer().redo();
+                if (loopHistory != nullptr)
+                    loopHistory->syncAll();
+            },
+            [this] (bool undoing) { auto& z = engine.getQuantizer(); return undoing ? z.canUndo() : z.canRedo(); }));
+        if (loopHistory != nullptr)
+            loopHistory->syncAll();
+    };
+    q.undoThroughHistory = [this] { return undoThroughHistory ("quantize"); };
+    auto& a = engine.getAutomation();
+    a.onUndoable = [this] (int before)
+    {
+        auto& au = engine.getAutomation();
+        history.push (RigHistory::siteStep (au.historySite, "automation", "a change to the automation", before,
+            [this] { engine.getAutomation().undo(); },
+            [this] { engine.getAutomation().redo(); },
+            [this] (bool undoing) { auto& z = engine.getAutomation(); return undoing ? z.canUndo() : z.canRedo(); }));
+    };
+    a.undoThroughHistory = [this] { return undoThroughHistory ("automation"); };
+    tickChordsHistory();
+    updateUndoButtons();
+}
+
+void RigView::forgetHistory()
+{
+    history.clear();
+    chordsKept = {};   // (the next look keeps the chords as they are now)
+    tickChordsHistory();
+    if (loopHistory != nullptr)
+        loopHistory->reset();
+    updateUndoButtons();
+}
+
+void RigView::tickHistory()
+{
+    if (loopHistory != nullptr)
+        loopHistory->tick();
+}
+
+void RigView::catchUpHistory()
+{
+    tickHistory();
+    if (song != nullptr)
+        song->noticeEdits();
+    tickChordsHistory();
+}
+
+namespace
+{
+// RigChords' saved state as an edit sees it: where the live key and octave are is playing, not editing.
+const char* const kChordsLiveProps[] = { "liveKeyShift", "liveOctave", "liveChange" };
+
+juce::ValueTree chordsAsEdited (const juce::ValueTree& t)
+{
+    auto c = t.createCopy();
+    for (auto* p : kChordsLiveProps)
+        c.removeProperty (p, nullptr);
+    return c;
+}
+}
+
+void RigView::tickChordsHistory()
+{
+    auto& chords = engine.getChords();
+    const auto now = chordsAsEdited (chords.toTree());
+    if (! chordsKept.isValid() || history.isBusy())
+    {
+        chordsKept = now;
+        return;
+    }
+    if (now.isEquivalentTo (chordsKept))
+        return;
+    const auto was = std::exchange (chordsKept, now);
+    // What the chords should be for the step to be good (it follows each undo and redo).
+    auto expected = std::make_shared<juce::ValueTree> (now);
+    auto put = [this, expected] (const juce::ValueTree& edited)
+    {
+        auto& c = engine.getChords();
+        auto full = edited.createCopy();
+        const auto current = c.toTree();
+        for (auto* p : kChordsLiveProps)
+            if (current.hasProperty (p))
+                full.setProperty (p, current.getProperty (p), nullptr);
+        c.fromTree (full);
+        *expected = chordsKept = chordsAsEdited (c.toTree());
+        if (chordsDrawer != nullptr)
+            chordsDrawer->refresh();
+    };
+    RigHistory::Step step;
+    step.what = "a change to the chords";
+    step.site = "chords";
+    step.stillValid = [this, expected] { return chordsAsEdited (engine.getChords().toTree()).isEquivalentTo (*expected); };
+    step.undo = [put, was] { put (was); };
+    step.redo = [put, now] { put (now); };
+    history.push (std::move (step));
+}
+
+bool RigView::undoThroughHistory (const juce::String& site)
+{
+    catchUpHistory();
+    return history.newestIs (site) && historyUndo();
+}
+
+bool RigView::historyUndo()
+{
+    catchUpHistory();
+    if (! history.canUndo())
+    {
+        say (RigHistory::nothingToUndoText());
+        updateUndoButtons();
+        return false;
+    }
+    const auto what = history.undo();
+    say (RigHistory::undidText (what, history.canUndo()));
+    updateCaptureButtons();
+    updateUndoButtons();
+    return true;
+}
+
+bool RigView::historyRedo()
+{
+    catchUpHistory();
+    if (! history.canRedo())
+    {
+        say (RigHistory::nothingToRedoText());
+        updateUndoButtons();
+        return false;
+    }
+    const auto what = history.redo();
+    say (RigHistory::redidText (what));
+    updateCaptureButtons();
+    updateUndoButtons();
+    return true;
+}
+
+void RigView::updateUndoButtons()
+{
+    if (std::exchange (updatingUndo, true))
+        return;
+    // What each would do, short enough for the button.
+    auto shortly = [] (const juce::String& what)
+    {
+        return what.length() <= 16 ? what : what.substring (0, 15).trimEnd() + juce::String::fromUTF8 ("\xe2\x80\xa6");
+    };
+    const auto undoWhat = history.nextUndo(), redoWhat = history.nextRedo();
+    const auto undoSub = undoWhat.isNotEmpty() ? shortly (undoWhat) : juce::String ("nothing yet");
+    const auto redoSub = redoWhat.isNotEmpty() ? shortly (redoWhat) : juce::String();
+    if (dock.undo.sub != undoSub)
+    {
+        dock.undo.sub = undoSub;
+        dock.undo.repaint();
+    }
+    if (dock.redo.sub != redoSub || dock.redo.isEnabled() != redoWhat.isNotEmpty())
+    {
+        dock.redo.sub = redoSub;
+        dock.redo.setEnabled (redoWhat.isNotEmpty());
+        dock.redo.repaint();
+    }
+    updatingUndo = false;
 }
 
 juce::String RigView::recTargetText() const
@@ -3620,6 +3878,11 @@ void RigView::timerCallback()
             say ("Loop " + juce::String (i + 1) + ": " + RigLooper::noUndoMessage (why));
     tickToLooper();
     updateCaptureButtons();
+    if (++undoButtonsTick % 8 == 0)
+    {
+        tickChordsHistory();
+        updateUndoButtons();
+    }
     checkCaughtIdea();
     if (phoneLink != nullptr)
         phoneLink->setShow (currentShow.getFileNameWithoutExtension());
@@ -4340,6 +4603,7 @@ void RigView::openShowFile (const juce::File& file)
             say (engine.getLoopAudioProblem());
         if (song != nullptr)
             song->forgetUndo();
+        forgetHistory();
         restoreWindows();
     }
     else
@@ -4733,9 +4997,15 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         return true;
     }
     // Cmd+[ and Cmd+]: back and forward, as in a web browser.
+    // Cmd+Z and Cmd+Shift+Z: Undo and Redo (the history, as the bottom bar's buttons).
     if (key == juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0))
     {
         undoLast();
+        return true;
+    }
+    if (key == juce::KeyPress ('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0))
+    {
+        historyRedo();
         return true;
     }
     // Delete (or backspace) on the Song screen: the picked section.
@@ -4820,26 +5090,11 @@ bool RigView::keyPressed (const juce::KeyPress& key)
 //==============================================================================
 bool RigView::undoLast()
 {
-    // Cmd+Z: takes back the last Clear on Play, or the last take on a loop (the Song screen's
-    // own Cmd+Z undoes its boxes).
-    const auto view = getView();
-    if (view == "Song" && song != nullptr)
+    // Cmd+Z: the bottom bar's Undo (a take in flight first, then the history). Bars view's
+    // finer undo keeps Cmd+Z there (its changes are song steps in the history too).
+    if (getView() == "Song" && song != nullptr && song->isShowingBars())
         return song->undo();
-    if (view == "Play" && groove != nullptr && groove->undoClear())
-        return true;
-    if (view == "Play" || currentPage() == "Looper")
-    {
-        auto& looper = engine.getLooper();
-        for (int i = 0; i < RigLooper::kLayers; ++i)
-            if (looper.canUndo (i) && looper.getState (i) == RigLooper::State::playing)
-            {
-                looper.undo (i);
-                say ("Took back the last recording on top of loop " + juce::String (i + 1) + ".");
-                return true;
-            }
-    }
-    say ("Nothing to undo here. (Cmd+Z takes back a Clear on Play, or the last overdub on a loop.)");
-    return false;
+    return undoLastTake();
 }
 
 std::pair<juce::String, juce::String> RigView::whatsRecording() const
@@ -5030,6 +5285,7 @@ void RigView::newSong (bool saveFirst, bool askWhatNext)
     refresh();
     if (song != nullptr)
         song->forgetUndo();
+    forgetHistory();
     takeLayer = -1;
     catchLayer = -1;
     lastTake.fill (-1);
@@ -5103,6 +5359,7 @@ juce::String RigView::importFromLogic (const juce::File& folder)
     refresh();
     if (this->song != nullptr)
         this->song->forgetUndo();
+    forgetHistory();
     showView ("Song");
     return said;
 }

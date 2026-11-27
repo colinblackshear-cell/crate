@@ -7,6 +7,8 @@
 #include <functional>
 #include <vector>
 
+#include "RigHistory.h"
+
 class RigDirty;
 
 // Automation: knob moves recorded over time, played back on the beat.
@@ -107,6 +109,16 @@ public:
     void clearAll();
     bool canUndo() const { return ! undoStack.empty(); }
     void undo();
+    // Does again what undo took back (until the next edit).
+    bool canRedo() const { return ! redoStack.empty(); }
+    void redo();
+    // Undo's history (RigHistory): an edit that can be undone is starting, with the token it
+    // had before. Each edit, undo and redo changes the token.
+    std::function<void (int tokenBefore)> onUndoable;
+    // The Automation panel's Undo goes through Undo's history while its step is the newest
+    // there (the window sets it; true when it did).
+    std::function<bool()> undoThroughHistory;
+    RigHistorySite historySite;
     // Adds a lane (or replaces the one for that setting). Returns its index.
     int addLane (Lane);
     // Move: a lane made to move a setting by itself, round and round in time like an LFO (a
@@ -183,7 +195,7 @@ private:
     mutable juce::SpinLock lock;
     std::vector<Lane> lanes;
     std::vector<Live> live;   // one per lane
-    std::vector<std::vector<Lane>> undoStack;
+    std::vector<std::vector<Lane>> undoStack, redoStack;
 
     // Recording.
     std::atomic<int> recState { (int) RecState::off };

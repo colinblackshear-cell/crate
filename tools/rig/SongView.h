@@ -5,6 +5,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
+#include "RigHistory.h"
 #include "RigPanels.h"
 #include "RigSong.h"
 
@@ -106,6 +107,11 @@ public:
     bool canUndo() const { return ! undoStack.empty(); }
     // Starts the undo afresh (a show loaded, a new song): nothing to take back into it.
     void forgetUndo();
+    // Undo and Redo (RigHistory): each change to the song is a step there too (the window sets
+    // these). noticeEdits keeps a change the timer hasn't seen yet (before Undo looks).
+    RigHistory* history = nullptr;
+    std::function<bool (const juce::String& site)> undoThrough;
+    void noticeEdits();
     // A track picked on the rail: its row lights up on the picked section (or the one playing,
     // or the first). Says so when the track isn't in the song yet.
     void showLane (int lane);
@@ -191,6 +197,9 @@ private:
     using Snapshot = std::pair<std::vector<RigTimeline::Block>, std::vector<RigTimeline::Marker>>;
     std::vector<Snapshot> undoStack;
     Snapshot kept;   // the song as it is (the next change pushes this)
+    RigHistorySite historySite;
+    void keepEdit();   // the song changed from `kept`: Undo can take it back
+    void putSnapshot (const Snapshot&);
     bool sameAsKept() const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SongView)
