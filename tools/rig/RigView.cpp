@@ -126,6 +126,13 @@ struct RigView::DocHost final : RigDocFlow::Host
     RigView& view;
 };
 
+void RigView::showLegacyQuestion (const juce::MessageBoxOptions& options, std::function<void (int)> done)
+{
+    if (legacyQuestionForTests)
+        return legacyQuestionForTests (options, std::move (done));
+    juce::AlertWindow::showAsync (options, std::move (done));
+}
+
 bool RigView::hostedDocuments() const
 {
     return ! standaloneDocuments || toolMode();
@@ -2737,7 +2744,7 @@ void RigView::startLesson()
                        .withButton ("Lesson, don't save")
                        .withButton ("Cancel")
                        .withAssociatedComponent (this);
-    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+    showLegacyQuestion (options, [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                                   {
                                       if (safe == nullptr || (result != 1 && result != 2))
                                           return;
@@ -4098,7 +4105,7 @@ void RigView::askOpenSong (const juce::File& file, std::function<void()> then)
                        .withButton ("Open, don't save")
                        .withButton ("Cancel")
                        .withAssociatedComponent (this);
-    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this), open] (int result)
+    showLegacyQuestion (options, [safe = juce::Component::SafePointer<RigView> (this), open] (int result)
                                   {
                                       if (safe == nullptr || (result != 1 && result != 2))
                                           return;
@@ -4138,7 +4145,7 @@ void RigView::startFresh (const juce::String& what, std::function<void()> then)
                        .withButton ("Start, don't save")
                        .withButton ("Cancel")
                        .withAssociatedComponent (this);
-    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this), then] (int result)
+    showLegacyQuestion (options, [safe = juce::Component::SafePointer<RigView> (this), then] (int result)
                                   {
                                       if (safe == nullptr || (result != 1 && result != 2))
                                           return;
@@ -4668,7 +4675,7 @@ void RigView::askNewSong()
                        .withButton ("New song, don't save")
                        .withButton ("Cancel")
                        .withAssociatedComponent (this);
-    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this)] (int result)
+    showLegacyQuestion (options, [safe = juce::Component::SafePointer<RigView> (this)] (int result)
                                   {
                                       // 1, 2, then 0 for the last button (Cancel).
                                       if (safe != nullptr && (result == 1 || result == 2))
@@ -4750,7 +4757,7 @@ void RigView::askImportFromLogic()
                        .withButton ("Import, don't save")
                        .withButton ("Cancel")
                        .withAssociatedComponent (this);
-    juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<RigView> (this), pick] (int result)
+    showLegacyQuestion (options, [safe = juce::Component::SafePointer<RigView> (this), pick] (int result)
                                   {
                                       if (safe == nullptr || (result != 1 && result != 2))
                                           return;

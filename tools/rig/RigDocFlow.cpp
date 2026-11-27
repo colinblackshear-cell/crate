@@ -67,6 +67,7 @@ juce::String RigDocFlow::showName() const
 //==============================================================================
 bool RigDocFlow::begin (std::unique_ptr<Request> r)
 {
+    ++requestsForTests;
     if (current != nullptr)
     {
         ++stats.ignored;

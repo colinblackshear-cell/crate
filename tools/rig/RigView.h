@@ -191,6 +191,9 @@ public:
     RigDocFlow& getDocFlow() { return *docFlow; }
     // Tests: their own answers to the flow's questions and windows (null: the window's own).
     void setAskerForTests (rigdirty::Asker*);
+    // Tests: the old way's questions (Logic, the one-tool plugins) come here instead of an
+    // AlertWindow, with the answer's number (1, 2, or 0 for Cancel), so they can be seen headless.
+    static inline std::function<void (const juce::MessageBoxOptions&, std::function<void (int)>)> legacyQuestionForTests;
     class RigTitle* getTitle() const { return title.get(); }
     void showTitle (bool show);
     // Opens a saved song (as Open show does, without the chooser).
@@ -514,6 +517,7 @@ private:
     // The document flow (the standalone app's), with the window's questions and what it does
     // for the flow. The flow goes first.
     void sayNewSong (const juce::String& saved);
+    static void showLegacyQuestion (const juce::MessageBoxOptions&, std::function<void (int)>);
     struct DocHost;
     std::unique_ptr<rigdirty::Asker> asker;
     std::unique_ptr<DocHost> docHost;

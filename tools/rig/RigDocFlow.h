@@ -4,6 +4,7 @@
 #include "RigEngine.h"
 #include "RigLogicImport.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
 
@@ -111,6 +112,8 @@ public:
     // Tests only: step 3 takes the model's published state, without the check (the old fault: an
     // edit nothing noted reads clean).
     static inline bool cachedStateForTests = false;
+    // Tests only: every request asked of any flow (started or not), to show a hosted window never asks one.
+    static inline std::atomic<int> requestsForTests { 0 };
 
 private:
     enum class Kind { blank, open, import, saveOnly };
