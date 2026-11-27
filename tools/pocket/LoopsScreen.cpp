@@ -638,6 +638,8 @@ HoldSpec LoopsScreen::layerMenuSpec (int l)
     s.items.push_back ({ hasTool ? juce::String ("OPEN ") + toolName (openTool) : juce::String ("DOUBLE"), {}, false, true, run (pTool) });
     if (onToSong)
         s.items.push_back ({ "TO SONG PART", "A, B, C...", false, true, [this, l] { if (onToSong) onToSong (l); } });
+    if (onExport)
+        s.items.push_back ({ "EXPORT", "stems or a mix: WAV, AIFF, MP3", false, true, [this] { if (onExport) onExport(); } });
     s.items.push_back ({ "SEND TO MAC", {}, false, true, run (pToMac) });
     s.items.push_back ({ "CLEAR", "undo brings it back", true, true, run (pClear) });
     return s;

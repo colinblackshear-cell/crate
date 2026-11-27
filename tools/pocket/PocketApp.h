@@ -20,6 +20,7 @@
 #include "RecordScreen.h"
 #include "SoundsScreen.h"
 #include "TempoSheet.h"
+#include "ExportSheet.h"
 #include "TrackInSheet.h"
 #include "SoundBankSheet.h"
 #include "VocoderScreen.h"
@@ -431,7 +432,12 @@ private:
     pocket::AddLayerSheet addSheet;   // + ADD A LAYER
     pocket::TakeSheet takeSheet;      // after a take: vibe, keep, try again, make it a pad
     pocket::VibeSheet vibeSheet;      // EFFECTS on a layer: vibes + one-finger pad
-    bool addOpen = false, takeOpen = false, vibeOpen = false;
+    ExportSheet exportSheet;          // EXPORT (SONG chip, the looper's hold menu): what, split, format, tail
+    bool addOpen = false, takeOpen = false, vibeOpen = false, exportOpen = false;
+    juce::Rectangle<int> exportBounds() const;
+    void openExport (SongScreen::Bounce::What what);
+    void closeExport();
+    juce::String describeBounce (const SongScreen::Bounce&);   // PocketAppSong.cpp: "Song, 32 bars: 4 stems + mix, WAV + MP3"
     std::array<int, 8> layerVibe {};  // the vibe last picked on each layer (shown again when its sheet opens)
     std::array<juce::Point<float>, 8> layerXY { { { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, 0.5f } } };
     juce::Rectangle<int> vibeBounds() const;

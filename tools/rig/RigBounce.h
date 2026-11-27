@@ -12,7 +12,7 @@ class RigEngine;
 //   Split    the mix only; each loop on its own (and the mix); or everything: each loop, each tool
 //            (MPC, drum machine, bass, synth, sampler, drone, vocoder, input) and the mix, played
 //            once in real time (the tools play live, so they can't be printed faster)
-//   Format   WAV (24-bit, the Rig's rate) and/or MP3 (320 kbps)
+//   Format   WAV and/or AIFF (24-bit, the Rig's rate) and/or MP3 (320 kbps)
 //   As heard with the loops' effects and levels, or dry
 //   Tail     a couple of seconds more for echoes and reverb to ring out
 // Also "Song markers.mid" (the tempo, and a marker per section) for Logic.
@@ -29,7 +29,7 @@ struct Options
     What what = What::song;
     int section = -1;           // What::section: the timeline marker
     Split split = Split::eachLoop;
-    bool wav = true, mp3 = true;
+    bool wav = true, mp3 = true, aiff = false;
     bool dry = false;
     double tailSeconds = 2.0;
     juce::String name;          // the show's name, for the folder ("Song" when empty)
@@ -65,12 +65,12 @@ juce::String describe (RigEngine&, const Options&);
 // The loops' part: each loop's stem and the mix of them, written now. With Split::everything the
 // real-time pass adds the tools (and its own mix) afterwards, so this writes no mix then.
 Result bounceLoops (RigEngine&, const Options&, const juce::File& folder);
-// Writes `audio` as `<base>.wav` and/or `<base>.mp3` per `options`; adds the names to `files`. False on an error.
+// Writes `audio` as `<base>.wav`, `<base>.aif` and/or `<base>.mp3` per `options`; adds the names to `files`. False on an error.
 bool writeAudio (const juce::File& base, const juce::AudioBuffer<float>& audio, double rate, const Options&, juce::StringArray& files);
 // The tempo and the sections over bars [from, to), as a MIDI file Logic reads markers from.
 bool writeMarkers (RigEngine&, const juce::File& file, juce::Range<double> bars, double bpm);
-// After the real-time pass: MP3 copies of the WAVs the recorder saved (and removes the WAVs when only
-// MP3 was asked for). Runs on the calling thread.
+// After the real-time pass: AIFF/MP3 copies of the WAVs the recorder saved (and removes the WAVs when WAV
+// wasn't asked for). Runs on the calling thread.
 void convertRecorded (const juce::Array<juce::File>& wavs, const Options&, juce::StringArray& files);
 // Over a friend's track: whether there is one, and the note for him ("94 BPM, 4/4, F minor...") that
 // goes in the folder. Its file name, or empty.

@@ -32,6 +32,25 @@ bool writeWav24 (const juce::File& file, const juce::AudioBuffer<float>& audio, 
     return false;
 }
 
+bool writeAiff24 (const juce::File& file, const juce::AudioBuffer<float>& audio, double rate)
+{
+    file.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
+    if (stream == nullptr)
+        return false;
+    juce::AiffAudioFormat aiff;
+    auto options = juce::AudioFormatWriterOptions().withSampleRate (rate).withNumChannels (2).withBitsPerSample (24);
+    if (auto writer = aiff.createWriterFor (stream, options))
+        return writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+    return false;
+}
+
+// WAV when asked, or when nothing else usable was (at least one format always comes out).
+bool wantsWav (const RigBounce::Options& o)
+{
+    return o.wav || ! (o.aiff || (o.mp3 && mp3::available()));
+}
+
 double bpmOf (RigEngine& engine)
 {
     return juce::jmax (20.0, engine.getTransport().getBpm());
@@ -174,7 +193,14 @@ juce::String RigBounce::describe (RigEngine& engine, const Options& o)
         }
     if (track)
         s << (o.withTrack ? ", with his track" : ", without his track");
-    s << ", " << (o.wav && o.mp3 ? "WAV + MP3" : o.mp3 ? "MP3" : "WAV");
+    juce::StringArray formats;
+    if (wantsWav (o))
+        formats.add ("WAV");
+    if (o.aiff)
+        formats.add ("AIFF");
+    if (o.mp3 && mp3::available())
+        formats.add ("MP3");
+    s << ", " << formats.joinIntoString (" + ");
     if (o.dry)
         s << ", dry";
     return s;
@@ -203,10 +229,16 @@ bool RigBounce::writeAudio (const juce::File& base, const juce::AudioBuffer<floa
     bool ok = true;
     const auto parent = base.getParentDirectory();
     const auto name = base.getFileName();
-    if (o.wav || ! mp3::available())
+    if (wantsWav (o))
     {
         const auto f = parent.getChildFile (name + ".wav");
         ok = writeWav24 (f, audio, rate) && ok;
+        files.add (f.getFileName());
+    }
+    if (o.aiff)
+    {
+        const auto f = parent.getChildFile (name + ".aif");
+        ok = writeAiff24 (f, audio, rate) && ok;
         files.add (f.getFileName());
     }
     if (o.mp3 && mp3::available())
@@ -357,29 +389,40 @@ void RigBounce::convertRecorded (const juce::Array<juce::File>& wavs, const Opti
                 writeWav24 (f, padded, rate);
             }
         }
-        if (o.wav)
+        const bool keepWav = wantsWav (o), wantAiff = o.aiff, wantMp3 = o.mp3 && mp3::available();
+        if (keepWav)
             files.add (f.getFileName());
-        if (! o.mp3 || ! mp3::available())
-            continue;
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (f.createInputStream().release(), true));
-        if (reader == nullptr)
-            continue;
-        juce::AudioBuffer<float> audio ((int) juce::jmax (1u, reader->numChannels), (int) reader->lengthInSamples);
-        reader->read (&audio, 0, (int) reader->lengthInSamples, 0, true, true);
-        const double rate = reader->sampleRate;
-        reader.reset();
-        if (audio.getNumChannels() == 1)
+        if (wantAiff || wantMp3)
         {
-            juce::AudioBuffer<float> stereo (2, audio.getNumSamples());
-            stereo.copyFrom (0, 0, audio, 0, 0, audio.getNumSamples());
-            stereo.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
-            audio = std::move (stereo);
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (f.createInputStream().release(), true));
+            if (reader == nullptr)
+                continue;
+            juce::AudioBuffer<float> audio ((int) juce::jmax (1u, reader->numChannels), (int) reader->lengthInSamples);
+            reader->read (&audio, 0, (int) reader->lengthInSamples, 0, true, true);
+            const double rate = reader->sampleRate;
+            reader.reset();
+            if (audio.getNumChannels() == 1)
+            {
+                juce::AudioBuffer<float> stereo (2, audio.getNumSamples());
+                stereo.copyFrom (0, 0, audio, 0, 0, audio.getNumSamples());
+                stereo.copyFrom (1, 0, audio, 0, 0, audio.getNumSamples());
+                audio = std::move (stereo);
+            }
+            if (wantAiff)
+            {
+                const auto aifFile = f.withFileExtension ("aif");
+                if (writeAiff24 (aifFile, audio, rate))
+                    files.add (aifFile.getFileName());
+            }
+            if (wantMp3)
+            {
+                const auto mp3File = f.withFileExtension ("mp3");
+                if (mp3::write (mp3File, audio, rate, 320))
+                    files.add (mp3File.getFileName());
+            }
         }
-        const auto mp3File = f.withFileExtension ("mp3");
-        if (mp3::write (mp3File, audio, rate, 320))
-            files.add (mp3File.getFileName());
-        if (! o.wav)
+        if (! keepWav)
             f.deleteFile();
     }
 }

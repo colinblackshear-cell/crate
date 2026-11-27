@@ -685,7 +685,7 @@ void SongScreen::paint (juce::Graphics& g)
                 break;
             }
             case endId: drawChip (g, h.r, "REC FROM END", false, down, 13.0f); break;
-            case bounceId: drawChip (g, h.r, U8("BOUNCE \xe2\x96\xbe"), false, down, 13.0f); break;
+            case bounceId: drawChip (g, h.r, U8("EXPORT \xe2\x96\xbe"), false, down, 13.0f); break;
             case trackId: paintTrackChip (g, h.r, down); break;
             case trackMuteId: drawChip (g, h.r, "M", loops.track().mute.load(), down, 15.0f, col::red); break;
             case practiceId: drawChip (g, h.r, song.isPracticing() ? U8("\xe2\x86\xbb ON \xe2\x96\xbe") : U8("PRACTICE \xe2\x96\xbe"), song.isPracticing(), down, 13.0f, col::green); break;
@@ -894,57 +894,15 @@ void SongScreen::paintLanes (juce::Graphics& g)
 void SongScreen::showBounceMenu()
 {
     if (song.isLive())
-        return say ("BOUNCE after STOP + KEEP.");
-    auto& b = bounceSettings;
+        return say ("EXPORT after STOP + KEEP.");
+    if (onExportSheet)
+        onExportSheet();
+}
+
+juce::String SongScreen::pickedPartName() const
+{
     const auto secs = song.sections();
-    const bool sectionPicked = juce::isPositiveAndBelow (section, (int) secs.size()) && ! song.markers.empty();
-    juce::PopupMenu m;
-    m.addSectionHeader ("BOUNCE");
-    m.addItem (1, "The song: each layer + the mix");
-    m.addItem (2, "The song: the mix");
-    if (sectionPicked)
-    {
-        m.addItem (3, secs[(size_t) section].name + ": each layer + the mix");
-        m.addItem (4, secs[(size_t) section].name + ": the mix");
-    }
-    else
-        m.addItem (-1, "A section: tap one on the ruler first", false);
-    m.addItem (5, "Layers playing now: each + the mix");
-    m.addItem (6, "Layers playing now: the mix");
-    m.addSeparator();
-    m.addItem (10, "WAV (for Logic)", true, b.wav);
-    m.addItem (11, "MP3 (to share)", true, b.mp3);
-    m.addItem (12, "Echo tail (2 s)", true, b.tailSeconds > 0.0);
-    m.addSeparator();
-    m.addItem (20, "TO MAC: the last bounce");
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (hitRect (bounceId).toNearestInt())),
-                     [safe = juce::Component::SafePointer<SongScreen> (this)] (int r)
-                     {
-                         if (safe == nullptr || r <= 0)
-                             return;
-                         auto& o = safe->bounceSettings;
-                         if (r >= 10 && r <= 12)
-                         {
-                             if (r == 10 && (! o.wav || o.mp3))
-                                 o.wav = ! o.wav;
-                             else if (r == 11 && (! o.mp3 || o.wav))
-                                 o.mp3 = ! o.mp3;
-                             else if (r == 12)
-                                 o.tailSeconds = o.tailSeconds > 0.0 ? 0.0 : 2.0;
-                             return safe->showBounceMenu();   // open again, to pick what
-                         }
-                         if (r == 20)
-                         {
-                             if (safe->onBounceToMac)
-                                 safe->onBounceToMac();
-                             return;
-                         }
-                         o.what = r <= 2 ? Bounce::song : r <= 4 ? Bounce::part : Bounce::loops;
-                         o.eachLayer = r % 2 == 1;
-                         o.section = safe->section;
-                         if (safe->onBounce)
-                             safe->onBounce (o);
-                     });
+    return juce::isPositiveAndBelow (section, (int) secs.size()) && ! song.markers.empty() ? secs[(size_t) section].name : juce::String();
 }
 
 //==============================================================================
@@ -1075,6 +1033,7 @@ SongScreen::Bounce SongScreen::sendBackPreset (int which) const
     b.withTrack = which == 2;
     b.eachLayer = which == 0;
     b.wav = which != 2;
+    b.aiff = false;
     b.mp3 = which == 2;
     b.tailSeconds = bounceSettings.tailSeconds;
     return b;

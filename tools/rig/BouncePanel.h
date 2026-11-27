@@ -21,7 +21,7 @@ public:
     void pickWhat (RigBounce::What);
     void pickSection (int);
     void pickSplit (RigBounce::Split);
-    void setFormats (bool wav, bool mp3);
+    void setFormats (bool wav, bool aiff, bool mp3);
     void pressBounce();
     // Over a friend's track (its row shows only then): the three ways to send it back.
     enum class SendBack { myPartsEach, myPartsMixed, everythingToListen };
@@ -41,7 +41,7 @@ private:
     juce::TextButton songButton { "Song" }, loopsButton { "Loops playing now" };
     juce::ComboBox sectionBox;
     juce::TextButton mixButton { "Mix" }, eachButton { "Each loop + mix" }, allButton { "Everything" };
-    juce::TextButton wavButton { "WAV" }, mp3Button { "MP3" }, dryButton { "Dry" };
+    juce::TextButton wavButton { "WAV" }, aiffButton { "AIFF" }, mp3Button { "MP3" }, dryButton { "Dry" };
     juce::ComboBox tailBox;
     juce::TextButton bounceButton { "Bounce" };
     juce::TextButton eachPartButton { "My parts, each" }, mixedPartsButton { "My parts mixed" }, listenButton { "All, to listen" };
