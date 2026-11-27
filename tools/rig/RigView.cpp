@@ -24,6 +24,7 @@
 #include "RigIdeas.h"
 #include "RigTitle.h"
 #include "core/Spark.h"
+#include "core/IdeaTempo.h"
 #include "core/ui/LanePeaks.h"
 #include "EffectsView.h"
 #include "DroneView.h"
@@ -1404,6 +1405,8 @@ int RigView::pressRecTake()
         }
         else if (st == RigLooper::State::recording)
         {
+            if (layer == catchLayer)
+                catchStopSeconds = looper.recordedSeconds (layer);
             looper.pressRecord (layer);   // closes at the end of the bar
             if (juce::isPositiveAndBelow (takeTrack, (int) lastTake.size()))
                 lastTake[(size_t) takeTrack] = layer;
@@ -3235,6 +3238,7 @@ void RigView::timerCallback()
         if (const auto why = engine.getLooper().takeNoUndo (i); why != RigLooper::NoUndo::none)
             say ("Loop " + juce::String (i + 1) + ": " + RigLooper::noUndoMessage (why));
     updateCaptureButtons();
+    checkCaughtIdea();
     if (phoneLink != nullptr)
         phoneLink->setShow (currentShow.getFileNameWithoutExtension());
 
@@ -4036,13 +4040,61 @@ void RigView::catchIdea()
         looper.getLayer (layer).countIn = 0;
         looper.pressRecord (layer);
         takeLayer = lastTakeLayer = layer;
+        catchLayer = layer;
+        catchStopSeconds = -1;
+        catchStarted = false;
         takeTrack = GrooveView::lineIn;
         takeStarted = false;
         takeKeptSaid = false;
         updateCaptureButtons();
-        say ("Catching your idea on loop " + juce::String (layer + 1) + ": sing, hum or play. Press Rec when you're done and it loops."
+        say ("Catching your idea on loop " + juce::String (layer + 1) + ": sing, hum or play. Press Rec when you're done: the song takes your tempo and it loops."
              + (engine.micOn.load() ? juce::String() : juce::String (" (Your mic records without being heard; Mic, top right, lets you hear it.)")));
     });
+}
+
+bool RigView::checkCaughtIdea()
+{
+    if (catchLayer < 0)
+        return false;
+    auto& looper = engine.getLooper();
+    const auto st = looper.getState (catchLayer);
+    if (st == RigLooper::State::armed || st == RigLooper::State::recording)
+    {
+        catchStarted = true;
+        return false;
+    }
+    if (st == RigLooper::State::empty && ! catchStarted)
+        return false;   // the press isn't through to the audio yet
+    const int layer = std::exchange (catchLayer, -1);
+    const double stopSeconds = std::exchange (catchStopSeconds, -1.0);
+    if (st != RigLooper::State::playing)
+        return false;   // called off, or cleared
+    auto& transport = engine.getTransport();
+    // In Logic the tempo is Logic's; and once there's more than this loop, the song's tempo stays.
+    if (transport.isHosted())
+        return false;
+    for (int l = 0; l < RigLooper::kLayers; ++l)
+        if (l != layer && looper.getState (l) != RigLooper::State::empty)
+            return false;
+    const auto take = looper.copyLayerAudio (layer);
+    const double rate = looper.getSampleRate();
+    const int stopAt = stopSeconds >= 0 ? (int) std::lround (stopSeconds * rate) : -1;
+    const auto fit = crate::IdeaTempo::fit (take, rate, stopAt, transport.getBeatsPerBar());
+    if (! fit.isValid())
+        return false;
+    const double was = transport.getBpm();
+    transport.setBpm (fit.bpm);
+    looper.setLayerAudio (layer, crate::IdeaTempo::cut (take, fit), fit.beats);
+    // From its top: bar 1 of the song is bar 1 of the idea.
+    if (transport.isPlaying())
+        transport.setPosition (0.0);
+    refresh();
+    const int bars = juce::roundToInt (fit.beats / juce::jmax (1, transport.getBeatsPerBar()));
+    say (juce::String (fit.heard ? "Your idea is at about " : "Your idea's length gives ") + juce::String (fit.bpm, 1) + " BPM, so that's the song's tempo now (it was "
+         + juce::String (was, 1) + "). Loop " + juce::String (layer + 1) + " is " + juce::String (bars) + (bars == 1 ? " bar" : " bars")
+         + ", from the beat you started on, as you sang it: nothing was stretched. Add a beat and it fits."
+         + (fit.heard ? juce::String() : juce::String (" (No clear beat to hear, so the tempo came from where you stopped.)")));
+    return true;
 }
 
 void RigView::startSpark (const crate::spark::Spark& spark)
@@ -4558,6 +4610,7 @@ void RigView::newSong (bool saveFirst, bool askWhatNext)
     if (song != nullptr)
         song->forgetUndo();
     takeLayer = -1;
+    catchLayer = -1;
     lastTake.fill (-1);
     say ((saved.isNotEmpty() ? "Saved " + saved + ". " : juce::String()) + "New song: everything's clear. Pick what to start with "
          "(New pattern), set the tempo, and press Play.");
