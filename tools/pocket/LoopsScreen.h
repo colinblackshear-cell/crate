@@ -79,6 +79,7 @@ public:
     std::function<void (int layer)> onTakeLanded;
     // EFFECTS on the panel or the hold menu: the app's simple vibe sheet (its KNOBS opens the editor's effects page).
     std::function<void (int layer)> onEffects;
+    std::function<void (int layer)> onToSong;   // TO SONG: put the layer in a song part (A, B, C...)
     // The layer a vocoder take is waiting or recording on (-1 = none). stopVocoder() ends it at the bar.
     int vocoderLayer() const;
     void stopVocoder();

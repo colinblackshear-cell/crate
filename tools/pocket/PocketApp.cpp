@@ -278,12 +278,15 @@ PocketApp::PocketApp (Options o)
     // The companion row: the layers, the two tools most ideas start with, + ADD A LAYER in the middle (every other tool is
     // in its sheet, in plain words), and the synth.
     // (Colin 2026-11-26: the looper, the sampler and the effects are the heart of it; drums and synth are in + ADD A LAYER)
-    toolRow.tools = { Tool::loops, Tool::sampler, Tool::add, Tool::pads, Tool::effects };
+    // (Colin 2026-11-26 evening: "I want to see the other instruments at the bottom... move freely between instruments")
+    toolRow.tools = { Tool::loops, Tool::sampler, Tool::drums, Tool::bass, Tool::add, Tool::synth, Tool::pads, Tool::more };
     // EFFECTS from a tool opens on that tool's board
     toolRow.onSelect = [this] (Tool t)
     {
         if (t == Tool::add)
             openAddLayer();
+        else if (t == Tool::more)
+            openMoreTools();
         else if (t == Tool::effects)
             openEffects (page == Page::tool ? boardForTool (tool) : -1);
         else
@@ -1026,10 +1029,116 @@ void PocketApp::refreshToolRow()
 {
     toolRow.selected = -1;
     if (page == Page::tool || page == Page::vocoderSettings)
+    {
+        const Tool on = page == Page::vocoderSettings ? Tool::vocoder : tool;
         for (int i = 0; i < (int) toolRow.tools.size(); ++i)
-            if (toolRow.tools[(size_t) i] == (page == Page::vocoderSettings ? Tool::vocoder : tool))
+            if (toolRow.tools[(size_t) i] == on)
                 toolRow.selected = i;
+        if (toolRow.selected < 0)   // a tool from MORE: MORE is lit
+            for (int i = 0; i < (int) toolRow.tools.size(); ++i)
+                if (toolRow.tools[(size_t) i] == Tool::more)
+                    toolRow.selected = i;
+    }
     toolRow.repaint();
+}
+
+void PocketApp::layerToSong (int layer)
+{
+    if (! loopsScreen.hasLayer (layer))
+        return;
+    HoldSpec s;
+    s.title = "LAYER " + juce::String (layer + 1) + U8(" \xc2\xb7 TO SONG PART");
+    s.spotlight = false;
+    const auto secs = song->markers.empty() ? std::vector<pocket::PocketSong::Section>() : song->sections();
+    for (int i = 0; i < (int) secs.size(); ++i)
+    {
+        const auto& sec = secs[(size_t) i];
+        juce::StringArray in;
+        bool here = false;
+        for (int l = 0; l < pocket::PocketSong::kLayers; ++l)
+            for (const auto& b : song->blocks)
+                if (b.layer == l && b.start < sec.end - 1.0e-6 && b.end() > sec.start + 1.0e-6)
+                {
+                    in.addIfNotAlreadyThere (juce::String (l + 1));
+                    here = here || l == layer;
+                }
+        const juce::String detail = (in.isEmpty() ? juce::String ("empty") : "layers " + in.joinIntoString (", ")) + U8(" \xc2\xb7 ")
+                                  + juce::String (juce::roundToInt (sec.end - sec.start)) + " bars";
+        s.items.push_back ({ (here ? U8("\xe2\x9c\x93 ") : juce::String()) + "PART " + sec.name.toUpperCase() + (here ? "  (take it out)" : ""), detail, false, true,
+                             [this, layer, i] { toggleLayerInPart (layer, i); } });
+    }
+    s.items.push_back ({ "+ NEW PART " + partName ((int) song->markers.size()), "after the others", false, true, [this, layer] { toggleLayerInPart (layer, -1); } });
+    s.items.push_back ({ "PLAY THE SONG", "the parts in order", false, ! song->markers.empty(), [this] { showTool (Tool::song); } });
+    holdMenu (s, *this, getLocalBounds().getCentre().toFloat(), {});
+}
+
+void PocketApp::toggleLayerInPart (int layer, int part)
+{
+    auto take = loopsScreen.engine().takeOf (layer);
+    if (take == nullptr)
+        return;
+    const double loopBars = juce::jmax (1.0, std::ceil (take->lengthBeats.load() / 4.0 - 1.0e-6));
+    double from = 0, to = 0;
+    juce::String name;
+    if (part < 0 || song->markers.empty())
+    {
+        // a new part at the song's end, as long as this layer's loop
+        from = std::ceil (song->lengthBars() - 1.0e-6);
+        if (! song->markers.empty())
+            from = juce::jmax (from, song->sections().back().end);
+        to = from + loopBars;
+        name = partName ((int) song->markers.size());
+        song->markers.push_back ({ from, name });
+    }
+    else
+    {
+        const auto secs = song->sections();
+        if (! juce::isPositiveAndBelow (part, (int) secs.size()))
+            return;
+        from = secs[(size_t) part].start;
+        to = secs[(size_t) part].end;
+        name = secs[(size_t) part].name;
+        bool here = false;
+        for (const auto& b : song->blocks)
+            here = here || (b.layer == layer && b.start < to - 1.0e-6 && b.end() > from + 1.0e-6);
+        if (here)
+        {
+            // take it out of the part
+            auto& bl = song->blocks;
+            bl.erase (std::remove_if (bl.begin(), bl.end(), [&] (const pocket::SongBlock& b) { return b.layer == layer && b.start >= from - 1.0e-6 && b.end() <= to + 1.0e-6; }), bl.end());
+            song->changed();
+            saveSong();
+            return toast ("Layer " + juce::String (layer + 1) + " is out of part " + name + ".");
+        }
+    }
+    pocket::SongBlock b;
+    b.layer = layer;
+    b.start = from;
+    b.length = to - from;
+    song->blocks.push_back (b);
+    song->changed();
+    saveSong();
+    toastAction ("Layer " + juce::String (layer + 1) + " is in part " + name + " (bars " + juce::String (juce::roundToInt (from) + 1) + "-" + juce::String (juce::roundToInt (to))
+                 + U8("). Pick another layer for this part or the next, then play the song."), "PLAY SONG", [this] { showTool (Tool::song); });
+}
+
+// MORE: the tools that don't fit the row, in a menu over it. Each opens its screen.
+void PocketApp::openMoreTools()
+{
+    HoldSpec s;
+    s.title = "MORE TOOLS";
+    s.spotlight = false;
+    s.items.push_back ({ "EFFECTS", "pedals on any tool or layer", false, true, [this] { openEffects (page == Page::tool ? boardForTool (tool) : -1); } });
+    s.items.push_back ({ "MY VOICE", "sing onto a layer", false, true, [this] { showTool (Tool::loops, false); loopsScreen.setSource ((int) LoopSource::mic); openAddLayer(); addSheet.showVoicePage (true); } });
+    s.items.push_back ({ "CHORDS", "chord pads in the song's key", false, true, [this] { showTool (Tool::chords); } });
+    s.items.push_back ({ "VOCODER", "your voice as a robot choir", false, true, [this] { showTool (Tool::vocoder); } });
+    s.items.push_back ({ "DRONE", "a deep tone under it all", false, true, [this] { showTool (Tool::drone); } });
+    s.items.push_back ({ "SONG", "put the parts in order", false, true, [this] { showTool (Tool::song); } });
+    int at = 0;
+    for (int i = 0; i < (int) toolRow.tools.size(); ++i)
+        if (toolRow.tools[(size_t) i] == Tool::more)
+            at = i;
+    holdMenu (s, toolRow, toolRow.cellRect (at).getCentre(), toolRow.cellRect (at));
 }
 
 // page: -1 = not on one of them. 1 Sounds, 2 Remote, 3 Mac link, 4 Settings
@@ -3352,6 +3461,8 @@ void PocketApp::swipeTool (int direction)
     int to = at + direction;
     if (juce::isPositiveAndBelow (to, (int) toolRow.tools.size()) && toolRow.tools[(size_t) to] == Tool::add)
         to += direction;   // (+ ADD A LAYER is a sheet: a swipe goes past it)
+    if (juce::isPositiveAndBelow (to, (int) toolRow.tools.size()) && toolRow.tools[(size_t) to] == Tool::more)
+        return;            // (and MORE is a menu: a swipe stops before it)
     if (at < 0 || to < 0 || to >= (int) toolRow.tools.size() || ! toolRow.onSelect)
         return;
     toolRow.onSelect (toolRow.tools[(size_t) to]);
@@ -4719,6 +4830,39 @@ juce::String PocketApp::runRecChecks (juce::String& report)
             report << "a beat already made: REC sent it straight to layer " << (want + 1) << "\n";
         loopsScreen.undo();
         pump (2048);
+        // TO SONG (Colin 2026-11-26): layer 1 to a new part A, layer 2 to a new part B, then layer 3 into B too
+        {
+            juce::Array<int> have;
+            for (int l = 0; l < kLoopLayers; ++l)
+                if (loopsScreen.hasLayer (l))
+                    have.add (l);
+            if (have.size() < 3)
+                problems.add ("TO SONG: the check needs 3 layers, found " + juce::String (have.size()));
+            else
+            {
+                const auto keepBlocks = song->blocks;
+                const auto keepMarkers = song->markers;
+                song->blocks.clear();
+                song->markers.clear();
+                toggleLayerInPart (have[0], -1);
+                toggleLayerInPart (have[1], -1);
+                toggleLayerInPart (have[2], 1);
+                const auto secs = song->sections();
+                int inB = 0;
+                for (const auto& b : song->blocks)
+                    inB += secs.size() == 2 && b.start >= secs[1].start - 1.0e-6 && b.end() <= secs[1].end + 1.0e-6 ? 1 : 0;
+                const bool ok = secs.size() == 2 && secs[0].name == "A" && secs[1].name == "B" && song->blocks.size() == 3 && inB == 2 && secs[1].start >= secs[0].start + 1.0;
+                toggleLayerInPart (have[2], 1);   // tapped again: out of B
+                const bool out = song->blocks.size() == 2;
+                report << "TO SONG: parts " << (int) secs.size() << ", blocks " << (int) song->blocks.size() + 1 << ", in B " << inB << ", out again " << (out ? "yes" : "no") << "\n";
+                if (! ok || ! out)
+                    problems.add ("TO SONG: parts " + juce::String ((int) secs.size()) + ", in part B " + juce::String (inB) + " (2 expected), taken out " + juce::String (out ? "yes" : "no"));
+                song->blocks = keepBlocks;
+                song->markers = keepMarkers;
+                song->changed();
+                hideToast();
+            }
+        }
         // TO LOOPER (Colin 2026-11-26 "I want the push to loop"): shown with a beat made, sends it, then hides
         {
             sentFingerprint = {};
@@ -5793,6 +5937,7 @@ void PocketApp::setupCompanion()
         openVibeSheet (l, vibe);
     };
     loopsScreen.onTakeLanded = [this] (int layer) { voiceTakeLanded (layer); openTakeSheet (layer); };
+    loopsScreen.onToSong = [this] (int layer) { layerToSong (layer); };
     addSheet.onVoice = [this] (bool free) { closeAddLayer(); startVoiceTake (free); };
     addSheet.wearingPhones = [this] { return route != pocket::Route::none; };
     loopsScreen.onEffects = [this] (int layer) { openVibeSheet (layer); };

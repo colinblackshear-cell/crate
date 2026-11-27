@@ -185,15 +185,29 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         toolRow.slideTo (cellX (Tool::sampler));
         toolRow.slideTo (cellX (Tool::pads));
         expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::pads, "Tool row: the finger on PADS didn't light PADS");
-        toolRow.slideTo (cellX (Tool::effects));
-        expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::effects, "Tool row: the finger on EFFECTS didn't light EFFECTS");
+        toolRow.slideTo (cellX (Tool::synth));
+        expect (toolRow.slidingTo() >= 0 && toolRow.tools[(size_t) toolRow.slidingTo()] == Tool::synth, "Tool row: the finger on SYNTH didn't light SYNTH");
         expect (tool == Tool::loops, "Tool row: the tool changed before the finger lifted");
-        toolRow.slideEnd (cellX (Tool::effects), 10.0f);
-        expect (page == Page::tool && tool == Tool::effects, "Tool row: lifting on EFFECTS didn't pick it");
-        toolRow.slideStart (cellX (Tool::effects));
+        toolRow.slideEnd (cellX (Tool::synth), 10.0f);
+        expect (page == Page::tool && tool == Tool::synth, "Tool row: lifting on SYNTH didn't pick it");
+        toolRow.slideStart (cellX (Tool::synth));
         toolRow.slideTo (cellX (Tool::pads));
         toolRow.slideEnd (cellX (Tool::pads), -200.0f);   // a finger that went up the screen calls it off
-        expect (tool == Tool::effects, "Tool row: a slide taken up and away still picked a tool");
+        expect (tool == Tool::synth, "Tool row: a slide taken up and away still picked a tool");
+        // every instrument is one tap away in the row
+        for (auto t : { Tool::drums, Tool::bass, Tool::synth, Tool::sampler, Tool::pads, Tool::loops })
+        {
+            toolRow.slideStart (cellX (t));
+            toolRow.slideEnd (cellX (t), 10.0f);
+            expect (page == Page::tool && tool == t, juce::String ("Tool row: a tap on ") + toolName (t) + " didn't open it");
+        }
+        // MORE: a menu with the rest; CHORDS from it lights MORE
+        toolRow.slideStart (cellX (Tool::more));
+        toolRow.slideEnd (cellX (Tool::more), 10.0f);
+        expect (holdCard.isOpen(), "Tool row: MORE didn't open its menu");
+        closeAllSheets();
+        showTool (Tool::chords);
+        expect (toolRow.selected >= 0 && toolRow.tools[(size_t) toolRow.selected] == Tool::more, "Tool row: CHORDS didn't light MORE");
         toolRow.slideStart (cellX (Tool::sampler));
         toolRow.slideEnd (cellX (Tool::sampler), 10.0f);
         expect (tool == Tool::sampler, "Tool row: a plain tap on SAMPLER no longer picks it");
@@ -307,8 +321,8 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         auto run = [&] (int item, const juce::String& what)
         {
             loopsScreen.holdLayer (0);
-            if (! holdCard.isOpen() || holdCard.itemCount() != 8)
-                return problems.add ("Hold menu on a layer: " + what + ": the menu didn't open with its 8 rows");
+            if (! holdCard.isOpen() || holdCard.itemCount() != 9)
+                return problems.add ("Hold menu on a layer: " + what + ": the menu didn't open with its 9 rows");
             holdCard.choose (item);
             if (holdCard.isOpen())
                 problems.add ("Hold menu on a layer: " + what + ": the menu stayed open after a pick");
@@ -318,9 +332,9 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect (loopsScreen.selectedLayer() == 0, "Hold menu on a layer: the layer isn't picked, so its panel doesn't show it");
         const auto spec = holdCard.current();
         holdCard.close();
-        expect (spec.items.size() == 8 && spec.items[0].text.startsWith ("IN / OUT") && spec.items[1].text == "FIT" && spec.items[2].text == "EFFECTS"
-                    && spec.items[3].text == "WARP" && spec.items[4].text == "DUB OVER IT" && spec.items[5].text.startsWith ("OPEN") && spec.items[6].text == "SEND TO MAC"
-                    && spec.items[7].text == "CLEAR" && spec.items[7].danger, "Hold menu on a layer: the rows are not the agreed ones");
+        expect (spec.items.size() == 9 && spec.items[0].text.startsWith ("IN / OUT") && spec.items[1].text == "FIT" && spec.items[2].text == "EFFECTS"
+                    && spec.items[3].text == "WARP" && spec.items[4].text == "DUB OVER IT" && spec.items[5].text.startsWith ("OPEN") && spec.items[6].text == "TO SONG PART"
+                    && spec.items[7].text == "SEND TO MAC" && spec.items[8].text == "CLEAR" && spec.items[8].danger, "Hold menu on a layer: the rows are not the agreed ones");
         run (0, "IN / OUT");
         expect (loopsScreen.editorSheet().isVisible() && loopsScreen.editorSheet().page() == LoopEditSheet::shapePage, "Hold menu on a layer: IN / OUT didn't open the editor");
         loopsScreen.closeEditor();
@@ -349,7 +363,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         run (5, "OPEN");
         expect (page == Page::tool && tool == Tool::drums, "Hold menu on a layer: OPEN DRUMS didn't open DRUMS");
         showTool (Tool::loops, false);
-        run (6, "SEND TO MAC");
+        run (7, "SEND TO MAC");
         expect (sendOpen, "Hold menu on a layer: SEND TO MAC didn't open the Send to Mac sheet");
         closeSendSheet();
         run (4, "DUB OVER IT");
@@ -360,7 +374,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         holdCard.choose (4);
         pump (500);
         expect (L.state (0) == LoopState::playing, "Hold menu on a layer: STOP DUB didn't end the dub");
-        run (7, "CLEAR");
+        run (8, "CLEAR");
         pump (4);
         expect (L.state (0) == LoopState::empty, "Hold menu on a layer: CLEAR didn't clear the layer");
         loopsScreen.undo();

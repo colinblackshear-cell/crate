@@ -159,6 +159,7 @@ void LoopsScreen::layoutPanel()
     panel[pToMac].setText ("To Mac");
     panel[pToMac].setLook (Look::amber);
     panel[pClearAll].setText ("Clear all");
+    panel[pClearAll].setLook (Look::cream);
 
     const int l = selected;
     if (l < 0 || l >= kLoopLayers)
@@ -192,6 +193,11 @@ void LoopsScreen::layoutPanel()
     panel[pTool].setFontHeight (has && t == Tool::vocoder ? 13.0f : 15.0f);
     panel[pClear].setText ("Clear");
     panel[pToMac].setText ("To Mac");
+    if (onToSong)   // with a layer picked, CLEAR ALL's place is TO SONG (tap the layer again and CLEAR ALL is back)
+    {
+        panel[pClearAll].setText ("To song");
+        panel[pClearAll].setLook (Look::green);
+    }
 }
 
 void LoopsScreen::resized()
@@ -485,7 +491,11 @@ void LoopsScreen::pressPanel (int which)
     if (which == pToMac)
         return sendToMac (true);
     if (which == pClearAll)
+    {
+        if (onToSong && selected >= 0 && hasLoop (loops.state (selected)) && loops.takeOf (selected) != nullptr)
+            return onToSong (selected);
         return clearAll();
+    }
     const int l = selected;
     if (l < 0)
         return;
@@ -626,6 +636,8 @@ HoldSpec LoopsScreen::layerMenuSpec (int l)
                          [this, l] { selected = lastLayer = l; layoutPanel(); openEditor (l, LoopEditSheet::warpPage); repaint(); } });
     s.items.push_back ({ dubbing ? "STOP DUB" : "DUB OVER IT", {}, false, true, run (pDub) });
     s.items.push_back ({ hasTool ? juce::String ("OPEN ") + toolName (openTool) : juce::String ("DOUBLE"), {}, false, true, run (pTool) });
+    if (onToSong)
+        s.items.push_back ({ "TO SONG PART", "A, B, C...", false, true, [this, l] { if (onToSong) onToSong (l); } });
     s.items.push_back ({ "SEND TO MAC", {}, false, true, run (pToMac) });
     s.items.push_back ({ "CLEAR", "undo brings it back", true, true, run (pClear) });
     return s;

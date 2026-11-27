@@ -36,6 +36,7 @@ const char* toolName (Tool t)
         case Tool::song: return "SONG";
         case Tool::add: return "ADD";
         case Tool::bass: return "BASS";
+        case Tool::more: return "MORE";
     }
     return "";
 }
@@ -55,6 +56,7 @@ juce::Colour toolColour (Tool t)
         case Tool::effects: return juce::Colour (0xffec4e8a);
         case Tool::song: return juce::Colour (0xffc9a54e);   // brass
         case Tool::add: return col::red;
+        case Tool::more: return col::inkDim;
         case Tool::bass: return juce::Colour (0xfff59a2a).interpolatedWith (juce::Colour (0xffec4e8a), 0.35f);   // deep orange
     }
     return col::green;
@@ -78,6 +80,10 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
             g.strokePath (p, juce::PathStrokeType (3.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             break;
         }
+        case Tool::more:   // three dots
+            for (int i = -1; i <= 1; ++i)
+                g.fillEllipse (c.x + (float) i * 8.0f - 2.6f, c.y - 2.6f, 5.2f, 5.2f);
+            break;
         case Tool::add:   // a plus
         {
             g.drawLine (c.x - 9, c.y, c.x + 9, c.y, 3.2f);
@@ -381,12 +387,15 @@ void ToolRow::paint (juce::Graphics& g)
         if (t == Tool::add)
         {
             // + ADD A LAYER: always a big magenta button, never "picked"
-            auto b = juce::Rectangle<float> (cell.getCentreX() - 30.0f, cell.getY() - 2.0f, 60.0f, 46.0f);
+            const bool narrow = cell.getWidth() < 64.0f;   // a full row of instruments: + and ADD
+            const float bw = juce::jmin (60.0f, cell.getWidth() - 2.0f);
+            auto b = juce::Rectangle<float> (cell.getCentreX() - bw * 0.5f, cell.getY() - 2.0f, bw, 46.0f);
             drawRaised (g, b, Look::red, false, 16.0f);
             drawToolIcon (g, t, b.getCentre().translated (0.0f, -1.0f), juce::Colours::white);
             g.setColour (col::ink);
             g.setFont (spaced (condensedBold (labelHeight()), 0.06f));
-            g.drawFittedText ("ADD A LAYER", juce::Rectangle<float> (cell.getX() - 14.0f, well.getBottom() + 2, cell.getWidth() + 28.0f, 16).toNearestInt(),
+            g.drawFittedText (narrow ? "ADD" : "ADD A LAYER", (narrow ? cell.withY (well.getBottom() + 2).withHeight (16)
+                                                                      : juce::Rectangle<float> (cell.getX() - 14.0f, well.getBottom() + 2, cell.getWidth() + 28.0f, 16)).toNearestInt(),
                               juce::Justification::centred, 1, 0.9f);
             continue;
         }

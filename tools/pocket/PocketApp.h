@@ -160,6 +160,12 @@ private:
     bool toolRowShown() const { return page != Page::songs; }
     juce::Rectangle<int> contentBounds() const;
     void refreshToolRow();
+    void openMoreTools();
+    // TO SONG (the looper): a layer goes into song part A, B, C... A part is a section of the SONG tool (a marker), the
+    // layers in it play over its bars. A new part goes on the song's end, as long as the layer's loop.
+    void layerToSong (int layer);
+    void toggleLayerInPart (int layer, int part);   // part: a section index; -1 = a new part
+    static juce::String partName (int index) { return juce::String::charToString ((juce::juce_wchar) ('A' + juce::jlimit (0, 25, index))); }
     void noteStep();   // keeps Your songs' progress picture (pocket::Ideas steps) up to date
     void stopEverything();
 
