@@ -692,6 +692,8 @@ private:
     std::array<std::atomic<bool>, numStems> stemOn {};
 
     juce::MidiMessageCollector incoming;
+    // Drum trigger hits learned onto a loop layer's Rec (MIDI thread adds, audio thread presses).
+    std::array<std::atomic<int>, RigLooper::kLayers> triggerLoopHits {};
     juce::SpinLock nowLock;
     juce::MidiBuffer nowMidi;          // addMidiNow, under nowLock
 

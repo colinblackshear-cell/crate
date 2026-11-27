@@ -614,8 +614,14 @@ void RigEngine::applyControls (const RigRouting::Result& r)
             list[move.parameter]->setValueNotifyingHost (move.value);
     }
 
+    // Learned buttons reach layers 1-8 (the controls there are); drum triggers any of the 16.
+    constexpr int kButtonLayers = RigRouting::loopRecord8 - RigRouting::loopRecord1 + 1;
     for (int i = 0; i < RigLooper::kLayers; ++i)
     {
+        for (int p = triggerLoopHits[(size_t) i].exchange (0); p > 0; --p)
+            looper.pressRecord (i);
+        if (i >= kButtonLayers)
+            continue;
         for (int p = r.presses[(size_t) (RigRouting::loopRecord1 + i)]; p > 0; --p)
             looper.pressRecord (i);
         if (r.presses[(size_t) (RigRouting::loopMute1 + i)] % 2 == 1)
@@ -1755,8 +1761,14 @@ void RigEngine::handleIncomingMidiMessage (juce::MidiInput* source, const juce::
     // plain keyboard's notes are keys even on channel 10; learned knobs turn knobs 1-8.
     auto msg = m;
     const int pads = routing.padChannel.load();
-    if (source != nullptr && ! controllers.translate (source->getName(), msg, pads > 0 ? pads : 10))
+    int loopHit = -1;
+    if (source != nullptr && ! controllers.translate (source->getName(), msg, pads > 0 ? pads : 10, &loopHit))
+    {
+        // A drum trigger learned onto a loop layer: its Rec is pressed in the next block.
+        if (juce::isPositiveAndBelow (loopHit, RigLooper::kLayers))
+            triggerLoopHits[(size_t) loopHit].fetch_add (1);
         return;
+    }
     incoming.addMessageToQueue (msg);
 }
 

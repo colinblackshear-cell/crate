@@ -11,6 +11,7 @@ juce::String kindName (Kind k)
         case Kind::keys:        return "Keyboard (keys only)";
         case Kind::pads:        return "Pad controller";
         case Kind::off:         return "Don't listen";
+        case Kind::triggers:    return "Drum triggers";
         default:                return {};
     }
 }
@@ -24,6 +25,7 @@ juce::String kindHint (Kind k)
         case Kind::keys:        return "Every note is a key: it plays the picked track, even on channel 10.";
         case Kind::pads:        return "Launchpad, MPD, APC, Maschine...: every pad plays an MPC pad, up to 64 (four banks at once).";
         case Kind::off:         return "Kaleidobox ignores it (handy for a second port that sends clock or lights).";
+        case Kind::triggers:    return "Kaleidobox Trigger box or an e-drum kit: hit each drum to learn it onto a pad or a loop layer.";
         default:                return {};
     }
 }
@@ -33,13 +35,62 @@ juce::String layoutName (Layout l)
     return l == Layout::rows ? "Rows of 8 (APC mini, Programmer mode)" : "4x4 blocks (MPC, MPD, Launchpad Drum mode)";
 }
 
+juce::String triggerTargetName (int t)
+{
+    if (juce::isPositiveAndBelow (t, kMaxPads))
+        return "Pad " + juce::String (t + 1) + " (" + juce::String::charToString ((juce::juce_wchar) ('A' + t / 16)) + juce::String (t % 16 + 1) + ")";
+    if (t >= kTriggerFirstLoop && t < kTriggerNumTargets)
+        return "Loop " + juce::String (t - kTriggerFirstLoop + 1) + " Rec";
+    return "Nothing";
+}
+
+juce::String feelName (Feel f)
+{
+    switch (f)
+    {
+        case Feel::soft: return "Light hands (soft hits louder)";
+        case Feel::hard: return "Heavy hands (soft hits softer)";
+        case Feel::even:
+        default:         return "As played";
+    }
+}
+
+int applyFeel (Feel f, int velocity)
+{
+    velocity = juce::jlimit (1, 127, velocity);
+    if (f == Feel::even)
+        return velocity;
+    const double x = velocity / 127.0, y = std::pow (x, f == Feel::soft ? 0.6 : 1.7);
+    return juce::jlimit (1, 127, (int) std::lround (y * 127.0));
+}
+
 Profile Profile::defaultsFor (Kind k)
 {
     Profile p;
     p.kind = k;
-    if (k == Kind::pads)
-        p.knobs.fill (-1);   // pad controllers' knobs differ too much: learn them
+    if (k == Kind::pads || k == Kind::triggers)
+        p.knobs.fill (-1);   // pad controllers' knobs differ too much: learn them (triggers have none)
     return p;
+}
+
+int Profile::triggerFor (int note) const
+{
+    if (! juce::isPositiveAndBelow (note, 128))
+        return kTriggerNothing;
+    const int t = triggers[(size_t) note];
+    if (t != kTriggerByNote)
+        return juce::isPositiveAndBelow (t, kTriggerNumTargets) ? t : kTriggerNothing;
+    const int pad = note - kRigFirstPadNote;
+    return juce::isPositiveAndBelow (pad, kMaxPads) ? pad : kTriggerNothing;
+}
+
+std::vector<int> Profile::learnedTriggers() const
+{
+    std::vector<int> notes;
+    for (int n = 0; n < 128; ++n)
+        if (triggers[(size_t) n] != kTriggerByNote)
+            notes.push_back (n);
+    return notes;
 }
 
 int Profile::padFor (int channel, int note) const
@@ -73,6 +124,15 @@ juce::ValueTree Profile::toTree() const
     for (int cc : knobs)
         k.add (juce::String (cc));
     t.setProperty ("knobs", k.joinIntoString (","), nullptr);
+    if (kind == Kind::triggers)
+    {
+        // "note:target" for each learned trigger.
+        juce::StringArray learned;
+        for (int n : learnedTriggers())
+            learned.add (juce::String (n) + ":" + juce::String ((int) triggers[(size_t) n]));
+        t.setProperty ("triggers", learned.joinIntoString (","), nullptr);
+        t.setProperty ("feel", (int) feel, nullptr);
+    }
     return t;
 }
 
@@ -90,13 +150,21 @@ Profile Profile::fromTree (const juce::ValueTree& t)
         for (int i = 0; i < kNumKnobs; ++i)
             p.knobs[(size_t) i] = i < k.size() ? juce::jlimit (-1, 119, k[i].getIntValue()) : -1;
     }
+    for (const auto& pair : juce::StringArray::fromTokens (t.getProperty ("triggers").toString(), ",", {}))
+    {
+        const int note = pair.upToFirstOccurrenceOf (":", false, false).getIntValue();
+        const int target = pair.fromFirstOccurrenceOf (":", false, false).getIntValue();
+        if (pair.contains (":") && juce::isPositiveAndBelow (note, 128))
+            p.triggers[(size_t) note] = (juce::int8) juce::jlimit (kTriggerNothing, kTriggerNumTargets - 1, target);
+    }
+    p.feel = (Feel) juce::jlimit (0, 2, (int) t.getProperty ("feel", (int) Feel::even));
     return p;
 }
 
 bool Profile::operator== (const Profile& o) const
 {
     return kind == o.kind && padChannel == o.padChannel && firstPadNote == o.firstPadNote && layout == o.layout
-           && octave == o.octave && knobs == o.knobs;
+           && octave == o.octave && knobs == o.knobs && triggers == o.triggers && feel == o.feel;
 }
 
 Profile guessFor (const juce::String& deviceName)
@@ -112,6 +180,13 @@ Profile guessFor (const juce::String& deviceName)
 
     if (n.contains ("launchkey"))
         return Profile::defaultsFor (Kind::launchkey);
+
+    // Drum triggers: the Kaleidobox Trigger box (or a DIY one on an Arduino), and e-drum modules.
+    if (any ({ "kaleidobox trigger", "drum trigger", "trigger box", "arduino leonardo", "arduino micro", "pro micro",
+               "e-drum", "edrum", "td-", "alesis strike", "alesis nitro", "alesis dm", "simmons", "2box",
+               "trigger io", "megadrum", "ddrum", "spd-sx", "spd sx", "octapad" })
+        || (n.contains ("trigger") && ! n.contains ("trigger finger")))
+        return Profile::defaultsFor (Kind::triggers);
 
     if (n.contains ("apc mini") || n.contains ("apc_mini"))
     {
@@ -156,11 +231,14 @@ Profile Translator::getProfile() const
     return profile;
 }
 
-void Translator::learn (Learn what)
+void Translator::learn (Learn what, int firstTarget)
 {
     const juce::SpinLock::ScopedLockType sl (lock);
     caughtKnobs.fill (-1);
     knobsSoFar = 0;
+    caughtTriggers.fill (false);
+    triggersSoFar = 0;
+    triggerTarget = juce::jlimit (kTriggerNothing, kTriggerNumTargets - 1, firstTarget);
     learnWhat = (int) what;
 }
 
@@ -176,9 +254,11 @@ void Translator::stopLearning()
     learnWhat = (int) Learn::none;
 }
 
-bool Translator::translate (juce::MidiMessage& m, int rigPadChannel)
+bool Translator::translate (juce::MidiMessage& m, int rigPadChannel, int* loopHit)
 {
     heard = juce::Time::getMillisecondCounter();
+    if (m.isNoteOn())
+        noteHeard[(size_t) m.getNoteNumber()] = heard.load();
     const juce::SpinLock::ScopedLockType sl (lock);
     const auto& p = profile;
     if (p.kind == Kind::off)
@@ -213,6 +293,41 @@ bool Translator::translate (juce::MidiMessage& m, int rigPadChannel)
             learned = true;
         }
         return false;   // turning knobs to learn them doesn't move anything
+    }
+
+    if (p.kind == Kind::triggers)
+    {
+        if (! m.isNoteOnOrOff())
+            return ! m.isAftertouch();   // a hi-hat pedal's CC and the like come through; pressure doesn't
+        const int note = m.getNoteNumber();
+        if (what == Learn::triggers && m.isNoteOn() && ! caughtTriggers[(size_t) note])
+        {
+            // Hit to learn: this drum gets the next target, and still plays it now.
+            caughtTriggers[(size_t) note] = true;
+            const int target = triggerTarget.load();
+            profile.triggers[(size_t) note] = (juce::int8) target;
+            triggersSoFar = triggersSoFar.load() + 1;
+            const bool loop = target >= kTriggerFirstLoop;
+            const int next = target + 1;
+            if (target >= 0 && next < (loop ? kTriggerNumTargets : kMaxPads))
+                triggerTarget = next;
+            learned = true;
+        }
+        const int target = p.triggerFor (note);
+        if (target < 0)
+            return false;
+        if (target >= kTriggerFirstLoop)
+        {
+            // A loop layer's Rec: pressed on the hit, nothing on the let go.
+            if (m.isNoteOn() && loopHit != nullptr)
+                *loopHit = target - kTriggerFirstLoop;
+            return false;
+        }
+        m.setChannel (rigPadChannel);
+        m.setNoteNumber (kRigFirstPadNote + target);
+        if (m.isNoteOn())
+            m.setVelocity ((float) applyFeel (p.feel, m.getVelocity()) / 127.0f);
+        return true;
     }
 
     if (m.isNoteOnOrOff() || m.isAftertouch())
@@ -369,7 +484,7 @@ bool Setup::saveLearned()
     return ! changed.empty();
 }
 
-bool Setup::translate (const juce::String& name, juce::MidiMessage& m, int rigPadChannel)
+bool Setup::translate (const juce::String& name, juce::MidiMessage& m, int rigPadChannel, int* loopHit)
 {
     Translator* t = nullptr;
     {
@@ -378,7 +493,7 @@ bool Setup::translate (const juce::String& name, juce::MidiMessage& m, int rigPa
             t = s->translator.get();
     }
     // Not set up yet (just plugged in, for a moment): as it comes.
-    return t == nullptr || t->translate (m, rigPadChannel);
+    return t == nullptr || t->translate (m, rigPadChannel, loopHit);
 }
 
 void Setup::save()

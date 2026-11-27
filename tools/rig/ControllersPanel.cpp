@@ -33,22 +33,116 @@ juce::String knobsText (const Profile& p)
         return "Knobs 1-8: CC " + ccs[0] + juce::String::fromUTF8 ("\xe2\x80\x93") + ccs[ccs.size() - 1];
     return "CC " + ccs.joinIntoString (" ");
 }
+
+// Every target a drum trigger can have; ids are the target + 2 (Nothing is 1).
+void fillTargets (juce::ComboBox& c, bool withNothing)
+{
+    c.clear (juce::dontSendNotification);
+    if (withNothing)
+        c.addItem (triggerTargetName (kTriggerNothing), kTriggerNothing + 2);
+    c.addSectionHeading ("Pads (play what the pads play: the MPC or the drum machine)");
+    for (int t = 0; t < kMaxPads; ++t)
+        c.addItem (triggerTargetName (t), t + 2);
+    c.addSectionHeading ("Loop layers (record / stop / overdub, as the layer's Rec)");
+    for (int t = kTriggerFirstLoop; t < kTriggerNumTargets; ++t)
+        c.addItem (triggerTargetName (t), t + 2);
+}
+
+constexpr int kTriggerLine = 30;
+}
+
+//==============================================================================
+ControllersPanel::Row::TriggerLine::TriggerLine (Row& r, int n) : note (n), row (r)
+{
+    fillTargets (target, true);
+    target.setSelectedId (row.translator.getProfile().triggerFor (note) + 2, juce::dontSendNotification);
+    target.setTooltip ("What this drum plays: a pad (whatever the pads play, the MPC or the drum machine), "
+                       "or a loop layer's Rec (record, stop, overdub), or nothing.");
+    target.onChange = [this]
+    {
+        auto np = row.translator.getProfile();
+        np.triggers[(size_t) note] = (juce::int8) (target.getSelectedId() - 2);
+        row.apply (np);
+    };
+    forget.setTooltip ("Forget this drum: it goes back to the pad its note is (note 36 is pad 1).");
+    forget.onClick = [this]
+    {
+        // This line goes away with it, so after this click.
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<Row> (&row), n = note]
+                                         { if (safe != nullptr) safe->forgetTrigger (n); });
+    };
+    vintage::setInWell (forget, true);
+    forget.getProperties().set ("fontSize", 14.0f);
+    addAndMakeVisible (target);
+    addAndMakeVisible (forget);
+}
+
+void ControllersPanel::Row::TriggerLine::tick()
+{
+    const auto heard = row.translator.lastHeard (note);
+    const bool nowLit = heard != 0 && juce::Time::getMillisecondCounter() - heard < 250;
+    if (nowLit != lit)
+    {
+        lit = nowLit;
+        repaint (lampArea);
+    }
+}
+
+void ControllersPanel::Row::TriggerLine::paint (juce::Graphics& g)
+{
+    vintage::drawLamp (g, lampArea.getCentre().toFloat(), lit ? vintage::Lit::next : vintage::Lit::none);
+    g.setColour (vintage::pal().wellInk);
+    g.setFont (vintage::barlow (14.5f));
+    g.drawFittedText ("Drum on note " + noteName (note), textArea, juce::Justification::centredLeft, 1, 0.85f);
+}
+
+void ControllersPanel::Row::TriggerLine::resized()
+{
+    auto r = getLocalBounds();
+    lampArea = r.removeFromLeft (20);
+    r.removeFromLeft (6);
+    textArea = r.removeFromLeft (200);
+    target.setBounds (r.removeFromLeft (220).reduced (0, 2));
+    r.removeFromLeft (10);
+    forget.setBounds (r.removeFromLeft (90).reduced (0, 2));
+}
+
+void ControllersPanel::Row::forgetTrigger (int note)
+{
+    auto np = translator.getProfile();
+    if (juce::isPositiveAndBelow (note, 128))
+        np.triggers[(size_t) note] = (juce::int8) kTriggerByNote;
+    apply (np);
+}
+
+ControllersPanel::Row::TriggerLine* ControllersPanel::Row::getTriggerLine (int note) const
+{
+    for (auto* l : triggerLines)
+        if (l->note == note)
+            return l;
+    return nullptr;
 }
 
 //==============================================================================
 int ControllersPanel::Row::heightFor (const Profile& p)
 {
-    int lines = 0;
-    if (p.kind != Kind::off)
+    int lines = 0, extra = 0;
+    if (p.isTriggers())
+    {
+        lines = 2;   // Hit to learn, Feel
+        extra = (int) p.learnedTriggers().size() * kTriggerLine;
+    }
+    else if (p.kind != Kind::off)
         lines = (p.hasPads() ? 1 : 0) + (p.hasKeys() ? 1 : 0) + 1;
-    return 12 + kLine + 4 + 22 + 8 + lines * (kLine + kGap) + (lines > 0 ? 22 : 0) + 10;
+    return 12 + kLine + 4 + 22 + 8 + lines * (kLine + kGap) + extra + (lines > 0 ? 22 : 0) + 10;
 }
 
 ControllersPanel::Row::Row (ControllersPanel& p, const juce::String& n)
     : name (n), panel (p), translator (p.setup.translatorFor (n))
 {
-    for (int k = 0; k < (int) Kind::numKinds; ++k)
-        kind.addItem (kindName ((Kind) k), k + 1);
+    // (Drum triggers came later; they're listed with the other controllers, before Don't listen.)
+    for (auto k : { Kind::launchkey, Kind::keysAndPads, Kind::keys, Kind::pads, Kind::triggers, Kind::off })
+        kind.addItem (kindName (k), (int) k + 1);
     kind.setTooltip ("What this controller is. It sets how its keys, pads and knobs play Kaleidobox.");
     kind.onChange = [this]
     {
@@ -104,6 +198,29 @@ ControllersPanel::Row::Row (ControllersPanel& p, const juce::String& n)
             translator.learn (Translator::Learn::knobs);
         tick();
     };
+    learnTriggers.setTooltip ("Press, then hit each drum (or pad) in turn: each takes the target in \"Learn as\", "
+                              "the next the one after (pad 1, pad 2, pad 3...). Press Stop when they're all done.");
+    learnTriggers.onClick = [this]
+    {
+        if (translator.learning() == Translator::Learn::triggers)
+            translator.stopLearning();
+        else
+            translator.learn (Translator::Learn::triggers, learnAs.getSelectedId() - 2);
+        tick();
+    };
+    fillTargets (learnAs, false);
+    learnAs.setSelectedId (2, juce::dontSendNotification);
+    learnAs.setTooltip ("What the first drum you hit gets; each drum after gets the next one.");
+    for (auto f : { Feel::soft, Feel::even, Feel::hard })
+        feel.addItem (feelName (f), (int) f + 1);
+    feel.setTooltip ("How hard hits come out. Light hands brings soft hits up; heavy hands keeps soft hits soft, "
+                     "so only real whacks are loud. The box itself can be tuned too (see its guide).");
+    feel.onChange = [this]
+    {
+        auto np = translator.getProfile();
+        np.feel = (Feel) (feel.getSelectedId() - 1);
+        apply (np);
+    };
     reset.setTooltip ("Back to the usual settings for this kind of controller.");
     reset.onClick = [this]
     {
@@ -112,7 +229,7 @@ ControllersPanel::Row::Row (ControllersPanel& p, const juce::String& n)
         apply (guess.kind == k ? guess : Profile::defaultsFor (k));
     };
 
-    for (auto* b : { &learnPad, &learnKnobs, &reset })
+    for (auto* b : { &learnPad, &learnKnobs, &learnTriggers, &reset })
     {
         vintage::setInWell (*b, true);
         b->getProperties().set ("fontSize", 15.0f);
@@ -120,7 +237,8 @@ ControllersPanel::Row::Row (ControllersPanel& p, const juce::String& n)
     }
     vintage::setLit (learnPad, vintage::Lit::arm);
     vintage::setLit (learnKnobs, vintage::Lit::arm);
-    for (auto* c : { &kind, &layout, &octave })
+    vintage::setLit (learnTriggers, vintage::Lit::arm);
+    for (auto* c : { &kind, &layout, &octave, &learnAs, &feel })
         addAndMakeVisible (c);
     for (auto* l : { &padsInfo, &knobsInfo, &status })
     {
@@ -154,15 +272,37 @@ void ControllersPanel::Row::refresh()
                           + (p.kind == Kind::pads ? juce::String (", any channel") : ", channel " + juce::String (p.padChannel)),
                       juce::dontSendNotification);
     knobsInfo.setText (knobsText (p), juce::dontSendNotification);
-    const bool on = p.kind != Kind::off;
+    feel.setSelectedId ((int) p.feel + 1, juce::dontSendNotification);
+    const bool on = p.kind != Kind::off, trig = p.isTriggers();
     learnPad.setVisible (on && p.hasPads());
     padsInfo.setVisible (on && p.hasPads());
     layout.setVisible (p.kind == Kind::pads);
     octave.setVisible (on && p.hasKeys());
-    for (auto* c : std::initializer_list<juce::Component*> { &learnKnobs, &knobsInfo, &reset, &status })
+    for (auto* c : std::initializer_list<juce::Component*> { &learnKnobs, &knobsInfo })
+        c->setVisible (on && ! trig);
+    for (auto* c : std::initializer_list<juce::Component*> { &reset, &status })
         c->setVisible (on);
+    for (auto* c : std::initializer_list<juce::Component*> { &learnTriggers, &learnAs, &feel })
+        c->setVisible (trig);
+    rebuildTriggerLines (p);
     resized();
     repaint();
+}
+
+void ControllersPanel::Row::rebuildTriggerLines (const Profile& p)
+{
+    const auto notes = p.isTriggers() ? p.learnedTriggers() : std::vector<int>();
+    bool same = (int) notes.size() == triggerLines.size();
+    for (size_t i = 0; same && i < notes.size(); ++i)
+        same = triggerLines[(int) i]->note == notes[i];
+    if (! same)
+    {
+        triggerLines.clear();
+        for (int n : notes)
+            addAndMakeVisible (triggerLines.add (new TriggerLine (*this, n)));
+    }
+    for (auto* l : triggerLines)
+        l->target.setSelectedId (p.triggerFor (l->note) + 2, juce::dontSendNotification);
 }
 
 void ControllersPanel::Row::tick()
@@ -183,6 +323,10 @@ void ControllersPanel::Row::tick()
             text = "Turn knob " + juce::String (translator.knobsLearned() + 1) + " of 8 now..."
                    + (translator.knobsLearned() > 0 ? " Stop keeps the " + juce::String (translator.knobsLearned()) + " turned so far." : juce::String());
             break;
+        case Translator::Learn::triggers:
+            text = "Hit a drum now: it gets " + triggerTargetName (translator.nextTriggerTarget())
+                   + (translator.triggersLearned() > 0 ? ". " + juce::String (translator.triggersLearned()) + " learned so far; Stop when done." : juce::String ("."));
+            break;
         case Translator::Learn::none:
         default:
             text = {};
@@ -194,6 +338,13 @@ void ControllersPanel::Row::tick()
     learnPad.setToggleState (translator.learning() == Translator::Learn::pad, juce::dontSendNotification);
     learnKnobs.setButtonText (translator.learning() == Translator::Learn::knobs ? "Stop" : "Learn knobs");
     learnKnobs.setToggleState (translator.learning() == Translator::Learn::knobs, juce::dontSendNotification);
+    const bool learningTriggers = translator.learning() == Translator::Learn::triggers;
+    learnTriggers.setButtonText (learningTriggers ? "Stop" : "Hit to learn");
+    learnTriggers.setToggleState (learningTriggers, juce::dontSendNotification);
+    if (learningTriggers)
+        learnAs.setSelectedId (translator.nextTriggerTarget() + 2, juce::dontSendNotification);
+    for (auto* l : triggerLines)
+        l->tick();
 }
 
 void ControllersPanel::Row::paint (juce::Graphics& g)
@@ -207,7 +358,8 @@ void ControllersPanel::Row::paint (juce::Graphics& g)
     g.setColour (pal.wellInk2);
     g.setFont (vintage::barlow (13.5f));
     g.drawFittedText (kindHint (translator.getProfile().kind), hintArea, juce::Justification::centredLeft, 1, 0.85f);
-    for (auto [area, text] : { std::pair { padsLabel, "Pads" }, { keysLabel, "Keys" }, { knobsLabel, "Knobs" } })
+    for (auto [area, text] : { std::pair { padsLabel, "Pads" }, { keysLabel, "Keys" }, { knobsLabel, "Knobs" },
+                               { triggersLabel, "Drums" }, { feelLabel, "Feel" } })
         if (! area.isEmpty())
             vintage::engraved (g, text, area, juce::Justification::centredLeft, 13.0f, true);
 }
@@ -225,10 +377,29 @@ void ControllersPanel::Row::resized()
     r.removeFromTop (4);
     hintArea = r.removeFromTop (22);
     r.removeFromTop (8);
-    padsLabel = keysLabel = knobsLabel = {};
+    padsLabel = keysLabel = knobsLabel = triggersLabel = feelLabel = {};
     if (p.kind == Kind::off)
         return;
     auto line = [&r] { auto l = r.removeFromTop (kLine); r.removeFromTop (kGap); return l; };
+    if (p.isTriggers())
+    {
+        auto l = line();
+        triggersLabel = l.removeFromLeft (kLabelW);
+        learnTriggers.setBounds (l.removeFromLeft (130).reduced (0, 1));
+        l.removeFromLeft (10);
+        learnAs.setBounds (l.removeFromLeft (220).reduced (0, 1));
+        l.removeFromLeft (10);
+        reset.setBounds (l.removeFromLeft (100).reduced (0, 1));
+        for (auto* t : triggerLines)
+            t->setBounds (r.removeFromTop (kTriggerLine).withTrimmedLeft (kLabelW));
+        if (! triggerLines.isEmpty())
+            r.removeFromTop (kGap);
+        auto f = line();
+        feelLabel = f.removeFromLeft (kLabelW);
+        feel.setBounds (f.removeFromLeft (320).reduced (0, 1));
+        status.setBounds (r.removeFromTop (22));
+        return;
+    }
     if (p.hasPads())
     {
         auto l = line();
@@ -280,7 +451,7 @@ ControllersPanel::ControllersPanel (Setup& s, std::function<juce::StringArray()>
 ControllersPanel::~ControllersPanel()
 {
     for (auto* r : rows)
-        if (r->learnPad.getToggleState() || r->learnKnobs.getToggleState())
+        if (r->learnPad.getToggleState() || r->learnKnobs.getToggleState() || r->learnTriggers.getToggleState())
             setup.translatorFor (r->name).stopLearning();
     setup.saveLearned();
     setLookAndFeel (nullptr);
@@ -335,8 +506,11 @@ void ControllersPanel::layoutList()
 void ControllersPanel::timerCallback()
 {
     if (setup.saveLearned())
+    {
         for (auto* r : rows)
             r->refresh();
+        layoutList();   // a drum learned adds a line
+    }
     for (auto* r : rows)
         r->tick();
 
