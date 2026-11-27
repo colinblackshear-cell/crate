@@ -1049,6 +1049,19 @@ public:
         modeExit.setFontHeight (15.0f);
         modeExit.onClick = [this] { owner.endPadMode(); };
         addChildComponent (modeExit);
+        // 16 LEVELS: the type of levels (two rows of buttons where the pattern's controls are) and MAKE 16 PADS
+        for (int k = 0; k < padlevels::numKinds; ++k)
+        {
+            auto& b = kindButtons[k];
+            b.setText (k == padlevels::pitch ? "Pitch" : k == padlevels::inKey ? "In key" : k == padlevels::pitchFilter ? "Pitch+filter"
+                       : k == padlevels::velocity ? "Velocity" : k == padlevels::filter ? "Filter" : k == padlevels::decay ? "Decay" : "Attack");
+            b.setFontHeight (14.5f);
+            b.onClick = [this, k] { owner.setLevelsKind (k); };
+            addChildComponent (b);
+        }
+        makeButton.setFontHeight (14.5f);
+        makeButton.onClick = [this] { owner.makeSixteenPads(); };
+        addChildComponent (makeButton);
         quantButton.onClick = [this] { owner.cycleQuantize(); };
         undoButton.onClick = [this]
         {
@@ -1073,6 +1086,16 @@ public:
     {
         modeExit.setVisible (owner.levelsOf >= 0 || owner.copyFrom >= 0);
         modeExit.setText (owner.copyFrom >= 0 ? "Cancel" : "Exit");
+        const bool lv = owner.levelsOf >= 0;
+        for (auto* b : { &barsButton, &quantButton, &undoButton, &recordSound })
+            b->setVisible (! lv);
+        chipView.setVisible (! lv);
+        makeButton.setVisible (lv);
+        for (int k = 0; k < padlevels::numKinds; ++k)
+        {
+            kindButtons[k].setVisible (lv);
+            kindButtons[k].setLook (owner.levelsKindValue == k ? Look::amber : Look::ghost);
+        }
         for (int i = 0; i < 4; ++i)
             banks[i].setLook (owner.bank == i ? Look::amber : Look::ghost);
         const auto& p = owner.drumData.padPattern;
@@ -1186,7 +1209,15 @@ public:
         drawWell (g, lcd, 12.0f);
         g.setColour (col::lcdAmber);
         g.setFont (spaced (lcdFont (26.0f), 0.04f));
-        g.drawFittedText (owner.padKit.name, lcd.reduced (10, 0).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+        g.drawFittedText (owner.padKit.name, lcd.reduced (10, 0).withTrimmedRight (14).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+        {
+            // a small arrow: the name opens the kit list
+            juce::Path arrow;
+            const float ax = lcd.getRight() - 16.0f, ay = lcd.getCentreY();
+            arrow.addTriangle (ax, ay - 3.0f, ax + 9.0f, ay - 3.0f, ax + 4.5f, ay + 3.5f);
+            g.setColour (col::lcdAmber.withAlpha (0.8f));
+            g.fillPath (arrow);
+        }
 
         if (owner.levelsOf >= 0 || owner.copyFrom >= 0)
             paintModeBanner (g);
@@ -1206,7 +1237,7 @@ public:
             auto inner = r.withTrimmedBottom (3.0f);
             if (levels)
             {
-                // 16 LEVELS: how loud each pad plays, as a bar and a number
+                // 16 LEVELS: what each pad does, as a number, its setting and a bar
                 auto bar = juce::Rectangle<float> (inner.getX() + 8, inner.getBottom() - 10, inner.getWidth() - 16, 4.0f);
                 g.setColour (juce::Colour (0x33f3eadb));
                 g.fillRoundedRectangle (bar, 2.0f);
@@ -1215,6 +1246,10 @@ public:
                 g.setFont (condensedBold (22.0f));
                 g.setColour (lit ? col::onBright : juce::Colour (0xfff3eadb));
                 g.drawText (juce::String (i + 1), inner.withTrimmedBottom (10), juce::Justification::centred);
+                g.setFont (small (12.0f));
+                g.setColour (lit ? col::onBright.withAlpha (0.75f) : juce::Colour (0xaaf3eadb));
+                g.drawText (padlevels::stepText (owner.levelsKindValue, i, owner.songKey ? owner.songKey() : pocket::SongKey()),
+                            inner.reduced (4, 4).withHeight (16.0f), juce::Justification::centred);
                 continue;
             }
             g.setFont (lcdFont (17.0f));
@@ -1253,6 +1288,24 @@ public:
         undoButton.setBounds (182, 166, 60, 44);
         recordSound.setBounds (248, 166, w - 16 - 248, 44);
         modeExit.setBounds (w - 16 - 84, 112, 84, 46);
+        {
+            // 16 LEVELS: four types, then three more and MAKE 16 PADS (each at least 44 pt tall)
+            const int gap = 6, usable = w - 32;
+            const int top[4] = { padlevels::pitch, padlevels::inKey, padlevels::filter, padlevels::decay };
+            const int each = (usable - 3 * gap) / 4;
+            for (int i = 0; i < 4; ++i)
+                kindButtons[top[i]].setBounds (16 + i * (each + gap), 166, each, 44);
+            const int weights[4] = { 62, 76, 96, 106 };
+            const int total = 62 + 76 + 96 + 106;
+            int x = 16;
+            juce::Component* row2[4] = { &kindButtons[padlevels::attack], &kindButtons[padlevels::velocity], &kindButtons[padlevels::pitchFilter], &makeButton };
+            for (int i = 0; i < 4; ++i)
+            {
+                const int bw = i == 3 ? 16 + usable - x : (usable - 3 * gap) * weights[i] / total;
+                row2[i]->setBounds (x, 214, bw, 44);
+                x += bw + gap;
+            }
+        }
         chipView.setBounds (chipBounds().toNearestInt());
         const int chipW = 52, gap = 4;
         chipRow.setSize (juce::jmax (chipView.getWidth(), noterepeat::kNumRates * chipW + (noterepeat::kNumRates - 1) * gap), chipView.getHeight());
@@ -1289,13 +1342,13 @@ public:
             return owner.copyPadTo (pad);   // COPY: this is the pad it goes to (it doesn't sound)
         if (owner.levelsOf >= 0)
         {
-            // 16 LEVELS: the picked pad's sound, quiet to loud along the bank
+            // 16 LEVELS: the picked pad's sound, a step higher along the bank (pitch, filter, decay, attack or level)
             levelDown = pad % 16;
             held = pad;
             padOfSource[(size_t) source] = pad;
-            const float velocity = (float) (levelDown + 1) / 16.0f;
-            owner.beatsEngine.padOn (owner.levelsOf, velocity);
-            owner.recordHit (owner.levelsOf, velocity);
+            const auto step = owner.levelsStep (levelDown);
+            owner.beatsEngine.padOn (owner.levelsOf, step.velocity, step.mods);
+            owner.recordHit (owner.levelsOf, step.velocity, step.mods);
             repaint();
             return;
         }
@@ -1324,10 +1377,25 @@ public:
         {
             renaming = false;
             if (lcdBounds().contains (e.position))
-                owner.renameKit();
+                kitNameTapped();   // the kit name: the factory kits (RENAME KIT is in that sheet)
             return;
         }
         liftPad (juce::jlimit (0, kSources - 1, e.source.getIndex()));
+    }
+
+    // The kit name: the factory kits (the self-checks tap it with this).
+    void kitNameTapped() { owner.host.openSoundBank(); }
+    // The 16 LEVELS buttons: 0-6 the types (padlevels::Kind), 7 MAKE 16 PADS.
+    void pressLevelsButton (int i)
+    {
+        auto& b = i == 7 ? makeButton : kindButtons[juce::jlimit (0, (int) padlevels::numKinds - 1, i)];
+        if (b.isShowing() || b.isVisible())
+            b.onClick();
+    }
+    bool levelsButtonShown (int i) const
+    {
+        const auto& b = i == 7 ? makeButton : kindButtons[juce::jlimit (0, (int) padlevels::numKinds - 1, i)];
+        return b.isVisible() && b.getHeight() >= 44 && b.getWidth() >= 44;
     }
 
     // A finger lifts: its pad lets go (the others keep sounding and repeating).
@@ -1384,18 +1452,19 @@ private:
         const auto& p = owner.padKit.pads[(size_t) juce::jlimit (0, kPads - 1, src)];
         g.setColour (col::lcdAmber);
         g.setFont (spaced (condensedBold (14.5f), 0.08f));
-        g.drawFittedText (owner.levelsOf >= 0 ? U8("16 LEVELS \xc2\xb7 ") + Kit::padLabel (src) + " " + p.name.toUpperCase()
+        g.drawFittedText (owner.levelsOf >= 0 ? U8("16 LEVELS \xc2\xb7 ") + Kit::padLabel (src) + " " + p.name.toUpperCase() + U8(" \xc2\xb7 ") + padlevels::name (owner.levelsKindValue)
                                               : U8("COPY ") + Kit::padLabel (src) + " " + p.name.toUpperCase() + U8(" TO\xe2\x80\xa6"),
                           in.withHeight (r.getHeight() * 0.5f + 4.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
         g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (small (12.5f));
-        g.drawFittedText (owner.levelsOf >= 0 ? "Quiet on the first pad, loud on the last. Hits record at the level you play."
+        g.drawFittedText (owner.levelsOf >= 0 ? juce::String (padlevels::hint (owner.levelsKindValue)) 
                                               : "Tap the pad it goes to. Any bank: pick the bank first.",
                           in.withTrimmedTop (r.getHeight() * 0.5f + 4.0f).toNearestInt(), juce::Justification::topLeft, 2, 0.75f);
     }
 
     BeatsScreen& owner;
     PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit" }, toMac { "To mac" };
+    PButton kindButtons[padlevels::numKinds], makeButton { "Make 16 pads", Look::cream };
     PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Sample a sound") },
             modeExit { "Exit", Look::amber };
     pocket::HoldDetector hold { [this] { holdFired(); } };
@@ -1630,7 +1699,70 @@ void BeatsScreen::startLevels (int pad)
     copyFrom = -1;
     levelsOf = pad;
     selectPad (pad);
-    host.toast ("16 LEVELS: pad " + Kit::padLabel (pad) + " on all 16 pads, quiet to loud. EXIT puts the pads back.");
+    padsView->refresh();
+    host.toast ("16 LEVELS: pad " + Kit::padLabel (pad) + " on all 16 pads. Pick PITCH, IN KEY, FILTER... MAKE 16 PADS keeps it. EXIT puts the pads back.");
+}
+
+void BeatsScreen::setLevelsKind (int kind)
+{
+    levelsKindValue = juce::jlimit (0, (int) padlevels::numKinds - 1, kind);
+    beatsEngine.stopPads();
+    if (padsView != nullptr)
+    {
+        padsView->refresh();
+        padsView->repaint();
+    }
+}
+
+padlevels::Step BeatsScreen::levelsStep (int step) const
+{
+    return padlevels::stepFor (levelsKindValue, step, songKey ? songKey() : pocket::SongKey());
+}
+
+// MAKE 16 PADS: the levels as they are now, on the 16 pads of the bank on screen. Each pad plays the picked pad's sound with
+// its own step (a tune, a cutoff, a decay, an attack or a volume), so the bass becomes a bass across the pads that EXPORT MPC
+// and the pad editor keep. UNDO (the note's button) puts the bank back.
+void BeatsScreen::makeSixteenPads()
+{
+    if (levelsOf < 0 || ! juce::isPositiveAndBelow (levelsOf, kPads) || padKit.pads[(size_t) levelsOf].empty())
+        return;
+    const auto source = padKit.pads[(size_t) levelsOf];
+    const int first = bank * 16;
+    std::array<KitPad, 16> before;
+    for (int i = 0; i < 16; ++i)
+        before[(size_t) i] = padKit.pads[(size_t) (first + i)];
+    const auto key = songKey ? songKey() : pocket::SongKey();
+    const auto baseName = source.name.isNotEmpty() ? source.name : juce::String ("Sound");
+    for (int i = 0; i < 16; ++i)
+    {
+        const auto step = padlevels::stepFor (levelsKindValue, i, key);
+        auto p = source;
+        p.tune = juce::jlimit (-360, 360, source.tune + step.mods.tune);
+        if (step.mods.cutoff > 0.0f)
+            p.cutoff = step.mods.cutoff;
+        if (step.mods.decay > 0.0f)
+            p.decay = step.mods.decay;
+        if (step.mods.attack > 0.0f)
+            p.attack = step.mods.attack;
+        p.volume = juce::jlimit (1, 100, juce::roundToInt ((float) source.volume * step.velocity));
+        const auto suffix = padlevels::stepText (levelsKindValue, i, key);
+        p.name = i == 0 && step.mods == PadMods() && step.velocity >= 1.0f ? baseName : baseName + " " + suffix;
+        beatsEngine.padOff (first + i);
+        padKit.pads[(size_t) (first + i)] = p;
+    }
+    endPadMode();
+    padsChanged();
+    selectPad (first);
+    host.toastAction (juce::String ("Bank ") + juce::String::charToString ((juce::juce_wchar) ('A' + bank)) + " has \"" + baseName + "\" on all 16 pads ("
+                          + juce::String (padlevels::name (levelsKindValue)).toLowerCase() + "). Hold a pad to change it.",
+                      "UNDO", [safe = juce::Component::SafePointer<BeatsScreen> (this), first, before]
+                      {
+                          if (safe == nullptr)
+                              return;
+                          for (int i = 0; i < 16; ++i)
+                              safe->padKit.pads[(size_t) (first + i)] = before[(size_t) i];
+                          safe->padsChanged();
+                      });
 }
 
 void BeatsScreen::startCopy (int pad)
@@ -1683,6 +1815,9 @@ void BeatsScreen::endPadMode()
 void BeatsScreen::testTouchPad (int pad) { padsView->touchPad (pad, padsView->padRectFor (pad).getCentre()); }
 void BeatsScreen::testTouchPadSource (int pad, int source) { padsView->touchPad (pad, padsView->padRectFor (pad).getCentre(), source); }
 void BeatsScreen::testLiftSource (int source) { padsView->liftPad (source); }
+void BeatsScreen::testPressLevelsButton (int index) { padsView->pressLevelsButton (index); }
+bool BeatsScreen::testLevelsButtonShown (int index) const { return padsView->levelsButtonShown (index); }
+void BeatsScreen::testTapKitName() { padsView->kitNameTapped(); }
 void BeatsScreen::testHoldElapsed() { padsView->fireHoldNow(); }
 void BeatsScreen::testLiftPad() { padsView->liftPad(); }
 juce::Rectangle<float> BeatsScreen::testPadBounds (int pad) const { return padsView->padRectFor (pad) + padsView->getPosition().toFloat(); }
@@ -2051,13 +2186,13 @@ void BeatsScreen::clearPattern()
     patternChanged();
 }
 
-void BeatsScreen::recordHit (int pad, float velocity)
+void BeatsScreen::recordHit (int pad, float velocity, const pocket::PadMods& mods)
 {
-    recordHitAt (pad, velocity, beatsEngine.clockBeat(), true);
+    recordHitAt (pad, velocity, beatsEngine.clockBeat(), true, mods);
 }
 
 // `now`: where on the clock the hit fell (a hand hit: the clock now; a repeat: where the audio thread played it).
-void BeatsScreen::recordHitAt (int pad, float velocity, double now, bool commit)
+void BeatsScreen::recordHitAt (int pad, float velocity, double now, bool commit, const pocket::PadMods& mods)
 {
     if (! recPads || ! beatsEngine.clockRunning() || now < recFrom - 0.25)
         return;   // (not during the count-in)
@@ -2076,12 +2211,13 @@ void BeatsScreen::recordHitAt (int pad, float velocity, double now, bool commit)
     patternUndo.push_back (p);
     if (patternUndo.size() > 64)
         patternUndo.erase (patternUndo.begin());
-    // The same pad on the same spot again just replaces it.
-    p.hits.erase (std::remove_if (p.hits.begin(), p.hits.end(), [&] (const PadHit& h) { return h.pad == pad && std::abs (h.beat - beat) < 1.0e-6; }), p.hits.end());
+    // The same pad (the same step of its 16 LEVELS) on the same spot again just replaces it.
+    p.hits.erase (std::remove_if (p.hits.begin(), p.hits.end(), [&] (const PadHit& h) { return h.pad == pad && h.mods == mods && std::abs (h.beat - beat) < 1.0e-6; }), p.hits.end());
     PadHit h;
     h.pad = pad;
     h.beat = beat;
     h.velocity = velocity;
+    h.mods = mods;
     // It was just heard by hand: if the grid moved it a little later, don't play it again this time round.
     h.skipRun = beatsEngine.clockRun();
     h.skipUntil = now + 0.5;
@@ -2099,7 +2235,7 @@ void BeatsScreen::takeRepeats()
         for (int i = 0; i < n; ++i)
             if (recPads)
             {
-                recordHitAt (reports[i].pad, reports[i].velocity, reports[i].beat, false);
+                recordHitAt (reports[i].pad, reports[i].velocity, reports[i].beat, false, reports[i].mods);
                 any = true;
             }
     if (any)
@@ -2247,6 +2383,206 @@ juce::String BeatsScreen::selfCheckSound()
         return "the drum machine's step doesn't move";
     if (padPeak < 0.01f)
         return "pad A13 is silent";
+    return {};
+}
+
+
+// 16 LEVELS: each pad's step carries its tune, filter, decay and attack to the sound (rendered, not just stored); a recorded hit
+// keeps them through save and load (and an old song's hits load as they were); every new factory kit loads; MAKE 16 PADS puts the
+// pitch on all 16 pads. Returns what was wrong; `report` says what was measured.
+juce::String BeatsScreen::selfCheckLevels()
+{
+    levelsReport.clear();
+    const double sr = 44100.0;
+    const auto savedPattern = drumData.padPattern;
+    const auto savedPads = padKit.pads;
+    const auto savedName = padKit.name;
+    const int savedBank = bank, savedLevels = levelsKindValue;
+    juce::String why;
+    auto restore = [&]
+    {
+        beatsEngine.setPatternPlaying (false);
+        beatsEngine.stopPads();
+        drumData.padPattern = savedPattern;
+        beatsEngine.setPadPattern (savedPattern);
+        padKit.pads = savedPads;
+        padKit.name = savedName;
+        bank = savedBank;
+        levelsKindValue = savedLevels;
+        levelsOf = copyFrom = -1;
+        pushPads();
+        padsView->refresh();
+    };
+
+    // 1. the steps: PITCH is a semitone a pad from the sound; IN KEY lands every pad on a note of the key
+    {
+        const auto before = songKey;
+        songKey = [] { return pocket::SongKey { 9, true }; };   // A minor
+        for (int step = 0; step < 16; ++step)
+        {
+            levelsKindValue = padlevels::pitch;
+            if (levelsStep (step).mods.tune != step * 10)
+                why = "PITCH: pad " + juce::String (step + 1) + " is not " + juce::String (step) + " semitones up";
+            levelsKindValue = padlevels::inKey;
+            const int semis = levelsStep (step).mods.tune / 10;
+            if (! pocket::SongKey { 9, true }.inScale (57 + semis))
+                why = "IN KEY: pad " + juce::String (step + 1) + " (" + juce::String (semis) + " up from A) is not in A minor";
+            if (step > 0 && levelsStep (step).mods.tune <= levelsStep (step - 1).mods.tune)
+                why = "IN KEY: the pads don't climb";
+        }
+        levelsKindValue = padlevels::filter;
+        if (! (levelsStep (0).mods.cutoff < levelsStep (8).mods.cutoff && levelsStep (8).mods.cutoff < levelsStep (15).mods.cutoff))
+            why = "FILTER: the cutoff doesn't open up the pads";
+        levelsKindValue = padlevels::decay;
+        if (! (levelsStep (0).mods.decay > 0.0f && levelsStep (0).mods.decay < levelsStep (8).mods.decay && levelsStep (15).mods.decay == 0.0f))
+            why = "DECAY: the decay doesn't lengthen up the pads";
+        levelsKindValue = padlevels::attack;
+        if (! (levelsStep (0).mods.attack == 0.0f && levelsStep (4).mods.attack < levelsStep (15).mods.attack))
+            why = "ATTACK: the attack doesn't slow up the pads";
+        levelsKindValue = padlevels::velocity;
+        if (! (levelsStep (0).velocity < levelsStep (15).velocity && levelsStep (15).velocity == 1.0f && ! levelsStep (3).mods.any()))
+            why = "VELOCITY: the level doesn't rise up the pads";
+        songKey = before;
+        if (why.isNotEmpty())
+            return restore(), why;
+    }
+
+    // 2. the audio engine applies each hit's mods: a tone, hit five ways by the pattern
+    {
+        const int length = (int) (0.4 * sr);
+        auto tone = std::make_shared<juce::AudioBuffer<float>> (1, length);
+        for (int i = 0; i < length; ++i)
+            tone->setSample (0, i, 0.8f * std::sin (juce::MathConstants<float>::twoPi * 441.0f * (float) i / 44100.0f));
+        PadSetup setup;
+        setup.audio = tone;
+        beatsEngine.setPad (63, setup);
+
+        PadPattern p;
+        p.bars = 2;
+        const PadMods mods[5] = { {}, { 120, 0, 0, 0 }, { 0, 100.0f, 0, 0 }, { 0, 0, 0.05f, 0 }, { 0, 0, 0, 0.2f } };
+        for (int i = 0; i < 5; ++i)
+        {
+            PadHit h;
+            h.pad = 63;
+            h.beat = (double) i;
+            h.mods = mods[i];
+            p.hits.push_back (h);
+        }
+        beatsEngine.setPlaying (false);
+        beatsEngine.stopPads();
+        beatsEngine.setClick (false);
+        beatsEngine.prepare (sr);
+        const double bpm = beatsEngine.getBpm();
+        const int beatLen = (int) std::lround (sr * 60.0 / bpm);
+        const int n = beatLen * 5;
+        std::vector<float> out ((size_t) n, 0.0f);
+        beatsEngine.setPadPattern (p);
+        beatsEngine.setPatternPlaying (true);
+        for (int i = 0; i < n; i += 512)
+            beatsEngine.render (out.data() + i, nullptr, juce::jmin (512, n - i));
+        beatsEngine.setPatternPlaying (false);
+        beatsEngine.stopPads();
+        auto crossings = [&] (int hit, int from, int len)
+        {
+            int z = 0;
+            for (int i = from + 1; i < from + len; ++i)
+                z += (out[(size_t) (hit * beatLen + i - 1)] < 0.0f) != (out[(size_t) (hit * beatLen + i)] < 0.0f) ? 1 : 0;
+            return z;
+        };
+        auto rms = [&] (int hit, int from, int len)
+        {
+            double s = 0;
+            for (int i = from; i < from + len; ++i)
+                s += (double) out[(size_t) (hit * beatLen + i)] * out[(size_t) (hit * beatLen + i)];
+            return std::sqrt (s / len);
+        };
+        const int z0 = crossings (0, 100, 2000), z1 = crossings (1, 100, 2000);
+        const double r0 = rms (0, 200, 4000), r2 = rms (2, 200, 4000);
+        const double tail0 = rms (0, (int) (0.25 * sr), 2000), tail3 = rms (3, (int) (0.25 * sr), 2000);
+        const double start0 = rms (0, 0, 800), start4 = rms (4, 0, 800), late4 = rms (4, (int) (0.25 * sr), 2000);
+        levelsReport << "rendered: tone crossings " << z0 << " plain vs " << z1 << " at +12 st; rms " << juce::String (r0, 3) << " plain vs "
+                     << juce::String (r2, 3) << " with a 100 Hz filter; tail " << juce::String (tail0, 3) << " plain vs " << juce::String (tail3, 3)
+                     << " with a 50 ms decay; first 18 ms " << juce::String (start0, 3) << " plain vs " << juce::String (start4, 3) << " with a 200 ms attack\n";
+        if (z0 < 10 || std::abs ((double) z1 / (double) z0 - 2.0) > 0.25)
+            why = "PITCH: a hit tuned +12 st rendered " + juce::String (z1) + " crossings against " + juce::String (z0) + " (should be about double)";
+        else if (r0 < 0.1 || r2 > r0 * 0.4)
+            why = "FILTER: a 100 Hz cutoff left the tone at " + juce::String (r2, 3) + " of " + juce::String (r0, 3);
+        else if (tail0 < 0.1 || tail3 > 0.02)
+            why = "DECAY: the 50 ms decay still sounds at 250 ms (" + juce::String (tail3, 3) + ")";
+        else if (start0 < 0.1 || start4 > start0 * 0.35 || late4 < 0.05)
+            why = "ATTACK: a 200 ms attack started at " + juce::String (start4, 3) + " against " + juce::String (start0, 3);
+        beatsEngine.setPad (63, padKit.pads[63].setup());
+        if (why.isNotEmpty())
+            return restore(), why;
+
+        // a recorded hit keeps them through save and load; an old song's three-number hits load as they were
+        PadPattern saved;
+        saved.bars = 1;
+        for (int i = 0; i < 5; ++i)
+        {
+            PadHit h;
+            h.pad = 20 + i;
+            h.beat = 0.25 * i;
+            h.velocity = 0.8f;
+            h.mods = mods[i];
+            saved.hits.push_back (h);
+        }
+        const auto back = PadPattern::fromVar (juce::JSON::parse (juce::JSON::toString (saved.toVar())));
+        bool same = back.hits.size() == saved.hits.size();
+        for (size_t i = 0; same && i < back.hits.size(); ++i)
+            same = back.hits[i].mods == saved.hits[i].mods && back.hits[i].pad == saved.hits[i].pad;
+        if (! same)
+            return restore(), "16 LEVELS hits lost their pitch, filter, decay or attack through save and load";
+        const auto old = PadPattern::fromVar (juce::JSON::parse ("{\"bars\":1,\"quantize\":4,\"hits\":[[3,0.5,0.7],[4,1.0]]}"));
+        if (old.hits.size() != 2 || old.hits[0].mods.any() || old.hits[1].mods.any() || old.hits[0].pad != 3)
+            return restore(), "an old song's hits didn't load as plain hits";
+        levelsReport << "save/load: 5 hits with a tune, a cutoff, a decay and an attack come back the same; old three-number hits load plain\n";
+    }
+
+    // 3. the new factory kits load onto a bank (16 pads each, with a tuned sound for 16 LEVELS)
+    {
+        int first = 5;
+        for (int k = first; k < (int) factoryKits().size(); ++k)
+        {
+            const int filled = loadFactoryKit (library, padKit, k, 3);
+            int used = 0;
+            for (int i = 0; i < 16; ++i)
+                used += padKit.pads[(size_t) (48 + i)].empty() ? 0 : 1;
+            if (filled != 16 || used != 16)
+                return restore(), juce::String (factoryKits()[(size_t) k].name) + " put " + juce::String (filled) + " pads on the bank (" + juce::String (used) + " used)";
+        }
+        levelsReport << "kits: " << (int) factoryKits().size() << " factory kits, the " << (int) factoryKits().size() - first << " new ones each load 16 pads\n";
+    }
+
+    // 4. MAKE 16 PADS: the boom bap's bass on all 16 pads of bank D, a semitone a pad (and IN KEY, on the key)
+    {
+        loadFactoryKit (library, padKit, 5, 3);
+        pushPads();
+        bank = 3;
+        const int bassPad = 48 + 12;   // "Bap bass C"
+        levelsKindValue = padlevels::pitch;
+        startLevels (bassPad);
+        const auto source = padKit.pads[(size_t) bassPad];
+        makeSixteenPads();
+        bool ok = levelsOf < 0;
+        for (int i = 0; i < 16 && ok; ++i)
+            ok = padKit.pads[(size_t) (48 + i)].tune == i * 10 && padKit.pads[(size_t) (48 + i)].audio == source.audio;
+        if (! ok)
+            return restore(), "MAKE 16 PADS didn't tune the 16 pads a semitone apart";
+        if (padKit.pads[48].audio != padKit.pads[63].audio || padKit.pads[63].tune != 150)
+            return restore(), "MAKE 16 PADS: pad D16 isn't the sound 15 semitones up";
+        loadFactoryKit (library, padKit, 5, 3);   // (the pads as the kit has them)
+        pushPads();
+        levelsKindValue = padlevels::filter;
+        startLevels (bassPad);
+        makeSixteenPads();
+        if (! (padKit.pads[48].cutoff > 0.0f && padKit.pads[48].cutoff < padKit.pads[63].cutoff && padKit.pads[48].tune == 0))
+            return restore(), "MAKE 16 PADS on FILTER didn't set a cutoff a pad";
+        levelsReport << "make 16 pads: PITCH puts \"" << source.name << "\" on D01-D16 tuned 0 to +15 st; FILTER puts a cutoff on each (" << juce::String (padKit.pads[48].cutoff, 0)
+                     << " Hz to " << juce::String (padKit.pads[63].cutoff, 0) << " Hz)\n";
+    }
+
+    restore();
     return {};
 }
 

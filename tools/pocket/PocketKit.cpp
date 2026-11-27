@@ -170,6 +170,12 @@ void Kit::save() const
         o->setProperty ("volume", p.volume);
         o->setProperty ("pan", p.pan);
         o->setProperty ("tune", p.tune);
+        if (p.cutoff > 0.0f)
+            o->setProperty ("cutoff", (double) p.cutoff);
+        if (p.attack > 0.0f)
+            o->setProperty ("attack", (double) p.attack);
+        if (p.decay > 0.0f)
+            o->setProperty ("decay", (double) p.decay);
         o->setProperty ("mode", modeNames[(int) p.mode]);
         list.add (juce::var (o));
     }
@@ -208,13 +214,41 @@ void Kit::load()
             auto& p = pads[(size_t) pad];
             p.volume = juce::jlimit (0, 100, (int) o.getProperty ("volume", 100));
             p.pan = juce::jlimit (0, 100, (int) o.getProperty ("pan", 50));
-            p.tune = juce::jlimit (-120, 120, (int) o.getProperty ("tune", 0));
+            p.tune = juce::jlimit (-360, 360, (int) o.getProperty ("tune", 0));   // (16 LEVELS' MAKE 16 PADS goes up to three octaves)
+            p.cutoff = juce::jlimit (0.0f, 20000.0f, (float) (double) o.getProperty ("cutoff", 0.0));
+            p.attack = juce::jlimit (0.0f, 5.0f, (float) (double) o.getProperty ("attack", 0.0));
+            p.decay = juce::jlimit (0.0f, 10.0f, (float) (double) o.getProperty ("decay", 0.0));
             const auto mode = o["mode"].toString();
             p.mode = mode == "mono" ? PadMode::mono : mode == "noteOff" ? PadMode::noteOff : PadMode::oneShot;
         }
 }
 
 //==============================================================================
+// The MPC's pad tune only goes a octave either way: a pad tuned further (16 LEVELS' MAKE 16 PADS) has its tuning baked
+// into the sound (resampled, as it would play), so the export plays as the phone does.
+crate::SharedAudio Kit::forMpc (const KitPad& p)
+{
+    if (std::abs (p.tune) <= 120)
+        return p.audio;
+    const double step = std::pow (2.0, (double) p.tune / 120.0);
+    const int n = juce::jmax (1, (int) ((double) p.audio->getNumSamples() / step));
+    auto out = std::make_shared<juce::AudioBuffer<float>> (p.audio->getNumChannels(), n);
+    for (int c = 0; c < out->getNumChannels(); ++c)
+    {
+        const auto* src = p.audio->getReadPointer (c);
+        const int last = p.audio->getNumSamples() - 1;
+        for (int s = 0; s < n; ++s)
+        {
+            const double pos = (double) s * step;
+            const int i0 = juce::jmin (last, (int) pos);
+            const int i1 = juce::jmin (last, i0 + 1);
+            const float frac = (float) (pos - (double) i0);
+            out->setSample (c, s, src[i0] + (src[i1] - src[i0]) * frac);
+        }
+    }
+    return out;
+}
+
 Kit::Export Kit::exportForMpc (const juce::File& work) const
 {
     Export out;
@@ -228,7 +262,8 @@ Kit::Export Kit::exportForMpc (const juce::File& work) const
         auto& p = pads[(size_t) i];
         if (p.empty())
             continue;
-        const auto& a = *p.audio;
+        const auto baked = forMpc (p);
+        const auto& a = *baked;
         const int n = a.getNumSamples();
         mpc::BankPad bp;
         bp.pad = i;
@@ -247,7 +282,7 @@ Kit::Export Kit::exportForMpc (const juce::File& work) const
         bp.sound.end = (std::uint32_t) n;
         bp.volume = (std::uint8_t) juce::jlimit (0, 100, p.volume);
         bp.pan = (std::uint8_t) juce::jlimit (0, 100, p.pan);
-        bp.tune = (std::int16_t) juce::jlimit (-120, 120, p.tune);
+        bp.tune = (std::int16_t) (std::abs (p.tune) > 120 ? 0 : p.tune);
         bp.voiceOverlap = overlapFor (p.mode);
         bank.pads.push_back (std::move (bp));
         ++out.pads;
@@ -326,9 +361,9 @@ juce::String Kit::verify (const Export& e) const
         auto snd = mpc::readSnd (readBytes (sndFile), &why);
         if (! snd)
             return sndFile.getFileName() + " can't be read back: " + juce::String (why);
-        if ((int) snd->frameCount() != p.audio->getNumSamples())
+        if ((int) snd->frameCount() != forMpc (p)->getNumSamples())
             return sndFile.getFileName() + " has the wrong length.";
-        if (note.voiceOverlap != overlapFor (p.mode) || note.tune != p.tune)
+        if (note.voiceOverlap != overlapFor (p.mode) || note.tune != (std::abs (p.tune) > 120 ? 0 : p.tune))
             return padLabel (i) + " lost its settings.";
         if (program->mixers[(size_t) (program->padToNote[(size_t) i] - mpc::kFirstNote)].volume != p.volume)
             return padLabel (i) + " lost its volume.";

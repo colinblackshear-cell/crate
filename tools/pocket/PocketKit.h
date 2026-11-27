@@ -14,13 +14,16 @@ struct KitPad
     int from = 0, to = -1;      // the slice of the sound in samples; to < 0 = to the end
     int volume = 100;           // 0..100
     int pan = 50;               // 0..100, 50 = centre
-    int tune = 0;               // tenths of a semitone, -120..120
+    int tune = 0;               // tenths of a semitone, -120..120 (up to -360..360 from 16 LEVELS' MAKE 16 PADS)
     PadMode mode = PadMode::oneShot;
+    // The pad's own filter (low-pass cutoff in Hz), attack and decay (seconds); 0 = none. 16 LEVELS' MAKE 16 PADS sets them.
+    // (The MPC export carries the tune; the sound's own filter and envelope are the phone's.)
+    float cutoff = 0.0f, attack = 0.0f, decay = 0.0f;
     crate::SharedAudio audio;   // the sound as it plays, with its effects baked in; null = empty pad
 
     bool empty() const { return audio == nullptr; }
     double seconds() const { return audio != nullptr ? (double) audio->getNumSamples() / crate::kSampleRate : 0.0; }
-    PadSetup setup() const { return { audio, volume, pan, tune, mode }; }
+    PadSetup setup() const { return { audio, volume, pan, tune, mode, cutoff, decay, attack }; }
 };
 
 // The MPC pad kit: 64 pads in banks A to D, saved to Documents/Kits as json that points at the Sounds
@@ -69,6 +72,7 @@ public:
     juce::String verify (const Export&) const;
 
 private:
+    static crate::SharedAudio forMpc (const KitPad&);
     crate::SharedAudio sliceOf (const SoundItem&, const juce::AudioBuffer<float>&, int from, int to) const;
 
     Library& library;
