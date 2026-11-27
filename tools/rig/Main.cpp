@@ -31,6 +31,9 @@ public:
 
         RigEngine::startWithFactoryKit = true;
         RigView::titleAtLaunch = true;   // the opening title (not in Logic)
+        // New song, Open, Import, the lesson and Cmd+S ask Save / Don't save / Cancel the app's
+        // way (RigDocFlow; not in Logic or the one-tool plugins).
+        RigView::standaloneDocuments = true;
         engine = std::make_unique<RigEngine>();
         // The show's changed-since-saved model, for measuring it on a real Mac (nothing shows it
         // yet): KALEIDOBOX_DIRTY=1 switches it on and logs to ~/Library/Logs/Kaleidobox/dirty.log.

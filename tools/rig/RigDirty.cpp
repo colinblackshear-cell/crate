@@ -803,6 +803,9 @@ void RigDirty::normalise (Flat& f, int currentBank, bool withPlayback)
     // (A save's tree as written keeps playback's values: only the rest applies to it.)
     if (withPlayback)
         playbackValues (f, currentBank);
+    // The Drone's On switch is a performance state, not the song's (a show always opens with it
+    // off): switching it never makes a show unsaved. The file still keeps it; its settings count.
+    f.erase ("Show/Tool[name=Drone]@state{xml}/PARAM[id=droneOn]@value");
 
     // The layers are the current bank's: filed under its place, like the other banks.
     const std::string from = "Show/Loop[", to = "Show/LoopBanks/Bank[" + std::to_string (currentBank) + "]/Loop[";

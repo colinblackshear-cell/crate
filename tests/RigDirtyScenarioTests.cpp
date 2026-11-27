@@ -100,9 +100,15 @@ struct RigDirtyScenarioTests : juce::UnitTest
         run ("Vocoder, drone, MPC, sampler: one setting each", true, [] (RigEngine& e, Runner&)
              {
                  for (auto* t : { (juce::AudioProcessor*) &e.getVocoder(), (juce::AudioProcessor*) &e.getDrone(), (juce::AudioProcessor*) &e.getMpc(), (juce::AudioProcessor*) &e.getSampler() })
-                     if (! t->getParameters().isEmpty())
-                         t->getParameters()[0]->setValueNotifyingHost (1.0f - t->getParameters()[0]->getValue());
+                 {
+                     // (The Drone's first is its On switch, a performance state that's never a change: its next one.)
+                     const int i = t == &e.getDrone() ? 1 : 0;
+                     if (t->getParameters().size() > i)
+                         t->getParameters()[i]->setValueNotifyingHost (1.0f - t->getParameters()[i]->getValue());
+                 }
              });
+        run ("The Drone switched on (a performance state)", false, [] (RigEngine& e, Runner&)
+             { e.getDrone().getParameters()[0]->setValueNotifyingHost (1.0f - e.getDrone().getParameters()[0]->getValue()); });
         run ("Automation: a point moved", true, [] (RigEngine& e, Runner&) { auto lane = e.getAutomation().getLanes()[0]; lane.points[1].value = 0.5f; e.getAutomation().clearAll(); e.getAutomation().addLane (lane); });
         run ("Macro moved", true, [] (RigEngine& e, Runner& r) { e.getMacros().value[0] = 0.2f; r.seconds (0.1); });
         run ("Drum pattern: one hit added", true, [] (RigEngine& e, Runner&) { auto p = e.getDrums().getEditedPattern(); p.hits[2][3] = 1; e.getDrums().setEditedPattern (p); });

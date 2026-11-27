@@ -457,6 +457,8 @@ public:
     // where they are). isBlank: nothing's been changed since (or since the Rig started).
     void newShow();
     bool isBlank() const;
+    // A new song's tempo (Import from Logic's, for stems without one).
+    double blankBpm() const { return (double) blankShow.getProperty ("bpm", 120.0); }
 
     // Which tools are in their own windows (on a second screen, say) and where, kept by the
     // window and saved with the show (message thread).
