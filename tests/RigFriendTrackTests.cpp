@@ -342,6 +342,48 @@ struct RigFriendTrackTests : juce::UnitTest
             folder.deleteRecursively();
         }
 
+        beginTest ("AIFF export: writeAudio with aiff writes a .aif that reads back (24-bit, same length); one format always stays on");
+        {
+            RigEngine engine;
+            quiet (engine);
+            RigBounce::Options o;
+            o.wav = false;
+            o.mp3 = false;
+            o.aiff = true;
+            const double rate = 48000.0;
+            juce::AudioBuffer<float> audio (2, 12000);
+            for (int i = 0; i < audio.getNumSamples(); ++i)
+            {
+                audio.setSample (0, i, 0.5f * std::sin (0.05f * (float) i));
+                audio.setSample (1, i, 0.25f * std::sin (0.03f * (float) i));
+            }
+            const auto folder = tempFolder ("aiff-export");
+            juce::StringArray files;
+            expect (RigBounce::writeAudio (folder.getChildFile ("Stem"), audio, rate, o, files), "written");
+            expectEquals (files.joinIntoString (","), juce::String ("Stem.aif"), "only the AIFF");
+            expect (! folder.getChildFile ("Stem.wav").existsAsFile(), "no WAV when it wasn't asked for");
+            juce::AiffAudioFormat aiff;
+            std::unique_ptr<juce::AudioFormatReader> reader (aiff.createReaderFor (folder.getChildFile ("Stem.aif").createInputStream().release(), true));
+            expect (reader != nullptr, "reads back");
+            if (reader != nullptr)
+            {
+                expectEquals ((int) reader->lengthInSamples, 12000, "same length");
+                expectEquals ((int) reader->numChannels, 2, "stereo");
+                expectEquals ((int) reader->bitsPerSample, 24, "24-bit");
+                expectWithinAbsoluteError (reader->sampleRate, rate, 0.5);
+            }
+            o.wav = true;
+            files.clear();
+            RigBounce::writeAudio (folder.getChildFile ("Both"), audio, rate, o, files);
+            expectEquals (files.joinIntoString (","), juce::String ("Both.wav,Both.aif"));
+            BouncePanel panel (engine, o);
+            panel.setFormats (false, true, false);
+            expect (panel.getOptions().aiff && ! panel.getOptions().wav, "AIFF alone");
+            panel.setFormats (false, false, false);
+            expect (panel.getOptions().aiff, "at least one stays on");
+            folder.deleteRecursively();
+        }
+
         beginTest ("the sheet: reads the file, takes the tempo in its name, Cancel puts it all back");
         {
             const auto folder = tempFolder ("friend-sheet");

@@ -34,14 +34,35 @@ void PocketApp::setupSong()
     songScreen = std::make_unique<SongScreen> (*song, L);
     songScreen->toast = [this] (const juce::String& t) { toast (t); };
     songScreen->onChanged = [this] { saveSong(); };
-    songScreen->onBounce = [this] (const SongScreen::Bounce& b)
+    // The EXPORT sheet: SONG's chip and the looper's hold menu open it; EXPORT writes the files, then the Share sheet.
+    auto doExport = [this] (const SongScreen::Bounce& b)
     {
+        closeExport();
         juce::String said;
         const auto files = bounceSong (b, said);
         toast (said);
         shareBounce (files);
     };
+    songScreen->onBounce = doExport;
     songScreen->onBounceToMac = [this] { bounceToMac(); };
+    songScreen->onExportSheet = [this]
+    {
+        exportSheet.settings = songScreen->bounceSettings;
+        openExport (songScreen->bounceSettings.what == SongScreen::Bounce::loops ? SongScreen::Bounce::song : songScreen->bounceSettings.what);
+    };
+    loopsScreen.onExport = [this] { exportSheet.settings = songScreen->bounceSettings; openExport (SongScreen::Bounce::loops); };
+    exportSheet.partName = [this] { return songScreen->pickedPartName(); };
+    exportSheet.summary = [this] (const SongScreen::Bounce& b) { return describeBounce (b); };
+    exportSheet.toast = [this] (const juce::String& t) { toast (t); };
+    exportSheet.onExport = [this, doExport] (const SongScreen::Bounce& b)
+    {
+        auto o = b;
+        o.section = songScreen->selectedSection();
+        songScreen->bounceSettings = b;   // the choices are kept
+        doExport (o);
+    };
+    exportSheet.onToMac = [this] { songScreen->bounceSettings = exportSheet.settings; closeExport(); bounceToMac(); };
+    exportSheet.onDismiss = [this] { songScreen->bounceSettings = exportSheet.settings; closeExport(); };
 }
 
 void PocketApp::songTickNow()
@@ -310,13 +331,85 @@ juce::String PocketApp::runSongChecks (juce::String& report, const juce::File& f
         }
     }
 
+    // ------------------------------------------------------------------ the EXPORT sheet: its chips, AIFF out and read back
+    {
+        songScreen->press (SongScreen::bounceId);
+        expect (exportOpen, "EXPORT: the SONG chip didn't open the export sheet");
+        auto& sheetNow = exportSheet;
+        sheetNow.press (ExportSheet::whatSong);
+        sheetNow.press (ExportSheet::splitStems);
+        sheetNow.press (ExportSheet::tailOff);
+        sheetNow.press (ExportSheet::fmtMp3);   // (toggles MP3; the next lines set what's wanted)
+        if (sheetNow.settings.mp3)
+            sheetNow.press (ExportSheet::fmtMp3);
+        if (! sheetNow.settings.wav)
+            sheetNow.press (ExportSheet::fmtWav);
+        sheetNow.press (ExportSheet::fmtAiff);
+        expect (sheetNow.settings.wav && sheetNow.settings.aiff && ! sheetNow.settings.mp3 && sheetNow.settings.eachLayer
+                    && sheetNow.settings.tailSeconds == 0.0 && sheetNow.settings.what == SongScreen::Bounce::song,
+                "EXPORT: the chips didn't set song, stems, no tail, WAV + AIFF");
+        expect (describeBounce (sheetNow.settings).contains ("stems + mix, WAV + AIFF"), "EXPORT: the summary line is '" + describeBounce (sheetNow.settings) + "'");
+        // at least one format stays on
+        sheetNow.press (ExportSheet::fmtWav);
+        sheetNow.press (ExportSheet::fmtAiff);
+        expect (sheetNow.settings.aiff && ! sheetNow.settings.wav, "EXPORT: turning WAV off left AIFF on, but turning AIFF off too must be refused");
+        sheetNow.press (ExportSheet::fmtWav);
+        expect (sheetNow.settings.wav && sheetNow.settings.aiff, "EXPORT: WAV didn't come back on");
+        // A PART needs a part picked on the ruler; the looper's chip works
+        const auto whatBefore = sheetNow.settings.what;
+        if (songScreen->pickedPartName().isEmpty())
+        {
+            sheetNow.press (ExportSheet::whatPart);
+            expect (sheetNow.settings.what == whatBefore, "EXPORT: A PART with no part picked changed WHAT");
+        }
+        sheetNow.press (ExportSheet::whatLoops);
+        expect (sheetNow.settings.what == SongScreen::Bounce::loops && describeBounce (sheetNow.settings).startsWith ("Looper now"), "EXPORT: LOOPER NOW isn't the looper's layers");
+        sheetNow.press (ExportSheet::whatSong);
+        sheetNow.setBounds (exportBounds());
+        savePng (folder.getChildFile ("export-sheet.png"));
+        const int before = lastBounce.size();
+        sheetNow.press (ExportSheet::exportId);
+        expect (! exportOpen, "EXPORT: the EXPORT button left the sheet open");
+        expect (songScreen->bounceSettings.aiff && songScreen->bounceSettings.wav, "EXPORT: the choices weren't kept in bounceSettings");
+        int aifs = 0, wavs = 0;
+        for (const auto& f : lastBounce)
+        {
+            if (f.hasFileExtension ("aif"))
+            {
+                ++aifs;
+                juce::AiffAudioFormat aiff;
+                std::unique_ptr<juce::AudioFormatReader> r { aiff.createReaderFor (f.createInputStream().release(), true) };
+                if (r == nullptr)
+                    expect (false, "EXPORT: " + f.getFileName() + " doesn't read back as AIFF");
+                else
+                {
+                    expect (std::abs ((double) r->lengthInSamples - std::ceil (song->lengthBars() - 1.0e-6) * 4.0 * 60.0 / bpm * crate::kSampleRate) < 2.0,
+                            "EXPORT: " + f.getFileName() + " isn't the song's length");
+                    expect (r->numChannels == 2 && r->bitsPerSample == 24, "EXPORT: the AIFF isn't 24-bit stereo");
+                    if (f.getFileName().contains ("Mix"))
+                        report << "AIFF mix: " << juce::String ((double) r->lengthInSamples / r->sampleRate, 2) << " s, " << (int) r->bitsPerSample << "-bit\n";
+                }
+            }
+            wavs += f.hasFileExtension ("wav") ? 1 : 0;
+        }
+        expect (aifs == 4 && wavs == 4 && lastBounce.size() != before, "EXPORT: WAV + AIFF should write 4 of each (" + juce::String (wavs) + " WAV, " + juce::String (aifs) + " AIFF)");
+        // looper now, from the sheet, as an AIFF mix only
+        openExport (SongScreen::Bounce::loops);
+        exportSheet.press (ExportSheet::splitMix);
+        exportSheet.press (ExportSheet::fmtWav);
+        expect (exportSheet.settings.aiff && ! exportSheet.settings.wav, "EXPORT: couldn't set AIFF alone");
+        exportSheet.press (ExportSheet::exportId);
+        expect (lastBounce.size() == 1 && lastBounce[0].hasFileExtension ("aif"), "EXPORT: looper now as AIFF alone didn't write one .aif");
+        closeAllSheets();
+    }
+
     loopsScreen.setDemoMode (wasDemo);
     report << "blocks " << (int) song->blocks.size() << ", takes " << (int) song->takes().size() << "\n";
     return problems.joinIntoString ("; ");
 }
 
 //==============================================================================
-// BOUNCE on SONG: the song, a section or the layers playing now, as the mix or each layer + the mix, as WAV and/or MP3,
+// EXPORT (SONG's chip, the looper's hold menu): the song, a section or the layers playing now, as the mix or each layer + the mix, as WAV, AIFF and/or MP3,
 // into the song's Bounces folder (Files > Kaleidobox Pocket), then the Share sheet (AirDrop to the Mac, Files...).
 juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce::String& said)
 {
@@ -399,12 +492,22 @@ juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce
                 padded.copyFrom (ch, lead, body, juce::jmin (ch, body.getNumChannels() - 1), 0, body.getNumSamples());
         }
         const auto& audio = lead > 0 ? padded : body;
-        if (o.wav || ! mp3::available())
+        if (o.wav || ! (o.aiff || (o.mp3 && mp3::available())))
         {
             const auto f = folder.getChildFile (juce::File::createLegalFileName (base) + ".wav");
             juce::WavAudioFormat wav;
             if (auto stream = std::unique_ptr<juce::OutputStream> (f.createOutputStream()))
                 if (auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (rate).withNumChannels (2).withBitsPerSample (24)))
+                    if (writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()))
+                        files.add (f);
+        }
+        if (o.aiff)
+        {
+            const auto f = folder.getChildFile (juce::File::createLegalFileName (base) + ".aif");
+            f.deleteFile();
+            juce::AiffAudioFormat aiff;
+            if (auto stream = std::unique_ptr<juce::OutputStream> (f.createOutputStream()))
+                if (auto writer = aiff.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (rate).withNumChannels (2).withBitsPerSample (24)))
                     if (writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()))
                         files.add (f);
         }
@@ -479,6 +582,66 @@ juce::Array<juce::File> PocketApp::bounceSong (const SongScreen::Bounce& o, juce
     return files;
 }
 
+// One line for the EXPORT sheet: "Song, 32 bars: 4 stems + mix, WAV + MP3".
+juce::String PocketApp::describeBounce (const SongScreen::Bounce& o)
+{
+    juce::String what = "Song";
+    juce::Range<double> bars;
+    int layers = 0;
+    double longest = 0;
+    for (int l = 0; l < kLoopLayers; ++l)
+        if (loopsScreen.hasLayer (l) && ! (o.what == SongScreen::Bounce::loops && loopsScreen.engine().isMuted (l)))
+            if (auto take = loopsScreen.engine().takeOf (l))
+                longest = juce::jmax (longest, (double) take->lengthBeats.load());
+    if (o.what == SongScreen::Bounce::loops)
+    {
+        what = "Looper now";
+        bars = { 0.0, std::ceil (longest / 4.0 - 1.0e-6) };
+    }
+    else if (o.what == SongScreen::Bounce::part)
+    {
+        const auto secs = song->sections();
+        if (! juce::isPositiveAndBelow (o.section, (int) secs.size()))
+            return "Tap a part on the ruler first.";
+        bars = { secs[(size_t) o.section].start, secs[(size_t) o.section].end };
+        what = secs[(size_t) o.section].name;
+    }
+    else
+        bars = { 0.0, std::ceil (song->songBars() - 1.0e-6) };
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        if (! loopsScreen.hasLayer (l))
+            continue;
+        bool used = false;
+        if (o.what == SongScreen::Bounce::loops)
+            used = ! loopsScreen.engine().isMuted (l);
+        else
+            for (const auto& b : song->blocks)
+                if (b.layer == l && b.start < bars.getEnd() - 1.0e-6 && b.end() > bars.getStart() + 1.0e-6)
+                    used = true;
+        layers += used ? 1 : 0;
+    }
+    const bool track = o.what != SongScreen::Bounce::loops && loopsScreen.engine().track().hasAudio();
+    if (bars.getLength() <= 0.0 || (layers == 0 && ! track))
+        return o.what == SongScreen::Bounce::loops ? "No layers playing to export." : "Nothing in the song to export yet.";
+    juce::String s = what + ", " + juce::String ((int) std::round (bars.getLength())) + (std::round (bars.getLength()) == 1.0 ? " bar" : " bars") + ": ";
+    if (o.eachLayer && layers > 0)
+        s << layers << (layers == 1 ? " stem" : " stems") << " + mix";
+    else
+        s << "the mix";
+    juce::StringArray formats;
+    if (o.wav || ! (o.aiff || (o.mp3 && mp3::available())))
+        formats.add ("WAV");
+    if (o.aiff)
+        formats.add ("AIFF");
+    if (o.mp3 && mp3::available())
+        formats.add ("MP3");
+    s << ", " << formats.joinIntoString (" + ");
+    if (o.tailSeconds > 0.0)
+        s << ", " << juce::String ((int) o.tailSeconds) << " s tail";
+    return s;
+}
+
 void PocketApp::shareBounce (const juce::Array<juce::File>& files)
 {
     juce::Array<juce::URL> urls;
@@ -499,7 +662,7 @@ void PocketApp::bounceToMac()
         return toast ("Bounce first: then TO MAC sends its files.");
     MacSend send;
     for (const auto& f : lastBounce)
-        if (f.hasFileExtension ("wav"))
+        if (f.hasFileExtension ("wav;aif;aiff"))
         {
             juce::AudioFormatManager formats;
             formats.registerBasicFormats();
@@ -508,9 +671,9 @@ void PocketApp::bounceToMac()
                 send.items.push_back ({ f.getFileNameWithoutExtension(), a, 0.0 });
         }
     if (send.items.empty())
-        return toast ("The bounce has no WAVs to send (it's MP3 only): use SHARE to AirDrop them.");
+        return toast ("The export has no WAV or AIFF files to send (it's MP3 only): use the Share sheet to AirDrop them.");
     send.title = juce::String ((int) send.items.size()) + (send.items.size() == 1 ? " bounce" : " stems");
-    send.detail = "WAVs";
+    send.detail = "WAV / AIFF";
     send.dests = { "sounds" };
     send.dest = "sounds";
     sendToMac (std::move (send));
