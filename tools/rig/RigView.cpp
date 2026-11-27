@@ -2891,15 +2891,23 @@ void RigView::showToolMenu()
                             const auto now = RigEngine::openBoxes();
                             if (result >= 100 && result < 100 + now.size())
                             {
-                                const auto sound = now[result - 100]->saveToolSound (strip);
-                                safe->say (engine.loadToolSound (sound) ? "Got the " + tool + " from the Kaleidobox in this song."
-                                                                        : "That Kaleidobox has no " + tool + " sound to give.");
+                                juce::String problem;
+                                const auto sound = now[result - 100]->saveToolSound (strip, problem);
+                                if (problem.isNotEmpty())
+                                    safe->say ("Couldn't get the " + tool + ": " + problem);
+                                else
+                                    safe->say (engine.loadToolSound (sound) ? "Got the " + tool + " from the Kaleidobox in this song."
+                                                                            : "That Kaleidobox has no " + tool + " sound to give.");
                                 safe->refresh();
                             }
                             else if (result >= 200 && result < 200 + now.size())
                             {
                                 auto* box = now[result - 200];
-                                if (box->loadToolSound (engine.saveToolSound (strip)))
+                                juce::String problem;
+                                const auto sound = engine.saveToolSound (strip, problem);
+                                if (problem.isNotEmpty())
+                                    safe->say ("Couldn't send the " + tool + ": " + problem);
+                                else if (box->loadToolSound (sound))
                                 {
                                     safe->say ("Sent this " + tool + " to the Kaleidobox in this song: its " + tool + " sounds like this now.");
                                     box->controlsMoved = true;
@@ -2928,7 +2936,10 @@ void RigView::keepToolSound (int strip)
                                   if (safe == nullptr || fc.getResult() == juce::File())
                                       return;
                                   const auto file = fc.getResult().withFileExtension (RigEngine::kToolSoundExtension);
-                                  const auto sound = safe->engine.saveToolSound (strip);
+                                  juce::String problem;
+                                  const auto sound = safe->engine.saveToolSound (strip, problem);
+                                  if (problem.isNotEmpty())
+                                      return safe->say ("Couldn't keep the " + tool + ": " + problem + " Nothing was saved.");
                                   auto xml = sound.createXml();
                                   safe->say (xml != nullptr && xml->writeTo (file)
                                                  ? "Kept the " + tool + " as " + file.getFileName() + ". Open it in any Kaleidobox or Kaleidobox " + tool + "."

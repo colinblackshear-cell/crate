@@ -20,6 +20,9 @@ target_sources(CrateTests PRIVATE
     OverdubUndoBench.cpp
     RigDirtyTests.cpp
     RigDirtyScenarioTests.cpp
+    RigDirtyPluginTests.cpp
+    RigDirtyPluginLoadTests.cpp
+    RigDirtyLoopLabTests.cpp
     LoopShapeTests.cpp
     WarpTests.cpp
     RigLoopLabTests.cpp
@@ -39,6 +42,7 @@ target_sources(CrateTests PRIVATE
     RigSwitchTests.cpp
     RigVocoderWakeTests.cpp
     RigPluginSlotTests.cpp
+    RigPluginPersistTests.cpp
     RigPerformFxTests.cpp
     RigSynthScreenTests.cpp
     RigGuideTests.cpp
@@ -95,7 +99,8 @@ target_compile_definitions(CrateTests PRIVATE
     JucePlugin_Name="Sample Editor"
     JUCE_APPLICATION_NAME_STRING="CrateTests"
     JUCE_APPLICATION_VERSION_STRING="0.1.0"
-    KALEIDOBOX_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+    KALEIDOBOX_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    KALEIDOBOX_BUILD_DIR="${CMAKE_BINARY_DIR}")
 target_link_libraries(CrateTests PRIVATE
     crate_core
     crate_shine
@@ -104,6 +109,12 @@ target_link_libraries(CrateTests PRIVATE
     rig_hosting
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+# The hosted-plugin dirty tests also host the repo's own instrument (and effect) as real VST3s
+# when they've been built (the Mac's CI builds everything; Linux CI only the tests, and there
+# that part is skipped). No build dependency: the tests don't wait for the plugins.
+target_compile_definitions(CrateTests PRIVATE
+    "CRATE_TEST_INSTRUMENT_VST3=\"$<GENEX_EVAL:$<TARGET_PROPERTY:SampleInstrument_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>\""
+    "CRATE_TEST_EFFECT_VST3=\"$<GENEX_EVAL:$<TARGET_PROPERTY:SampleEditor_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>\"")
 add_test(NAME crate_tests COMMAND CrateTests)
 # A hung test fails the run instead of holding the runner for hours.
 set_tests_properties(crate_tests PROPERTIES TIMEOUT 900)

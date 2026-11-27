@@ -170,8 +170,10 @@ void RigPlugin::getStateInformation (juce::MemoryBlock& data)
     // getStateInformation can't fail, and the host keeps whatever it's given, so when the loops
     // can't be saved the host gets the last state that was saved whole (its show and its loops
     // together), never this show paired with other sound.
+    // The same for a hosted plugin whose settings can't be read: never a state with less in it.
     rigshow::Result result;
-    auto show = engine->saveShowForHost (loopsFile(), result);
+    juce::String pluginProblem;
+    auto show = engine->saveShowForHost (loopsFile(), result, &pluginProblem);
     if (show.isValid())
     {
         show.setProperty ("logicSong", songId, nullptr);
@@ -185,8 +187,12 @@ void RigPlugin::getStateInformation (juce::MemoryBlock& data)
     if (lastSavedState.getSize() > 0)
     {
         data = lastSavedState;
-        engine->noteShowFilesMessage ("Kaleidobox couldn't save its loops (" + result.error + ") Logic was given this plugin's last saved state, "
-                                      "so changes since then aren't in this save. Free some disk space, then save the Logic project again.", true);
+        if (pluginProblem.isNotEmpty())
+            engine->noteShowFilesMessage ("Kaleidobox couldn't save a plugin's settings (" + pluginProblem + ") Logic was given this plugin's last saved state, "
+                                          "so changes since then aren't in this save. Check the plugin, then save the Logic project again.", true);
+        else
+            engine->noteShowFilesMessage ("Kaleidobox couldn't save its loops (" + result.error + ") Logic was given this plugin's last saved state, "
+                                          "so changes since then aren't in this save. Free some disk space, then save the Logic project again.", true);
         return;
     }
     // Nothing saved yet to fall back on: the show without its loops, marked so, which loads
@@ -196,8 +202,12 @@ void RigPlugin::getStateInformation (juce::MemoryBlock& data)
     bare.setProperty ("logicSong", songId, nullptr);
     if (auto xml = bare.createXml())
         copyXmlToBinary (*xml, data);
-    engine->noteShowFilesMessage ("Kaleidobox couldn't save its loops (" + result.error + ") This Logic save has the plugin's settings but "
-                                  "no loops. Free some disk space, then save the Logic project again.", true);
+    if (pluginProblem.isNotEmpty())
+        engine->noteShowFilesMessage ("Kaleidobox couldn't save a plugin's settings (" + pluginProblem + ") This Logic save has no loops and "
+                                      "that plugin without its settings. Check the plugin, then save the Logic project again.", true);
+    else
+        engine->noteShowFilesMessage ("Kaleidobox couldn't save its loops (" + result.error + ") This Logic save has the plugin's settings but "
+                                      "no loops. Free some disk space, then save the Logic project again.", true);
 }
 
 void RigPlugin::setStateInformation (const void* data, int size)

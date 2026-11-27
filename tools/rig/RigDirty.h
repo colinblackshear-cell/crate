@@ -129,6 +129,21 @@ public:
     // A take's sound went onto a layer at `version`.
     void takeOnLayer (juce::uint64 takeId, int layer, int version);
 
+    // A show's own hosted plugin going live (message thread, from PluginSlot via the engine): one
+    // restored from the show's tree, never one picked by hand. Until then every save writes the
+    // show's tree for it; once it's in, it reports its state in its own bytes (an Arturia synth
+    // doesn't hand back the bytes it was given), which would read as a change nobody made.
+    // pluginLanding just before the slot reports the plugin (`slotKey`: where that slot's plugin
+    // is in the flattened show, before the loops are filed under their bank), pluginLanded just
+    // after (its state and knobs in). Only that slot's plugin entries can move, in the baseline
+    // and in a save's candidate, from what the show had to what the plugin reports now, and
+    // only if the baseline had exactly what the show had there (all of them, or none); nothing
+    // else in the baseline changes. `levelAndBypassAsShowHad`: false when the slot's level or
+    // bypass was changed while it loaded: those are yours, not the plugin's, and never move.
+    // No baseline (or switched off): nothing (the baseline, when it's taken, has the plugin).
+    void pluginLanding (const std::string& slotKey);
+    void pluginLanded (bool levelAndBypassAsShowHad);
+
     // Message thread, from the engine's timer: looks at a few counters, and checks when
     // something changed and things have been quiet for a moment.
     void service();
@@ -148,6 +163,12 @@ public:
     bool fieldSlotForTests (Field, int index, float& authored, bool& active);
     Flat baselineForTests() const;
     static inline std::function<void()> afterBeforeTreeForTests;
+    // Tests only: a show's tree as the comparison sees it, and the old way of comparing a hosted
+    // plugin's description (with the time JUCE stamps on it), to show the tests catch it.
+    static Flat flattenForTests (const juce::ValueTree& show);
+    static inline bool comparePluginInfoTimeForTests = false;
+    // Tests only: a show's plugin going live leaves the baseline as it was (the old fault).
+    static inline bool noLandingRebaseForTests = false;
 
     struct Stats
     {
@@ -168,6 +189,12 @@ public:
         double takeFallbackMs = 0;
         juce::int64 bytesHashed = 0;
         double hashMs = 0;
+        // A show's plugins going live: the baseline's entries for it moved; left (the baseline
+        // didn't have what the show had there); nothing differed; no baseline yet. The keys
+        // moved, and what the two looks at the show cost (milliseconds, message thread).
+        int pluginLandingsRebased = 0, pluginLandingsLeft = 0, pluginLandingsSame = 0, pluginLandingsNoBaseline = 0;
+        int pluginLandingKeysMoved = 0;
+        double lastPluginLandingMs = 0, maxPluginLandingMs = 0;
     };
     Stats getStats() const;
     void resetStats();
@@ -322,6 +349,18 @@ private:
     void adopt (const SlotValues&);
     void dropAnsweredJobs();
     std::atomic<int> savesWaiting { 0 };
+
+    // A show's plugin going live (between pluginLanding and pluginLanded).
+    struct Landing
+    {
+        bool active = false;
+        std::string slotKey, prefix;
+        juce::uint64 baselineId = 0;
+        Flat before;
+        double ms = 0;
+    };
+    Landing landing;
+    std::string slotFlat (const std::string& slotKey, Flat& out);
 
     std::unique_ptr<Hasher> hasher;
     std::mutex jobsLock, doneLock;

@@ -10,6 +10,9 @@ class PluginSlot
 public:
     explicit PluginSlot (bool) {}
     bool isLoaded() const { return false; }
+    bool hasPluginToSave() const { return false; }
+    void clear() {}
+    bool treeForSave (juce::ValueTree& tree, juce::String&) const { tree = {}; return true; }
     void prepare (double, int) {}
     void setPlayHead (juce::AudioPlayHead*) {}
     bool process (juce::AudioBuffer<float>&, juce::MidiBuffer&) { return false; }
@@ -44,10 +47,16 @@ public:
 
     // A plugin of your own (any installed effect: Quake, a Valhalla...) after the rack.
     PluginSlot plugin { false };
+    // Why getStateInformation couldn't save the plugin whole (empty when it could): the engine's
+    // save fails on it (see PluginSlot::treeForSave). Message thread.
+    juce::String pluginSaveProblem;
     void setPlayHead (juce::AudioPlayHead*) override;
 
     // Anything turned up? (The window lights the strip's FX button.)
     bool isActive() const;
+    // The same, counting a show's plugin that isn't in yet (loading, not installed here), for
+    // keeping the rack's settings. Message thread (isActive is the audio thread's too).
+    bool isActiveToSave() const;
     // Every effect back to its default (off).
     void reset();
 

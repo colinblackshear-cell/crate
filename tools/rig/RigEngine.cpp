@@ -198,6 +198,24 @@ RigEngine::RigEngine()
         loopFx[(size_t) i].setPlayHead (&transport);
         looper.setEffects (i, &loopFx[(size_t) i]);
     }
+    // A show's own hosted plugin going live: the dirty model moves only that slot's plugin in its
+    // baseline (RigDirty::pluginLanding), by where saveShow writes it.
+    auto landing = [this] (PluginSlot& slot, std::string key)
+    {
+        slot.showPluginLanding = [this, &slot, key] (bool landed)
+        {
+            if (landed)
+                dirty.pluginLanded (slot.levelAndBypassAsShowHad());
+            else
+                dirty.pluginLanding (key);
+        };
+    };
+    landing (bassPlugin, "Show/Instrument[tool=Bass]/Plugin");
+    landing (synthPlugin, "Show/Instrument[tool=Synth]/Plugin");
+    for (int st = 0; st < numStrips; ++st)
+        landing (fx[(size_t) st].plugin, "Show/Tool[name=" + toolName (fxTool + st).toStdString() + "]@state{xml}/Plugin");
+    for (int i = 0; i < RigLooper::kLayers; ++i)
+        landing (loopFx[(size_t) i].plugin, "Show/Loop[index=" + std::to_string (i) + "]@fx{xml}/Plugin");
     transport.setBpm (mpc.getProject().currentSequence().bpm);
     // The MPC changes sequence (and moves through its songs) on the Rig's bar lines.
     mpc.getSequencer().switchWhileFollowing = true;
@@ -1745,6 +1763,28 @@ void RigEngine::handleIncomingMidiMessage (juce::MidiInput* source, const juce::
 //==============================================================================
 juce::ValueTree RigEngine::saveShow() const
 {
+    juce::String problem;
+    return saveShow (problem);
+}
+
+juce::ValueTree RigEngine::saveShow (juce::String& problem) const
+{
+    std::vector<PluginProblem> problems;
+    auto show = saveShow (problems);
+    problem = {};
+    for (const auto& p : problems)
+        problem << (problem.isEmpty() ? "" : " ") << p.text;
+    return show;
+}
+
+juce::ValueTree RigEngine::saveShow (std::vector<PluginProblem>& problems) const
+{
+    problems.clear();
+    auto pluginProblem = [&problems] (const juce::String& tool, const juce::String& where, const juce::String& why)
+    {
+        if (why.isNotEmpty())
+            problems.push_back ({ tool, where + ": " + why });
+    };
     juce::ValueTree show (kShowType);
     show.setProperty ("version", 1, nullptr);
     show.setProperty ("bpm", transport.getBpm(), nullptr);
@@ -1824,10 +1864,11 @@ juce::ValueTree RigEngine::saveShow() const
         const auto state = looper.getState (i);
         if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
             loop.setProperty ("beats", layer.lengthBeats.load(), nullptr);
-        if (loopFx[(size_t) i].isActive())
+        if (loopFx[(size_t) i].isActiveToSave())
         {
             juce::MemoryBlock fxState;
             const_cast<StripFx&> (loopFx[(size_t) i]).getStateInformation (fxState);
+            pluginProblem ("Loop " + juce::String (i + 1), "Loop " + juce::String (i + 1) + "'s effect plugin", loopFx[(size_t) i].pluginSaveProblem);
             loop.setProperty ("fx", fxState.toBase64Encoding(), nullptr);
         }
         show.appendChild (loop, nullptr);
@@ -1933,19 +1974,28 @@ juce::ValueTree RigEngine::saveShow() const
     {
         juce::MemoryBlock state;
         tool->getStateInformation (state);
+        if (auto* rack = dynamic_cast<StripFx*> (tool))
+            pluginProblem (name, "The " + name + " effect plugin", rack->pluginSaveProblem);
         juce::ValueTree t ("Tool");
         t.setProperty ("name", name, nullptr);
         t.setProperty ("state", state.toBase64Encoding(), nullptr);
         show.appendChild (t, nullptr);
     }
+    // The instruments: each as it is now, or as the show had it while it isn't in.
     for (auto [name, slot] : { std::pair<const char*, const PluginSlot*> { "Bass", &bassPlugin }, { "Synth", &synthPlugin } })
-        if (slot->isLoaded())
+    {
+        juce::ValueTree plugin;
+        juce::String why;
+        slot->treeForSave (plugin, why);
+        pluginProblem (name, juce::String ("The ") + name + "'s plugin", why);
+        if (plugin.isValid())
         {
             juce::ValueTree t ("Instrument");
             t.setProperty ("tool", name, nullptr);
-            t.appendChild (slot->toTree(), nullptr);
+            t.appendChild (plugin, nullptr);
             show.appendChild (t, nullptr);
         }
+    }
     return show;
 }
 
@@ -2047,10 +2097,16 @@ void RigEngine::loadShow (const juce::ValueTree& show)
     // Shows from before the effects have none, and shows from before the drone have it as a new
     // Rig has it (off).
     for (auto& f : fx)
+    {
         f.reset();
+        f.plugin.clear();   // (the show's own comes back with its effects below)
+    }
     drone.setStateInformation (droneDefaults.getData(), (int) droneDefaults.getSize());
     for (auto& f : loopFx)
+    {
         f.reset();
+        f.plugin.clear();   // (a loop with effects of its own gets its plugin back below)
+    }
 
     for (auto& s : strips)
     {
@@ -2297,7 +2353,26 @@ juce::ValueTree RigEngine::toolSoundFromShow (const juce::ValueTree& show, int s
 
 juce::ValueTree RigEngine::saveToolSound (int strip) const
 {
-    return toolSoundFromShow (saveShow(), strip);
+    juce::String problem;
+    return saveToolSound (strip, problem);
+}
+
+juce::ValueTree RigEngine::saveToolSound (int strip, juce::String& problem) const
+{
+    // Only this tool's own plugins count (another tool's isn't in the sound).
+    std::vector<PluginProblem> problems;
+    auto sound = toolSoundFromShow (saveShow (problems), strip);
+    problem = {};
+    const auto names = toolSoundTools (strip);
+    for (const auto& p : problems)
+    {
+        bool mine = names.contains (p.tool);
+        for (int st : toolSoundStrips (strip))
+            mine = mine || p.tool == toolName (fxTool + st);
+        if (mine)
+            problem << (problem.isEmpty() ? "" : " ") << p.text;
+    }
+    return sound;
 }
 
 bool RigEngine::loadToolSound (const juce::ValueTree& sound)
@@ -3114,7 +3189,18 @@ rigshow::Result RigEngine::saveShowFile (const juce::File& showFile, rigshow::Sa
     }
 
     dirty.beforeTree (ticket);
-    auto show = saveShow();
+    juce::String pluginProblem;
+    auto show = saveShow (pluginProblem);
+    if (pluginProblem.isNotEmpty())
+    {
+        // Never a show with less in it than you have: this save fails, as a disk error would.
+        rigshow::discard (staged);
+        result.ok = false;
+        result.error = pluginProblem + " Saving now would lose its sound, so " + showFile.getFileName()
+                     + " wasn't saved. The last saved show is unchanged.";
+        dirty.finishSave (ticket, false, kind);
+        return result;
+    }
     dirty.captureSave (ticket, show, staged, assets);
     show.setProperty (rigshow::kRevisionAttribute, staged.revision, nullptr);
     auto xml = show.createXml();
@@ -3131,11 +3217,17 @@ rigshow::Result RigEngine::saveShowFile (const juce::File& showFile, rigshow::Sa
     committedAudio = rigshow::committedFrom (staged);
     rigshow::finish (staged, result);
     result.ok = true;
+    // A plugin picked by hand that's still on its way isn't in this save (the slot is what it
+    // was until it's in, and the show reads as changed once it is).
+    for (auto [name, slot] : { std::pair<const char*, const PluginSlot*> { "Bass", &bassPlugin }, { "Synth", &synthPlugin } })
+        if (slot->getNameLoading().isNotEmpty())
+            result.warning << (result.warning.isEmpty() ? "" : " ") << slot->getNameLoading() << " was still loading on the " << name
+                           << ", so this save has the " << name << "'s sound from before it. Save again once it's in.";
     dirty.finishSave (ticket, true, kind);
     return result;
 }
 
-juce::ValueTree RigEngine::saveShowForHost (const juce::File& loopsShowFile, rigshow::Result& result)
+juce::ValueTree RigEngine::saveShowForHost (const juce::File& loopsShowFile, rigshow::Result& result, juce::String* pluginProblemOut)
 {
     // The host keeps the state; its "commit" is out of our hands. So the loops are staged and
     // tidied first, and the state only names a revision that is complete on disk. Nothing here
@@ -3147,7 +3239,18 @@ juce::ValueTree RigEngine::saveShowForHost (const juce::File& loopsShowFile, rig
     rigshow::Staged staged;
     if (! rigshow::stage (loopsShowFile, loopAssets(), sampleRate, committedAudio, staged, result))
         return {};
-    auto show = saveShow();
+    juce::String pluginProblem;
+    auto show = saveShow (pluginProblem);
+    if (pluginProblem.isNotEmpty())
+    {
+        // Not a state with less in it: the caller gives the host the last whole one.
+        rigshow::discard (staged);
+        result.ok = false;
+        result.error = pluginProblem;
+        if (pluginProblemOut != nullptr)
+            *pluginProblemOut = pluginProblem;
+        return {};
+    }
     show.setProperty (rigshow::kRevisionAttribute, staged.revision, nullptr);
     committedAudio = rigshow::committedFrom (staged);
     rigshow::finish (staged, result);
@@ -3399,7 +3502,7 @@ void RigEngine::storeLoopBank()
         l.level = live.level.load();
         l.mute = live.mute.load();
         l.fx.reset();
-        if (loopFx[(size_t) i].isActive())
+        if (loopFx[(size_t) i].isActiveToSave())
             loopFx[(size_t) i].getStateInformation (l.fx);
     }
     dirty.bankStored (currentLoopBank, copied);
@@ -3528,7 +3631,7 @@ juce::String RigEngine::clearAllLoops()
     bool anything = false;
     for (int i = 0; i < RigLooper::kLayers; ++i)
         anything = anything || looper.getState (i) != RigLooper::State::empty || looper.isSwapPending (i) || bankFxPending[(size_t) i]
-                   || loopFx[(size_t) i].isActive() || looper.getLayer (i).mute.load();
+                   || loopFx[(size_t) i].isActiveToSave() || looper.getLayer (i).mute.load();
     if (! anything)
         return "The looper is already empty: no loops and no loop effects. Press Rec next layer to start.";
 
@@ -3552,7 +3655,7 @@ juce::String RigEngine::clearAllLoops()
         l.bars = live.bars.load();
         l.level = live.level.load();
         l.mute = live.mute.load();
-        if (loopFx[(size_t) i].isActive())
+        if (loopFx[(size_t) i].isActiveToSave())
             loopFx[(size_t) i].getStateInformation (l.fx);
         clearedLoopNames[(size_t) i] = getLoopName (i);
     }

@@ -22,7 +22,8 @@ InstrumentShell::InstrumentShell (PluginSlot& s, const juce::String& name, juce:
     window.onClick = [this] { slot.showWindow(); };
     remove.onClick = [this]
     {
-        const auto was = slot.getName();
+        // (A show's plugin that isn't in, still loading or not installed here, goes the same way.)
+        const auto was = slot.isLoaded() ? slot.getName() : slot.toTree().getProperty ("name").toString();
         slot.clear();
         say (was + " is out. The " + trackName + " plays its own sound again.");
         refresh();
@@ -102,7 +103,7 @@ juce::String InstrumentShell::signature() const
 {
     juce::String s;
     s << (slot.isLoaded() ? slot.getName() : juce::String ("-")) << "|" << slot.currentProgram() << "|" << (int) slot.bypassed.load()
-      << "|" << (int) slot.isWindowOpen() << "|" << (int) isShowingScreen();
+      << "|" << (int) slot.isWindowOpen() << "|" << (int) isShowingScreen() << "|" << (int) slot.hasPluginToSave();
     for (int i = 0; i < PluginSlot::kMacros; ++i)
         s << "|" << slot.getMacro (i);
     return s;
@@ -114,6 +115,7 @@ void InstrumentShell::refresh()
     const bool loaded = slot.isLoaded();
     for (auto* b : { &window, &remove, &prev, &next, &presets, &autoMap })
         b->setEnabled (loaded);
+    remove.setEnabled (slot.hasPluginToSave());   // a show's plugin that isn't in can be taken out too
     for (int i = 0; i < (int) macros.size(); ++i)
     {
         auto* p = slot.macroParameter (i);

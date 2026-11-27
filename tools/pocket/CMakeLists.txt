@@ -17,11 +17,25 @@ juce_add_binary_data(pocket_fonts
         ${TOOLS}/rig/fonts/Fraunces-ExtraBoldItalic.ttf)
 set_target_properties(pocket_fonts PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 
+# TestFlight / App Store: the version people see (CFBundleShortVersionString) and the build number
+# (CFBundleVersion), which must go up with every upload. The TestFlight workflow passes its run number;
+# a build on your own Mac stays at 1.
+set(POCKET_VERSION "0.2.0")
+set(POCKET_BUILD_NUMBER "1" CACHE STRING "Kaleidobox Pocket build number (CFBundleVersion); must rise with each TestFlight upload")
+
 juce_add_gui_app(KaleidoboxPocket
     COMPANY_NAME "Colin Blackshear"
     BUNDLE_ID "com.colinblackshear.kaleidobox.pocket"
     PRODUCT_NAME "Kaleidobox Pocket"
-    ICON_BIG "${TOOLS}/rig/icon/kaleidobox-icon.png"
+    VERSION "${POCKET_VERSION}"
+    BUILD_VERSION "${POCKET_BUILD_NUMBER}"
+    # The iPhone icon is full-bleed with no transparency (the App Store refuses an icon with an alpha
+    # channel; iOS rounds the corners itself). Drawn by tools/rig/icon/make_icon.py --phone.
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/icon/pocket-icon.png"
+    # An iPhone app (it runs on an iPad in iPhone mode). Portrait only, so it can't take part in iPad
+    # split screen; saying so keeps App Store Connect from refusing the upload.
+    TARGETED_DEVICE_FAMILY "1"
+    REQUIRES_FULL_SCREEN TRUE
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Kaleidobox Pocket records sounds from your microphone."
     BACKGROUND_AUDIO_ENABLED TRUE
@@ -31,7 +45,9 @@ juce_add_gui_app(KaleidoboxPocket
     IPHONE_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait
     IPAD_SCREEN_ORIENTATIONS UIInterfaceOrientationPortrait
     # Link to Mac: finds Kaleidobox on the Wi-Fi with Bonjour (iOS asks once for the local network).
-    PLIST_TO_MERGE "<plist><dict><key>NSLocalNetworkUsageDescription</key><string>Kaleidobox Pocket finds Kaleidobox on your Mac over the Wi-Fi, to send it sounds and run its Remote.</string><key>NSBonjourServices</key><array><string>_kaleidobox._tcp</string></array></dict></plist>")
+    # ITSAppUsesNonExemptEncryption = false: the app has no encryption of its own (the Mac link is plain
+    # local Wi-Fi), so App Store Connect doesn't ask the export-compliance question on every upload.
+    PLIST_TO_MERGE "<plist><dict><key>NSLocalNetworkUsageDescription</key><string>Kaleidobox Pocket finds Kaleidobox on your Mac over the Wi-Fi, to send it sounds and run its Remote.</string><key>NSBonjourServices</key><array><string>_kaleidobox._tcp</string></array><key>ITSAppUsesNonExemptEncryption</key><false/></dict></plist>")
 
 target_sources(KaleidoboxPocket PRIVATE
     Main.cpp
@@ -102,6 +118,10 @@ target_sources(KaleidoboxPocket PRIVATE
 crate_rename_vocoder_entry()
 target_include_directories(KaleidoboxPocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${VOCODER_INCLUDE})
 
+# TestFlight crash reports need the debug symbols (a dSYM) in the Release archive.
+set_target_properties(KaleidoboxPocket PROPERTIES
+    XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT[variant=Release] "dwarf-with-dsym")
+
 # Whether the sound is going to headphones: the phone asks the audio session, a computer says yes.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(KaleidoboxPocket PRIVATE PocketRoute.mm)
@@ -113,7 +133,7 @@ endif()
 target_compile_definitions(KaleidoboxPocket PRIVATE
     JucePlugin_Name="Kaleidobox Pocket"
     JUCE_APPLICATION_NAME_STRING="Kaleidobox Pocket"
-    JUCE_APPLICATION_VERSION_STRING="0.2.0"
+    JUCE_APPLICATION_VERSION_STRING="${POCKET_VERSION}"
     JUCE_MODAL_LOOPS_PERMITTED=0)
 
 # The SYNTH tool: the Mac's PS-8 synth engine (its DSP only, no plugin or window), on every build.
