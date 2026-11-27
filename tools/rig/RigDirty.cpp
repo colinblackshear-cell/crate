@@ -42,19 +42,78 @@ std::string stored (int field, float v)
     return std::to_string (juce::roundToInt (v));
 }
 
+// A hosted plugin's description (PluginSlot::toTree writes juce::PluginDescription::createXml)
+// without "infoUpdateTime": JUCE sets that to the current time every time the description is
+// asked for (the VST3 and AU instances' fillInPluginDescription), so it would differ at every
+// check. It isn't part of the show's sound or the plugin's identity; the rest (name, format,
+// file, ids, manufacturer, version, ...) is compared as written. Only the comparison drops it:
+// the show file keeps the description as JUCE wrote it.
+juce::String descriptionForCompare (const juce::String& s)
+{
+    if (RigDirty::comparePluginInfoTimeForTests || ! s.contains ("<PLUGIN"))
+        return s;
+    auto xml = juce::XmlDocument::parse (s);
+    if (xml == nullptr || ! xml->hasTagName ("PLUGIN") || ! xml->hasAttribute ("infoUpdateTime"))
+        return s;
+    xml->removeAttribute ("infoUpdateTime");
+    return xml->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());
+}
+
+// Binary (a hosted plugin's own state, most often): every byte counts, a zero byte or bytes
+// that aren't text included (FNV-1a over the bytes, and their number).
+std::string bytesHash (const juce::MemoryBlock& m)
+{
+    juce::uint64 h = 14695981039346656037ull;
+    const auto* p = static_cast<const juce::uint8*> (m.getData());
+    for (size_t i = 0; i < m.getSize(); ++i)
+        h = (h ^ p[i]) * 1099511628211ull;
+    return juce::String::toHexString ((juce::int64) h).toStdString() + "/" + std::to_string (m.getSize());
+}
+
+// The text inside an XML state, with the elements it's in (none in the tools' own states).
+void collectText (const juce::XmlElement& e, juce::MemoryOutputStream& out)
+{
+    for (auto* c : e.getChildIterator())
+    {
+        if (c->isTextElement())
+        {
+            out << e.getTagName();
+            out.writeByte (0);
+            out << c->getText();
+            out.writeByte (0);
+        }
+        else
+            collectText (*c, out);
+    }
+}
+
 // A value as the show's tree has it ("state", "fx" and "data" are base64; when they're XML,
 // their own keys and values; other binary is hashed).
 void flattenTree (const juce::ValueTree& t, const std::string& path, RigDirty::Flat& out, bool byPosition);
 void flattenValue (const std::string& path, const juce::String& name, const juce::String& s, RigDirty::Flat& out)
 {
+    if (name == "description")
+    {
+        out[path + "@" + name.toStdString()] = descriptionForCompare (s).toStdString();
+        return;
+    }
     if ((name == "state" || name == "fx" || name == "data") && s.length() > 16)
     {
         juce::MemoryBlock m;
         if (m.fromBase64Encoding (s))
         {
             if (auto x = juce::AudioProcessor::getXmlFromBinary (m.getData(), (int) m.getSize()))
-                return flattenTree (juce::ValueTree::fromXml (*x), path + "@" + name.toStdString() + "{xml}", out, false);
-            out[path + "@" + name.toStdString() + "{bin}"] = juce::String::toHexString ((juce::int64) m.toString().hashCode64()).toStdString();
+            {
+                const auto key = path + "@" + name.toStdString() + "{xml}";
+                flattenTree (juce::ValueTree::fromXml (*x), key, out, false);
+                // (A ValueTree has no text: a hosted VST3's own state is base64 text inside the XML.)
+                juce::MemoryOutputStream text;
+                collectText (*x, text);
+                if (text.getDataSize() > 0)
+                    out[key + "{text}"] = bytesHash (text.getMemoryBlock());
+                return;
+            }
+            out[path + "@" + name.toStdString() + "{bin}"] = bytesHash (m);
             return;
         }
     }
@@ -319,6 +378,7 @@ void RigDirty::setEnabled (bool on)
         hasBaselineFlag = false;
         candidates.clear();
         saveSlots.clear();
+        landing = {};
         publishedGeneration = 0;
     }
 }
@@ -675,6 +735,13 @@ bool RigDirty::lookupTake (juce::uint64 id, juce::uint64& hash)
 void RigDirty::flatten (const juce::ValueTree& show, Flat& out)
 {
     flattenTree (show, "Show", out, false);
+}
+
+RigDirty::Flat RigDirty::flattenForTests (const juce::ValueTree& show)
+{
+    Flat f;
+    flattenTree (show, "Show", f, false);
+    return f;
 }
 
 void RigDirty::playbackValues (Flat& f, int currentBank)
@@ -1653,5 +1720,171 @@ void RigDirty::takeOnLayer (juce::uint64 takeId, int layer, int version)
     else
         takeAliases[takeId] = { layer, version };
     swapAliases[(size_t) layer] = {};
+    noteChange();
+}
+
+//==============================================================================
+// A show's own plugin going live.
+namespace
+{
+// The slot's level or bypass (the Plugin's own "level" and "bypassed", not something inside its
+// state): the host's settings, never part of what the plugin reports.
+bool isHostSetting (const std::string& key, size_t prefixLength)
+{
+    const auto rest = key.substr (prefixLength);
+    const auto at = rest.rfind ('@');
+    if (at == std::string::npos || rest.find ('{') < at)
+        return false;
+    const auto attr = rest.substr (at + 1);
+    return attr == "level" || attr == "bypassed";
+}
+} // namespace
+
+std::string RigDirty::slotFlat (const std::string& slotKey, Flat& out)
+{
+    // The show as a check sees it (the same flattening and filing; playback's values only ever
+    // touch the tools' own settings, never a hosted plugin's), then only this slot's plugin.
+    const auto show = engine.saveShow();
+    const auto banks = show.getChildWithName ("LoopBanks");
+    const int current = banks.isValid() ? (int) banks.getProperty ("current", 0) : 0;
+    Flat all;
+    flatten (show, all);
+    normalise (all, current, false);
+    auto prefix = slotKey;
+    const std::string loops = "Show/Loop[";
+    if (prefix.compare (0, loops.size(), loops) == 0)
+        prefix = "Show/LoopBanks/Bank[" + std::to_string (current) + "]/Loop[" + prefix.substr (loops.size());
+    for (auto it = all.lower_bound (prefix); it != all.end() && it->first.compare (0, prefix.size(), prefix) == 0; ++it)
+        out.insert (*it);
+    return prefix;
+}
+
+void RigDirty::pluginLanding (const std::string& slotKey)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+    landing = {};
+    if (! isEnabled())
+        return;
+    if (baseline == nullptr)
+    {
+        // (Shown, then opened: the baseline is taken after, with the plugin in.)
+        {
+            const std::lock_guard<std::mutex> l (statsLock);
+            ++stats.pluginLandingsNoBaseline;
+        }
+        say ("plugin in (" + juce::String (slotKey) + "): no baseline yet");
+        return;
+    }
+    const auto t0 = nowMs();
+    landing.active = true;
+    landing.slotKey = slotKey;
+    landing.baselineId = baselineId;
+    landing.prefix = slotFlat (slotKey, landing.before);
+    landing.ms = nowMs() - t0;
+}
+
+void RigDirty::pluginLanded (bool levelAndBypassAsShowHad)
+{
+    if (! landing.active)
+        return;
+    auto l = std::move (landing);
+    landing = {};
+    // (The same baseline as just before: nothing in between could move it, but a stale call never does.)
+    if (! isEnabled() || baseline == nullptr || l.baselineId != baselineId)
+        return;
+    const auto t0 = nowMs();
+    Flat after;
+    slotFlat (l.slotKey, after);
+
+    // What differs between the show's tree for the plugin and what the plugin reports now.
+    std::vector<std::string> moved;
+    int yours = 0;
+    {
+        auto a = l.before.begin(), b = after.begin();
+        while (a != l.before.end() || b != after.end())
+        {
+            std::string key;
+            if (b == after.end() || (a != l.before.end() && a->first < b->first))
+                key = (a++)->first;
+            else if (a == l.before.end() || b->first < a->first)
+                key = (b++)->first;
+            else
+            {
+                const bool same = a->second == b->second;
+                key = a->first;
+                ++a, ++b;
+                if (same)
+                    continue;
+            }
+            if (! levelAndBypassAsShowHad && isHostSetting (key, l.prefix.size()))
+            {
+                ++yours;   // changed while it loaded: yours, it stays as the baseline has it
+                continue;
+            }
+            moved.push_back (std::move (key));
+        }
+    }
+
+    // All of them, or none: only where the baseline has exactly what the show had.
+    std::string mismatch;
+    auto rebase = [&] (Flat& flat) -> bool
+    {
+        for (const auto& k : moved)
+        {
+            const auto s = flat.find (k);
+            const auto was = l.before.find (k);
+            const bool inBase = s != flat.end(), inShow = was != l.before.end();
+            if (inBase != inShow || (inBase && s->second != was->second))
+            {
+                if (mismatch.empty())
+                    mismatch = k;
+                return false;
+            }
+        }
+        for (const auto& k : moved)
+        {
+            if (const auto now = after.find (k); now != after.end())
+                flat[k] = now->second;
+            else
+                flat.erase (k);
+        }
+        return true;
+    };
+    bool rebased = false;
+    int candidatesMoved = 0;
+    if (! moved.empty() && ! noLandingRebaseForTests)
+    {
+        rebased = rebase (baseline->flat);
+        for (auto& [serial, cand] : candidates)
+            if (cand != nullptr && rebase (cand->flat))
+                ++candidatesMoved;
+    }
+    const double ms = l.ms + (nowMs() - t0);
+    {
+        const std::lock_guard<std::mutex> lk (statsLock);
+        if (moved.empty())
+            ++stats.pluginLandingsSame;
+        else if (rebased)
+            ++stats.pluginLandingsRebased, stats.pluginLandingKeysMoved += (int) moved.size();
+        else
+            ++stats.pluginLandingsLeft;
+        stats.lastPluginLandingMs = ms;
+        stats.maxPluginLandingMs = juce::jmax (stats.maxPluginLandingMs, ms);
+    }
+    juce::String text ("plugin in (" + juce::String (l.prefix) + "): ");
+    if (moved.empty())
+        text << "reports what the show had";
+    else if (rebased)
+        text << juce::String ((int) moved.size()) << " of its entries now as it reports them";
+    else if (noLandingRebaseForTests)
+        text << "left (tests: switched off)";
+    else
+        text << "left: the baseline differs from the show at " << juce::String (mismatch).substring (0, 120);
+    if (yours > 0)
+        text << "; its level or bypass changed while it loaded (kept as a change)";
+    if (candidatesMoved > 0)
+        text << "; " << candidatesMoved << " save(s) in flight too";
+    text << " (" << juce::String (ms, 1) << " ms)";
+    say (text);
     noteChange();
 }

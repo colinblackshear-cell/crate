@@ -46,6 +46,7 @@ public:
         bool follow = true;
         bool playingOriginal = false;
         double soundsLike = 0;           // the tempo it sounds like (0: can't tell)
+        double originalBpm = 0;          // the tempo when it was opened (the original plays as it is at it)
 
         // What the lab last put on the layer (its version), and at what tempo it was rendered.
         int playingVersion = -1;

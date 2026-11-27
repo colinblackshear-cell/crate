@@ -506,6 +506,9 @@ void PluginSlot::startLoad (const juce::PluginDescription& description, const ju
                                                 }
                                                 if (ok)
                                                 {
+                                                    // (The show's own plugin: the dirty model hears it go live.)
+                                                    if (putBack && showPluginLanding)
+                                                        showPluginLanding (false);
                                                     setInstance (std::move (made));
                                                     if (putBack)
                                                     {
@@ -519,6 +522,8 @@ void PluginSlot::startLoad (const juce::PluginDescription& description, const ju
                                                             if (onChange)
                                                                 onChange();
                                                         }
+                                                        if (showPluginLanding)
+                                                            showPluginLanding (true);
                                                     }
                                                 }
                                                 if (done)
@@ -627,7 +632,7 @@ void PluginSlot::setProgram (int i)
 juce::ValueTree PluginSlot::toTree() const
 {
     if (instance == nullptr)
-        return kept.isValid() ? kept.createCopy() : juce::ValueTree ("Plugin");   // as the show had it, settings and all
+        return kept.isValid() ? keptForSave() : juce::ValueTree ("Plugin");   // as the show had it, settings and all
     juce::ValueTree tree;
     juce::String problem;
     liveTree (tree, problem);
@@ -640,10 +645,25 @@ bool PluginSlot::treeForSave (juce::ValueTree& tree, juce::String& problem) cons
     if (instance == nullptr)
     {
         if (kept.isValid() && ! oldSavingForTests)
-            tree = kept.createCopy();   // byte for byte as the show had it
+            tree = keptForSave();   // byte for byte as the show had it (but for a level or bypass you changed)
         return true;
     }
     return liveTree (tree, problem);
+}
+
+juce::ValueTree PluginSlot::keptForSave() const
+{
+    // The show's tree exactly, unless you changed the slot's level or bypass since it was read
+    // (while its plugin loads, or while it's missing, didn't open or was left closed): then a
+    // copy with only those two as they are now (written as liveTree writes them). `kept` itself
+    // never changes.
+    auto tree = kept.createCopy();
+    if (! levelAndBypassAsShowHad() && ! keptLevelOverlayOffForTests)
+    {
+        tree.setProperty ("bypassed", bypassed.load(), nullptr);
+        tree.setProperty ("level", level.load(), nullptr);
+    }
+    return tree;
 }
 
 bool PluginSlot::liveTree (juce::ValueTree& tree, juce::String& problem) const
@@ -706,6 +726,10 @@ void PluginSlot::fromTree (const juce::ValueTree& tree)
     // as it is until it's in: still loading, or it doesn't load here (not installed, didn't open).
     clear();
     kept = tree.createCopy();
+    // (A plugin that isn't opened (unreadable, left closed) leaves level and bypass as they are:
+    // saved as the show's tree has them until you change them.)
+    restoredLevel = level.load();
+    restoredBypassed = bypassed.load();
     juce::PluginDescription description;
     if (auto xml = juce::XmlDocument::parse (tree.getProperty ("description").toString()); xml == nullptr || ! description.loadFromXml (*xml))
         return;   // unreadable here: kept as it is
@@ -718,6 +742,8 @@ void PluginSlot::fromTree (const juce::ValueTree& tree)
     }
     bypassed = (bool) tree.getProperty ("bypassed", false);
     level = juce::jlimit (0.0f, 2.0f, (float) tree.getProperty ("level", 1.0f));
+    restoredLevel = level.load();
+    restoredBypassed = bypassed.load();
     startLoad (description, kept, false, {});
 }
 

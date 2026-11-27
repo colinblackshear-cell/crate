@@ -8,6 +8,16 @@ namespace
 {
 constexpr int kMaxUndo = 64;
 
+// The plan leaves the recording exactly as it is at `bpm`: no markers that move anything, the
+// loop's own length, every setting at its default, and the tempo the lab opened it at.
+bool isIdentity (const RigLoopLab::Layer& l, double bpm)
+{
+    const auto& p = l.plan;
+    return p.isStraight() && p.settings == Warp::Settings {}
+           && juce::exactlyEqual (p.sourceBeats, l.originalBeats) && juce::exactlyEqual (p.targetBeats, l.originalBeats)
+           && std::abs (bpm - l.originalBpm) < 0.01;
+}
+
 std::vector<double> hitSeconds (const RigLoopLab::Layer& l, double sampleRate)
 {
     std::vector<double> s;
@@ -68,7 +78,7 @@ bool RigLoopLab::open (int layer)
     l.hits = Warp::findHits (l.original, beats, l.sensitivity);
     l.soundsLike = Warp::soundsLikeBpm (hitSeconds (l, looper.getSampleRate()), transport.getBpm());
     l.playingVersion = version;
-    l.renderedBpm = transport.getBpm();
+    l.renderedBpm = l.originalBpm = transport.getBpm();
     l.open = true;
     return true;
 }
@@ -261,6 +271,15 @@ void RigLoopLab::render (int layer)
     if (onChange)
         onChange (layer);
 
+    // Nothing changed at all (no warp, same length, no transpose, formant or style, the tempo it
+    // was opened at): the recording itself, as ORIGINAL plays it. Rendering would give it back
+    // only when its length is exactly targetBeats at this tempo; a loop a few samples longer or
+    // shorter would come back stretched to fit.
+    if (isIdentity (l, bpm))
+    {
+        apply (layer, serial, l.original, bpm);
+        return;
+    }
     if (renderInline)
     {
         apply (layer, serial, Warp::render (l.original, l.plan, length, sampleRate), bpm);

@@ -100,7 +100,8 @@ public:
     void clear();
     bool isLoaded() const { return loaded.load(); }
     // A plugin to save: the one loaded, or a show's own that isn't in: still loading, not
-    // installed here, didn't open, or left closed after a freeze. Saved as the show had it.
+    // installed here, didn't open, or left closed after a freeze. Saved as the show had it (with
+    // the slot's level and bypass as they are now, if you changed them since).
     bool hasPluginToSave() const { return loaded.load() || (kept.isValid() && ! oldSavingForTests); }
     // A plugin picked by hand that's still on its way (its name; empty when there's none).
     juce::String getNameLoading() const { return loadingByHand; }
@@ -130,7 +131,8 @@ public:
     juce::ValueTree toTree() const;
     void fromTree (const juce::ValueTree&);
     // What a save writes for this slot, in `tree`: the plugin as it is now, the show's own tree
-    // (exactly) while its plugin isn't in, or nothing (an invalid tree) when there's no plugin.
+    // (exactly, but for a level or bypass you changed meanwhile) while its plugin isn't in, or
+    // nothing (an invalid tree) when there's no plugin.
     // False, with why in `problem`, when the plugin's can't be written whole (it gave no
     // settings where it had some, or they couldn't be read): the save must fail then. `tree` is
     // still the most there is (for a host, which can't be told no).
@@ -154,15 +156,24 @@ public:
     void autoMapMacros();
 
     std::function<void()> onChange;   // loaded, cleared (message thread)
+    // A show's own plugin (restored from its tree, never one picked by hand) going live: called
+    // with false just before the slot reports it, and true just after (its state and knobs in).
+    // Only for the load that lands (the newest request). Message thread.
+    std::function<void (bool landed)> showPluginLanding;
+    // The slot's level and bypass are still what the show's tree gave them (not changed while
+    // its plugin loaded). Message thread.
+    bool levelAndBypassAsShowHad() const { return juce::exactlyEqual (level.load(), restoredLevel) && bypassed.load() == restoredBypassed; }
 
     // Tests only, all off: each brings back one of the old faults, so the tests show they catch it.
     static inline bool oldLoadResultForTests = false;   // a load that worked says "It didn't load" (so a show's settings aren't put back)
     static inline bool oldSavingForTests = false;       // only a loaded plugin is saved
     static inline bool noGenerationForTests = false;    // a load on its way lands whatever was asked for after it
+    static inline bool keptLevelOverlayOffForTests = false;   // a level or bypass changed while the show's plugin isn't in isn't saved
 
 private:
     void startLoad (const juce::PluginDescription&, const juce::ValueTree& restore, bool byHand, std::function<void (const juce::String&)> done);
     bool liveTree (juce::ValueTree& tree, juce::String& problem) const;
+    juce::ValueTree keptForSave() const;
     const bool isInstrument;
     juce::SharedResourcePointer<PluginHost> host;
     juce::SpinLock lock;
@@ -174,6 +185,8 @@ private:
     juce::uint64 generation = 0;   // the newest request: only its load lands (message thread)
     juce::Array<juce::PluginDescription> stillOpening;   // loads on their way (for the "opening" note)
     juce::String loadingByHand;
+    float restoredLevel = 1.0f;     // what fromTree set level and bypass to
+    bool restoredBypassed = false;
     mutable bool hasHadState = false;   // this plugin had settings (from the show, or saved): none now is a fault
     juce::AudioPlayHead* playHead = nullptr;
     double rate = 44100.0;
