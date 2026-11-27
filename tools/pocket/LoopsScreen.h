@@ -38,6 +38,10 @@ public:
     // FIT TO THE BEAT: a free take's beat found and the take warped onto the song's (UNDO puts it back as sung).
     // Returns the tempo it heard it at (0: couldn't tell), or -1 when the layer can't be fitted now.
     double fitToBeat (int layer);
+    // TO LOOPER from the SAMPLER: a sound (its IN..OUT) onto the next layer from bar 1. A sound a bar or longer is fitted
+    // (same pitch) to the whole bars nearest its length; a shorter one plays once a bar, from the bar's start.
+    // Returns the layer, or -1.
+    int putSound (const juce::AudioBuffer<float>&, juce::Range<int> sel);
     int source() const { return sourceChoice; }   // pocket::LoopSource
     void setSource (int s) { if (juce::isPositiveAndBelow (s, 4) && s != sourceChoice) { sourceChoice = s; settingsDirty = true; if (onSourceChanged) onSourceChanged(); repaint(); } }
     // Arms `layer` with an undo step (LOCK BEAT and REC on DRUMS use it). False when it couldn't. tool: a LayerTool.

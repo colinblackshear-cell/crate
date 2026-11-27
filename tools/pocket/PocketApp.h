@@ -365,6 +365,14 @@ private:
     SingScreen singScreen;
     pocket::SynthPart synthPart;   // the SYNTH tool's sound and pattern, also inside the renderer
     SynthScreen synthScreen;
+    pocket::SynthPart bassPart;    // the BASS tool: the same synth, its own part, with the bass sounds
+    SynthScreen bassScreen;
+    bool bassActive = false;       // REC, TO LOOPER and UNDO work on BASS (true) or SYNTH
+    pocket::SynthPart& sPart() { return bassActive ? bassPart : synthPart; }
+    const pocket::SynthPart& sPart() const { return bassActive ? bassPart : synthPart; }
+    SynthScreen& sScreen() { return bassActive ? bassScreen : synthScreen; }
+    const SynthScreen& sScreen() const { return bassActive ? bassScreen : synthScreen; }
+    pocket::SynthPart* synthUndoPart = nullptr;   // whose part UNDO gives back
     ChordsScreen chordsScreen;
     pocket::DroneTool droneTool;   // the DRONE tool, inside the renderer
     DroneScreen droneScreen;

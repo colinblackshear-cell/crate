@@ -72,7 +72,7 @@ private:
 
     // the layout (from the bounds)
     juce::Rectangle<float> panel, lcd, prevR, nextR, strip, keysArea, hintArea;
-    std::array<juce::Rectangle<float>, pocket::kSynthKinds> kindR;
+    std::array<juce::Rectangle<float>, pocket::kKindsPerFamily> kindR;
     std::array<juce::Rectangle<float>, 4> knobR;
     std::array<juce::Rectangle<float>, 16> stepR;
     std::vector<Hit> hits;

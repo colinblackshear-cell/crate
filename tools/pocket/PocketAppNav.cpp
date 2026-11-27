@@ -226,7 +226,7 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         expect (! addOpen && tool == Tool::synth, "Add a layer: SYNTH didn't open the synth");
         openAddLayer();
         addSheet.pick (pocket::AddLayerSheet::bass);
-        expect (! addOpen && tool == Tool::synth && synthPart.kind() == 0, "Add a layer: BASS didn't open the synth on a bass sound");
+        expect (! addOpen && tool == Tool::bass && familyOfKind (bassPart.kind()) == bassFamily && bassScreen.isVisible(), "Add a layer: BASS didn't open the BASS tool on a bass sound");
         openAddLayer();
         addSheet.pick (pocket::AddLayerSheet::sampler);
         expect (! addOpen && tool == Tool::sampler, "Add a layer: SAMPLER didn't open the sampler");

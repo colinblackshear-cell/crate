@@ -14,6 +14,7 @@ const char* layerToolName (int tool)
         case LayerTool::drums: return "DRUMS";
         case LayerTool::pads: return "PADS";
         case LayerTool::synth: return "SYNTH";
+        case LayerTool::bass: return "BASS";
         case LayerTool::chords: return "CHORDS";
         case LayerTool::vocoder: return "VOCODER";
         case LayerTool::mix: return "MIX";
@@ -29,6 +30,7 @@ juce::Colour layerToolColour (int tool)
         case LayerTool::drums: return toolColour (Tool::drums);
         case LayerTool::pads: return toolColour (Tool::pads);
         case LayerTool::synth: return toolColour (Tool::synth);
+        case LayerTool::bass: return toolColour (Tool::bass);
         case LayerTool::chords: return toolColour (Tool::chords);
         case LayerTool::vocoder: return toolColour (Tool::vocoder);
         case LayerTool::mix: return juce::Colour (0xffb7a9c2);
@@ -44,6 +46,7 @@ void drawLayerToolIcon (juce::Graphics& g, int tool, juce::Point<float> c, juce:
         case LayerTool::drums: drawToolIcon (g, Tool::drums, c, ink); break;
         case LayerTool::pads: drawToolIcon (g, Tool::pads, c, ink); break;
         case LayerTool::synth: drawToolIcon (g, Tool::synth, c, ink); break;
+        case LayerTool::bass: drawToolIcon (g, Tool::bass, c, ink); break;
         case LayerTool::chords: drawToolIcon (g, Tool::chords, c, ink); break;
         case LayerTool::mix: drawToolIcon (g, Tool::loops, c, ink); break;
         case LayerTool::drone: drawToolIcon (g, Tool::drone, c, ink); break;

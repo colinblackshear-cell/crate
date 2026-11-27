@@ -35,6 +35,7 @@ const char* toolName (Tool t)
         case Tool::effects: return "EFFECTS";
         case Tool::song: return "SONG";
         case Tool::add: return "ADD";
+        case Tool::bass: return "BASS";
     }
     return "";
 }
@@ -54,6 +55,7 @@ juce::Colour toolColour (Tool t)
         case Tool::effects: return juce::Colour (0xffec4e8a);
         case Tool::song: return juce::Colour (0xffc9a54e);   // brass
         case Tool::add: return col::red;
+        case Tool::bass: return juce::Colour (0xfff59a2a).interpolatedWith (juce::Colour (0xffec4e8a), 0.35f);   // deep orange
     }
     return col::green;
 }
@@ -64,6 +66,18 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
     const juce::PathStrokeType stroke (2.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
     switch (t)
     {
+        case Tool::bass:   // a long, low wave
+        {
+            juce::Path p;
+            for (int i = 0; i <= 24; ++i)
+            {
+                const float x = c.x - 11.0f + (float) i * 22.0f / 24.0f;
+                const float y = c.y + 6.0f * std::sin ((float) i / 24.0f * juce::MathConstants<float>::twoPi);
+                i == 0 ? p.startNewSubPath (x, y) : p.lineTo (x, y);
+            }
+            g.strokePath (p, juce::PathStrokeType (3.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            break;
+        }
         case Tool::add:   // a plus
         {
             g.drawLine (c.x - 9, c.y, c.x + 9, c.y, 3.2f);

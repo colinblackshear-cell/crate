@@ -31,6 +31,7 @@ Tool openToolFor (int layerTool, bool& has)
         case LayerTool::drums: return Tool::drums;
         case LayerTool::pads: return Tool::pads;
         case LayerTool::synth: return Tool::synth;
+        case LayerTool::bass: return Tool::bass;
         case LayerTool::chords: return Tool::chords;
         case LayerTool::vocoder: return Tool::vocoder;
         case LayerTool::drone: return Tool::drone;
@@ -947,6 +948,46 @@ void LoopsScreen::setOriginal (int layer, bool original)
     if (editor.isVisible() && editor.layer() == layer)
         editor.layerChanged();
     repaint();
+}
+
+int LoopsScreen::putSound (const juce::AudioBuffer<float>& buf, juce::Range<int> sel)
+{
+    const int layer = nextLayer();
+    sel = sel.getIntersectionWith ({ 0, buf.getNumSamples() });
+    if (layer < 0 || sel.getLength() < 64)
+        return -1;
+    const double sr = loops.rate(), bpm = juce::jlimit (40.0, 240.0, loops.bpm());
+    const int n = sel.getLength();
+    std::vector<float> mono ((size_t) n, 0.0f);
+    const int chans = juce::jmax (1, buf.getNumChannels());
+    for (int c = 0; c < buf.getNumChannels(); ++c)
+        for (int i = 0; i < n; ++i)
+            mono[(size_t) i] += buf.getSample (c, sel.getStart() + i) / (float) chans;
+    const double beats = (double) n / sr * bpm / 60.0;
+    const bool fit = beats >= 3.0;
+    const int bars = fit ? juce::jlimit (1, 64, juce::roundToInt (beats / 4.0)) : 1;
+    const int target = (int) std::llround (bars * 4.0 * 60.0 / bpm * sr);
+    auto take = LoopsEngine::makeTake (target, sr);
+    if (fit)
+    {
+        const auto out = stretchAudio (mono.data(), n, target);
+        std::copy (out.begin(), out.begin() + juce::jmin ((int) out.size(), target), take->data.begin());
+    }
+    else
+        std::copy (mono.begin(), mono.begin() + juce::jmin (n, target), take->data.begin());
+    take->length = target;
+    take->lengthBeats = bars * 4.0;
+    take->source = (int) LoopSource::mix;
+    take->tool = (int) LayerTool::pads;
+    Undo u;
+    u.items.push_back ({ layer, nullptr, false });
+    pushUndo (std::move (u));
+    loops.setLayer (layer, take, false, 0.0);
+    selected = lastLayer = layer;
+    settingsDirty = true;
+    layoutPanel();
+    repaint();
+    return layer;
 }
 
 int LoopsScreen::printLayer (int layer)

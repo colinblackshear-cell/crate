@@ -18,6 +18,7 @@ int pocket::toolForSource (int source)
         case LoopSource::mix: return (int) LayerTool::mix;
         case LoopSource::synth: return (int) LayerTool::synth;
         case LoopSource::chords: return (int) LayerTool::chords;
+        case LoopSource::bass: return (int) LayerTool::bass;
         case LoopSource::drone: return (int) LayerTool::drone;
         case LoopSource::loops:
         case LoopSource::master:
@@ -709,8 +710,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
         std::fill (vocR.begin(), vocR.begin() + n, 0.0f);
         inst->render (vocL.data(), vocR.data(), n);
-        if (stereo)
-            boards[(size_t) (boardSynth + k)].process (vocL.data(), vocR.data(), n);   // SYNTH, CHORDS
+        if (stereo && k < 2)
+            boards[(size_t) (boardSynth + k)].process (vocL.data(), vocR.data(), n);   // SYNTH, CHORDS (BASS has no board of its own yet)
         const float echo = inst->echoSend();
         const float toDelay = echo * 0.55f, toReverb = echo * 0.3f;   // pocket::echoToDelay / echoToReverb
         for (int i = 0; i < n; ++i)
@@ -1072,6 +1073,7 @@ void LoopsEngine::recordLayer (Layer& l, int index, double blockBeat, double bps
         case LoopSource::both: src = srcBoth.data(); break;
         case LoopSource::synth: src = srcInst[0].data(); break;
         case LoopSource::chords: src = srcInst[1].data(); break;
+        case LoopSource::bass: src = srcInst[2].data(); break;
         case LoopSource::drone: src = srcDrone.data(); break;
         case LoopSource::loops: src = srcLoops.data(); break;
         case LoopSource::master: src = srcMaster.data(); break;

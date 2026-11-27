@@ -21,8 +21,12 @@
 // a pattern recorded from the arp plays back as it was). Nothing on the audio thread allocates or waits.
 namespace pocket
 {
-constexpr int kSynthKinds = 8;
-const char* synthKindName (int kind);           // "BASS"
+// Two families of eight kinds each: the SYNTH tool's (0-7) and the BASS tool's (8-15). Each tool shows its own eight.
+constexpr int kSynthKinds = 16;
+constexpr int kKindsPerFamily = 8;
+enum SynthFamily { synthFamily, bassFamily };
+inline int familyOfKind (int kind) { return kind >= kKindsPerFamily ? bassFamily : synthFamily; }
+const char* synthKindName (int kind);           // "LEAD", "SUB"
 juce::Colour synthKindColour (int kind);
 
 struct SynthPreset
@@ -169,8 +173,10 @@ private:
 class SynthPart
 {
 public:
-    explicit SynthPart (BeatsEngine&);
+    explicit SynthPart (BeatsEngine&, int family = synthFamily);
     SynthEngine& engine() { return eng; }
+    const int family;          // SYNTH (lead, keys, pads...) or BASS (sub, 808, acid...): which sounds it picks from
+    int firstKind() const { return family == bassFamily ? kKindsPerFamily : 0; }
 
     enum Mode { keysMode, patternMode, arpMode };
     int preset = 0;

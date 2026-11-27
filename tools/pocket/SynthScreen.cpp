@@ -99,7 +99,7 @@ void SynthScreen::layout()
     addHit (nextR, nextId);
     addHit (lcd.withRight (prevR.getX() - 4.0f), nameId);
     const float kw = (iw - 20.0f - 3.0f * 8.0f) / 4.0f;
-    for (int k = 0; k < kSynthKinds; ++k)
+    for (int k = 0; k < kKindsPerFamily; ++k)
     {
         kindR[(size_t) k] = { x0 + 10.0f + (float) (k % 4) * (kw + 8.0f), lcd.getBottom() + 4.0f + (float) (k / 4) * (kindH + 6.0f), kw, kindH };
         addHit (kindR[(size_t) k], kindBase + k);
@@ -415,9 +415,9 @@ void SynthScreen::press (int id)
                          });
         return;
     }
-    else if (id >= kindBase && id < kindBase + kSynthKinds)
+    else if (id >= kindBase && id < kindBase + kKindsPerFamily)
     {
-        const int k = id - kindBase;
+        const int k = part.firstKind() + id - kindBase;
         if (k == part.kind())
             part.stepPreset (1);   // the lit kind again: its next sound
         else
@@ -760,7 +760,7 @@ void SynthScreen::paint (juce::Graphics& g)
     {
         g.setFont (spaced (lcdFont (21.0f), 0.04f));
         g.setColour (col::lcdAmber);
-        g.drawFittedText ("SYNTH " + juce::String (U8("\xc2\xb7 ")) + preset.name.toUpperCase(), lcd.withRight (prevR.getX() - 4.0f).toNearestInt(),
+        g.drawFittedText ((part.family == bassFamily ? "BASS " : "SYNTH ") + juce::String (U8("\xc2\xb7 ")) + preset.name.toUpperCase(), lcd.withRight (prevR.getX() - 4.0f).toNearestInt(),
                           juce::Justification::centredLeft, 1, 0.7f);
         const auto list = synthPresetsOf (part.kind());
         int at = 0;
@@ -777,19 +777,20 @@ void SynthScreen::paint (juce::Graphics& g)
             g.drawText (t, r, juce::Justification::centred);
         }
     }
-    for (int i = 0; i < kSynthKinds; ++i)
+    for (int i = 0; i < kKindsPerFamily; ++i)
     {
         auto r = kindR[(size_t) i];
-        const bool lit = part.kind() == i;
+        const int kind = part.firstKind() + i;
+        const bool lit = part.kind() == kind;
         const bool down = pressed == kindBase + i;
-        const auto c = synthKindColour (i);
+        const auto c = synthKindColour (kind);
         g.setColour (lit ? c.darker (0.5f) : c.withAlpha (0.85f));
         g.fillRoundedRectangle (r.translated (0, 3), 9.0f);
         g.setColour (lit ? c : kDarkKey);
         g.fillRoundedRectangle (r.translated (0, down ? 2.0f : 0.0f), 9.0f);
         g.setColour (lit ? col::onBright : kPaper);
         g.setFont (spaced (condensedBold (15.0f), 0.08f));
-        g.drawText (synthKindName (i), r.translated (0, down ? 2.0f : 0.0f), juce::Justification::centred);
+        g.drawText (synthKindName (kind), r.translated (0, down ? 2.0f : 0.0f), juce::Justification::centred);
     }
     for (int i = 0; i < 4; ++i)
         drawKnob (g, i);

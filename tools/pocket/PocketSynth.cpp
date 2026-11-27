@@ -13,13 +13,15 @@ namespace sy = crate::synth;
 
 const char* synthKindName (int kind)
 {
-    static const char* const names[kSynthKinds] = { "BASS", "LEAD", "KEYS", "PAD", "PLUCK", "808", "ORGAN", "STRINGS" };
+    static const char* const names[kSynthKinds] = { "LEAD", "KEYS", "PAD", "PLUCK", "ORGAN", "STRINGS", "BELLS", "BRASS",
+                                                    "SUB", "808", "FUNK", "ACID", "GROWL", "ANALOG", "PICKED", "DIGITAL" };
     return names[juce::jlimit (0, kSynthKinds - 1, kind)];
 }
 
 juce::Colour synthKindColour (int kind)
 {
-    static const juce::uint32 colours[kSynthKinds] = { 0xfff59a2a, 0xfff7c04a, 0xff2fc6a8, 0xffa877f5, 0xff9a5cf0, 0xffec4e8a, 0xfff7c04a, 0xffa877f5 };
+    static const juce::uint32 colours[kSynthKinds] = { 0xfff7c04a, 0xff2fc6a8, 0xffa877f5, 0xff9a5cf0, 0xfff7c04a, 0xffa877f5, 0xff5fe3c6, 0xfff59a2a,
+                                                       0xfff59a2a, 0xffec4e8a, 0xfff7c04a, 0xff2fc6a8, 0xffec4e8a, 0xfff59a2a, 0xffa877f5, 0xff5fe3c6 };
     return juce::Colour (colours[juce::jlimit (0, kSynthKinds - 1, kind)]);
 }
 
@@ -31,7 +33,8 @@ const char* synthShapeName (int shape)
 
 namespace
 {
-enum Kind { bass, lead, keys, pad, pluck, b808, organ, strings };
+enum Kind { lead, keys, pad, pluck, organ, strings, bells, brass,
+            sub, b808, funk, acid, growl, analog, picked, digital };
 
 // A Rig sound's settings (RigSounds' parameter ids) onto the engine's settings.
 void applyPs8 (Settings& s, const char* id, float v)
@@ -140,19 +143,25 @@ std::vector<SynthPreset> build()
         out.push_back (p);
     };
 
-    // BASS: the BX-1's sounds, and the PS-8's wobble an octave down
-    for (auto* n : { "Rubber Funk", "Acid 303", "Square Acid", "Screaming Acid", "Deep Sub", "Soft Round", "Pluck Bass", "Disco Octave",
-                     "Growl", "Wobble Bass", "Reese", "Distorted Square" })
-        bx1 (bass, n);
-    ps8 (bass, "Wobble", [] (Settings& s) { s.voiceMode = st::VoiceMode::mono; });
-
+    // ---- SYNTH family (the SYNTH tool) ----
     // LEAD
     for (auto* n : { "Big Supersaw", "Square Lead", "Chip Lead", "Screamer", "Soft Flute", "Random Bleeps" })
         ps8 (lead, n);
+    own (lead, "Sync Lead", [] (Settings& s)
+    {
+        s.wave = sy::Wave::saw; s.osc2Wave = st::Osc2Wave::saw; s.osc2Semi = 7; s.osc2Fine = 4; s.osc2Level = 0.45f;
+        s.cutoff = 3200; s.resonance = 0.35f; s.envMod = 0.5f; s.filterDecay = 0.35f; s.voiceMode = st::VoiceMode::legato; s.glide = 0.06f;
+        s.attack = 0.003f; s.sustain = 0.8f; s.release = 0.2f; s.lfoDepth = 0.06f; s.lfoRate = 6; s.lfoDest = st::LfoDest::pitch;
+    });
+    own (lead, "Glass Whistle", [] (Settings& s)
+    {
+        s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 12; s.osc2Fine = 3; s.osc2Level = 0.5f;
+        s.cutoff = 5000; s.resonance = 0.1f; s.envMod = 0.1f; s.attack = 0.04f; s.sustain = 0.9f; s.release = 0.35f;
+        s.voiceMode = st::VoiceMode::mono; s.glide = 0.08f; s.lfoDepth = 0.05f; s.lfoRate = 7; s.lfoDest = st::LfoDest::pitch;
+    });
 
     // KEYS
     ps8 (keys, "Electric Piano");
-    ps8 (keys, "Brass");
     own (keys, "Soft Keys", [] (Settings& s)
     {
         s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 12; s.osc2Fine = 0; s.osc2Level = 0.35f;
@@ -164,27 +173,46 @@ std::vector<SynthPreset> build()
         s.wave = sy::Wave::square; s.pulseWidth = 0.22f; s.cutoff = 1600; s.resonance = 0.45f; s.envMod = 0.7f; s.filterDecay = 0.15f;
         s.attack = 0.001f; s.decay = 0.35f; s.sustain = 0.1f; s.release = 0.12f;
     });
+    own (keys, "Dusty Keys", [] (Settings& s)
+    {
+        s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 0; s.osc2Fine = 9; s.osc2Level = 0.5f; s.noiseLevel = 0.04f;
+        s.cutoff = 1800; s.resonance = 0.05f; s.envMod = 0.3f; s.filterDecay = 0.6f; s.filterType = sy::FilterType::low12;
+        s.attack = 0.003f; s.decay = 1.8f; s.sustain = 0.15f; s.release = 0.6f; s.lfoDepth = 0.04f; s.lfoRate = 4; s.lfoDest = st::LfoDest::pitch;
+    });
+    own (keys, "Stab Keys", [] (Settings& s)
+    {
+        s.wave = sy::Wave::saw; s.detune = 0.2f; s.osc2Wave = st::Osc2Wave::square; s.osc2Semi = 12; s.osc2Fine = 0; s.osc2Level = 0.3f;
+        s.cutoff = 2400; s.resonance = 0.3f; s.envMod = 0.6f; s.filterDecay = 0.2f; s.attack = 0.001f; s.decay = 0.4f; s.sustain = 0.0f; s.release = 0.2f;
+    });
 
     // PAD
     for (auto* n : { "Warm Pad", "Ambient Glass", "Dark Drone", "Trance Gate Pad" })
         ps8 (pad, n);
+    own (pad, "Night Air", [] (Settings& s)
+    {
+        s.wave = sy::Wave::supersaw; s.detune = 0.45f; s.cutoff = 1400; s.resonance = 0.2f; s.envMod = 0.1f; s.noiseLevel = 0.03f;
+        s.attack = 1.2f; s.sustain = 0.9f; s.release = 2.4f; s.width = 1.0f; s.lfoDepth = 0.25f; s.lfoRate = 2; s.lfoDest = st::LfoDest::filter;
+    });
+    own (pad, "Choir Pad", [] (Settings& s)
+    {
+        s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::saw; s.osc2Semi = 12; s.osc2Fine = 6; s.osc2Level = 0.3f;
+        s.filterType = sy::FilterType::band; s.cutoff = 1100; s.resonance = 0.45f; s.envMod = 0.05f;
+        s.attack = 0.6f; s.sustain = 0.9f; s.release = 1.5f; s.width = 0.8f; s.lfoDepth = 0.05f; s.lfoRate = 5; s.lfoDest = st::LfoDest::pitch;
+    });
 
     // PLUCK
-    for (auto* n : { "Pluck", "Bell Pluck", "Supersaw Stab", "Marimba" })
+    for (auto* n : { "Pluck", "Supersaw Stab", "Marimba" })
         ps8 (pluck, n);
-
-    // 808: the BX-1's boom, and three of the phone's own
-    bx1 (b808, "808 Boom", [] (Settings& s) { s.glide = 0.03f; s.release = 0.3f; s.sustain = 0.0f; s.decay = 1.4f; });
-    auto boom = [] (Settings& s, float decay, float drive, float glide)
+    own (pluck, "Kalimba", [] (Settings& s)
     {
-        s.wave = sy::Wave::triangle; s.voiceMode = st::VoiceMode::mono; s.octave = -1;
-        s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 0; s.osc2Fine = 0; s.osc2Level = 0.9f; s.subLevel = 0.5f;
-        s.cutoff = 260; s.resonance = 0.05f; s.envMod = 0.25f; s.filterDecay = 0.08f;
-        s.attack = 0.001f; s.decay = decay; s.sustain = 0.0f; s.release = decay * 0.4f; s.drive = drive; s.glide = glide; s.volume = 0.8f;
-    };
-    own (b808, "808 Long", [=] (Settings& s) { boom (s, 2.2f, 0.2f, 0.0f); });
-    own (b808, "808 Punch", [=] (Settings& s) { boom (s, 0.5f, 0.55f, 0.0f); s.envMod = 0.6f; s.filterDecay = 0.04f; });
-    own (b808, "808 Glide", [=] (Settings& s) { boom (s, 1.6f, 0.35f, 0.09f); s.voiceMode = st::VoiceMode::legato; s.sustain = 0.6f; });
+        s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 24; s.osc2Fine = 0; s.osc2Level = 0.25f;
+        s.cutoff = 4000; s.resonance = 0.15f; s.envMod = 0.4f; s.filterDecay = 0.1f; s.attack = 0.001f; s.decay = 0.6f; s.sustain = 0.0f; s.release = 0.4f;
+    });
+    own (pluck, "Tropic Pluck", [] (Settings& s)
+    {
+        s.wave = sy::Wave::square; s.pulseWidth = 0.3f; s.osc2Wave = st::Osc2Wave::saw; s.osc2Semi = 12; s.osc2Fine = 5; s.osc2Level = 0.35f;
+        s.cutoff = 1500; s.resonance = 0.5f; s.envMod = 0.75f; s.filterDecay = 0.12f; s.attack = 0.001f; s.decay = 0.3f; s.sustain = 0.0f; s.release = 0.25f; s.width = 0.5f;
+    });
 
     // ORGAN
     ps8 (organ, "Organ");
@@ -221,6 +249,144 @@ std::vector<SynthPreset> build()
     {
         s.wave = sy::Wave::saw; s.detune = 0.5f; s.osc2Wave = st::Osc2Wave::saw; s.osc2Semi = 12; s.osc2Fine = 6; s.osc2Level = 0.3f;
         s.cutoff = 4200; s.resonance = 0.15f; s.envMod = 0.05f; s.attack = 0.3f; s.sustain = 0.85f; s.release = 0.9f; s.width = 1.0f;
+    });
+
+    // BELLS
+    ps8 (bells, "Bell Pluck");
+    own (bells, "Music Box", [] (Settings& s)
+    {
+        s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 24; s.osc2Fine = 7; s.osc2Level = 0.45f; s.octave = 1;
+        s.cutoff = 6000; s.resonance = 0.0f; s.envMod = 0.2f; s.filterDecay = 0.3f; s.attack = 0.001f; s.decay = 1.2f; s.sustain = 0.0f; s.release = 1.0f;
+    });
+    own (bells, "Temple Bell", [] (Settings& s)
+    {
+        s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 19; s.osc2Fine = 14; s.osc2Level = 0.6f;
+        s.cutoff = 3800; s.resonance = 0.2f; s.envMod = 0.3f; s.filterDecay = 0.8f; s.attack = 0.002f; s.decay = 3.0f; s.sustain = 0.0f; s.release = 2.5f; s.width = 0.6f;
+    });
+    own (bells, "Glass Mallet", [] (Settings& s)
+    {
+        s.wave = sy::Wave::square; s.pulseWidth = 0.12f; s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 12; s.osc2Fine = 0; s.osc2Level = 0.5f;
+        s.cutoff = 5200; s.resonance = 0.25f; s.envMod = 0.35f; s.filterDecay = 0.25f; s.attack = 0.001f; s.decay = 0.9f; s.sustain = 0.0f; s.release = 0.7f;
+    });
+
+    // BRASS
+    ps8 (brass, "Brass");
+    own (brass, "Horn Stab", [] (Settings& s)
+    {
+        s.wave = sy::Wave::saw; s.detune = 0.25f; s.osc2Wave = st::Osc2Wave::saw; s.osc2Semi = 0; s.osc2Fine = 8; s.osc2Level = 0.5f;
+        s.cutoff = 1300; s.resonance = 0.2f; s.envMod = 0.7f; s.filterAttack = 0.04f; s.filterDecay = 0.25f; s.filterSustain = 0.3f;
+        s.attack = 0.02f; s.decay = 0.3f; s.sustain = 0.6f; s.release = 0.15f;
+    });
+    own (brass, "Soft Brass", [] (Settings& s)
+    {
+        s.wave = sy::Wave::saw; s.detune = 0.3f; s.cutoff = 1000; s.resonance = 0.1f; s.envMod = 0.5f; s.filterAttack = 0.15f; s.filterDecay = 0.6f; s.filterSustain = 0.5f;
+        s.attack = 0.12f; s.sustain = 0.85f; s.release = 0.4f; s.width = 0.5f;
+    });
+    own (brass, "Big Synth Brass", [] (Settings& s)
+    {
+        s.wave = sy::Wave::supersaw; s.detune = 0.3f; s.cutoff = 1500; s.resonance = 0.25f; s.envMod = 0.65f; s.filterAttack = 0.03f; s.filterDecay = 0.4f; s.filterSustain = 0.35f;
+        s.attack = 0.01f; s.sustain = 0.8f; s.release = 0.3f; s.width = 0.9f; s.drive = 0.15f;
+    });
+
+    // ---- BASS family (the BASS tool) ----
+    // SUB
+    for (auto* n : { "Deep Sub", "Soft Round" })
+        bx1 (sub, n);
+    own (sub, "Pure Sub", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 0; s.osc2Fine = 0; s.osc2Level = 0.8f;
+        s.cutoff = 300; s.resonance = 0.0f; s.envMod = 0.05f; s.subLevel = 0.3f; s.drive = 0.05f; s.release = 0.08f;
+    });
+    own (sub, "Warm Sub", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::square; s.pulseWidth = 0.45f; s.cutoff = 260; s.resonance = 0.15f; s.envMod = 0.2f; s.filterDecay = 0.25f; s.drive = 0.25f;
+    });
+
+    // 808: the BX-1's boom, and the phone's own
+    bx1 (b808, "808 Boom", [] (Settings& s) { s.glide = 0.03f; s.release = 0.3f; s.sustain = 0.0f; s.decay = 1.4f; });
+    auto boom = [] (Settings& s, float decay, float drive, float glide)
+    {
+        s.wave = sy::Wave::triangle; s.voiceMode = st::VoiceMode::mono; s.octave = -1;
+        s.osc2Wave = st::Osc2Wave::sine; s.osc2Semi = 0; s.osc2Fine = 0; s.osc2Level = 0.9f; s.subLevel = 0.5f;
+        s.cutoff = 260; s.resonance = 0.05f; s.envMod = 0.25f; s.filterDecay = 0.08f;
+        s.attack = 0.001f; s.decay = decay; s.sustain = 0.0f; s.release = decay * 0.4f; s.drive = drive; s.glide = glide; s.volume = 0.8f;
+    };
+    own (b808, "808 Long", [=] (Settings& s) { boom (s, 2.2f, 0.2f, 0.0f); });
+    own (b808, "808 Punch", [=] (Settings& s) { boom (s, 0.5f, 0.55f, 0.0f); s.envMod = 0.6f; s.filterDecay = 0.04f; });
+    own (b808, "808 Glide", [=] (Settings& s) { boom (s, 1.6f, 0.35f, 0.09f); s.voiceMode = st::VoiceMode::legato; s.sustain = 0.6f; });
+    own (b808, "808 Dirty", [=] (Settings& s) { boom (s, 1.1f, 0.85f, 0.04f); s.cutoff = 900; s.envMod = 0.4f; });
+
+    // FUNK
+    for (auto* n : { "Rubber Funk", "Disco Octave" })
+        bx1 (funk, n);
+    own (funk, "Slap Synth", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::square; s.pulseWidth = 0.3f; s.cutoff = 700; s.resonance = 0.45f; s.envMod = 0.8f; s.filterDecay = 0.12f;
+        s.decay = 0.25f; s.sustain = 0.5f; s.drive = 0.2f;
+    });
+    own (funk, "Boogie", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::saw; s.cutoff = 550; s.resonance = 0.5f; s.envMod = 0.65f; s.filterDecay = 0.2f; s.glide = 0.04f; s.voiceMode = st::VoiceMode::legato;
+    });
+
+    // ACID
+    for (auto* n : { "Acid 303", "Square Acid", "Screaming Acid" })
+        bx1 (acid, n);
+    own (acid, "Rubber Acid", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::saw; s.cutoff = 380; s.resonance = 0.85f; s.envMod = 0.85f; s.filterDecay = 0.18f; s.glide = 0.07f;
+        s.voiceMode = st::VoiceMode::legato; s.drive = 0.35f;
+    });
+
+    // GROWL
+    for (auto* n : { "Growl", "Wobble Bass", "Reese", "Distorted Square" })
+        bx1 (growl, n);
+    ps8 (growl, "Wobble", [] (Settings& s) { s.voiceMode = st::VoiceMode::mono; });
+
+    // ANALOG: the classic synth basses
+    own (analog, "Fat Analog", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::saw; s.osc2Wave = st::Osc2Wave::saw; s.osc2Semi = 0; s.osc2Fine = 9; s.osc2Level = 0.7f;
+        s.cutoff = 650; s.resonance = 0.3f; s.envMod = 0.55f; s.filterDecay = 0.3f; s.filterSustain = 0.25f; s.subLevel = 0.45f;
+    });
+    own (analog, "Moody Low", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::square; s.osc2Wave = st::Osc2Wave::saw; s.osc2Semi = -12; s.osc2Fine = 0; s.osc2Level = 0.5f;
+        s.cutoff = 420; s.resonance = 0.25f; s.envMod = 0.4f; s.filterDecay = 0.5f; s.filterSustain = 0.2f; s.release = 0.12f;
+    });
+    own (analog, "Pulse Bass", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::square; s.pulseWidth = 0.18f; s.cutoff = 900; s.resonance = 0.2f; s.envMod = 0.5f; s.filterDecay = 0.2f;
+        s.lfoDepth = 0.2f; s.lfoRate = 8; s.lfoDest = st::LfoDest::pulseWidth;
+    });
+
+    // PICKED: short, played basses
+    bx1 (picked, "Pluck Bass");
+    own (picked, "Finger Bass", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::triangle; s.osc2Wave = st::Osc2Wave::saw; s.osc2Semi = 0; s.osc2Fine = 0; s.osc2Level = 0.3f;
+        s.cutoff = 800; s.resonance = 0.1f; s.envMod = 0.5f; s.filterDecay = 0.15f; s.decay = 0.6f; s.sustain = 0.2f; s.release = 0.1f; s.drive = 0.1f;
+    });
+    own (picked, "Muted Pick", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::saw; s.cutoff = 600; s.resonance = 0.2f; s.envMod = 0.7f; s.filterDecay = 0.08f; s.decay = 0.18f; s.sustain = 0.0f; s.release = 0.06f;
+    });
+
+    // DIGITAL: bright, modern
+    own (digital, "Digital Hollow", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::square; s.osc2Wave = st::Osc2Wave::square; s.osc2Semi = 12; s.osc2Fine = 0; s.osc2Level = 0.35f;
+        s.filterType = sy::FilterType::band; s.cutoff = 700; s.resonance = 0.4f; s.envMod = 0.5f; s.filterDecay = 0.2f; s.drive = 0.3f;
+    });
+    own (digital, "Laser Bass", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::saw; s.cutoff = 2500; s.resonance = 0.55f; s.envMod = -0.0f; s.filterDecay = 0.1f;
+        s.glide = 0.12f; s.voiceMode = st::VoiceMode::legato; s.lfoDepth = 0.3f; s.lfoRate = 9; s.lfoDest = st::LfoDest::filter; s.drive = 0.25f;
+    });
+    own (digital, "Bit Bass", [] (Settings& s)
+    {
+        s = bassBase(); s.wave = sy::Wave::square; s.pulseWidth = 0.25f; s.cutoff = 3000; s.resonance = 0.0f; s.envMod = 0.0f; s.subLevel = 0.5f;
+        s.decay = 0.3f; s.sustain = 0.6f; s.release = 0.04f;
     });
 
     for (auto& p : out)
@@ -266,7 +432,7 @@ int presetShape (int preset)
 bool synthKnobIsRelease (int preset)
 {
     const int k = synthPresets()[(size_t) juce::jlimit (0, (int) synthPresets().size() - 1, preset)].kind;
-    return k == pad || k == organ || k == strings;
+    return k == pad || k == organ || k == strings || k == brass;
 }
 
 static float decayScale (float knob) { return std::exp2 ((juce::jlimit (0.0f, 1.0f, knob) - 0.5f) * 4.0f); }
@@ -595,14 +761,14 @@ void SynthEngine::renderAt (float* left, float* right, int n, bool running, doub
 }
 
 //==============================================================================
-SynthPart::SynthPart (BeatsEngine& b) : eng (b)
+SynthPart::SynthPart (BeatsEngine& b, int fam) : family (fam), eng (b)
 {
     reset();
 }
 
 void SynthPart::reset()
 {
-    preset = juce::jmax (0, synthPresetIndex ("Rubber Funk"));
+    preset = juce::jmax (0, synthPresetIndex (family == bassFamily ? "Rubber Funk" : "Electric Piano"));
     knobs = {};
     knobs.shape = presetShape (preset);
     octave = 0;
