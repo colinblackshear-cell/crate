@@ -359,6 +359,7 @@ PocketApp::PocketApp (Options o)
     soundBank.onLoad = [this] (int k) { loadKit (k); };
     soundBank.onDone = [this] { closeSoundBank(); };
     soundBank.onSets = [this] { showSetsMenu(); };
+    soundBank.onRename = [this] { closeSoundBank(); beats.renameKit(); };
     soundBank.onOpenSounds = [this] { closeSoundBank(); showPage (Page::more, 1); };
     soundBank.loadedKitName = [this] { return beats.kit().name; };
     soundBank.onImport = [this]
@@ -1586,7 +1587,7 @@ void PocketApp::openSoundBank()
     closeSendSheet();
     closeTempo();
     bankOpen = true;
-    auto open = tempoBounds().withTop (getHeight() - 560 - insets.getBottom());
+    auto open = tempoBounds().withTop (getHeight() - SoundBankSheet::kHeight - insets.getBottom());
     dim->setVisible (true);
     soundBank.setBounds (open.withY (getHeight()));
     dim->toFront (false);
@@ -1602,7 +1603,7 @@ void PocketApp::closeSoundBank()
         return;
     bankOpen = false;
     dim->setVisible (false);
-    slide (soundBank, tempoBounds().withTop (getHeight() - 560 - insets.getBottom()), false);
+    slide (soundBank, tempoBounds().withTop (getHeight() - SoundBankSheet::kHeight - insets.getBottom()), false);
     if (! animate)
         soundBank.setVisible (false);
     else
@@ -3820,7 +3821,7 @@ void PocketApp::resized()
     exportSheet.setBounds (exportOpen ? exportBounds() : exportBounds().withY (h));
     vibeSheet.setBounds (vibeOpen ? vibeBounds() : vibeBounds().withY (h));
     headphones.setBounds (phonesOpen ? headphonesBounds() : headphonesBounds().withY (h));
-    soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - 560 - insets.getBottom()) : tempoBounds().withTop (h - 560 - insets.getBottom()).withY (h));
+    soundBank.setBounds (bankOpen ? tempoBounds().withTop (h - SoundBankSheet::kHeight - insets.getBottom()) : tempoBounds().withTop (h - SoundBankSheet::kHeight - insets.getBottom()).withY (h));
     toastBox->setBounds (24, content.getBottom() - 60, w - 48, 52);
     if (visualsView != nullptr)
     {
@@ -4286,9 +4287,15 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     beats.holdPad (9);
     savePng (folder.getChildFile ("22-hold-pad.png"));
     holdCard.close();
+    beats.setLevelsKind (pocket::padlevels::pitch);
     beats.startLevels (9);
     toastBox->setVisible (false);
-    savePng (folder.getChildFile ("22b-pads-16-levels.png"));
+    savePng (folder.getChildFile ("22b-pads-16-levels.png"));   // the PITCH banner and the type buttons
+    beats.setLevelsKind (pocket::padlevels::inKey);
+    savePng (folder.getChildFile ("22b2-pads-16-levels-in-key.png"));
+    beats.setLevelsKind (pocket::padlevels::filter);
+    savePng (folder.getChildFile ("22b3-pads-16-levels-filter.png"));
+    beats.setLevelsKind (pocket::padlevels::pitch);
     beats.endPadMode();
     beats.startCopy (9);
     toastBox->setVisible (false);
@@ -4303,6 +4310,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     closePadSheet();
     openSoundBank();
     savePng (folder.getChildFile ("05d-sound-bank.png"));
+    soundBank.scrollKitsTo (soundBank.kitCount());
+    savePng (folder.getChildFile ("05d2-sound-bank-scrolled.png"));
+    soundBank.scrollKitsTo (0);
     closeSoundBank();
     padSheet.onTrim (4);   // SAMPLE PAGE: the pad's sound on the SAMPLER
     savePng (folder.getChildFile ("05e-pad-sample-page.png"));
@@ -4586,6 +4596,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
 
     if (const auto why = beats.selfCheckSound(); why.isNotEmpty())
         problems.add ("Sound: " + why);
+    if (const auto why = beats.selfCheckLevels(); why.isNotEmpty())
+        problems.add ("16 LEVELS: " + why);
     if (const auto why = beats.selfCheckPattern(); why.isNotEmpty())
         problems.add ("Pad pattern: " + why);
     if (const auto why = beats.selfCheckLive(); why.isNotEmpty())
@@ -4767,6 +4779,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     note.replaceWithText ((problems.isEmpty() ? juce::String ("OK: + NEW SONG makes an empty song open on LOOPS, SET IN / SET OUT at the playhead and TRIM give a loop of the snapped length that plays gap-free in time (a 7-beat trim pads to 2 bars), FIT TO n BARS is exact and keeps the pitch, QUANTIZE moves loosely played pad hits and synth notes onto the grid in the re-rendered layer and UNDO brings the original back, effects and moves survive trim, fit and quantize, a BPM change keeps every layer's pitch, each CHORDS colour gives the right notes, the progression changes chord on every bar line and each chord reaches the vocoder, REC on CHORDS (progression and held chord) lands a take of the right length that isn't silent and the live chords then stop sounding (the progression still drives the vocoder), a PLAY LIVE hit just before its step sounds once (not again from the grid), a SYNTH key sounds at its pitch in the song's key, SYNTH pattern notes start on their steps, the arp plays in time, REC on SYNTH (KEYS and PATTERN) lands a take of the right length that isn't silent and the synth part then stops (UNDO brings it back), a new song starts with an empty drum grid and empty pad pattern (no pre-made beat), PLAY LIVE hits land on the nearest step while playing and not in the count-in or when stopped, the lesson's suggested steps are never written unless tapped, ideas keep their own pads and beat, a new idea gets the Street kit, TO PAD, the MPC export round trip, the pad pattern, the drum machine and the pads make sound, loops record, line up and play with no gap, the vocoder makes sound that follows the voice, REC on LOOPS, DRUMS (through the lesson), PLAY LIVE, PADS and VOCODER lands a take of the right length on the next layer, the count-in click is heard with CLICK off, the mic is silent in the speaker until it's allowed, an untouched song renders bit for bit as before the effect boards, each pedal changes the sound when on and is bit-transparent when off, a SYNTH board changes only the synth, REC on EFFECTS records through the board with the layer's own board left empty, QUANTIZE keeps the board, boards come back with the song, and the tempo-synced delay follows the BPM, the song drawer opens from the menu icon, the song name and the left edge (not over the SYNTH keys, the thumb bar or the tool row) and closes on a swipe left or a tap on the dim, picking a song there switches to it on the same tool with its own layers, the drawer reaches Sounds, the sound recorder, Mac link, Remote, Settings, the tour and the lesson, a hold on a layer, a pad, a chord pad or a song opens its menu and each row runs its action (CLEAR, REMOVE SOUND and COPY undo), a touch on a pad or chord sounds before and during the hold, sliding along the tool row or swiping the header changes tool, every bottom sheet closes on a downward drag or flick, and the tool row's amber outline can't stay on\n")
                                               : "FAILED\n" + problems.joinIntoString ("\n") + "\n")
                           + "\nPLAY LIVE early hit: " + beats.liveReport + "\n"
+                          + "\n16 LEVELS and the new kits:\n" + beats.levelsReport
                           + "\nSynth self-check (120 BPM, 44.1 kHz):\n" + synthReport
                           + "\nChords self-check (120 BPM, 44.1 kHz):\n" + chordsReport
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport

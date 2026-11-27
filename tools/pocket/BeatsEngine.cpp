@@ -152,6 +152,13 @@ juce::var PadPattern::toVar() const
         one.add (h.pad);
         one.add (h.beat);
         one.add (h.velocity);
+        if (h.mods.any())   // (old songs have just the three numbers)
+        {
+            one.add (h.mods.tune);
+            one.add ((double) h.mods.cutoff);
+            one.add ((double) h.mods.decay);
+            one.add ((double) h.mods.attack);
+        }
         list.add (one);
     }
     o->setProperty ("hits", list);
@@ -175,6 +182,13 @@ PadPattern PadPattern::fromVar (const juce::var& v)
                 hit.pad = juce::jlimit (0, kPads - 1, (int) h[0]);
                 hit.beat = juce::jlimit (0.0, p.lengthBeats() - 1.0e-6, (double) h[1]);
                 hit.velocity = h.size() > 2 ? juce::jlimit (0.05f, 1.0f, (float) (double) h[2]) : 1.0f;
+                if (h.size() > 6)
+                {
+                    hit.mods.tune = juce::jlimit (-360, 360, (int) h[3]);
+                    hit.mods.cutoff = juce::jlimit (0.0f, 20000.0f, (float) (double) h[4]);
+                    hit.mods.decay = juce::jlimit (0.0f, 10.0f, (float) (double) h[5]);
+                    hit.mods.attack = juce::jlimit (0.0f, 5.0f, (float) (double) h[6]);
+                }
                 p.hits.push_back (hit);
             }
     return p;
@@ -329,12 +343,13 @@ void BeatsEngine::hitVoice (int voice, float velocity, bool accent)
     push (e);
 }
 
-void BeatsEngine::padOn (int pad, float velocity)
+void BeatsEngine::padOn (int pad, float velocity, PadMods mods)
 {
     Event e;
     e.kind = Event::padOn;
     e.index = pad;
     e.velocity = velocity;
+    e.mods = mods;
     push (e);
 }
 
@@ -374,13 +389,16 @@ void BeatsEngine::setPad (int pad, const PadSetup& setup)
     const float gain = (float) juce::jlimit (0, 100, setup.volume) / 100.0f;
     s.left = juce::jmin (1.0f, std::cos (p * juce::MathConstants<float>::halfPi) * 1.41421f) * gain;
     s.right = juce::jmin (1.0f, std::sin (p * juce::MathConstants<float>::halfPi) * 1.41421f) * gain;
-    s.tune = juce::jlimit (-120, 120, setup.tune);
+    s.tune = juce::jlimit (-360, 360, setup.tune);
     s.mode = (int) setup.mode;
+    s.cutoff = juce::jlimit (0.0f, 20000.0f, setup.cutoff);
+    s.decay = juce::jlimit (0.0f, 10.0f, setup.decay);
+    s.attack = juce::jlimit (0.0f, 5.0f, setup.attack);
     s.audio = setup.audio != nullptr && setup.audio->getNumSamples() > 0 ? setup.audio.get() : nullptr;
 }
 
 //==============================================================================
-void BeatsEngine::startPad (int pad, float velocity)
+void BeatsEngine::startPad (int pad, float velocity, const PadMods& mods)
 {
     auto& s = slots[(size_t) pad];
     const auto* a = s.audio.load();
@@ -405,7 +423,17 @@ void BeatsEngine::startPad (int pad, float velocity)
     }
     slot->audio = a;
     slot->position = 0;
-    slot->step = (crate::kSampleRate / sampleRate) * std::pow (2.0, (double) s.tune.load() / 120.0);
+    slot->step = (crate::kSampleRate / sampleRate) * std::pow (2.0, (double) juce::jlimit (-360, 360, s.tune.load() + mods.tune) / 120.0);
+    // the hit's own filter, decay and attack win over the pad's
+    const float cutoff = mods.cutoff > 0.0f ? mods.cutoff : s.cutoff.load();
+    const float decay = mods.decay > 0.0f ? mods.decay : s.decay.load();
+    const float attack = mods.attack > 0.0f ? mods.attack : s.attack.load();
+    slot->shaped = cutoff > 0.0f || decay > 0.0f || attack > 0.0f;
+    slot->lpCoef = cutoff > 0.0f ? 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (cutoff, 0.45f * (float) sampleRate) / (float) sampleRate) : 0.0f;
+    slot->lp1L = slot->lp2L = slot->lp1R = slot->lp2R = 0.0f;
+    slot->played = 0;
+    slot->attackLen = attack * sampleRate;
+    slot->decayLen = decay * sampleRate;
     slot->gainL = s.left.load() * velocity;
     slot->gainR = s.right.load() * velocity;
     slot->release = 1.0f;
@@ -422,8 +450,8 @@ void BeatsEngine::handle (const Event& e)
         case Event::padOn:
         {
             const int pad = juce::jlimit (0, kPads - 1, e.index);
-            startPad (pad, e.velocity);
-            heldPads[(size_t) pad] = { true, e.velocity, wasRunning ? ppq : -1.0, sampleClock };
+            startPad (pad, e.velocity, e.mods);
+            heldPads[(size_t) pad] = { true, e.velocity, wasRunning ? ppq : -1.0, sampleClock, e.mods };
             break;
         }
         case Event::padOff:
@@ -494,9 +522,37 @@ void BeatsEngine::renderPads (float* left, float* right, int n)
                     break;
                 }
             }
-            left[i] += s0 * v.gainL * v.release;
+            float out0 = s0, out1 = s1, shape = 1.0f;
+            if (v.shaped)
+            {
+                if (v.lpCoef > 0.0f)
+                {
+                    v.lp1L += v.lpCoef * (out0 - v.lp1L);
+                    v.lp2L += v.lpCoef * (v.lp1L - v.lp2L);
+                    v.lp1R += v.lpCoef * (out1 - v.lp1R);
+                    v.lp2R += v.lpCoef * (v.lp1R - v.lp2R);
+                    out0 = v.lp2L;
+                    out1 = v.lp2R;
+                }
+                if (v.attackLen > 0.0 && v.played < v.attackLen)
+                    shape = (float) (v.played / v.attackLen);
+                if (v.decayLen > 0.0)
+                {
+                    // whole until a third of the decay time, then a smooth fade to nothing
+                    const double x = (v.played / v.decayLen - 0.35) / 0.65;
+                    if (x >= 1.0)
+                    {
+                        alive = false;
+                        break;
+                    }
+                    if (x > 0.0)
+                        shape *= (float) ((1.0 - x) * (1.0 - x));
+                }
+                v.played += 1.0;
+            }
+            left[i] += out0 * v.gainL * v.release * shape;
             if (right != nullptr)
-                right[i] += s1 * v.gainR * v.release;
+                right[i] += out1 * v.gainR * v.release * shape;
             v.position += v.step;
         }
         if (alive)
@@ -615,7 +671,7 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
                 continue;
             if (h.skipRun == thisRun && t < h.skipUntil)
                 continue;
-            triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - start) / beatsPerSample)), h.pad, h.velocity, false };
+            triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - start) / beatsPerSample)), h.pad, h.velocity, false, h.mods };
         }
     }
 
@@ -644,7 +700,7 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
                         break;
                     if (h.pressPpq >= 0 && t - h.pressPpq < rate * 0.5)
                         continue;
-                    triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - blockStart) / beatsPerSample)), pad, h.velocity, true };
+                    triggers[(size_t) numTriggers++] = { juce::jlimit (0, numSamples - 1, (int) ((t - blockStart) / beatsPerSample)), pad, h.velocity, true, h.mods };
                 }
             }
             else
@@ -655,7 +711,7 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
                     const int offset = juce::roundToInt ((double) n * everySamples - since);
                     if (offset >= numSamples)
                         break;
-                    triggers[(size_t) numTriggers++] = { juce::jmax (0, offset), pad, h.velocity, true };
+                    triggers[(size_t) numTriggers++] = { juce::jmax (0, offset), pad, h.velocity, true, h.mods };
                 }
             }
         }
@@ -685,7 +741,7 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
         if (i < numTriggers)
         {
             const auto& t = triggers[(size_t) i];
-            startPad (t.pad, t.velocity);
+            startPad (t.pad, t.velocity, t.mods);
             if (! t.repeat)
                 hitsPlayed = hitsPlayed.load() + 1;
             else
@@ -696,7 +752,7 @@ void BeatsEngine::renderWithClick (float* left, float* right, int numSamples, fl
                     int w1, n1w, w2, n2w;
                     reportFifo.prepareToWrite (1, w1, n1w, w2, n2w);
                     if (n1w > 0)
-                        reports[(size_t) w1] = { t.pad, t.velocity, blockStart + t.offset * beatsPerSample };
+                        reports[(size_t) w1] = { t.pad, t.velocity, blockStart + t.offset * beatsPerSample, t.mods };
                     reportFifo.finishedWrite (n1w + n2w);
                 }
             }
