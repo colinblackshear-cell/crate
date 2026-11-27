@@ -35,7 +35,7 @@ public:
     {
         enum What { song, part, loops } what = song;   // part: one section
         int section = -1;
-        bool eachLayer = true, wav = true, mp3 = true;
+        bool eachLayer = true, wav = true, aiff = false, mp3 = true;
         double tailSeconds = 2.0;
         bool withTrack = true;    // a friend's track in the mix (off: only your parts, lined up with his file)
         bool sendBack = false;    // SEND BACK: named for the track, with a note on lining it up
@@ -43,7 +43,10 @@ public:
     Bounce bounceSettings;
     std::function<void (const Bounce&)> onBounce;
     std::function<void()> onBounceToMac;
+    // EXPORT: opens the app's export sheet (after STOP + KEEP). The picked part's name is for its WHAT chip.
+    std::function<void()> onExportSheet;
     void showBounceMenu();
+    juce::String pickedPartName() const;   // "" when no part is tapped on the ruler
     void showSendBackMenu();
     // SEND BACK's three: 0 my parts each (+ mixed), 1 my parts mixed, 2 everything as an MP3 to listen to.
     Bounce sendBackPreset (int which) const;

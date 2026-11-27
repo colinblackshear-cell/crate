@@ -4,6 +4,8 @@
 #include "PocketHost.h"
 #include "PocketKey.h"
 #include "PocketKit.h"
+#include "PocketLevels.h"
+#include "PocketLoopTools.h"
 #include "PocketLibrary.h"
 #include "PocketTheme.h"
 #include "RepeatHold.h"
@@ -36,6 +38,11 @@ public:
     void leave();               // the tab was left: stop the drums and the pads
     void refreshPads();         // redraw the pad buttons' states (after LOCK BEAT)
     void flush();               // save anything waiting to be saved, now (before switching ideas)
+    // The app's UNDO history: the drum machine, the pad pattern and the kit as they are, and put back.
+    struct Snapshot { juce::var drums; std::array<pocket::KitPad, pocket::kPads> pads; juce::String kitName; };
+    Snapshot snapshot() const;
+    void restore (const Snapshot&);
+    static juce::String signature (const Snapshot&);
     void reloadIdea (const juce::String& ideaName);   // the library points at another idea: load its pads and beat
     juce::String summary() const;   // "92 BPM · 4 pads · beat recorded", for the Ideas list
 
@@ -51,9 +58,15 @@ public:
     void undoRemovePad();
     void addFactoryItem (pocket::HoldSpec&, int pad);              // FACTORY SOUND BACK, on a factory kit's bank
     bool canUndoRemovePad() const { return haveRemoved; }
-    // 16 LEVELS: the bank's 16 pads play one pad's sound from quiet (the first pad) to loud (the last).
+    // 16 LEVELS: the bank's 16 pads play one pad's sound a step apart (padlevels::Kind: PITCH, IN KEY, FILTER, DECAY, ATTACK,
+    // VELOCITY, PITCH+FILTER), as on the MPC2000XL. A hit played this way records with its step. MAKE 16 PADS bakes the steps
+    // onto the 16 pads of the bank on screen (UNDO puts them back).
     void startLevels (int pad);
     int levelsPad() const { return levelsOf; }
+    void setLevelsKind (int kind);
+    int levelsKind() const { return levelsKindValue; }
+    pocket::padlevels::Step levelsStep (int step) const;   // what pad `step` (0-15) of the bank plays now
+    void makeSixteenPads();
     // COPY TO ANOTHER PAD: tap the pad it goes to (the pad there is kept for UNDO).
     void startCopy (int pad);
     void copyPadTo (int target);
@@ -72,6 +85,11 @@ public:
     // The self-checks: a finger lands on a pad of the bank, the hold time passes, the finger lifts.
     void testTouchPad (int pad);
     void testHoldElapsed();
+    void testPressLevelsButton (int index);   // 0-6 the 16 LEVELS types, 7 MAKE 16 PADS
+    bool testLevelsButtonShown (int index) const;
+    void testTapKitName();                    // a tap on the kit name (opens the factory kits)
+    juce::String selfCheckLevels();            // 16 LEVELS' pitch, filter, decay and attack, the new kits, MAKE 16 PADS
+    juce::String levelsReport;
     void testLiftPad();
     void testTouchPadSource (int pad, int source);   // a second finger (multi-touch)
     void testLiftSource (int source);
@@ -85,11 +103,16 @@ public:
     void togglePatternPlay();
     void setPatternBars (int bars);
     void cycleQuantize();
+    // QUANTIZE (the button beside Snap): the hits already in the pattern move onto a grid (PocketApp's sheet asks for it).
+    std::function<void()> onQuantize;
+    int padPatternHits() const { return (int) drumData.padPattern.hits.size(); }
+    pocket::QuantizeResult quantizePads (const pocket::QuantizeSpec&);
+    void pressQuantize();                     // the button, for the self-checks too
     void undoPatternHit();
     void clearPattern();
     void patternChanged();
     double patternPosition() const;   // beats into the pattern, -1 when it isn't playing
-    void recordHit (int pad, float velocity);
+    void recordHit (int pad, float velocity, const pocket::PadMods& mods = {});
 
     // NOTE REPEAT (PADS): hold the red REPEAT strip and every pad you hold plays again at the rate; double-tap the strip to
     // latch it on, press once to switch it off. The rate chips above the pads set how fast (noterepeat::kRates).
@@ -195,10 +218,11 @@ private:
     noterepeat::Hold repeatHold;
     void applyRepeatRate();
     void takeRepeats();   // REC PADS: the repeats the engine played go into the pattern
-    void recordHitAt (int pad, float velocity, double now, bool commit);
+    void recordHitAt (int pad, float velocity, double now, bool commit, const pocket::PadMods& mods = {});
     std::vector<pocket::PadPattern> patternUndo;
     bool drumsDirty = false, kitDirty = false;
     int levelsOf = -1, copyFrom = -1, removedPad = -1, copiedTo = -1;
+    int levelsKindValue = pocket::padlevels::pitch;
     pocket::KitPad removed, copiedWas;
     bool haveRemoved = false, haveCopied = false;
     bool padEdit = false;              // PLAY / EDIT on the pads

@@ -529,6 +529,8 @@ void LoopsScreen::pressPanel (int which)
             {
                 Undo u;
                 u.items.push_back ({ l, loops.copyOf (l), loops.isMuted (l), false, {}, loops.startBeat (l) });
+                if (onBeforeDub)
+                    onBeforeDub (l, u.items.back().before);
                 if (loops.dub (l))
                 {
                     pushUndo (std::move (u));
@@ -638,6 +640,8 @@ HoldSpec LoopsScreen::layerMenuSpec (int l)
     s.items.push_back ({ hasTool ? juce::String ("OPEN ") + toolName (openTool) : juce::String ("DOUBLE"), {}, false, true, run (pTool) });
     if (onToSong)
         s.items.push_back ({ "TO SONG PART", "A, B, C...", false, true, [this, l] { if (onToSong) onToSong (l); } });
+    if (onExport)
+        s.items.push_back ({ "EXPORT", "stems or a mix: WAV, AIFF, MP3", false, true, [this] { if (onExport) onExport(); } });
     s.items.push_back ({ "SEND TO MAC", {}, false, true, run (pToMac) });
     s.items.push_back ({ "CLEAR", "undo brings it back", true, true, run (pClear) });
     return s;
@@ -2036,3 +2040,68 @@ juce::String LoopsScreen::selfCheck (juce::String& report)
     return problems.joinIntoString ("\n");
 }
 
+
+//==============================================================================
+// UNDO history (PocketAppHistory.cpp)
+LoopsScreen::Snapshot LoopsScreen::snapshot() const
+{
+    Snapshot s;
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        auto& one = s.layers[(size_t) l];
+        if (! hasLoop (loops.state (l)))
+            continue;
+        one.take = loops.takeOf (l);
+        one.mute = loops.isMuted (l);
+        one.fx = loops.fxOf (l);
+        one.start = loops.startBeat (l);
+        one.board = loops.board (layerBoardId (l)).toVar();
+        one.version = loops.version (l);
+    }
+    return s;
+}
+
+juce::String LoopsScreen::signature (const Snapshot& s)
+{
+    juce::String t;
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        const auto& one = s.layers[(size_t) l];
+        if (one.take == nullptr)
+        {
+            t << "|-";
+            continue;
+        }
+        t << "|" << (juce::pointer_sized_int) one.take.get() << "," << (one.mute ? 1 : 0) << "," << one.start << "," << juce::JSON::toString (one.board, true);
+        for (int k = 0; k < kFxKnobs; ++k)
+        {
+            float sum = 0.0f;
+            for (auto v : one.fx.moves[(size_t) k])
+                sum += v;
+            t << "," << one.fx.knob[(size_t) k] << "/" << (int) one.fx.moves[(size_t) k].size() << "/" << sum;
+        }
+    }
+    return t;
+}
+
+void LoopsScreen::restore (const Snapshot& s)
+{
+    for (int l = 0; l < kLoopLayers; ++l)
+    {
+        const auto& one = s.layers[(size_t) l];
+        if (one.take == nullptr)
+        {
+            if (loops.state (l) != LoopState::empty)
+                loops.clear (l);
+            continue;
+        }
+        if (! hasLoop (loops.state (l)) || loops.takeOf (l) != one.take || loops.isMuted (l) != one.mute || std::abs (loops.startBeat (l) - one.start) > 1.0e-9)
+            loops.setLayer (l, one.take, one.mute, one.start);
+        loops.setFx (l, one.fx);
+        loops.board (layerBoardId (l)).fromVar (one.board);
+    }
+    if (editor.isVisible())
+        editor.layerChanged();
+    layoutPanel();
+    save();
+}

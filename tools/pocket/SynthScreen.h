@@ -21,6 +21,9 @@ public:
     std::function<void()> onChanged;       // something to save
     std::function<int()> nextLayer;        // for the hint: where REC lands (0-based, -1 = full)
     std::function<bool()> recBusy;         // REC is counting in, recording or locking
+    std::function<void()> onQuantize;      // QUANTIZE (when the pattern has notes): the app's sheet moves them onto a grid
+    void pressQuantize() { press (quantId); }   // the button, for the self-checks
+    bool quantizeShown() const;            // KEYS and PATTERN, with notes in the pattern
 
     void leave();                          // another tool opened: every key up
     void partChanged();                    // the part was replaced (a song opened): redraw, no keys held
@@ -46,7 +49,7 @@ private:
     {
         none = 0, prevId, nextId, nameId, kindBase = 10, knobBase = 20, modeBase = 30, keyChipId = 33, octDownId, octUpId,
         scaleId = 40, chromaticId, snapId, chordsId, arpBase = 45, rateBase = 50, holdId = 52, lenId = 55, pagePrevId, pageNextId, tieId, clearId,
-        stripId = 60, stepBase = 70, keyBase = 100
+        stripId = 60, quantId = 61, stepBase = 70, keyBase = 100
     };
     struct Hit { juce::Rectangle<float> r; int id; };
 
@@ -85,4 +88,5 @@ private:
     std::array<int, pocket::kSynthKinds> lastOfKind;
     std::vector<int> demoHeld;
     int shownStep = -2;
+    bool laidOutWithNotes = false;
 };

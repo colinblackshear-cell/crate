@@ -75,6 +75,9 @@ target_sources(KaleidoboxPocket PRIVATE
     SoundBankSheet.cpp
     DrumKitSheet.cpp
     TempoSheet.cpp
+    ExportSheet.cpp
+    MovesSheet.cpp
+    QuantizeSheet.cpp
     IdeasScreen.cpp
     PocketTheme.cpp
     PocketWave.cpp
@@ -104,6 +107,8 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketAppEffects.cpp
     PocketAppNav.cpp
     PocketAppSong.cpp
+    PocketAppMoves.cpp
+    PocketAppHistory.cpp
     PocketAppTrack.cpp
     PocketAppSampler.cpp
     ${PROJECT_SOURCE_DIR}/core/link/PocketLink.cpp
@@ -145,6 +150,10 @@ target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/Mp3Writer.cpp)
 target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/RigFriendTrack.cpp)
 target_include_directories(KaleidoboxPocket PRIVATE ${TOOLS}/rig)
 target_compile_definitions(KaleidoboxPocket PRIVATE CRATE_STRIPFX_NO_PLUGINS=1)
+# MOVES (the performance pad over the whole mix: filter, repeat, tape stop, gate, riser, drop, freeze, grain, reverse):
+# the Mac FX pad's own effect (PerformFx), without its Mac pad component.
+target_sources(KaleidoboxPocket PRIVATE ${TOOLS}/rig/PerformFx.cpp)
+target_compile_definitions(KaleidoboxPocket PRIVATE CRATE_PERFORMFX_DSP_ONLY=1)
 
 # The Beats tab: the Mac's 808 engine and the MPC file writer. On the desktop preview the Mac tools
 # already define mpc_format; on iOS the phone makes it here.

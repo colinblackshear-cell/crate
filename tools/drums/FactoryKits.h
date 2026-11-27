@@ -4,7 +4,7 @@
 
 #include <vector>
 
-// The factory sound bank: five kits of 16 sounds, all made in code (the 808 engine plus original
+// The factory sound bank: eleven kits of 16 sounds, all made in code (the 808 engine plus original
 // one-shots synthesised here), so Kaleidobox has a full bank on day one with nothing to license.
 // The same kits on the iPhone (Kaleidobox Pocket's pads) and the Mac (the MPC pads and the Sounds bank).
 namespace crate::factory

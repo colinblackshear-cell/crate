@@ -331,7 +331,7 @@ void ThumbBar::paint (juce::Graphics& g)
 
     auto undoR = buttonRect (undo);
     drawRaised (g, undoR, Look::cream, pressed == undo, 12.0f);
-    label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", s.undoPass ? "LAST PASS" : "LAST TAKE", col::ink, 18.0f);
+    label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", s.undoPass ? "LAST PASS" : "LAST STEP", col::ink, 18.0f);
 
     // TO LOOPER (in VISUALS' place): the looper's icon on teal, what this tool made goes on a layer.
     if (s.toLooper)
@@ -343,6 +343,41 @@ void ThumbBar::paint (juce::Graphics& g)
         g.setColour (col::onBright);
         g.setFont (spaced (condensedBold (11.0f), 0.04f));
         g.drawFittedText ("TO LOOPER", body.withTrimmedTop (body.getHeight() * 0.6f).reduced (2, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
+    }
+    else if (s.moves)
+    {
+        // MOVES: the FX pad over the whole mix (a pad with a finger on it); red while its sheet is open
+        auto r = buttonRect (visuals);
+        drawRaised (g, r, s.movesOpen ? Look::red : Look::cream, pressed == visuals, 12.0f);
+        auto body = r.withTrimmedBottom (3).translated (0, pressed == visuals ? 2.0f : 0.0f);
+        const auto c = body.getCentre().translated (0, -7.0f);
+        const auto ink = s.movesOpen ? col::onBright : col::ink;
+        g.setColour (ink);
+        g.drawRoundedRectangle (c.x - 11.0f, c.y - 10.0f, 22.0f, 20.0f, 4.0f, 2.0f);
+        g.setColour (ink.withAlpha (0.45f));
+        g.drawLine (c.x - 11.0f, c.y + 2.0f, c.x + 11.0f, c.y + 2.0f, 1.2f);
+        g.drawLine (c.x + 3.0f, c.y - 10.0f, c.x + 3.0f, c.y + 10.0f, 1.2f);
+        g.setColour (ink);
+        g.fillEllipse (c.x + 3.0f - 3.5f, c.y + 2.0f - 3.5f, 7.0f, 7.0f);
+        g.setFont (spaced (condensedBold (11.0f), 0.06f));
+        g.drawText ("MOVES", body.withTrimmedTop (body.getHeight() * 0.62f), juce::Justification::centredTop);
+    }
+    else if (s.power >= 0)
+    {
+        // ON / OFF: the instrument plays along by itself (lit teal), or stays quiet with its part kept
+        auto r = buttonRect (visuals);
+        const bool on = s.power == 1;
+        drawRaised (g, r, on ? Look::green : Look::cream, pressed == visuals, 12.0f);
+        auto body = r.withTrimmedBottom (3).translated (0, pressed == visuals ? 2.0f : 0.0f);
+        const auto c = body.getCentre().translated (0, -8.0f);
+        const auto ink = on ? col::onBright : col::ink;
+        juce::Path ring;
+        ring.addCentredArc (c.x, c.y, 8.5f, 8.5f, 0.0f, 0.75f, juce::MathConstants<float>::twoPi - 0.75f, true);
+        g.setColour (ink);
+        g.strokePath (ring, juce::PathStrokeType (2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.drawLine (c.x, c.y - 11.0f, c.x, c.y - 2.0f, 2.4f);
+        g.setFont (spaced (condensedBold (12.0f), 0.06f));
+        g.drawFittedText (on ? "ON" : "OFF", body.withTrimmedTop (body.getHeight() * 0.6f).reduced (2, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
     }
     else
     // VISUALS: a little kaleidoscope of the tools' colours; amber while the light show is on.
@@ -420,6 +455,15 @@ void ToolRow::paint (juce::Graphics& g)
             }
         }
         drawToolIcon (g, t, well.getCentre(), on ? kPaper : col::inkDim.withAlpha (0.8f));
+        if (isLive && isLive (t))
+        {
+            // playing along by itself: a teal light in the well's corner
+            const auto d = juce::Rectangle<float> (well.getRight() - 11.0f, well.getY() + 4.0f, 7.0f, 7.0f);
+            g.setColour (col::green.withAlpha (0.35f));
+            g.fillEllipse (d.expanded (2.5f));
+            g.setColour (col::green);
+            g.fillEllipse (d);
+        }
         g.setColour (on ? col::ink : col::inkDim);
         // one size for every label, the size the narrowest cell lets the longest name have (eight tools at 390: 11.5)
         g.setFont (spaced (condensedBold (labelHeight()), 0.06f));

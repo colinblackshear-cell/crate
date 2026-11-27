@@ -1,5 +1,10 @@
-#include "PerformPad.h"
-#include "Vintage.h"
+// CRATE_PERFORMFX_DSP_ONLY (Kaleidobox Pocket): only the effect, without the Mac's pad component.
+#if CRATE_PERFORMFX_DSP_ONLY
+ #include "PerformFx.h"
+#else
+ #include "PerformPad.h"
+ #include "Vintage.h"
+#endif
 
 namespace
 {
@@ -333,6 +338,7 @@ void PerformFx::process (juce::AudioBuffer<float>& mix, double ppq, double bpm, 
         freeBeat = beat;
 }
 
+#if ! CRATE_PERFORMFX_DSP_ONLY
 //==============================================================================
 PerformPad::PerformPad (PerformFx& f) : fx (f)
 {
@@ -484,3 +490,5 @@ void PerformPad::resized()
     }
     holdButton.setBounds (buttons.removeFromBottom (bh));
 }
+
+#endif

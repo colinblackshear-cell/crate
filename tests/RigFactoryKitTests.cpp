@@ -12,10 +12,10 @@ public:
 
     void runTest() override
     {
-        beginTest ("the five factory kits, 16 sounds each, none silent");
+        beginTest ("the factory kits, 16 sounds each, none silent");
         {
             const auto& kits = crate::factory::kits();
-            expectEquals ((int) kits.size(), 5);
+            expectEquals ((int) kits.size(), 11);
             for (int k = 0; k < (int) kits.size(); ++k)
             {
                 const auto sounds = crate::factory::makeSounds (k);

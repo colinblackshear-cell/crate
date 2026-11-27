@@ -118,6 +118,9 @@ public:
     void setPattern (const SynthPattern&);
     // The pattern only plays from this beat on (a REC pass: what you play goes in, and plays from the pass's end).
     void setPlayFrom (double beat) { playFrom = beat; }
+    // OFF (after TO LOOPER, or the thumb's ON/OFF): the pattern stays but doesn't play; keys played by hand still sound.
+    void setPatternMuted (bool m) { patternMuted = m; }
+    bool isPatternMuted() const { return patternMuted.load(); }
     void keyDown (int note, float velocity = 0.8f);
     void keyUp (int note);
     void allKeysUp();
@@ -145,6 +148,8 @@ private:
     double sampleRate = 44100.0;
     std::atomic<float> echo { 0.0f }, peak { 0.0f };
     std::atomic<double> playFrom { -1.0e9 };
+    std::atomic<bool> patternMuted { false };
+    bool wasMuted = false;   // audio thread
     std::atomic<bool> capture { false };
     std::atomic<int> step { -1 }, patternNotesPlayed { 0 };
 
@@ -190,6 +195,9 @@ public:
     int arpRate = 1;           // 0 1/8, 1 1/16
     bool arpHold = false;
     SynthPattern pattern;
+    // ON: its pattern (and a held arp) plays along. OFF: silent unless you play it by hand (the pattern is kept).
+    bool live = true;
+    void setLive (bool on);
 
     void setPreset (int index);   // the knobs go back to the sound's own
     void stepPreset (int delta);  // inside the kind
