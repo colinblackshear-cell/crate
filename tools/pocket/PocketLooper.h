@@ -299,6 +299,7 @@ private:
     RigFriendTrack friendTrack;
     PerformFx perform;
     std::vector<float> trackL, trackR;
+    std::vector<float> moveL, moveR;   // MOVES works on a copy of the mix without the click
     std::atomic<double> songCountIn { -1.0 };
     const std::atomic<bool>* vocoderMonitor = nullptr;
     bool vocoderHeard = true;

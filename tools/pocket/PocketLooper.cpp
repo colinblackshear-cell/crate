@@ -397,7 +397,7 @@ void LoopsEngine::prepare (double rate)
         v->assign ((size_t) kChunk, 0.0f);
     for (auto& v : srcInst)
         v.assign ((size_t) kChunk, 0.0f);
-    for (auto* v : { &padsL, &padsR, &voiceL, &voiceR, &allL, &allR, &srcLoops, &srcMaster, &trackL, &trackR })
+    for (auto* v : { &padsL, &padsR, &voiceL, &voiceR, &allL, &allR, &srcLoops, &srcMaster, &trackL, &trackR, &moveL, &moveR })
         v->assign ((size_t) kChunk, 0.0f);
     friendTrack.prepare (rate);
     perform.prepare (rate);
@@ -944,27 +944,25 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         for (int i = 0; i < n; ++i)
             srcMaster[(size_t) i] = (right != nullptr ? 0.5f * (left[i] + right[i]) : left[i]) - clickBuf[(size_t) i];
 
-    // MOVES on the whole mix, the click left out of it (and heard as it was)
+    // MOVES on the whole mix, the click left out of it (and heard as it was). It always listens (its history feeds
+    // Repeat, Tape stop and Reverse) to a copy without the click; only while it sounds does the mix become its output
+    // with the click put back, so an untouched mix stays bit for bit what it was.
     if (right != nullptr)
     {
-        // (the click's arithmetic only while it sounds: x - 0 + 0 turns a -0.0 into +0.0, and an untouched mix stays bit for bit)
-        bool clicking = false;
-        for (int i = 0; i < n && ! clicking; ++i)
-            clicking = clickBuf[(size_t) i] != 0.0f;
-        if (clicking)
-            for (int i = 0; i < n; ++i)
-            {
-                left[i] -= clickBuf[(size_t) i];
-                right[i] -= clickBuf[(size_t) i];
-            }
-        float* ch[2] = { left, right };
+        for (int i = 0; i < n; ++i)
+        {
+            moveL[(size_t) i] = left[i] - clickBuf[(size_t) i];
+            moveR[(size_t) i] = right[i] - clickBuf[(size_t) i];
+        }
+        float* ch[2] = { moveL.data(), moveR.data() };
         juce::AudioBuffer<float> mixBuf (ch, 2, n);
+        const bool wasSounding = perform.sounding();
         perform.process (mixBuf, blockBeat, beats.getBpm(), running);
-        if (clicking)
+        if (wasSounding || perform.sounding())
             for (int i = 0; i < n; ++i)
             {
-                left[i] += clickBuf[(size_t) i];
-                right[i] += clickBuf[(size_t) i];
+                left[i] = moveL[(size_t) i] + clickBuf[(size_t) i];
+                right[i] = moveR[(size_t) i] + clickBuf[(size_t) i];
             }
     }
 

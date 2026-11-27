@@ -39,6 +39,9 @@ public:
 
     // What the pad shows: how far a riser has risen, 0..1.
     float getRise() const { return rise.load(); }
+    // Audio thread: whether process() changes the mix now (held, fading out, or a Drop waiting for its bar).
+    // When it doesn't, the mix passes through untouched.
+    bool sounding() const { return engaged.load() || wet.getCurrentValue() > 0.0001f || wet.isSmoothing() || dropBackBeat >= 0; }
 
 private:
     struct Svf
