@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 
+#include <array>
 #include <cmath>
 
 // 16 Levels, as on the MPC: one sound spread over all 16 pads of the bank on screen, each pad
@@ -15,11 +16,22 @@
 // - Velocity: from soft on pad 1 to full on pad 16 (ghost notes to accents).
 // - Decay: short on pad 1, longer up the pads, the whole sound at pad 16 (an 808 kick's tail).
 //
+// - Attack: instant on pad 1, a slower and slower fade-in up the pads.
+// - In key: like Tune, but each pad climbs the song's scale (pad 1 = the key's root) instead of
+//   a semitone, so every pad is in key.
+//
 // A hit played this way keeps its step (its "note variation", as the MPC calls it): the
 // sequencer records the sound's own pad with the step, and plays it back the same way.
 namespace levels
 {
-    enum Type { off, tune, filter, tuneFilter, velocity, decay, numTypes };
+    // (New types go on the end: a saved hit's variation is type * 16 + step, which must stay
+    // <= 127, so there's room for 8 types in all.)
+    enum Type { off, tune, filter, tuneFilter, velocity, decay, attack, inKey, numTypes };
+    static_assert (numTypes <= 8, "a packed variation is type * 16 + step and must fit in 0..127");
+
+    // The song's scale: the semitones above the root of its seven notes. C major until the host says.
+    using Scale = std::array<int, 7>;
+    inline constexpr Scale majorScale { 0, 2, 4, 5, 7, 9, 11 };
 
     inline juce::String typeName (int type)
     {
@@ -30,6 +42,8 @@ namespace levels
             case tuneFilter: return "Tune + filter";
             case velocity:   return "Velocity";
             case decay:      return "Decay";
+            case attack:     return "Attack";
+            case inKey:      return "In key";
             default:         return "Off";
         }
     }
@@ -38,6 +52,27 @@ namespace levels
     inline double semitones (int type, int step)
     {
         return type == tune || type == tuneFilter ? (double) juce::jlimit (0, 15, step) : 0.0;
+    }
+
+    // Semitones above the sound for a step of In key: scale degree `step` of the song's scale
+    // (pad 1 = the root, pad 8 = the root an octave up), as the phone's key.degreeSemis does.
+    inline int inKeySemitones (int step, const Scale& scale)
+    {
+        const int degree = juce::jlimit (0, 15, step);
+        return scale[(size_t) (degree % 7)] + 12 * (degree / 7);
+    }
+
+    // Semitones for any type that pitches the sound, in the song's scale for In key.
+    inline double semitones (int type, int step, const Scale& scale)
+    {
+        return type == inKey ? (double) inKeySemitones (step, scale) : semitones (type, step);
+    }
+
+    // The fade-in's length in seconds: none on pad 1, then 4 ms doubling every two pads.
+    inline double attackSeconds (int type, int step)
+    {
+        step = juce::jlimit (0, 15, step);
+        return type != attack || step <= 0 ? 0.0 : 0.004 * std::pow (2.0, 0.5 * step);
     }
 
     // The low-pass filter's cutoff in Hz, or 0 when the step doesn't filter the sound.
@@ -61,7 +96,7 @@ namespace levels
     }
 
     // What a step does, for the pad that plays it: "+3 st", "1.2 kHz", "Vel 64", "180 ms".
-    inline juce::String stepText (int type, int step)
+    inline juce::String stepText (int type, int step, const Scale& scale = majorScale)
     {
         auto hz = [] (float f) { return f >= 1000.0f ? juce::String (f / 1000.0f, 1) + " kHz" : juce::String (juce::roundToInt (f)) + " Hz"; };
         switch (type)
@@ -75,6 +110,8 @@ namespace levels
                 const double secs = decaySeconds (type, step);
                 return secs <= 0 ? juce::String ("Whole") : juce::String (juce::roundToInt (secs * 1000.0)) + " ms";
             }
+            case inKey:      return step <= 0 ? juce::String ("Root") : "+" + juce::String (inKeySemitones (step, scale)) + " st";
+            case attack:     return step <= 0 ? juce::String ("0 ms") : juce::String (juce::roundToInt (attackSeconds (type, step) * 1000.0)) + " ms";
             default:         return {};
         }
     }

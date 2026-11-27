@@ -2,6 +2,7 @@
 #include "core/TrackAnalysis.h"
 #include "RigSong.h"
 #include "FactoryKits.h"
+#include "dsp/Chords.h"   // the vocoder's scales, for the MPC's 16 Levels In key
 
 
 #include <algorithm>
@@ -858,7 +859,17 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
     // (In a one-tool plugin only its tool runs; the others stay quiet and cost nothing.)
     mpcBlock.clear();
     if (runsStrip (mpcStrip))
+    {
+        // The MPC's 16 Levels "In key" climbs the song's scale: the chord builder's key and scale.
+        {
+            levels::Scale scale;
+            const auto& notes = vox::Chords::scales[juce::jlimit (0, vox::Chords::numScales - 1, chords.fillScale)];
+            for (size_t i = 0; i < scale.size(); ++i)
+                scale[i] = notes[i];
+            mpc.setSongKey (chords.fillKey, scale);
+        }
         mpc.processBlock (mpcBlock, mpcMidi);
+    }
     drumsBlock.clear();
     if (runsStrip (drumsStrip))
         drums.processBlock (drumsBlock, drumsMidi);

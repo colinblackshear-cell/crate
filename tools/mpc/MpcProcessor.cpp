@@ -331,6 +331,55 @@ bool MpcProcessor::redoEdit()
     return true;
 }
 
+void MpcProcessor::setSongKey (int root, const levels::Scale& scale)
+{
+    songRoot = ((root % 12) + 12) % 12;
+    for (size_t i = 0; i < scale.size(); ++i)
+        songScale[i] = juce::jlimit (0, 11, scale[i]);
+}
+
+levels::Scale MpcProcessor::getSongScale() const
+{
+    levels::Scale s;
+    for (size_t i = 0; i < s.size(); ++i)
+        s[i] = songScale[i].load();
+    return s;
+}
+
+void MpcProcessor::beginBankEdit()
+{
+    if (bankUndoIndex != project.getCurrentIndex())
+    {
+        bankUndoStack.clear();
+        bankRedoStack.clear();
+        bankUndoIndex = project.getCurrentIndex();
+    }
+    bankUndoStack.push_back (project.currentBank());
+    if ((int) bankUndoStack.size() > kMaxUndo)
+        bankUndoStack.erase (bankUndoStack.begin());
+    bankRedoStack.clear();
+}
+
+bool MpcProcessor::undoBankEdit()
+{
+    if (! canUndoBankEdit())
+        return false;
+    bankRedoStack.push_back (std::exchange (project.currentBank(), std::move (bankUndoStack.back())));
+    bankUndoStack.pop_back();
+    project.changed();
+    return true;
+}
+
+bool MpcProcessor::redoBankEdit()
+{
+    if (! canRedoBankEdit())
+        return false;
+    bankUndoStack.push_back (std::exchange (project.currentBank(), std::move (bankRedoStack.back())));
+    bankRedoStack.pop_back();
+    project.changed();
+    return true;
+}
+
 int MpcProcessor::collectRecorded()
 {
     std::array<SequencerEngine::Recorded, 256> notes;
@@ -602,7 +651,7 @@ void MpcProcessor::handleMidi (const juce::MidiMessage& m, const std::shared_ptr
 
     // 16 Levels and the pad's live sound.
     const int type = levels::typeOf (variation), step = levels::stepOf (variation);
-    if (const double semis = levels::semitones (type, step); semis > 0.0)
+    if (const double semis = levels::semitones (type, step, getSongScale()); semis > 0.0)
         v.step *= std::pow (2.0, semis / 12.0);
 
     float cutoff = sound.cutoff;
@@ -618,7 +667,8 @@ void MpcProcessor::handleMidi (const juce::MidiMessage& m, const std::shared_ptr
     double decay = sound.decaySeconds;
     if (const double d = levels::decaySeconds (type, step); d > 0.0)
         decay = decay > 0.0 ? juce::jmin (decay, d) : d;
-    v.attackLength = (int) (sound.attackSeconds * hostRate);
+    const double attack = juce::jmax (sound.attackSeconds, levels::attackSeconds (type, step));
+    v.attackLength = (int) (attack * hostRate);
     v.decayLength = (int) (decay * hostRate);
     if (v.decayLength > 0)
         v.decayFactor = (float) std::pow (0.001, 1.0 / v.decayLength);   // -60 dB by the end
