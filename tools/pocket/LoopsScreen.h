@@ -38,6 +38,12 @@ public:
     // FIT TO THE BEAT: a free take's beat found and the take warped onto the song's (UNDO puts it back as sung).
     // Returns the tempo it heard it at (0: couldn't tell), or -1 when the layer can't be fitted now.
     double fitToBeat (int layer);
+    // CATCH AN IDEA: the song takes the tempo the first take was sung at (core/IdeaTempo.h). The take is cut to the
+    // whole bars sung, from the beat at its first sound, and put on the bars from bar 1; nothing is stretched. UNDO
+    // puts the take back (it then follows the new tempo). Returns the tempo set, 0 when it couldn't (the take stays).
+    // `heard`: the beat was heard (else the tempo came from the take's length); `bars`: the loop's length.
+    // `setTempo` sets the app's one tempo (BEATS keeps it).
+    double takeTempoFrom (int layer, const std::function<void (double)>& setTempo, bool& heard, int& bars);
     // TO LOOPER from the SAMPLER: a sound (its IN..OUT) onto the next layer from bar 1. A sound a bar or longer is fitted
     // (same pitch) to the whole bars nearest its length; a shorter one plays once a bar, from the bar's start.
     // Returns the layer, or -1.

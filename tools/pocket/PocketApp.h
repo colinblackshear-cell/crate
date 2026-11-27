@@ -228,6 +228,7 @@ private:
     // MY VOICE: to a click (heard while the take counts in and records) or free (fitted to the beat once it lands).
     bool voiceTakeClick = false;
     int voiceFitLayer = -1;
+    int catchTempoLayer = -1;   // CATCH AN IDEA's take: once it lands, the song takes its tempo
     void startVoiceTake (bool free);
     void voiceTakeLanded (int layer);
     crate::drums::Pattern sentDrums[2];

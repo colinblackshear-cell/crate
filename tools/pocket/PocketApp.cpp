@@ -1820,6 +1820,7 @@ void PocketApp::switchIdea (const juce::String& id)
 {
     if (id == ideas.current().id)
         return;
+    catchTempoLayer = -1;
     lockWatch.stopTimer();
     lockKind = LockKind::none;
     finishSynthTake();
@@ -1880,8 +1881,9 @@ void PocketApp::catchIdea()
     {
         if (page != Page::tool || tool != Tool::loops || recBusy())
             return;
-        if (loopsScreen.recordFrom ((int) LoopSource::mic, 0) >= 0)
-            toast ("Catching it: sing, hum or play. Tap REC when you're done and it loops on layer 1.");
+        catchTempoLayer = loopsScreen.recordFrom ((int) LoopSource::mic, 0);
+        if (catchTempoLayer >= 0)
+            toast ("Catching it: sing, hum or play. Tap REC when you're done: the song takes your tempo and it loops on layer 1.");
         applyClick();
         headerTickNow();
     };
@@ -2728,6 +2730,26 @@ void PocketApp::voiceTakeLanded (int layer)
 {
     voiceTakeClick = false;
     applyClick();
+    if (layer == catchTempoLayer)
+    {
+        // The first idea of a song sets its tempo (when it's still the only layer).
+        catchTempoLayer = -1;
+        bool alone = true;
+        for (int l = 0; l < kLoopLayers; ++l)
+            if (l != layer && loopsScreen.engine().state (l) != pocket::LoopState::empty)
+                alone = false;
+        bool heard = false;
+        int bars = 0;
+        const double bpm = alone ? loopsScreen.takeTempoFrom (layer, [this] (double b) { beats.setBpm (b); }, heard, bars) : 0.0;
+        if (bpm > 0.0)
+        {
+            headerTickNow();
+            thumb.repaint();
+            toast ((heard ? "You sang at about " : "Your take's length gives ") + juce::String (bpm, 1) + " BPM, so the song is at it now: layer "
+                   + juce::String (layer + 1) + " is " + juce::String (bars) + (bars == 1 ? " bar" : " bars") + U8(", as you sang it. Add a beat and it fits."));
+        }
+        return;
+    }
     if (layer != voiceFitLayer)
         return;
     voiceFitLayer = -1;

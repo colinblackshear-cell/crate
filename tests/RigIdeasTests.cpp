@@ -6,6 +6,7 @@
 #include "RigView.h"
 #include "GrooveView.h"
 #include "core/Spark.h"
+#include "IdeaTempoSounds.h"
 #include "core/ui/LanePeaks.h"
 
 // My ideas on the Mac (the front page, as the phone's) and the opening title.
@@ -187,6 +188,39 @@ public:
             expect (! folder.getChildFile ("Rain loop loops").exists());
             juce::File back;
             RigIdeas::renameSong (renamed, "Rain loop", back);
+        }
+
+        beginTest ("CATCH AN IDEA: the song takes the tempo it was sung at");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            RigView view (engine, nullptr);
+            view.setSize (1440, 960);
+            view.catchIdea();
+            expectEquals (view.getTakeLayer(), 0);
+            const double was = engine.getTransport().getBpm();   // a new song's (90)
+            // What the mic caught: a jingle at 96 BPM, bar 1 at 0.8 s, closed at a bar line of the song's tempo.
+            auto sung = ideatempo::jingle (96.0, 0.8, 16.0);
+            auto& looper = engine.getLooper();
+            looper.setLayerAudio (0, sung, 16.0 * was / 60.0);   // 16 s
+            expect (view.checkCaughtIdea(), "it found the tempo");
+            expectWithinAbsoluteError (engine.getTransport().getBpm(), 96.0, 1.0);
+            expectWithinAbsoluteError (looper.getLayer (0).lengthBeats.load(), 16.0, 1.0e-9, "the 4 bars sung");
+            const auto loop = looper.copyLayerAudio (0);
+            expectWithinAbsoluteError (loop.getNumSamples() / 48000.0, 16.0 * 60.0 / engine.getTransport().getBpm(), 0.002,
+                                       "the loop is its bars at the new tempo: nothing stretched");
+            expect (! view.checkCaughtIdea(), "only once");
+
+            // A second loop already there: the tempo stays.
+            RigEngine e3;
+            e3.prepare (48000.0, 480);
+            RigView v3 (e3, nullptr);
+            v3.setSize (1440, 960);
+            v3.catchIdea();
+            e3.getLooper().setLayerAudio (0, sung, 24.0);
+            e3.getLooper().setLayerAudio (1, sung, 24.0);
+            expect (! v3.checkCaughtIdea());
+            expectWithinAbsoluteError (e3.getTransport().getBpm(), was, 1.0e-9);
         }
 
         beginTest ("the Rig opens on My ideas; its ways in start a song");

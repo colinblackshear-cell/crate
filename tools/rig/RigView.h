@@ -205,6 +205,10 @@ public:
     // CATCH AN IDEA records your mic onto loop 1 straight away, free length; a spark sets its
     // tempo, key and kit and opens its first tool; a tile (RigIdeas::onStartWith) opens a tool.
     void catchIdea();
+    // Once CATCH AN IDEA's take has closed, the song takes the tempo it was sung at (core/IdeaTempo.h):
+    // the loop is cut to the whole bars sung, from the beat at its first sound. The timer calls this;
+    // true when it set the tempo just now.
+    bool checkCaughtIdea();
     void startSpark (const crate::spark::Spark&);
     void startWithTile (int tile);
 
@@ -305,6 +309,9 @@ private:
     RecLands recLands = RecLands::layer;
     int recCountIn = 1, recLength = 4;
     int lastTakeLayer = -1;
+    int catchLayer = -1;            // CATCH AN IDEA's loop, until its tempo is found (-1: none)
+    double catchStopSeconds = -1;   // how far in Rec was pressed to stop it (-1: not seen here)
+    bool catchStarted = false;      // its layer has been seen armed or recording
     // The count-in and length are this Mac's (in the app), kept with the Timing file.
     void loadRecSetup();
     void saveRecSetup();

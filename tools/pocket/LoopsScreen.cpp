@@ -1,6 +1,7 @@
 #include "LoopsScreen.h"
 
 #include "core/AudioFiles.h"
+#include "core/IdeaTempo.h"
 #include "PocketChordPlayer.h"
 
 using namespace pocket;
@@ -930,6 +931,41 @@ double LoopsScreen::fitToBeat (int layer)
         return -1.0;
     warpLayer (layer, plan);
     return like;
+}
+
+double LoopsScreen::takeTempoFrom (int layer, const std::function<void (double)>& setTempo, bool& heard, int& bars)
+{
+    heard = false;
+    bars = 0;
+    auto take = loops.takeOf (layer);
+    if (take == nullptr || take->part != nullptr || loops.state (layer) != LoopState::playing || jobLayer >= 0 || ! setTempo)
+        return 0.0;
+    const int len = juce::jmin (take->length.load(), (int) take->data.size());
+    if (len <= 0)
+        return 0.0;
+    float* chans[] = { take->data.data() };
+    const juce::AudioBuffer<float> sung (chans, 1, len);   // (refers to the take; only read)
+    const auto fit = crate::IdeaTempo::fit (sung, take->sampleRate, take->content > 0 ? take->content : -1, 4);
+    if (! fit.isValid())
+        return 0.0;
+    const auto loop = crate::IdeaTempo::cut (sung, fit);
+    auto made = LoopsEngine::makeTake (fit.length, take->sampleRate);
+    std::copy (loop.getReadPointer (0), loop.getReadPointer (0) + fit.length, made->data.begin());
+    made->length = fit.length;
+    made->lengthBeats = fit.beats;
+    made->source = take->source;
+    made->tool = take->tool;
+    setTempo (fit.bpm);
+    shownBpm = loops.bpm();   // (the follower has nothing to do: the loop is at it)
+    Edited e;
+    e.take = made;
+    e.fx = loops.fxOf (layer);
+    e.shift = -loops.startBeat (layer);   // its bar 1 on the song's bar 1
+    applyEdited (layer, take.get(), std::move (e));
+    heard = fit.heard;
+    bars = juce::roundToInt (fit.beats / 4.0);
+    repaint();
+    return fit.bpm;
 }
 
 bool LoopsScreen::playingOriginal (int layer) const
