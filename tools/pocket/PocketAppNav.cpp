@@ -587,8 +587,22 @@ juce::String PocketApp::runNavigationChecks (juce::String& report, const juce::F
         holdCard.choose (1);
         expect (lessonOn, "Drawer: SHOW ME: MAKE A BEAT didn't start the lesson");
         settle();
+        {
+            showTool (Tool::loops, false);
+            openDrawer();
+            const auto card = drawer.macCardBounds();
+            expect (! card.isEmpty() && getLocalBounds().contains (card) && ! card.intersects (drawer.tileBounds (SongDrawer::tourLesson)),
+                    "Drawer: the KALEIDOBOX FOR MAC card is missing or overlaps the tiles");
+            juce::String opened;
+            auto real = openInBrowser;
+            openInBrowser = [&opened] (const juce::URL& u) { opened = u.toString (false); };
+            drawer.tapGetMac();
+            openInBrowser = real;
+            expect (opened == kMacDownloadUrl && ! drawer.isOpen(), "Drawer: GET IT on KALEIDOBOX FOR MAC didn't open the download page");
+            settle();
+        }
         report << "drawer: SOUNDS, RECORD A SOUND, MAC LINK, REMOTE, SETTINGS (each with a way back to the tool) and TOUR · LESSON (the tour, the lesson) are all reachable; "
-                  "the old ··· button and More list are gone\n";
+                  "KALEIDOBOX FOR MAC's GET IT opens the desktop download page; the old ··· button and More list are gone\n";
     }
 
     // ------------------------------------------------------------------ the amber outline on the tool row

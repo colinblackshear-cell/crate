@@ -255,6 +255,7 @@ PocketApp::PocketApp (Options o)
         holdMenu (songHoldSpec (id), source, at, highlight);
     };
     drawer.onTile = [this] (int tile) { drawerTile (tile); };
+    drawer.onGetMac = [this] { closeDrawer(); openInBrowser (juce::URL (kMacDownloadUrl)); };
     drawer.currentLayers = [this] { return loopsScreen.layerCount(); };
     drawer.currentBpm = [this] { return beats.drums().bpm; };
     holdCard.onClosed = [this] { repaint(); };

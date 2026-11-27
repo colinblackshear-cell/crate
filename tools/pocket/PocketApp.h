@@ -188,6 +188,10 @@ private:
     void pickSong (const juce::String& id);          // a song in the drawer: switch to it and stay on the tool
     void playFromDrawer (const juce::String& id);
     void drawerTile (int tile);
+    // KALEIDOBOX FOR MAC in the drawer: the desktop app's download page in Safari (kaleidobox.app once that site is
+    // live). The self-checks swap openInBrowser out so nothing opens.
+    static constexpr const char* kMacDownloadUrl = "https://colinblackshear-cell.github.io/crate/get/";
+    std::function<void (const juce::URL&)> openInBrowser = [] (const juce::URL& u) { u.launchInDefaultBrowser(); };
     pocket::HoldSpec songHoldSpec (const juce::String& id);
     void swipeTool (int direction);                   // the header bar: the previous (-1) or next (+1) tool
     bool edgeSwipeAllowed (juce::Point<float> inApp) const;
