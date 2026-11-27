@@ -271,17 +271,28 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
         addAndMakeVisible (*b);
     }
     levelsButton.setTooltip ("16 Levels: the picked pad's sound on all 16 pads, a step apart (Tune plays it as a scale, Filter "
-                             "opens up pad by pad, Velocity soft to loud, Decay short to long).");
+                             "opens up pad by pad, Velocity soft to loud, Decay short to long, In key climbs the song's scale, Attack instant to a slow "
+                             "fade-in). Make 16 pads (in its menu) bakes the steps onto the 16 pads.");
     levelsButton.onClick = [this]
     {
         juce::PopupMenu menu;
         menu.addSectionHeader ("16 Levels of pad " + padLabel (getSelectedPad()));
         for (int t = 0; t < levels::numTypes; ++t)
             menu.addItem (t + 1, levels::typeName (t), true, engine.getMpc().levelsType.load() == t);
+        // As on the phone: bake the steps onto the 16 pads (each its own pad), with an undo.
+        menu.addSeparator();
+        menu.addItem (1000, "Make 16 pads", mpcView != nullptr && engine.getMpc().levelsType.load() != levels::off);
+        menu.addItem (1001, "Undo Make 16 pads", engine.getMpc().canUndoBankEdit());
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&levelsButton),
                             [safe = juce::Component::SafePointer<SamplerScreen> (this)] (int result)
                             {
-                                if (safe != nullptr && result > 0)
+                                if (safe == nullptr || result <= 0)
+                                    return;
+                                if (result == 1000)
+                                    safe->makeSixteenPads();
+                                else if (result == 1001)
+                                    safe->undoMakeSixteenPads();
+                                else
                                     safe->setSixteenLevels (result - 1);
                             });
     };
@@ -1316,6 +1327,33 @@ void SamplerScreen::setSixteenLevels (int type)
         onSay (type == levels::off ? juce::String ("16 Levels is off: each pad plays its own sound again.")
                                    : "16 Levels (" + levels::typeName (type) + "): all 16 pads play pad " + padLabel (pad)
                                          + ", pad 1 lowest to pad 16 highest. Hits you record keep their level.");
+    repaint();
+}
+
+void SamplerScreen::makeSixteenPads()
+{
+    auto& mpc = engine.getMpc();
+    const int type = mpc.levelsType.load();
+    if (mpcView == nullptr || type == levels::off)
+        return;
+    const auto name = mpc.getProject().currentBank().pads[(size_t) juce::jlimit (0, mpc::kPadCount - 1, mpc.levelsPad.load())].name;
+    mpcView->makeSixteenPads();
+    updatePadTools();
+    if (onSay)
+        onSay ("Made 16 pads from " + name + " (" + levels::typeName (type) + "): each pad is its own pad now, with its step's "
+               "pitch, filter, attack and decay. 16 Levels > Undo Make 16 pads puts them back.");
+    repaint();
+}
+
+void SamplerScreen::undoMakeSixteenPads()
+{
+    auto& mpc = engine.getMpc();
+    if (! mpc.canUndoBankEdit())
+        return;
+    mpc.undoBankEdit();
+    updatePadTools();
+    if (onSay)
+        onSay ("Undone: the 16 pads are back as they were.");
     repaint();
 }
 

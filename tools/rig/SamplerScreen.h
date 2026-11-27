@@ -53,6 +53,9 @@ public:
     // Sequencer · Kits side. Takes ownership.
     void ownMpc (MpcView*);
     MpcView* getMpcView() const { return mpcView; }
+    // 16 Levels > Make 16 pads (the steps baked onto the 16 pads of the bank on screen), and its undo.
+    void makeSixteenPads();
+    void undoMakeSixteenPads();
 
     enum Side { chopSide, mpcSide, editSide };
     void setSide (int);
