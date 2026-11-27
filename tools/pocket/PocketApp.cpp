@@ -2985,8 +2985,7 @@ void PocketApp::lockWatchTick()
             part->preset = sPart().preset;
             part->knobs = sPart().knobs;
             part->octave = sPart().octave;
-            if (! bassActive)
-                part->board = loopsScreen.engine().board (pocket::boardSynth).settings();   // recorded through it: QUANTIZE keeps it
+            part->board = loopsScreen.engine().board (bassActive ? pocket::boardBass : pocket::boardSynth).settings();   // recorded through it: QUANTIZE keeps it
             part->lengthBeats = lockBars * 4.0;
             part->startBeat = lockStart;
             lockPart = part;

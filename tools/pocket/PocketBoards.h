@@ -22,7 +22,9 @@ namespace pocket
 enum BoardId
 {
     boardDrums, boardPads, boardSynth, boardChords, boardVoice, boardVocoder, boardLayer1,
-    boardAll = boardLayer1 + 8, boardMaster, kBoards
+    boardAll = boardLayer1 + 8, boardMaster,
+    boardBass, boardDrone,   // (added later: after MASTER, so the other ids stay as they were)
+    kBoards
 };
 constexpr int kLayerBoards = 8;
 inline int layerBoardId (int layer) { return boardLayer1 + layer; }

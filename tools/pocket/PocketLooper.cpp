@@ -710,8 +710,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         std::fill (vocL.begin(), vocL.begin() + n, 0.0f);
         std::fill (vocR.begin(), vocR.begin() + n, 0.0f);
         inst->render (vocL.data(), vocR.data(), n);
-        if (stereo && k < 2)
-            boards[(size_t) (boardSynth + k)].process (vocL.data(), vocR.data(), n);   // SYNTH, CHORDS (BASS has no board of its own yet)
+        if (stereo)
+            boards[(size_t) (k == 0 ? boardSynth : k == 1 ? boardChords : boardBass)].process (vocL.data(), vocR.data(), n);   // SYNTH, CHORDS, BASS
         const float echo = inst->echoSend();
         const float toDelay = echo * 0.55f, toReverb = echo * 0.3f;   // pocket::echoToDelay / echoToReverb
         for (int i = 0; i < n; ++i)
@@ -786,6 +786,8 @@ void LoopsEngine::chunk (float* left, float* right, int n)
         drone->setFeed (feed);
         drone->render (vocL.data(), vocR.data(), n);
         drone->setFeed (nullptr);
+        if (stereo)
+            boards[(size_t) boardDrone].process (vocL.data(), vocR.data(), n);
         for (int i = 0; i < n; ++i)
         {
             left[i] += vocL[(size_t) i];

@@ -75,7 +75,7 @@ juce::Colour EffectsScreen::pedalColour (int pedal) const
 
 std::vector<int> EffectsScreen::sources() const
 {
-    std::vector<int> s { boardDrums, boardPads, boardSynth, boardChords, boardVoice, boardVocoder };
+    std::vector<int> s { boardDrums, boardPads, boardBass, boardSynth, boardChords, boardVoice, boardVocoder, boardDrone };   // every instrument
     for (int l = 0; l < kLayerBoards; ++l)
         if (model.shown && model.shown (layerBoardId (l)))
             s.push_back (layerBoardId (l));
