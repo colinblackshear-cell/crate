@@ -56,7 +56,13 @@ void drawLayerToolIcon (juce::Graphics& g, int tool, juce::Point<float> c, juce:
 
 //==============================================================================
 // The notes a layer came from
-juce::String NotePart::describe() const { return kind == pads ? "PADS" : "SYNTH"; }
+juce::String NotePart::describe() const
+{
+    if (kind == pads)
+        return "PADS";
+    const auto& all = synthPresets();
+    return ! all.empty() && familyOfKind (all[(size_t) juce::jlimit (0, (int) all.size() - 1, preset)].kind) == bassFamily ? "BASS" : "SYNTH";
+}
 
 juce::var NotePart::toVar() const
 {

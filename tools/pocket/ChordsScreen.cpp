@@ -507,6 +507,8 @@ void ChordsScreen::showSoundMenu()
     m.addSectionHeader ("SYNTH SOUND");
     for (int k = 0; k < kSynthKinds; ++k)
     {
+        if (k == kKindsPerFamily)
+            m.addSectionHeader ("BASS SOUND");
         juce::PopupMenu sub;
         bool any = false;
         for (int p : synthPresetsOf (k))

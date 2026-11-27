@@ -47,7 +47,7 @@ void PocketApp::showSampleToolMenu()
         s.items.push_back ({ "ALL THE LOOPS", "mixed, as you hear them", false, true, [this] { sampleLayer (-1); } });
     s.items.push_back ({ "RECORD A TOOL FIRST", U8("pick it \xc2\xb7 REC \xc2\xb7 back here"), false, true, [this]
     {
-        toast ("Pick a tool below (DRUMS, SYNTH, CHORDS...) and press REC: its take lands on a loop layer. Then SAMPLER > A TOOL brings it here.");
+        toast ("Pick a tool below (DRUMS, BASS, SYNTH...) and press REC: its take lands on a loop layer. Then SAMPLER > A TOOL brings it here.");
     } });
     holdMenu (s, sampler, sampler.getLocalBounds().getCentre().toFloat().withY (60.0f), {});
 }

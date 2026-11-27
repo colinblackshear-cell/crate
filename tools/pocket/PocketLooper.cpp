@@ -779,6 +779,7 @@ void LoopsEngine::chunk (float* left, float* right, int n)
             case 2: feed = srcDrums.data(); break;
             case 3: feed = srcInst[0].data(); break;
             case 4: feed = srcInst[1].data(); break;
+            case 5: feed = srcInst[2].data(); break;
             default: break;
         }
         std::fill (vocL.begin(), vocL.begin() + n, 0.0f);

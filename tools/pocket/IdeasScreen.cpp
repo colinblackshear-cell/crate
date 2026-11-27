@@ -15,7 +15,7 @@ const juce::Colour kNumberColours[3] = { juce::Colour (0xffa877f5), juce::Colour
 // The tiles under START A SONG FROM ANY TOOL: the tool, what the tile says, and MY VOICE (LOOPS on the mic).
 struct TileInfo { Tool tool; const char* label; bool voice; };
 // (the companion order, 2026-11-26: your voice first, then the quick ways in)
-const TileInfo kTiles[] = { { Tool::loops, "My voice", true }, { Tool::drums, "A beat", false }, { Tool::pads, "Pads", false },
+const TileInfo kTiles[] = { { Tool::loops, "My voice", true }, { Tool::drums, "A beat", false }, { Tool::bass, "A bass line", false }, { Tool::pads, "Pads", false },
                             { Tool::synth, "A melody", false }, { Tool::sampler, "A sample", false }, { Tool::vocoder, "Vocoder", false },
                             { Tool::chords, "Chords", false }, { Tool::drone, "Drone", false } };
 constexpr int kNumTiles = (int) (sizeof (kTiles) / sizeof (kTiles[0]));
@@ -600,7 +600,7 @@ struct IdeasScreen::Content : public juce::Component
         auto note = L.sparkButtons.withY (L.sparkButtons.getBottom() + 8).withHeight (36);
         g.setColour (col::inkDim);
         g.setFont (small (13.0f));
-        static const char* const opens[8] = { "DRUMS", "PADS", "the SAMPLER", "SYNTH", "CHORDS", "the VOCODER", "LOOPS on the mic", "DRONE" };
+        static const char* const opens[8] = { "DRUMS", "PADS", "the SAMPLER", "SYNTH", "CHORDS", "the VOCODER", "the LOOPER on the mic", "DRONE" };
         const auto& kits = factoryKits();
         const juce::String kit = juce::isPositiveAndBelow (s.kit, (int) kits.size()) ? juce::String (kits[(size_t) s.kit].name) : juce::String ("factory");
         g.drawFittedText ("Sets " + juce::String (s.bpm) + " BPM and " + s.keyName() + ", loads the " + kit + " and opens "

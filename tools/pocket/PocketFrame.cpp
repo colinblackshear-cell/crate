@@ -186,7 +186,7 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
 void showSongKeyMenu (juce::Component& target, juce::Rectangle<int> area, SongKey current, std::function<void (SongKey)> picked)
 {
     juce::PopupMenu m;
-    m.addSectionHeader (U8("THE SONG'S KEY \xc2\xb7 SYNTH, CHORDS AND VOCODER"));
+    m.addSectionHeader (U8("THE SONG'S KEY \xc2\xb7 SYNTH, BASS, CHORDS, VOCODER"));
     m.addItem (101, "Minor", true, current.minor);
     m.addItem (102, "Major", true, ! current.minor);
     m.addSeparator();
@@ -351,10 +351,10 @@ void ThumbBar::paint (juce::Graphics& g)
         drawRaised (g, r, s.visuals ? Look::amber : Look::cream, pressed == visuals, 12.0f);
         auto body = r.withTrimmedBottom (3).translated (0, pressed == visuals ? 2.0f : 0.0f);
         const auto c = body.getCentre().translated (0, -6.0f);
-        const Tool petals[6] { Tool::drums, Tool::pads, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone };
-        for (int i = 0; i < 6; ++i)
+        const Tool petals[8] { Tool::drums, Tool::bass, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone };
+        for (int i = 0; i < 8; ++i)
         {
-            const float a = juce::MathConstants<float>::twoPi * (float) i / 6.0f;
+            const float a = juce::MathConstants<float>::twoPi * (float) i / 8.0f;
             const auto p = c.translated (std::cos (a) * 7.0f, std::sin (a) * 7.0f);
             g.setColour (toolColour (petals[i]));
             g.fillEllipse (p.x - 4.0f, p.y - 4.0f, 8.0f, 8.0f);

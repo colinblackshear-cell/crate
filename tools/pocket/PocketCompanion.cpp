@@ -140,7 +140,7 @@ AddLayerSheet::AddLayerSheet()
         { "Sampler", "Grab a sound, chop it, pitch it, add effects", Tool::sampler },
         { "Pads", "Tap sounds: your own recordings or the kits", Tool::pads },
         { "Drums", "Tap boxes to make a beat, or play it in live", Tool::drums },
-        { "Bass", "A low line under it all. Every key fits", Tool::drone },
+        { "Bass", "A low line under it all. Every key fits", Tool::bass },
         { "Synth", "Pick a sound and play. Every key fits", Tool::synth },
         { "Vocoder", "Your voice turned into a robot choir", Tool::vocoder },
         { "Resample", "Grab any layer, or the whole mix, as a new sound", Tool::song },

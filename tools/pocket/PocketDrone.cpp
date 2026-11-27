@@ -16,6 +16,7 @@ const char* pocket::droneFeedName (DroneFeed f)
         case DroneFeed::drums: return "DRUMS";
         case DroneFeed::synth: return "SYNTH";
         case DroneFeed::chords: return "CHORDS";
+        case DroneFeed::bass: return "BASS";
         default: return "";
     }
 }

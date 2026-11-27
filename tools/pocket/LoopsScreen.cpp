@@ -793,7 +793,7 @@ void LoopsScreen::quantizeLayer (int layer, const LoopQuantize& q)
 {
     auto take = loops.takeOf (layer);
     if (take == nullptr || take->part == nullptr || loops.state (layer) != LoopState::playing)
-        return host.toast ("QUANTIZE works on a layer made from notes (PADS or SYNTH), before it's trimmed or dubbed.");
+        return host.toast ("QUANTIZE works on a layer made from notes (PADS, SYNTH or BASS), before it's trimmed or dubbed.");
     if (take->part->kind == NotePart::pads && take->part->kit.empty() && kitSounds)
     {
         auto filled = std::make_shared<NotePart> (*take->part);
@@ -1563,6 +1563,10 @@ void LoopsScreen::restore()
             if (auto part = NotePart::fromVar (item.getProperty ("part", {})))
             {
                 take->part = part;
+                // a bass line from before BASS had its own tool: it's a BASS layer now
+                if (take->tool == (int) LayerTool::synth && part->kind == NotePart::synth && ! synthPresets().empty()
+                    && familyOfKind (synthPresets()[(size_t) juce::jlimit (0, (int) synthPresets().size() - 1, part->preset)].kind) == bassFamily)
+                    take->tool = (int) LayerTool::bass;
                 const auto q = item.getProperty ("quantize", {});
                 take->quant.grid = juce::jlimit (0, 3, (int) q.getProperty ("grid", 0));
                 take->quant.strength = (float) (double) q.getProperty ("strength", 1.0);
@@ -1676,8 +1680,8 @@ void LoopsScreen::showDemo()
     std::copy (rendered.begin(), rendered.end(), bassTake->data.begin());
     bassTake->length = bassSamples;
     bassTake->lengthBeats = 16.0;
-    bassTake->source = (int) LoopSource::synth;
-    bassTake->tool = (int) LayerTool::synth;
+    bassTake->source = (int) LoopSource::bass;
+    bassTake->tool = (int) LayerTool::bass;
     bassTake->part = bass;
     loops.setLayer (1, bassTake, false);
 
