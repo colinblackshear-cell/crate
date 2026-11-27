@@ -110,6 +110,7 @@ private:
     class Toast;
     void hideToast();
     bool toastHasAction() const;
+    juce::String lastToast;   // the last note shown (checks)
     void pressToastAction();
     class Dim;
 

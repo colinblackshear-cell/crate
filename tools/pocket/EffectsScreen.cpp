@@ -1,5 +1,7 @@
 #include "EffectsScreen.h"
 #include "PocketFrame.h"
+#include "PocketLoopTools.h"
+#include "PocketLooper.h"
 
 using namespace pocket;
 
@@ -73,12 +75,21 @@ juce::Colour EffectsScreen::pedalColour (int pedal) const
     return juce::Colour (pedalboard::pedals()[(size_t) pedal].colour);
 }
 
+bool EffectsScreen::shownLayer (int id) const { return ! model.shown || model.shown (id); }
+
+juce::Rectangle<float> EffectsScreen::chipRect (int boardId) const
+{
+    for (auto& [id, r] : chipRects)
+        if (id == boardId)
+            return r;
+    return {};
+}
+
 std::vector<int> EffectsScreen::sources() const
 {
     std::vector<int> s { boardDrums, boardPads, boardBass, boardSynth, boardChords, boardVoice, boardVocoder, boardDrone };   // every instrument
     for (int l = 0; l < kLayerBoards; ++l)
-        if (model.shown && model.shown (layerBoardId (l)))
-            s.push_back (layerBoardId (l));
+        s.push_back (layerBoardId (l));   // all eight: an empty layer's chip is dim and toasts
     s.push_back (boardAll);
     s.push_back (boardMaster);
     return s;
@@ -104,17 +115,6 @@ void EffectsScreen::setSource (int id)
     padDown = false;
     reloadChoices();
     layout();
-    // keep its chip in view
-    for (auto& [b, r] : chipRects)
-        if (b == id)
-        {
-            const float room = chipsR.getWidth() - 60.0f;
-            if (r.getRight() - chipScroll > room + 44.0f)
-                chipScroll = r.getRight() - room - 44.0f;
-            if (r.getX() - chipScroll < 44.0f)
-                chipScroll = r.getX() - 44.0f;
-            chipScroll = juce::jlimit (0.0f, juce::jmax (0.0f, chipsWidth - chipsR.getWidth() + 16.0f), chipScroll);
-        }
     repaint();
 }
 
@@ -155,7 +155,7 @@ void EffectsScreen::showTuner (bool on)
 void EffectsScreen::refresh()
 {
     const auto list = sources();
-    if (std::find (list.begin(), list.end(), src) == list.end())
+    if (std::find (list.begin(), list.end(), src) == list.end() || (isLayerBoard (src) && model.shown && ! model.shown (src)))
         src = boardSynth;   // its layer went
     reloadChoices();
     layout();
@@ -195,7 +195,7 @@ void EffectsScreen::timerCallback()
     // the chips' lamps and the layers that come and go
     juce::uint32 h = 17;
     for (int id : sources())
-        h = h * 31u + (juce::uint32) id * 3u + (model.board (id).audible() ? 1u : 0u);
+        h = h * 31u + (juce::uint32) id * 3u + (model.board (id).audible() ? 1u : 0u) + (shownLayer (id) ? 5u : 0u);
     if (h != shownState)
     {
         shownState = h;
@@ -373,21 +373,24 @@ void EffectsScreen::layout()
 {
     const float W = (float) getWidth(), H = (float) getHeight();
     float y = 6.0f;
-    chipsR = { 0.0f, y, W, 44.0f };
     {
+        // two rows, every sound on screen: INSTRUMENTS (8 icon chips), LOOPS (1-8, ALL, MIX), hit areas touching
+        const float m = 8.0f, rowH = 48.0f, rowH2 = 44.0f;
+        chipsR = { 0.0f, y, W, rowH + 2.0f + rowH2 };
         chipRects.clear();
-        float x = 46.0f;
-        for (int id : sources())
-        {
-            const auto label = boardLabel (id);
-            const float w = juce::jmax (58.0f, juce::GlyphArrangement::getStringWidth (spaced (condensedBold (14.0f), 0.06f), label) + 28.0f);
-            chipRects.push_back ({ id, { x, y, w, 44.0f } });
-            x += w + 6.0f;
-        }
-        chipsWidth = x;
-        chipScroll = juce::jlimit (0.0f, juce::jmax (0.0f, chipsWidth - W + 16.0f), chipScroll);
+        const int inst[] = { boardDrums, boardPads, boardBass, boardSynth, boardChords, boardVoice, boardVocoder, boardDrone };
+        const float cw = (W - 2.0f * m) / 8.0f;
+        for (int i = 0; i < 8; ++i)
+            chipRects.push_back ({ inst[i], { m + cw * (float) i, y, cw, rowH } });
+        y += rowH + 2.0f;
+        const float wide = 46.0f, nw = (W - 2.0f * m - 2.0f * wide) / (float) kLayerBoards;
+        float x = m;
+        for (int l = 0; l < kLayerBoards; ++l, x += nw)
+            chipRects.push_back ({ layerBoardId (l), { x, y, nw, rowH2 } });
+        chipRects.push_back ({ boardAll, { x, y, wide, rowH2 } });
+        chipRects.push_back ({ boardMaster, { x + wide, y, wide, rowH2 } });
+        y += rowH2 + 6.0f;
     }
-    y += 50.0f;
     const bool voice = src == boardVoice;
     bannerR = voice ? juce::Rectangle<float> (16.0f, y, W - 32.0f, 46.0f) : juce::Rectangle<float>();
     if (voice)
@@ -499,7 +502,7 @@ int EffectsScreen::idAt (juce::Point<float> p) const
     if (chipsR.contains (p))
     {
         for (auto& [id, r] : chipRects)
-            if (r.translated (-chipScroll, 0.0f).contains (p) && p.x > 40.0f)
+            if (r.contains (p))
                 return chipBase + id;
         return none;
     }
@@ -564,6 +567,12 @@ void EffectsScreen::press (int id)
 {
     if (id >= chipBase && id < chipBase + kBoards)
     {
+        if (isLayerBoard (id - chipBase) && ! shownLayer (id - chipBase))
+        {
+            if (model.toast)
+                model.toast ("Record a loop on layer " + juce::String (id - chipBase - boardLayer1 + 1) + " first");
+            return;
+        }
         setSource (id - chipBase);
         if (model.picked)
             model.picked (src);
@@ -633,9 +642,8 @@ void EffectsScreen::mouseDown (const juce::MouseEvent& e)
 {
     pressed = idAt (e.position);
     moved = false;
-    draggingChips = pressed >= chipBase && pressed < chipBase + kBoards;
     draggingList = mode == listMode && pressed >= rowBase;
-    dragStartScroll = draggingChips ? chipScroll : listScroll;
+    dragStartScroll = listScroll;
     if (pressed >= knobBase && pressed < knobBase + 8)
     {
         dragKnob = pressed - knobBase;
@@ -648,17 +656,6 @@ void EffectsScreen::mouseDown (const juce::MouseEvent& e)
 
 void EffectsScreen::mouseDrag (const juce::MouseEvent& e)
 {
-    if (draggingChips)
-    {
-        if (std::abs (e.getDistanceFromDragStartX()) > 6)
-            moved = true;
-        if (moved)
-        {
-            chipScroll = juce::jlimit (0.0f, juce::jmax (0.0f, chipsWidth - (float) getWidth() + 16.0f), dragStartScroll - (float) e.getDistanceFromDragStartX());
-            repaint();
-        }
-        return;
-    }
     if (draggingList)
     {
         if (std::abs (e.getDistanceFromDragStartY()) > 6)
@@ -772,29 +769,48 @@ void EffectsScreen::paint (juce::Graphics& g)
 
 void EffectsScreen::drawChips (juce::Graphics& g)
 {
-    g.setColour (col::inkDim);
-    g.setFont (spaced (condensedBold (12.0f), 0.12f));
-    g.drawText ("ON", juce::Rectangle<float> (16.0f, chipsR.getY(), 26.0f, chipsR.getHeight() - 3.0f), juce::Justification::centredLeft);
-    juce::Graphics::ScopedSaveState s (g);
-    g.reduceClipRegion (juce::Rectangle<float> (42.0f, chipsR.getY() - 2.0f, chipsR.getWidth() - 42.0f, chipsR.getHeight() + 6.0f).toNearestInt());
-    for (auto& [id, r0] : chipRects)
+    for (auto& [id, r] : chipRects)
     {
-        auto r = r0.translated (-chipScroll, 0.0f);
-        if (r.getRight() < 0 || r.getX() > (float) getWidth())
-            continue;
-        drawChip (g, r, boardLabel (id), id == src, pressed == chipBase + id, 14.0f);
-        if (model.board (id).audible())
+        const bool lit = id == src, dim = isLayerBoard (id) && ! shownLayer (id);
+        const bool instrument = ! isLayerBoard (id) && id != boardAll && id != boardMaster;
+        int lt = -1;
+        switch (id)
         {
-            g.setColour (id == src ? col::onBright : col::green.darker (0.2f));
-            g.fillEllipse (r.getRight() - 11.0f, r.getY() + 5.0f, 6.0f, 6.0f);
+            case boardDrums: lt = (int) LayerTool::drums; break;
+            case boardPads: lt = (int) LayerTool::pads; break;
+            case boardBass: lt = (int) LayerTool::bass; break;
+            case boardSynth: lt = (int) LayerTool::synth; break;
+            case boardChords: lt = (int) LayerTool::chords; break;
+            case boardVoice: lt = (int) LayerTool::mic; break;
+            case boardVocoder: lt = (int) LayerTool::vocoder; break;
+            case boardDrone: lt = (int) LayerTool::drone; break;
+            default: break;
         }
-    }
-    // there's more off the edge
-    if (chipsWidth - chipScroll > (float) getWidth())
-    {
-        juce::ColourGradient fade (col::cream.withAlpha (0.0f), (float) getWidth() - 28.0f, 0.0f, col::cream, (float) getWidth(), 0.0f, false);
-        g.setGradientFill (fade);
-        g.fillRect (juce::Rectangle<float> ((float) getWidth() - 28.0f, chipsR.getY(), 28.0f, chipsR.getHeight()));
+        const auto colour = lt >= 0 ? layerToolColour (lt) : (id == boardMaster ? toolColour (Tool::effects) : toolColour (Tool::loops));
+        auto cell = r.reduced (1.0f, 0.0f);
+        const bool press = pressed == chipBase + id;
+        {
+            juce::Graphics::ScopedSaveState s (g);
+            if (dim)
+                g.beginTransparencyLayer (0.4f);
+            drawChip (g, cell, instrument ? juce::String() : (isLayerBoard (id) ? "L" + juce::String (id - boardLayer1 + 1) : (id == boardAll ? juce::String ("ALL") : juce::String ("MIX"))),
+                      lit, press, 14.0f, colour);
+            if (instrument)
+            {
+                const float dy = press ? 2.0f : 0.0f;
+                drawLayerToolIcon (g, lt, { cell.getCentreX(), cell.getY() + 17.0f + dy }, lit ? col::onBright : colour);
+                g.setColour (lit ? col::onBright : col::ink);
+                g.setFont (spaced (condensedBold (9.5f), 0.02f));
+                g.drawText (boardLabel (id), cell.withTrimmedBottom (3.0f).withTop (cell.getY() + 30.0f + dy).expanded (3.0f, 0.0f), juce::Justification::centred, false);
+            }
+            if (dim)
+                g.endTransparencyLayer();
+        }
+        if (! dim && model.board (id).audible())
+        {
+            g.setColour (lit ? col::onBright : col::green.darker (0.2f));
+            g.fillEllipse (cell.getRight() - 10.0f, cell.getY() + 4.0f, 6.0f, 6.0f);
+        }
     }
 }
 
