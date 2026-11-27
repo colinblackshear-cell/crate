@@ -1,0 +1,152 @@
+name: TestFlight
+
+# Builds Kaleidobox Pocket (Release; a Debug build shows a black screen on the phone), signs it and
+# sends it to App Store Connect, where it shows up under TestFlight. Uploading invites nobody: testers
+# only get a build once someone adds them in App Store Connect.
+#
+# Run it by hand: Actions > TestFlight > Run workflow. It needs these repository secrets once
+# (Settings > Secrets and variables > Actions), see tools/pocket/testflight/README.md:
+#   APPLE_TEAM_ID    the 10-character Team ID from developer.apple.com > Membership
+#   ASC_KEY_ID       an App Store Connect API key's Key ID (Users and Access > Integrations, role Admin)
+#   ASC_ISSUER_ID    the Issuer ID shown above that key list
+#   ASC_KEY_P8       the whole text of the key's AuthKey_XXXX.p8 file
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Send the build to App Store Connect (off: only build the .ipa and keep it here)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  # Colin's own Mac (the "kaleidobox-mac" runner) when it is online, otherwise GitHub's macos-15.
+  # (Same check as in build.yml and ios.yml.)
+  pick-mac:
+    runs-on: ubuntu-24.04
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.KB_RUNNER_STATUS_TOKEN }}
+        run: |
+          runner='"macos-15"'
+          if [ -n "$GH_TOKEN" ]; then
+            online=$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" \
+              --jq '[.runners[] | select(.status == "online") | select(any(.labels[]; .name == "kaleidobox-mac"))] | length' || echo 0)
+            if [ "${online:-0}" -gt 0 ]; then runner='["self-hosted","kaleidobox-mac"]'; fi
+          fi
+          echo "Building on: $runner"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+
+  testflight:
+    needs: pick-mac
+    runs-on: ${{ fromJSON(needs.pick-mac.outputs.runner) }}
+    timeout-minutes: 120
+    env:
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      # Every upload needs a higher build number than the last: this workflow's run number.
+      BUILD_NUMBER: ${{ github.run_number }}
+      ASC_KEY_P8_SET: ${{ secrets.ASC_KEY_P8 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the secrets are set
+        run: |
+          missing=""
+          for s in TEAM_ID ASC_KEY_ID ASC_ISSUER_ID; do [ -n "${!s}" ] || missing="$missing $s"; done
+          [ "$ASC_KEY_P8_SET" = "true" ] || missing="$missing ASC_KEY_P8"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing (see tools/pocket/testflight/README.md)"
+            exit 1
+          fi
+          xcodebuild -version
+          echo "BUILD_DIR=$RUNNER_TEMP/pocket-testflight" >> "$GITHUB_ENV"
+
+      - name: Put the App Store Connect key where xcodebuild can read it
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          KEY_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      # Two global classes with one name in the phone app break the one-definition rule.
+      - name: Check no class name is defined twice
+        run: python3 tools/pocket/check_class_names.py .
+
+      - name: Configure
+        run: |
+          rm -rf "$BUILD_DIR"
+          cmake -S . -B "$BUILD_DIR" -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_XCODE_GENERATE_SCHEME=ON \
+            -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM="$TEAM_ID" \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE=Automatic \
+            -DPOCKET_BUILD_NUMBER="$BUILD_NUMBER"
+
+      - name: Archive (Release, build ${{ github.run_number }})
+        run: |
+          xcodebuild archive \
+            -project "$BUILD_DIR/Crate.xcodeproj" \
+            -scheme KaleidoboxPocket \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$BUILD_DIR/KaleidoboxPocket.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -quiet
+
+      - name: Check the archive's version, build number and icon
+        run: |
+          plist="$BUILD_DIR/KaleidoboxPocket.xcarchive/Products/Applications/Kaleidobox Pocket.app/Info.plist"
+          echo "Version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
+          echo "Build:   $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"
+          echo "Encryption: $(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$plist")"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" = "$BUILD_NUMBER"
+
+      - name: Sign and ${{ inputs.upload && 'upload to App Store Connect' || 'export the .ipa' }}
+        env:
+          UPLOAD: ${{ inputs.upload }}
+        run: |
+          opts="$BUILD_DIR/ExportOptions.plist"
+          cp tools/pocket/testflight/ExportOptions.plist "$opts"
+          /usr/libexec/PlistBuddy -c "Set :teamID $TEAM_ID" "$opts"
+          if [ "$UPLOAD" != "true" ]; then /usr/libexec/PlistBuddy -c "Set :destination export" "$opts"; fi
+          xcodebuild -exportArchive \
+            -archivePath "$BUILD_DIR/KaleidoboxPocket.xcarchive" \
+            -exportOptionsPlist "$opts" \
+            -exportPath "$BUILD_DIR/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          if [ "$UPLOAD" = "true" ]; then
+            echo "### Build $BUILD_NUMBER sent to App Store Connect" >> "$GITHUB_STEP_SUMMARY"
+            echo "It appears under TestFlight once Apple finishes processing it (usually 5 to 30 minutes). No testers were invited." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the .ipa
+        if: ${{ !inputs.upload }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: KaleidoboxPocket-build-${{ github.run_number }}
+          path: ${{ runner.temp }}/pocket-testflight/export/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc" "$BUILD_DIR"

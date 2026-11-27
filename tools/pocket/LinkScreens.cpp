@@ -45,6 +45,10 @@ juce::String lengthText (const crate::SharedAudio& a)
 }
 }
 
+// Where Kaleidobox for Mac is downloaded (the install page for friends). Change to https://kaleidobox.app once that
+// site is live.
+static const char* const kMacDownloadUrl = "https://colinblackshear-cell.github.io/crate/get/";
+
 //==============================================================================
 MacLinkScreen::MacLinkScreen (LinkClient& c) : client (c)
 {
@@ -213,16 +217,18 @@ void MacLinkScreen::paint (juce::Graphics& g)
         g.drawText (sub, juce::Rectangle<float> (r.getX() + 40, r.getY() + 28, r.getWidth() - 50, 20), juce::Justification::centredLeft);
     }
 
-    // what linking is for
+    // what linking is for, or (not linked) where to get Kaleidobox for Mac: a tap opens its download page
     auto info = infoRect();
     g.setColour (col::well);
     g.fillRoundedRectangle (info, 14.0f);
-    g.setColour (col::inkFaint);
+    g.setColour (linked ? col::inkFaint : col::amber);
     g.setFont (spaced (condensedBold (12.0f), 0.14f));
-    g.drawText (linked ? "LINKED, THIS PHONE CAN" : "LINKED, THE PHONE CAN", info.withTrimmedLeft (14).withTrimmedTop (8).withHeight (18), juce::Justification::centredLeft);
+    g.drawText (linked ? juce::String ("LINKED, THIS PHONE CAN") : U8("NO KALEIDOBOX ON YOUR MAC YET? \xe2\x80\xba GET IT"),
+                info.withTrimmedLeft (14).withTrimmedTop (8).withHeight (18), juce::Justification::centredLeft);
     g.setColour (creamText);
     g.setFont (small (15.0f));
-    g.drawFittedText (U8("Send sounds and kits straight to the Mac · run the Rig from the Remote page while you sing"),
+    g.drawFittedText (linked ? U8("Send sounds and kits straight to the Mac \xc2\xb7 run the Rig from the Remote page while you sing")
+                             : U8("The full studio and live rig: Logic plugins, a bigger looper, the vocoder pedalboard. Tap to get it."),
                       info.reduced (14, 0).withTrimmedTop (28).withTrimmedBottom (6).toNearestInt(), juce::Justification::topLeft, 2);
 
     // NOT NOW / LINK, or UNLINK / REMOTE
@@ -269,6 +275,11 @@ void MacLinkScreen::mouseUp (const juce::MouseEvent& e)
         if (client.isLinked())
             return onRemote ? onRemote() : void();
         return pressLink();
+    }
+    if (! client.isLinked() && infoRect().contains (p))
+    {
+        juce::URL (kMacDownloadUrl).launchInDefaultBrowser();
+        return;
     }
     if (! client.isLinked() && digitRect (0).getUnion (digitRect (3)).contains (p))
         entry.grabKeyboardFocus();
