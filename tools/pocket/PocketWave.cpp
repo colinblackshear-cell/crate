@@ -113,7 +113,7 @@ void PocketWave::paint (juce::Graphics& g)
         const float x = a.getX() + (float) i * (a.getWidth() / (float) peaks.size());
         const float h = juce::jmax (2.0f, peaks[(size_t) i] * half * 0.92f);
         const bool inside = ! hasSel || (x >= sx0 && x <= sx1);
-        g.setColour (inside ? col::amber : juce::Colour (0xff9a6c28));
+        g.setColour (inside ? col::amber : juce::Colour (0xffc9a54e));
         g.fillRoundedRectangle (x, mid - h, 2.6f, h * 2, 1.2f);
     }
 

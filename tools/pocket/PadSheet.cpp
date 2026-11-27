@@ -26,12 +26,23 @@ PadSheet::PadSheet (Kit& k) : kit (k)
              return p == 0 ? juce::String ("C") : (p < 0 ? "L" : "R") + juce::String (std::abs (p));
          },
          [this] (double v) { kit.pads[(size_t) padIndex].pan = (int) std::round (v); });
-    add ("TUNE", -12, 12, 0, [] (double v)
-         {
-             const double t = std::round (v * 10.0) / 10.0;
-             return (t < 0 ? juce::String ("-") : juce::String ("+")) + juce::String (std::abs (t), 1);
-         },
-         [this] (double v) { kit.pads[(size_t) padIndex].tune = juce::roundToInt (v * 10.0); });
+
+    // PITCH, first and big: whole semitones (a finer tune from the Mac or a set is kept until the pitch is moved)
+    pitch.onChange = [this] (int st) { setPitch (st); };
+    addAndMakeVisible (pitch);
+    for (auto* b : { &down, &up })
+    {
+        b->setFontHeight (24.0f);
+        addAndMakeVisible (b);
+    }
+    down.onClick = [this] { setPitch (pitch.getValue() - 1); };
+    up.onClick = [this] { setPitch (pitch.getValue() + 1); };
+    keys.setFontHeight (17.0f);
+    more.setFontHeight (17.0f);
+    keys.onClick = [this] { if (! kit.pads[(size_t) padIndex].empty() && onPlayAsKeys) onPlayAsKeys (padIndex); };
+    more.onClick = [this] { if (onMore) onMore (padIndex); };
+    addAndMakeVisible (keys);
+    addAndMakeVisible (more);
 
     const char* names[] = { "One shot", "Mono", "Note off" };
     for (int i = 0; i < 3; ++i)
@@ -81,6 +92,18 @@ void PadSheet::show (int pad)
     refresh();
 }
 
+void PadSheet::setPitch (int st)
+{
+    auto& p = kit.pads[(size_t) padIndex];
+    if (p.empty())
+        return;
+    st = juce::jlimit (-12, 12, st);
+    p.tune = st * 10;
+    pitch.setValue (st);
+    if (onChanged)
+        onChanged (padIndex);
+}
+
 void PadSheet::setMode (PadMode m)
 {
     auto& p = kit.pads[(size_t) padIndex];
@@ -97,7 +120,9 @@ void PadSheet::refresh()
     auto& p = kit.pads[(size_t) padIndex];
     knobs[0]->setValue (p.volume);
     knobs[1]->setValue (p.pan);
-    knobs[2]->setValue (p.tune / 10.0);
+    pitch.setValue (juce::roundToInt (p.tune / 10.0));
+    for (auto* b : { &down, &up, &keys })
+        b->setEnabled (! p.empty());
     for (int i = 0; i < 3; ++i)
         modes[i].setLook (! p.empty() && (int) p.mode == i ? Look::amber : Look::ghost);
     clear.setText (hasCleared ? "Undo" : "Clear");
@@ -136,15 +161,23 @@ void PadSheet::resized()
     const int w = getWidth();
     done.setBounds (w - 16 - 76, 20, 76, 44);
 
-    const int colW = (w - 40) / 3;
+    // PITCH: - [strip] +
+    down.setBounds (16, 88, 48, 48);
+    up.setBounds (w - 16 - 48, 88, 48, 48);
+    pitch.setBounds (16 + 48 + 6, 66, w - 2 * (16 + 48 + 6), 72);
+
+    const int colW = (w - 40) / 2;
     for (int i = 0; i < knobs.size(); ++i)
-        knobs[i]->setBounds (20 + i * colW, 66, colW, 104);
+        knobs[i]->setBounds (20 + i * colW, 146, colW, 96);
 
     const int each = (w - 32) / 3;
     for (int i = 0; i < 3; ++i)
-        modes[i].setBounds (16 + i * each, 188, each - 6, 46);
+        modes[i].setBounds (16 + i * each, 250, each - 6, 44);
 
-    clear.setBounds (w - 16 - 72, 248, 72, 46);
-    trim.setBounds (clear.getX() - 6 - 120, 248, 120, 46);
-    chop.setBounds (16, 248, trim.getX() - 12 - 16, 46);
+    const int half = (w - 32 - 6) / 2;
+    keys.setBounds (16, 302, half, 46);
+    trim.setBounds (16 + half + 6, 302, half, 46);
+    clear.setBounds (w - 16 - 72, 356, 72, 46);
+    more.setBounds (clear.getX() - 6 - 96, 356, 96, 46);
+    chop.setBounds (16, 356, more.getX() - 6 - 16, 46);
 }

@@ -25,7 +25,7 @@ const char* stepHint (int s)
 
 juce::Colour stepColour (int s)
 {
-    static const juce::uint32 cols[kSteps] = { 0xfff08a74, 0xfff2b632, 0xff8fc06a, 0xff5fb3c4, 0xff8a6fb3, 0xffe0785a, 0xffc9a472 };
+    static const juce::uint32 cols[kSteps] = { 0xfff59a2a, 0xfff7c04a, 0xff2fc6a8, 0xffa877f5, 0xff9a5cf0, 0xfff27bb0, 0xffc9a54e };
     return juce::Colour (cols[juce::jlimit (0, kSteps - 1, s)]);
 }
 

@@ -16,6 +16,8 @@ juce::String boardLabel (int id)
         case boardVocoder: return "VOCODER";
         case boardAll: return "ALL";
         case boardMaster: return "MASTER";
+        case boardBass: return "BASS";
+        case boardDrone: return "DRONE";
         default: return {};
     }
 }
@@ -34,6 +36,8 @@ juce::String boardTitle (int id)
         case boardVocoder: return "Vocoder";
         case boardAll: return "All loops";
         case boardMaster: return "Master";
+        case boardBass: return "Bass";
+        case boardDrone: return "Drone";
         default: return {};
     }
 }
@@ -357,6 +361,8 @@ std::vector<BoardChoice> boardChoices (int boardId, const juce::File& ownFolder)
             case boardDrums:
             case boardPads: return forWhat == "Drums";
             case boardSynth: return forWhat == "Keys and synths" || forWhat == "Bass";
+            case boardBass: return forWhat == "Bass" || forWhat == "Keys and synths";
+            case boardDrone: return forWhat == "Keys and synths";
             case boardChords:
             case boardVocoder: return forWhat == "Keys and synths";
             case boardVoice: return forWhat == "Guitar" || forWhat == "Bass";

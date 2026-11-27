@@ -5,9 +5,9 @@ namespace pocket
 {
 namespace
 {
-const juce::Colour kPaper { 0xfff1e7d1 }, kRecTop { 0xffe9573f }, kRecBottom { 0xffc93a26 }, kRecEdge { 0xff8f2617 },
-                   kStopTop { 0xff2e2822 }, kStopBottom { 0xff1d1915 }, kPlayGreen { 0xff3c8f56 },
-                   kGreenBg { 0xffe6f2e2 }, kGreenEdge { 0xff8fc06a }, kAmberBg { 0xfffbe9c4 };
+const juce::Colour kPaper { 0xfff3eadb }, kRecTop { 0xffe5588f }, kRecBottom { 0xffc0346a }, kRecEdge { 0xff7a1a42 },
+                   kStopTop { 0xff2e2540 }, kStopBottom { 0xff1d1728 }, kPlayGreen { 0xff1f8f7a },
+                   kGreenBg { 0xff17332f }, kGreenEdge { 0xff2fc6a8 }, kAmberBg { 0xff3a2f1c };
 
 void label2 (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& top, const juce::String& bottom, juce::Colour ink, float topSize = 19.0f)
 {
@@ -24,7 +24,7 @@ const char* toolName (Tool t)
 {
     switch (t)
     {
-        case Tool::loops: return "LOOPS";
+        case Tool::loops: return "LOOPER";
         case Tool::drums: return "DRUMS";
         case Tool::pads: return "PADS";
         case Tool::sampler: return "SAMPLER";
@@ -34,6 +34,9 @@ const char* toolName (Tool t)
         case Tool::drone: return "DRONE";
         case Tool::effects: return "EFFECTS";
         case Tool::song: return "SONG";
+        case Tool::add: return "ADD";
+        case Tool::bass: return "BASS";
+        case Tool::more: return "MORE";
     }
     return "";
 }
@@ -42,18 +45,21 @@ juce::Colour toolColour (Tool t)
 {
     switch (t)
     {
-        case Tool::loops: return col::ink;
-        case Tool::drums: return juce::Colour (0xfff0674f);
+        case Tool::loops: return col::green;
+        case Tool::drums: return juce::Colour (0xfff59a2a);
         case Tool::pads: return col::amber;
-        case Tool::sampler: return juce::Colour (0xffe08fb0);
-        case Tool::synth: return juce::Colour (0xff5fb3c4);
-        case Tool::chords: return juce::Colour (0xffb9a3dc);
-        case Tool::vocoder: return juce::Colour (0xff82cf6a);
-        case Tool::drone: return juce::Colour (0xffd8578e);   // the Mac's Drone: kumkum rose
-        case Tool::effects: return juce::Colour (0xffe8c27a);
-        case Tool::song: return juce::Colour (0xff8fb84a);   // the Mac's Song screen: leaf green
+        case Tool::sampler: return juce::Colour (0xfff7c04a);
+        case Tool::synth: return juce::Colour (0xffa877f5);
+        case Tool::chords: return juce::Colour (0xff9a5cf0);
+        case Tool::vocoder: return juce::Colour (0xfff27bb0);
+        case Tool::drone: return juce::Colour (0xff5fe3c6);   // the Mac's Drone, minty
+        case Tool::effects: return juce::Colour (0xffec4e8a);
+        case Tool::song: return juce::Colour (0xffc9a54e);   // brass
+        case Tool::add: return col::red;
+        case Tool::more: return col::inkDim;
+        case Tool::bass: return juce::Colour (0xfff59a2a).interpolatedWith (juce::Colour (0xffec4e8a), 0.35f);   // deep orange
     }
-    return col::ink;
+    return col::green;
 }
 
 void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour ink)
@@ -62,6 +68,28 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
     const juce::PathStrokeType stroke (2.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
     switch (t)
     {
+        case Tool::bass:   // a long, low wave
+        {
+            juce::Path p;
+            for (int i = 0; i <= 24; ++i)
+            {
+                const float x = c.x - 11.0f + (float) i * 22.0f / 24.0f;
+                const float y = c.y + 6.0f * std::sin ((float) i / 24.0f * juce::MathConstants<float>::twoPi);
+                i == 0 ? p.startNewSubPath (x, y) : p.lineTo (x, y);
+            }
+            g.strokePath (p, juce::PathStrokeType (3.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            break;
+        }
+        case Tool::more:   // three dots
+            for (int i = -1; i <= 1; ++i)
+                g.fillEllipse (c.x + (float) i * 8.0f - 2.6f, c.y - 2.6f, 5.2f, 5.2f);
+            break;
+        case Tool::add:   // a plus
+        {
+            g.drawLine (c.x - 9, c.y, c.x + 9, c.y, 3.2f);
+            g.drawLine (c.x, c.y - 9, c.x, c.y + 9, 3.2f);
+            break;
+        }
         case Tool::loops:   // two tape reels
         {
             g.drawEllipse (c.x - 11, c.y - 5, 10, 10, 2.3f);
@@ -158,7 +186,7 @@ void drawToolIcon (juce::Graphics& g, Tool t, juce::Point<float> c, juce::Colour
 void showSongKeyMenu (juce::Component& target, juce::Rectangle<int> area, SongKey current, std::function<void (SongKey)> picked)
 {
     juce::PopupMenu m;
-    m.addSectionHeader (U8("THE SONG'S KEY Â· SYNTH, CHORDS AND VOCODER"));
+    m.addSectionHeader (U8("THE SONG'S KEY \xc2\xb7 SYNTH, BASS, CHORDS, VOCODER"));
     m.addItem (101, "Minor", true, current.minor);
     m.addItem (102, "Major", true, ! current.minor);
     m.addSeparator();
@@ -191,7 +219,7 @@ void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
     }
     else
         drawRaised (g, r, lit ? Look::amber : Look::cream, pressed, 10.0f);
-    g.setColour (col::ink);
+    g.setColour (lit ? col::onBright : col::ink);
     g.setFont (spaced (condensedBold (fontHeight), 0.06f));
     g.drawFittedText (text, r.withTrimmedBottom (3).translated (0, pressed ? 2.0f : 0.0f).reduced (4, 0).toNearestInt(), juce::Justification::centred, 2, 0.7f);
 }
@@ -249,7 +277,7 @@ void ThumbBar::paint (juce::Graphics& g)
 
     auto clickR = buttonRect (click);
     drawRaised (g, clickR, s.click ? Look::amber : Look::cream, pressed == click, 12.0f);
-    label2 (g, clickR.withTrimmedBottom (3).translated (0, pressed == click ? 2.0f : 0.0f), "CLICK", s.click ? "ON" : "OFF", col::ink);
+    label2 (g, clickR.withTrimmedBottom (3).translated (0, pressed == click ? 2.0f : 0.0f), "CLICK", s.click ? "ON" : "OFF", s.click ? col::onBright : col::ink);
 
     // REC: red; dark STOP while it counts in or records
     {
@@ -296,25 +324,37 @@ void ThumbBar::paint (juce::Graphics& g)
         {
             juce::Path tri;
             tri.addTriangle (c.x - 7, c.y - 10, c.x - 7, c.y + 10, c.x + 10, c.y);
-            g.setColour (col::ink);
+            g.setColour (col::onBright);
             g.fillPath (tri);
         }
     }
 
     auto undoR = buttonRect (undo);
     drawRaised (g, undoR, Look::cream, pressed == undo, 12.0f);
-    label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", "LAST TAKE", col::ink, 18.0f);
+    label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", s.undoPass ? "LAST PASS" : "LAST TAKE", col::ink, 18.0f);
 
+    // TO LOOPER (in VISUALS' place): the looper's icon on teal, what this tool made goes on a layer.
+    if (s.toLooper)
+    {
+        auto r = buttonRect (visuals);
+        drawRaised (g, r, Look::green, pressed == visuals, 12.0f);
+        auto body = r.withTrimmedBottom (3).translated (0, pressed == visuals ? 2.0f : 0.0f);
+        drawToolIcon (g, Tool::loops, body.getCentre().translated (0, -8.0f), col::onBright);
+        g.setColour (col::onBright);
+        g.setFont (spaced (condensedBold (11.0f), 0.04f));
+        g.drawFittedText ("TO LOOPER", body.withTrimmedTop (body.getHeight() * 0.6f).reduced (2, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
+    }
+    else
     // VISUALS: a little kaleidoscope of the tools' colours; amber while the light show is on.
     {
         auto r = buttonRect (visuals);
         drawRaised (g, r, s.visuals ? Look::amber : Look::cream, pressed == visuals, 12.0f);
         auto body = r.withTrimmedBottom (3).translated (0, pressed == visuals ? 2.0f : 0.0f);
         const auto c = body.getCentre().translated (0, -6.0f);
-        const Tool petals[6] { Tool::drums, Tool::pads, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone };
-        for (int i = 0; i < 6; ++i)
+        const Tool petals[8] { Tool::drums, Tool::bass, Tool::pads, Tool::sampler, Tool::synth, Tool::chords, Tool::vocoder, Tool::drone };
+        for (int i = 0; i < 8; ++i)
         {
-            const float a = juce::MathConstants<float>::twoPi * (float) i / 6.0f;
+            const float a = juce::MathConstants<float>::twoPi * (float) i / 8.0f;
             const auto p = c.translated (std::cos (a) * 7.0f, std::sin (a) * 7.0f);
             g.setColour (toolColour (petals[i]));
             g.fillEllipse (p.x - 4.0f, p.y - 4.0f, 8.0f, 8.0f);
@@ -344,6 +384,21 @@ void ToolRow::paint (juce::Graphics& g)
         const auto t = tools[(size_t) i];
         const float wellW = juce::jmin (56.0f, cell.getWidth() - 4.0f);   // eight tools on a 375-point phone: 41 wide
         auto well = juce::Rectangle<float> (cell.getCentreX() - wellW * 0.5f, cell.getY() + 2, wellW, 40);
+        if (t == Tool::add)
+        {
+            // + ADD A LAYER: always a big magenta button, never "picked"
+            const bool narrow = cell.getWidth() < 64.0f;   // a full row of instruments: + and ADD
+            const float bw = juce::jmin (60.0f, cell.getWidth() - 2.0f);
+            auto b = juce::Rectangle<float> (cell.getCentreX() - bw * 0.5f, cell.getY() - 2.0f, bw, 46.0f);
+            drawRaised (g, b, Look::red, false, 16.0f);
+            drawToolIcon (g, t, b.getCentre().translated (0.0f, -1.0f), juce::Colours::white);
+            g.setColour (col::ink);
+            g.setFont (spaced (condensedBold (labelHeight()), 0.06f));
+            g.drawFittedText (narrow ? "ADD" : "ADD A LAYER", (narrow ? cell.withY (well.getBottom() + 2).withHeight (16)
+                                                                      : juce::Rectangle<float> (cell.getX() - 14.0f, well.getBottom() + 2, cell.getWidth() + 28.0f, 16)).toNearestInt(),
+                              juce::Justification::centred, 1, 0.9f);
+            continue;
+        }
         if (on)
         {
             g.setColour (col::well);
@@ -453,7 +508,7 @@ void CountInPanel::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0x55000000));
     g.fillRoundedRectangle (r.translated (0, 3), 16.0f);
     drawWell (g, r, 16.0f);
-    g.setColour (juce::Colour (0xffd9cfb8));
+    g.setColour (juce::Colour (0xffe4dbee));
     g.setFont (spaced (lcdFont (19.0f), 0.08f));
     const juce::String head = totalBars > 1 ? U8("COUNT-IN \xc2\xb7 BAR ") + juce::String (barNow + 1) + " OF " + juce::String (totalBars) + U8(" \xc2\xb7 CLICK")
                                             : U8("COUNT-IN \xc2\xb7 THE CLICK IS PLAYING");
@@ -464,14 +519,14 @@ void CountInPanel::paint (juce::Graphics& g)
     {
         auto c = juce::Rectangle<float> (r.getCentreX() - total * 0.5f + (float) i * (d + gap), r.getY() + 38, d, d);
         const bool lit = i <= beat;
-        g.setColour (lit ? juce::Colour (0xfff0846c) : juce::Colour (0xff2e2823));
+        g.setColour (lit ? juce::Colour (0xfff59a2a) : juce::Colour (0xff221b2d));
         g.fillEllipse (c);
         if (i == beat)
         {
-            g.setColour (juce::Colour (0xfff0846c).withAlpha (0.35f));
+            g.setColour (juce::Colour (0xfff59a2a).withAlpha (0.35f));
             g.drawEllipse (c.expanded (3), 3.0f);
         }
-        g.setColour (lit ? juce::Colour (0xff3a160f) : juce::Colour (0xff6b6155));
+        g.setColour (lit ? juce::Colour (0xff3a160f) : juce::Colour (0xff8e7fa0));
         g.setFont (lcdFont (d * 0.75f));
         g.drawText (juce::String (i + 1), c, juce::Justification::centred);
     }
@@ -634,7 +689,7 @@ void HeadphonesSheet::paint (juce::Graphics& g)
         g.drawText (routeName (order[i]), r.reduced (12, 0).withHeight (26).translated (0, 5), juce::Justification::centredLeft);
         if (found)
         {
-            g.setColour (i == 0 ? juce::Colour (0xff3c8f56) : col::amberDark);
+            g.setColour (i == 0 ? col::green : col::amber);
             g.setFont (spaced (condensedBold (13.0f), 0.1f));
             const auto t = r.reduced (12, 0).withHeight (26).translated (0, 5);
             g.drawText (i == 2 ? "NOW" : "FOUND", t.withTrimmedRight (18), juce::Justification::centredRight);

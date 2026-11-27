@@ -4,8 +4,8 @@ using namespace pocket;
 
 namespace
 {
-const juce::Colour kSynth { 0xff5fb3c4 }, kDarkKey { 0xff2b2520 }, kPaper { 0xfff1e7d1 }, kKeyFace { 0xfffaf4e6 }, kRootDot { 0xfff0806a };
-const juce::Colour kKnobFaces[4] = { juce::Colour (0xff5fb3c4), juce::Colour (0xff8fc06a), juce::Colour (0xffe8dcc4), juce::Colour (0xfff0806a) };
+const juce::Colour kSynth { 0xffa877f5 }, kDarkKey { 0xff221b2d }, kPaper { 0xfff3eadb }, kKeyFace { 0xfff3eadb }, kRootDot { 0xfff59a2a };
+const juce::Colour kKnobFaces[4] = { juce::Colour (0xffa877f5), juce::Colour (0xff2fc6a8), juce::Colour (0xffe4dbee), juce::Colour (0xfff59a2a) };
 const char* const kKnobNames[4] = { "TONE", "SHAPE", "DECAY", "ECHO" };
 const char* const kModeNames[3] = { "KEYS", "PATTERN", "ARP" };
 const char* const kArpNames[3] = { "UP", "DOWN", "UP-DN" };
@@ -15,6 +15,8 @@ SynthScreen::SynthScreen (SynthPart& p, BeatsEngine& b) : part (p), beats (b)
 {
     fingerKey.fill (-1);
     fingerNote.fill (-1);
+    for (auto& c : fingerChord)
+        c = { -1, -1 };
     lastOfKind.fill (-1);
     setOpaque (false);
     startTimerHz (20);
@@ -97,7 +99,7 @@ void SynthScreen::layout()
     addHit (nextR, nextId);
     addHit (lcd.withRight (prevR.getX() - 4.0f), nameId);
     const float kw = (iw - 20.0f - 3.0f * 8.0f) / 4.0f;
-    for (int k = 0; k < kSynthKinds; ++k)
+    for (int k = 0; k < kKindsPerFamily; ++k)
     {
         kindR[(size_t) k] = { x0 + 10.0f + (float) (k % 4) * (kw + 8.0f), lcd.getBottom() + 4.0f + (float) (k / 4) * (kindH + 6.0f), kw, kindH };
         addHit (kindR[(size_t) k], kindBase + k);
@@ -143,7 +145,7 @@ void SynthScreen::layout()
         }
     };
     if (part.mode == SynthPart::keysMode)
-        row ({ { 80, scaleId }, { 96, chromaticId }, { 12, 0 }, { 110, snapId } });
+        row ({ { 84, scaleId }, { 76, chordsId }, { 64, chromaticId }, { 96, snapId } });
     else if (part.mode == SynthPart::arpMode)
         row ({ { 50, arpBase }, { 56, arpBase + 1 }, { 56, arpBase + 2 }, { 46, rateBase }, { 50, rateBase + 1 }, { 56, holdId } });
     else
@@ -171,7 +173,8 @@ void SynthScreen::layout()
 
     // the keys, low; a line of help above them when there's room
     const float room = h - 8.0f - y;
-    const float keysH = juce::jlimit (90.0f, 170.0f, room - (room > 170.0f ? 42.0f : 0.0f));
+    const float keysH = part.chromatic ? juce::jlimit (90.0f, 170.0f, room - (room > 170.0f ? 42.0f : 0.0f))
+                                       : juce::jlimit (120.0f, 240.0f, room - (room > 240.0f ? 42.0f : 0.0f));   // (two rows in key)
     keysArea = { x0, h - 8.0f - keysH, iw, keysH };
     hintArea = { x0, y, iw, juce::jmax (0.0f, keysArea.getY() - y - 6.0f) };
 }
@@ -181,8 +184,10 @@ juce::Rectangle<float> SynthScreen::keyRect (int key) const
     auto a = keysArea;
     if (! part.chromatic)
     {
-        const float kw = a.getWidth() / 8.0f;
-        return { a.getX() + (float) key * kw + 2.0f, a.getY(), kw - 4.0f, a.getHeight() };
+        // two rows of 8: the low octave under the thumb, the next one up above it
+        const float kw = a.getWidth() / 8.0f, gap = 8.0f, rh = (a.getHeight() - gap) / 2.0f;
+        const int col = key % 8, rowUp = key >= 8 ? 1 : 0;
+        return { a.getX() + (float) col * kw + 2.0f, a.getY() + (rowUp ? 0.0f : rh + gap), kw - 4.0f, rh - 4.0f };
     }
     const float kw = a.getWidth() / 8.0f;
     if (key < 8)
@@ -200,8 +205,8 @@ int SynthScreen::keyAt (juce::Point<float> p) const
         for (int k = 8; k < 13; ++k)
             if (keyRect (k).contains (p))
                 return k;
-    for (int k = 0; k < 8; ++k)
-        if (keyRect (k).expanded (2.0f, 6.0f).contains (p))
+    for (int k = 0; k < (part.chromatic ? 8 : 16); ++k)
+        if (keyRect (k).expanded (2.0f, part.chromatic ? 6.0f : 3.0f).contains (p))
             return k;
     return -1;
 }
@@ -227,6 +232,16 @@ void SynthScreen::keyDown (int source, int key)
     fingerKey[(size_t) source] = key;
     fingerNote[(size_t) source] = note;
     part.engine().keyDown (note, 0.85f);
+    fingerChord[(size_t) source] = { -1, -1 };
+    if (part.mode != SynthPart::patternMode)
+    {
+        const auto notes = part.keyNotes (key, k);   // CHORDS: the third and the fifth too
+        for (size_t i = 1; i < notes.size() && i < 3; ++i)
+        {
+            fingerChord[(size_t) source][i - 1] = notes[i];
+            part.engine().keyDown (notes[i], 0.7f);
+        }
+    }
     if (part.mode == SynthPart::patternMode && selectedStep >= 0)
     {
         // a step is picked: the key sets its note, and the next step is picked
@@ -254,6 +269,12 @@ void SynthScreen::keyUp (int source)
     if (! juce::isPositiveAndBelow (source, (int) fingerKey.size()) || fingerKey[(size_t) source] < 0)
         return;
     part.engine().keyUp (fingerNote[(size_t) source]);
+    for (auto& n : fingerChord[(size_t) source])
+        if (n >= 0)
+        {
+            part.engine().keyUp (n);
+            n = -1;
+        }
     fingerKey[(size_t) source] = -1;
     fingerNote[(size_t) source] = -1;
     repaint();
@@ -394,9 +415,9 @@ void SynthScreen::press (int id)
                          });
         return;
     }
-    else if (id >= kindBase && id < kindBase + kSynthKinds)
+    else if (id >= kindBase && id < kindBase + kKindsPerFamily)
     {
-        const int k = id - kindBase;
+        const int k = part.firstKind() + id - kindBase;
         if (k == part.kind())
             part.stepPreset (1);   // the lit kind again: its next sound
         else
@@ -424,12 +445,17 @@ void SynthScreen::press (int id)
             say (part.octave > 0 ? "That's as high as it goes" : "That's as low as it goes");
         part.apply();
     }
-    else if (id == scaleId || id == chromaticId)
+    else if (id == scaleId || id == chromaticId || id == chordsId)
     {
         leave();
         part.chromatic = id == chromaticId;
-        say (part.chromatic ? U8("CHROMATIC: every note, C to C. The dots are the song's key notes.")
-                            : U8("IN KEY: the 8 keys are the song's scale, so there are no wrong notes."));
+        part.chords = id == chordsId;
+        say (part.chromatic ? U8("PIANO: every note, C to C. The dots are the song's key notes.")
+             : part.chords  ? U8("CHORDS: each key plays a whole chord in the song's key. One finger, a full sound.")
+                            : U8("ONE NOTE: every key is in the song's key, so there are no wrong notes."));
+        layout();
+        if (onChanged)
+            onChanged();
     }
     else if (id == snapId)
     {
@@ -587,7 +613,7 @@ void SynthScreen::drawKnob (juce::Graphics& g, int k)
     const auto cc = c.getCentre();
     g.setColour (col::ink);
     g.drawLine (cc.x + std::sin (a) * d * 0.14f, cc.y - std::cos (a) * d * 0.14f, cc.x + std::sin (a) * d * 0.4f, cc.y - std::cos (a) * d * 0.4f, 3.0f);
-    g.setColour (juce::Colour (0xffcdbfa5));
+    g.setColour (juce::Colour (0xffb7a9c2));
     g.setFont (spaced (condensedBold (12.0f), 0.12f));
     const juce::String name = k == 2 && synthKnobIsRelease (part.preset) ? "RELEASE" : kKnobNames[k];
     g.drawText (name, juce::Rectangle<float> (r.getX(), c.getBottom() + 3.0f, r.getWidth(), 14.0f), juce::Justification::centred);
@@ -601,7 +627,7 @@ void SynthScreen::drawStrip (juce::Graphics& g, juce::Rectangle<float> r)
     drawWell (g, r, 10.0f);
     const auto& pat = part.pattern;
     g.setFont (spaced (condensedBold (11.0f), 0.12f));
-    g.setColour (juce::Colour (0xffcdbfa5));
+    g.setColour (juce::Colour (0xffb7a9c2));
     const juce::String bars = juce::String (pat.bars) + (pat.bars == 1 ? " BAR" : " BARS");
     const juce::String head = pat.empty() ? U8("PATTERN \xc2\xb7 EMPTY \xc2\xb7 REC PUTS WHAT YOU PLAY HERE \xc2\xb7 TAP TO EDIT")
                                           : U8("PATTERN \xc2\xb7 ") + bars + U8(" \xc2\xb7 TAP PATTERN TO EDIT");
@@ -659,11 +685,11 @@ void SynthScreen::drawSteps (juce::Graphics& g)
         }
         if (label.isNotEmpty())
         {
-            g.setColour (col::ink);
+            g.setColour (col::onBright);
             g.setFont (condensedBold (15.0f));
             g.drawFittedText (label, r.reduced (3, 0).withTrimmedBottom (12).toNearestInt(), juce::Justification::centred, 1, 0.7f);
         }
-        g.setColour (label.isNotEmpty() ? col::ink.withAlpha (0.6f) : juce::Colour (0xff8a7d6a));
+        g.setColour (label.isNotEmpty() ? col::onBright.withAlpha (0.7f) : juce::Colour (0xff8e7fa0));
         g.setFont (condensedBold (11.0f));
         g.drawText (juce::String (global + 1), r.reduced (5, 3), juce::Justification::bottomRight);
         if (playing == global)
@@ -703,15 +729,21 @@ void SynthScreen::drawKeys (juce::Graphics& g)
         }
         else if (part.chromatic && k.inScale (note))
         {
-            g.setColour ((black ? kPaper : col::inkFaint).withAlpha (0.8f));
+            g.setColour ((black ? kPaper : col::onBright).withAlpha (0.7f));
             g.fillEllipse (r.getCentreX() - 3.0f, markY + 1.0f + down, 6.0f, 6.0f);
         }
-        g.setColour (black ? kPaper : col::ink);
+        g.setColour (black ? kPaper : col::onBright);
         g.setFont (condensedBold (black ? 13.0f : 16.0f));
-        const auto name = SongKey::pitchName (note);
+        auto name = SongKey::pitchName (note);
+        if (part.chords && ! part.chromatic)   // CHORDS: the chord's name (m minor, a small circle diminished)
+        {
+            const auto notes = part.keyNotes (key, k);
+            if (notes.size() == 3)
+                name += notes[1] - notes[0] == 3 ? (notes[2] - notes[0] == 6 ? juce::String (U8("\xc2\xb0")) : juce::String ("m")) : juce::String();
+        }
         g.drawFittedText (name, r.translated (0, down).withTrimmedTop (r.getHeight() - 30.0f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
     };
-    for (int key = 0; key < 8; ++key)
+    for (int key = 0; key < (part.chromatic ? 8 : 16); ++key)
         drawOne (key);
     if (part.chromatic)
         for (int key = 8; key < 13; ++key)
@@ -728,36 +760,37 @@ void SynthScreen::paint (juce::Graphics& g)
     {
         g.setFont (spaced (lcdFont (21.0f), 0.04f));
         g.setColour (col::lcdAmber);
-        g.drawFittedText ("SYNTH " + juce::String (U8("\xc2\xb7 ")) + preset.name.toUpperCase(), lcd.withRight (prevR.getX() - 4.0f).toNearestInt(),
+        g.drawFittedText ((part.family == bassFamily ? "BASS " : "SYNTH ") + juce::String (U8("\xc2\xb7 ")) + preset.name.toUpperCase(), lcd.withRight (prevR.getX() - 4.0f).toNearestInt(),
                           juce::Justification::centredLeft, 1, 0.7f);
         const auto list = synthPresetsOf (part.kind());
         int at = 0;
         for (int i = 0; i < (int) list.size(); ++i)
             if (list[(size_t) i] == part.preset)
                 at = i;
-        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (lcdFont (19.0f));
         g.drawText (juce::String (at + 1) + " OF " + juce::String ((int) list.size()), prevR.getUnion (nextR).reduced (30, 0), juce::Justification::centred);
         for (auto [r, t] : { std::pair { prevR, U8("\xe2\x80\xb9") }, std::pair { nextR, U8("\xe2\x80\xba") } })
         {
-            g.setColour (pressed == (r == prevR ? prevId : nextId) ? col::lcdAmber : juce::Colour (0xffcdbfa5));
+            g.setColour (pressed == (r == prevR ? prevId : nextId) ? col::lcdAmber : juce::Colour (0xffb7a9c2));
             g.setFont (condensedBold (30.0f));
             g.drawText (t, r, juce::Justification::centred);
         }
     }
-    for (int i = 0; i < kSynthKinds; ++i)
+    for (int i = 0; i < kKindsPerFamily; ++i)
     {
         auto r = kindR[(size_t) i];
-        const bool lit = part.kind() == i;
+        const int kind = part.firstKind() + i;
+        const bool lit = part.kind() == kind;
         const bool down = pressed == kindBase + i;
-        const auto c = synthKindColour (i);
+        const auto c = synthKindColour (kind);
         g.setColour (lit ? c.darker (0.5f) : c.withAlpha (0.85f));
         g.fillRoundedRectangle (r.translated (0, 3), 9.0f);
         g.setColour (lit ? c : kDarkKey);
         g.fillRoundedRectangle (r.translated (0, down ? 2.0f : 0.0f), 9.0f);
-        g.setColour (lit ? col::ink : kPaper);
+        g.setColour (lit ? col::onBright : kPaper);
         g.setFont (spaced (condensedBold (15.0f), 0.08f));
-        g.drawText (synthKindName (i), r.translated (0, down ? 2.0f : 0.0f), juce::Justification::centred);
+        g.drawText (synthKindName (kind), r.translated (0, down ? 2.0f : 0.0f), juce::Justification::centred);
     }
     for (int i = 0; i < 4; ++i)
         drawKnob (g, i);
@@ -773,9 +806,10 @@ void SynthScreen::paint (juce::Graphics& g)
         else if (id == keyChipId) text = k.label().replace (" ", "\n");
         else if (id == octDownId) text = U8("OCT\n\xe2\x88\x92") + (part.octave < 0 ? juce::String (part.octave) : juce::String());
         else if (id == octUpId) text = "OCT\n+" + (part.octave > 0 ? juce::String (part.octave) : juce::String());
-        else if (id == scaleId) { text = "IN KEY"; lit = ! part.chromatic; }
-        else if (id == chromaticId) { text = "CHROMATIC"; lit = part.chromatic; }
-        else if (id == snapId) text = "REC SNAP " + juce::String (part.quantize == 0 ? "1/16" : part.quantize == 1 ? "1/8" : "OFF");
+        else if (id == scaleId) { text = "ONE NOTE"; lit = ! part.chromatic && ! part.chords; }
+        else if (id == chordsId) { text = "CHORDS"; lit = ! part.chromatic && part.chords; }
+        else if (id == chromaticId) { text = "PIANO"; lit = part.chromatic; }
+        else if (id == snapId) text = "SNAP " + juce::String (part.quantize == 0 ? "1/16" : part.quantize == 1 ? "1/8" : "OFF");
         else if (id >= arpBase && id < arpBase + 3) { text = id == arpBase + 2 ? U8("UP\xc2\xb7" "DN") : juce::String (kArpNames[id - arpBase]); lit = part.arpStyle == id - arpBase; }
         else if (id >= rateBase && id < rateBase + 2) { text = id == rateBase ? "1/8" : "1/16"; lit = part.arpRate == id - rateBase; }
         else if (id == holdId) { text = "HOLD"; lit = part.arpHold; }
@@ -822,6 +856,7 @@ void SynthScreen::paint (juce::Graphics& g)
             hint = "Recording: play now. STOP calls it off; what you played stays in the pattern.";
         else if (part.mode == SynthPart::keysMode)
             hint = part.chromatic ? U8("Every note, C to C; the dots are the song's key notes. REC: count-in, play, and it loops on ") + layer + "."
+                    : part.chords ? U8("Every key is a chord in the song's key. Press REC: count-in, play, and it loops on ") + layer + "."
                                   : U8("Every key is in the song's key, so there are no wrong notes. Press REC: count-in, play, and it loops on ") + layer + ".";
         else if (part.mode == SynthPart::arpMode)
             hint = "Hold keys: they play in time, one after another. REC records the arp onto " + layer + ".";

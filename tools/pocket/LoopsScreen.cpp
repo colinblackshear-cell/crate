@@ -10,7 +10,7 @@ namespace
 constexpr int kPeakBins = 96;
 const char* const kSourceNames[4] = { "MIC", "DRUMS", "VOCODER", "MIX" };
 
-const juce::Colour kRowRed { 0xfff0674f }, kRowAmber { 0xfff5b13d }, kRowBlue { 0xff56b3d6 }, kRowGrey { 0xff8a8174 }, kRowText { 0xffe8dfc9 };
+const juce::Colour kRowRed { 0xfff59a2a }, kRowAmber { 0xfff7c04a }, kRowBlue { 0xffa877f5 }, kRowGrey { 0xff8e7fa0 }, kRowText { 0xffe4dbee };
 
 bool hasLoop (LoopState s) { return s == LoopState::playing || s == LoopState::overdubWait || s == LoopState::overdubbing; }
 bool isBusy (LoopState s) { return s == LoopState::waiting || s == LoopState::recording || s == LoopState::overdubbing; }
@@ -31,6 +31,7 @@ Tool openToolFor (int layerTool, bool& has)
         case LayerTool::drums: return Tool::drums;
         case LayerTool::pads: return Tool::pads;
         case LayerTool::synth: return Tool::synth;
+        case LayerTool::bass: return Tool::bass;
         case LayerTool::chords: return Tool::chords;
         case LayerTool::vocoder: return Tool::vocoder;
         case LayerTool::drone: return Tool::drone;
@@ -158,6 +159,7 @@ void LoopsScreen::layoutPanel()
     panel[pToMac].setText ("To Mac");
     panel[pToMac].setLook (Look::amber);
     panel[pClearAll].setText ("Clear all");
+    panel[pClearAll].setLook (Look::cream);
 
     const int l = selected;
     if (l < 0 || l >= kLoopLayers)
@@ -191,6 +193,11 @@ void LoopsScreen::layoutPanel()
     panel[pTool].setFontHeight (has && t == Tool::vocoder ? 13.0f : 15.0f);
     panel[pClear].setText ("Clear");
     panel[pToMac].setText ("To Mac");
+    if (onToSong)   // with a layer picked, CLEAR ALL's place is TO SONG (tap the layer again and CLEAR ALL is back)
+    {
+        panel[pClearAll].setText ("To song");
+        panel[pClearAll].setLook (Look::green);
+    }
 }
 
 void LoopsScreen::resized()
@@ -253,7 +260,14 @@ void LoopsScreen::refresh()
         const int v = loops.version (l);
         const bool changed = st != r.st || v != r.version || st == LoopState::recording;
         const bool stateChanged = st != r.st || r.muted != loops.isMuted (l);
+        const bool landed = r.st == LoopState::recording && st == LoopState::playing;
         r.st = st;
+        if (landed && onTakeLanded && ! demo)
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LoopsScreen> (this), l]
+            {
+                if (safe != nullptr && safe->onTakeLanded)
+                    safe->onTakeLanded (l);
+            });
         r.muted = loops.isMuted (l);
         if (changed)
         {
@@ -477,7 +491,11 @@ void LoopsScreen::pressPanel (int which)
     if (which == pToMac)
         return sendToMac (true);
     if (which == pClearAll)
+    {
+        if (onToSong && selected >= 0 && hasLoop (loops.state (selected)) && loops.takeOf (selected) != nullptr)
+            return onToSong (selected);
         return clearAll();
+    }
     const int l = selected;
     if (l < 0)
         return;
@@ -499,6 +517,8 @@ void LoopsScreen::pressPanel (int which)
         case pFx:
             if (dubbing)
                 return host.toast ("Let the dub finish first (or STOP DUB).");
+            if (which == pFx && onEffects)
+                return onEffects (l);
             openEditor (l, which == pFx ? LoopEditSheet::effectsPage : LoopEditSheet::shapePage,
                         which == pQuant ? (take->part != nullptr ? LoopEditSheet::quantizeFocus : LoopEditSheet::fitFocus) : LoopEditSheet::noFocus);
             break;
@@ -616,6 +636,8 @@ HoldSpec LoopsScreen::layerMenuSpec (int l)
                          [this, l] { selected = lastLayer = l; layoutPanel(); openEditor (l, LoopEditSheet::warpPage); repaint(); } });
     s.items.push_back ({ dubbing ? "STOP DUB" : "DUB OVER IT", {}, false, true, run (pDub) });
     s.items.push_back ({ hasTool ? juce::String ("OPEN ") + toolName (openTool) : juce::String ("DOUBLE"), {}, false, true, run (pTool) });
+    if (onToSong)
+        s.items.push_back ({ "TO SONG PART", "A, B, C...", false, true, [this, l] { if (onToSong) onToSong (l); } });
     s.items.push_back ({ "SEND TO MAC", {}, false, true, run (pToMac) });
     s.items.push_back ({ "CLEAR", "undo brings it back", true, true, run (pClear) });
     return s;
@@ -771,7 +793,7 @@ void LoopsScreen::quantizeLayer (int layer, const LoopQuantize& q)
 {
     auto take = loops.takeOf (layer);
     if (take == nullptr || take->part == nullptr || loops.state (layer) != LoopState::playing)
-        return host.toast ("QUANTIZE works on a layer made from notes (PADS or SYNTH), before it's trimmed or dubbed.");
+        return host.toast ("QUANTIZE works on a layer made from notes (PADS, SYNTH or BASS), before it's trimmed or dubbed.");
     if (take->part->kind == NotePart::pads && take->part->kit.empty() && kitSounds)
     {
         auto filled = std::make_shared<NotePart> (*take->part);
@@ -893,6 +915,19 @@ void LoopsScreen::warpLayer (int layer, const crate::Warp::Plan& plan)
     runJob (layer, [copy, fx, plan, bpm] { return warpTake (*copy, fx, plan, bpm); }, true);
 }
 
+double LoopsScreen::fitToBeat (int layer)
+{
+    auto take = loops.takeOf (layer);
+    if (take == nullptr || loops.state (layer) != LoopState::playing || jobLayer >= 0)
+        return -1.0;
+    double like = 0.0;
+    const auto plan = fitToBeatPlan (warpSourceOf (*take), take->sampleRate, loops.bpm(), like);
+    if (! plan.isValid())
+        return -1.0;
+    warpLayer (layer, plan);
+    return like;
+}
+
 bool LoopsScreen::playingOriginal (int layer) const
 {
     const auto& o = abOriginal[(size_t) layer];
@@ -925,6 +960,46 @@ void LoopsScreen::setOriginal (int layer, bool original)
     if (editor.isVisible() && editor.layer() == layer)
         editor.layerChanged();
     repaint();
+}
+
+int LoopsScreen::putSound (const juce::AudioBuffer<float>& buf, juce::Range<int> sel)
+{
+    const int layer = nextLayer();
+    sel = sel.getIntersectionWith ({ 0, buf.getNumSamples() });
+    if (layer < 0 || sel.getLength() < 64)
+        return -1;
+    const double sr = loops.rate(), bpm = juce::jlimit (40.0, 240.0, loops.bpm());
+    const int n = sel.getLength();
+    std::vector<float> mono ((size_t) n, 0.0f);
+    const int chans = juce::jmax (1, buf.getNumChannels());
+    for (int c = 0; c < buf.getNumChannels(); ++c)
+        for (int i = 0; i < n; ++i)
+            mono[(size_t) i] += buf.getSample (c, sel.getStart() + i) / (float) chans;
+    const double beats = (double) n / sr * bpm / 60.0;
+    const bool fit = beats >= 3.0;
+    const int bars = fit ? juce::jlimit (1, 64, juce::roundToInt (beats / 4.0)) : 1;
+    const int target = (int) std::llround (bars * 4.0 * 60.0 / bpm * sr);
+    auto take = LoopsEngine::makeTake (target, sr);
+    if (fit)
+    {
+        const auto out = stretchAudio (mono.data(), n, target);
+        std::copy (out.begin(), out.begin() + juce::jmin ((int) out.size(), target), take->data.begin());
+    }
+    else
+        std::copy (mono.begin(), mono.begin() + juce::jmin (n, target), take->data.begin());
+    take->length = target;
+    take->lengthBeats = bars * 4.0;
+    take->source = (int) LoopSource::mix;
+    take->tool = (int) LayerTool::pads;
+    Undo u;
+    u.items.push_back ({ layer, nullptr, false });
+    pushUndo (std::move (u));
+    loops.setLayer (layer, take, false, 0.0);
+    selected = lastLayer = layer;
+    settingsDirty = true;
+    layoutPanel();
+    repaint();
+    return layer;
 }
 
 int LoopsScreen::printLayer (int layer)
@@ -968,7 +1043,7 @@ void LoopsScreen::drawChoice (juce::Graphics& g, juce::Rectangle<float> cell, co
 {
     if (on)
         drawRaised (g, cell.reduced (3, 0), Look::amber, false, 12.0f);
-    g.setColour (on ? col::ink : (dim ? col::inkDim : col::ink));
+    g.setColour (on ? col::onBright : (dim ? col::inkDim : col::ink));
     g.setFont (spaced (condensed (17.0f), 0.08f));
     g.drawText (text, cell.withTrimmedBottom (3), juce::Justification::centred);
 }
@@ -1016,7 +1091,7 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
     const int tool = take != nullptr ? take->tool : 0;
     const auto colour = layerToolColour (tool);
     const bool muted = row.muted && hasLoop (st);
-    g.setColour (juce::Colour (0xff2c2620));
+    g.setColour (juce::Colour (0xff221b2d));
     g.fillRoundedRectangle (iconBox, 7.0f);
     drawLayerToolIcon (g, tool, iconBox.getCentre(), muted ? colour.withAlpha (0.4f) : colour);
 
@@ -1121,7 +1196,7 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
         }
         if (jobLayer == l)
         {
-            g.setColour (juce::Colour (0xcc1a1613));
+            g.setColour (juce::Colour (0xcc0f0c15));
             g.fillRect (wave);
             g.setColour (kRowText);
             g.setFont (spaced (condensedBold (13.0f), 0.1f));
@@ -1131,7 +1206,7 @@ void LoopsScreen::drawRow (juce::Graphics& g, int l)
 
     auto mute = muteRect (l);
     drawRaised (g, mute, row.muted ? Look::blue : Look::dark, pressed == rowMute + l, 10.0f);
-    g.setColour (row.muted ? col::ink : juce::Colour (0xfff1e7d1));
+    g.setColour (row.muted ? col::onBright : juce::Colour (0xfff3eadb));
     g.setFont (condensed (17.0f));
     g.drawText ("M", mute.withTrimmedBottom (3), juce::Justification::centred);
 }
@@ -1488,6 +1563,10 @@ void LoopsScreen::restore()
             if (auto part = NotePart::fromVar (item.getProperty ("part", {})))
             {
                 take->part = part;
+                // a bass line from before BASS had its own tool: it's a BASS layer now
+                if (take->tool == (int) LayerTool::synth && part->kind == NotePart::synth && ! synthPresets().empty()
+                    && familyOfKind (synthPresets()[(size_t) juce::jlimit (0, (int) synthPresets().size() - 1, part->preset)].kind) == bassFamily)
+                    take->tool = (int) LayerTool::bass;
                 const auto q = item.getProperty ("quantize", {});
                 take->quant.grid = juce::jlimit (0, 3, (int) q.getProperty ("grid", 0));
                 take->quant.strength = (float) (double) q.getProperty ("strength", 1.0);
@@ -1601,8 +1680,8 @@ void LoopsScreen::showDemo()
     std::copy (rendered.begin(), rendered.end(), bassTake->data.begin());
     bassTake->length = bassSamples;
     bassTake->lengthBeats = 16.0;
-    bassTake->source = (int) LoopSource::synth;
-    bassTake->tool = (int) LayerTool::synth;
+    bassTake->source = (int) LoopSource::bass;
+    bassTake->tool = (int) LayerTool::bass;
     bassTake->part = bass;
     loops.setLayer (1, bassTake, false);
 

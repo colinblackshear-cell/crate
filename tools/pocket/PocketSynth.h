@@ -21,8 +21,12 @@
 // a pattern recorded from the arp plays back as it was). Nothing on the audio thread allocates or waits.
 namespace pocket
 {
-constexpr int kSynthKinds = 8;
-const char* synthKindName (int kind);           // "BASS"
+// Two families of eight kinds each: the SYNTH tool's (0-7) and the BASS tool's (8-15). Each tool shows its own eight.
+constexpr int kSynthKinds = 16;
+constexpr int kKindsPerFamily = 8;
+enum SynthFamily { synthFamily, bassFamily };
+inline int familyOfKind (int kind) { return kind >= kKindsPerFamily ? bassFamily : synthFamily; }
+const char* synthKindName (int kind);           // "LEAD", "SUB"
 juce::Colour synthKindColour (int kind);
 
 struct SynthPreset
@@ -169,8 +173,10 @@ private:
 class SynthPart
 {
 public:
-    explicit SynthPart (BeatsEngine&);
+    explicit SynthPart (BeatsEngine&, int family = synthFamily);
     SynthEngine& engine() { return eng; }
+    const int family;          // SYNTH (lead, keys, pads...) or BASS (sub, 808, acid...): which sounds it picks from
+    int firstKind() const { return family == bassFamily ? kKindsPerFamily : 0; }
 
     enum Mode { keysMode, patternMode, arpMode };
     int preset = 0;
@@ -178,6 +184,7 @@ public:
     int octave = 0;            // -2..2
     int mode = keysMode;
     bool chromatic = false;
+    bool chords = false;       // in key: each key plays its chord (the key's note, a third and a fifth up, all in the key)
     int quantize = 0;          // REC: 0 1/16, 1 1/8, 2 off (as played)
     int arpStyle = 0;          // 0 up, 1 down, 2 up and down
     int arpRate = 1;           // 0 1/8, 1 1/16
@@ -193,9 +200,13 @@ public:
     juce::var toVar() const;
     void fromVar (const juce::var&);
 
-    // The keys: in the key (8 keys, the scale from the root up to the root an octave up) or chromatic
+    // The keys: in the key (16 keys in two rows: the scale from the root up two octaves) or chromatic
     // (a piano octave from C: 8 white keys and 5 black).
-    int keyCount() const { return chromatic ? 13 : 8; }
+    int keyCount() const { return chromatic ? 13 : 16; }
+    // The notes a key sounds: its note, and with CHORDS (in key) the third and fifth above it in the key.
+    std::vector<int> keyNotes (int key, const SongKey&) const;
+    // In key, the scale step a key plays: the low row root to root (0-7), the top row from that root up (7-14).
+    static int keyDegree (int key) { key = juce::jlimit (0, 15, key); return key < 8 ? key : key - 1; }
     int keyNote (int key, const SongKey&) const;
 
     // REC into the pattern: what the keys and the arp play from `from` to `to` (beats on the clock) goes in,
@@ -204,6 +215,9 @@ public:
     void serviceTake();           // often, while it records
     void endTake();               // notes still held end at the pass's end
     bool taking() const { return takeOn; }
+    // Loop until STOP: notes keep going in pass after pass (wrapped into the pattern) until this beat.
+    void setTakeEnd (double beat) { takeEnd = beat; }
+    double takeEndBeat() const { return takeEnd; }
     bool hasStash() const { return stashed; }
     void restoreStash();
     void clearKeepingUndo();      // the part went on a layer: an empty pattern, the part kept for UNDO
@@ -213,7 +227,7 @@ public:
 private:
     SynthEngine eng;
     bool takeOn = false, stashed = false;
-    double takeFrom = 0, takeTo = 0;
+    double takeFrom = 0, takeTo = 0, takeEnd = 0;   // takeTo: the first pass ends (the pattern plays from there); takeEnd: notes stop going in
     std::array<double, 128> openAt {};
     std::array<float, 128> openVel {};
     void addTakeNote (double onBeat, double offBeat, int note, float velocity);

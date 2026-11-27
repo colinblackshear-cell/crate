@@ -45,7 +45,7 @@ juce::uint64 mixFingerprint (std::function<void (LoopsEngine&)> tweak, bool synt
     b.setPadPattern (pp);
     b.setPatternPlaying (true);
 
-    synth.setSettings (makeSynthSettings (0, SynthKnobs(), 0));
+    synth.setSettings (makeSynthSettings (juce::jmax (0, synthPresetIndex ("Rubber Funk")), SynthKnobs(), 0));   // (the first sound when the fingerprint was taken)
     SynthPattern sp;
     if (synthNotes)
     {

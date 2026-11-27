@@ -45,7 +45,7 @@ private:
     enum Id
     {
         none = 0, prevId, nextId, nameId, kindBase = 10, knobBase = 20, modeBase = 30, keyChipId = 33, octDownId, octUpId,
-        scaleId = 40, chromaticId, snapId, arpBase = 45, rateBase = 50, holdId = 52, lenId = 55, pagePrevId, pageNextId, tieId, clearId,
+        scaleId = 40, chromaticId, snapId, chordsId, arpBase = 45, rateBase = 50, holdId = 52, lenId = 55, pagePrevId, pageNextId, tieId, clearId,
         stripId = 60, stepBase = 70, keyBase = 100
     };
     struct Hit { juce::Rectangle<float> r; int id; };
@@ -72,7 +72,7 @@ private:
 
     // the layout (from the bounds)
     juce::Rectangle<float> panel, lcd, prevR, nextR, strip, keysArea, hintArea;
-    std::array<juce::Rectangle<float>, pocket::kSynthKinds> kindR;
+    std::array<juce::Rectangle<float>, pocket::kKindsPerFamily> kindR;
     std::array<juce::Rectangle<float>, 4> knobR;
     std::array<juce::Rectangle<float>, 16> stepR;
     std::vector<Hit> hits;
@@ -81,6 +81,7 @@ private:
     float dragStart = 0, dragValue = 0;
     std::array<int, 10> fingerKey;          // the key each finger holds (-1 none)
     std::array<int, 10> fingerNote;         // the note it sounds
+    std::array<std::array<int, 2>, 10> fingerChord;   // with CHORDS: the other two notes (-1 none)
     std::array<int, pocket::kSynthKinds> lastOfKind;
     std::vector<int> demoHeld;
     int shownStep = -2;

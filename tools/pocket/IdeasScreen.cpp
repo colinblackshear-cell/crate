@@ -9,14 +9,15 @@ using namespace pocket;
 namespace
 {
 constexpr int kCardH = 90, kGap = 10, kMargin = 16, kLaneH = 16, kLaneGap = 5, kMaxLanes = 5;
-const juce::Colour kOnDark { 0xfff1e7d1 }, kOnDarkDim { 0xffb8aa92 }, kHeroRing { 0xfff2b632 };
-const juce::Colour kNumberColours[3] = { juce::Colour (0xff5fb3c4), juce::Colour (0xfff0674f), juce::Colour (0xff82cf6a) };
+const juce::Colour kOnDark { 0xfff3eadb }, kOnDarkDim { 0xffb7a9c2 }, kHeroRing { 0xfff7c04a };
+const juce::Colour kNumberColours[3] = { juce::Colour (0xffa877f5), juce::Colour (0xfff59a2a), juce::Colour (0xfff27bb0) };
 
 // The tiles under START A SONG FROM ANY TOOL: the tool, what the tile says, and MY VOICE (LOOPS on the mic).
 struct TileInfo { Tool tool; const char* label; bool voice; };
-const TileInfo kTiles[] = { { Tool::drums, "A beat", false }, { Tool::pads, "Pads", false }, { Tool::synth, "A melody", false },
-                            { Tool::chords, "Chords", false }, { Tool::loops, "My voice", true }, { Tool::sampler, "A sample", false },
-                            { Tool::drone, "Drone", false }, { Tool::vocoder, "Vocoder", false } };
+// (the companion order, 2026-11-26: your voice first, then the quick ways in)
+const TileInfo kTiles[] = { { Tool::loops, "My voice", true }, { Tool::drums, "A beat", false }, { Tool::bass, "A bass line", false }, { Tool::pads, "Pads", false },
+                            { Tool::synth, "A melody", false }, { Tool::sampler, "A sample", false }, { Tool::vocoder, "Vocoder", false },
+                            { Tool::chords, "Chords", false }, { Tool::drone, "Drone", false } };
 constexpr int kNumTiles = (int) (sizeof (kTiles) / sizeof (kTiles[0]));
 constexpr int kTileW = 86, kTileH = 92, kTileGap = 8;
 
@@ -165,7 +166,7 @@ struct IdeasScreen::List : public juce::Component
                                             juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), idea.name) + 2.0f);
             g.drawFittedText (idea.name, nameRow.withWidth (nameW).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
             if (idea.starred)
-                drawStar (g, { nameRow.getX() + nameW + 11.0f, nameRow.getCentreY() }, 7.5f, juce::Colour (0xffc98a00));
+                drawStar (g, { nameRow.getX() + nameW + 11.0f, nameRow.getCentreY() }, 7.5f, juce::Colour (0xffc9a54e));
             g.setColour (col::inkDim);
             g.setFont (small (13.5f));
             juce::String meta = whenText (idea.modified);
@@ -210,9 +211,9 @@ struct IdeasScreen::List : public juce::Component
             // play what it has so far
             auto pb = playButton (row);
             const bool playing = owner.isPlaying && owner.isPlaying (idea.id);
-            g.setColour (playing ? col::red : col::ink);
+            g.setColour (playing ? col::red : col::green);
             g.fillEllipse (pb.translated (0, pressedPlay == row ? 1.0f : 0.0f));
-            drawPlayGlyph (g, pb, juce::Colours::white, playing);
+            drawPlayGlyph (g, pb, playing ? juce::Colours::white : col::onBright, playing);
         }
         if (ord.empty())
         {
@@ -373,6 +374,9 @@ struct IdeasScreen::Content : public juce::Component
         L.title = { kMargin, y, iw, 40 };              y += 46;
         L.buttons = { kMargin, y, iw, 86 };            y += 92;
         L.caption = { kMargin, y, iw, 20 };            y += 30;
+        // Or start with a tool, right under CATCH AN IDEA (the companion: one tap from an idea to a layer).
+        L.toolsLabel = { kMargin, y, iw, 18 };         y += 26;
+        L.tiles = { 0, y, w, kTileH + 4 };             y += kTileH + 4 + 22;
         if (owner.hero() != nullptr)
         {
             const int lanes = laneCount();
@@ -383,6 +387,14 @@ struct IdeasScreen::Content : public juce::Component
             L.heroButtons = { kMargin + 16, L.hero.getBottom() - 16 - 52, iw - 32, 52 };
             y += h + 18;
         }
+        L.songsLabel = { kMargin, y, iw, 18 };         y += 26;
+        L.search = { kMargin, y, iw, 44 };             y += 54;
+        L.chips = { 0, y, w, 36 };                     y += 48;
+        const int rows = juce::jmax (1, (int) owner.order().size());
+        L.list = { 0, y, w, rows * (kCardH + kGap) + (owner.order().empty() ? 0 : 0) };
+        if (owner.order().empty())
+            L.list.setHeight (70);
+        y = L.list.getBottom() + 14;
         {
             const int h = 16 + 30 + 2 + 58 + 6 + 3 * 34 + 10 + 48 + 8 + 36 + 14;
             L.spark = { kMargin, y, iw, h };
@@ -391,16 +403,6 @@ struct IdeasScreen::Content : public juce::Component
             L.sparkButtons = { kMargin + 16, L.sparkSteps.getBottom() + 10, iw - 32, 48 };
             y += h + 20;
         }
-        L.toolsLabel = { kMargin, y, iw, 18 };         y += 26;
-        L.tiles = { 0, y, w, kTileH + 4 };             y += kTileH + 4 + 20;
-        L.songsLabel = { kMargin, y, iw, 18 };         y += 26;
-        L.search = { kMargin, y, iw, 44 };             y += 54;
-        L.chips = { 0, y, w, 36 };                     y += 48;
-        const int rows = juce::jmax (1, (int) owner.order().size());
-        L.list = { 0, y, w, rows * (kCardH + kGap) + (owner.order().empty() ? 0 : 0) };
-        if (owner.order().empty())
-            L.list.setHeight (70);
-        y = L.list.getBottom() + 10;
         L.how = { kMargin, y, iw, owner.howOpen ? 14 + 24 + 10 + 28 + 12 + 44 + 14 : 14 + 24 + 12 + 44 + 14 };
         y += L.how.getHeight() + 28;
         L.height = y;
@@ -460,7 +462,7 @@ struct IdeasScreen::Content : public juce::Component
         g.drawText (juce::String (week) + U8(" THIS WEEK \xc2\xb7 ") + juce::String (layers) + (layers == 1 ? " LAYER" : " LAYERS"), L.title, juce::Justification::centredRight);
 
         g.setFont (small (13.5f));
-        g.drawFittedText ("Catch an idea records your voice straight onto layer 1 of a new song.", L.caption, juce::Justification::centred, 1, 0.85f);
+        g.drawFittedText ("Catch an idea: tap, sing or play, and it's layer 1 of a new idea.", L.caption, juce::Justification::centred, 1, 0.85f);
 
         if (auto* idea = owner.hero(); idea != nullptr && ! L.hero.isEmpty())
             paintHero (g, L, *idea);
@@ -468,14 +470,14 @@ struct IdeasScreen::Content : public juce::Component
 
         g.setColour (col::inkDim);
         g.setFont (spaced (condensedBold (13.0f), 0.14f));
-        g.drawText ("START A SONG FROM ANY TOOL", L.toolsLabel, juce::Justification::centredLeft);
+        g.drawText ("OR START WITH", L.toolsLabel, juce::Justification::centredLeft);
         g.drawText (U8("YOUR SONGS \xc2\xb7 ") + juce::String ((int) owner.ideas.list().size()), L.songsLabel, juce::Justification::centredLeft);
 
         // HOW IT WORKS
         g.setColour (col::well);
         g.fillRoundedRectangle (L.how.toFloat(), 16.0f);
         auto how = L.how.reduced (16, 14);
-        g.setColour (juce::Colour (0xffd9ccb4));
+        g.setColour (juce::Colour (0xffe4dbee));
         g.setFont (spaced (condensedBold (13.5f), 0.14f));
         g.drawText ("HOW IT WORKS", how.removeFromTop (24), juce::Justification::centredLeft);
         if (owner.howOpen)
@@ -549,7 +551,7 @@ struct IdeasScreen::Content : public juce::Component
             g.setFont (lcdFont (15.0f));
             g.drawText (juce::String (l + 1), lane.removeFromLeft (16), juce::Justification::centredLeft);
             lane.removeFromLeft (4);
-            g.setColour (juce::Colour (0xff2b231d));
+            g.setColour (juce::Colour (0xff221b2d));
             g.fillRoundedRectangle (lane, 4.0f);
             crate::lanes::drawPeaks (g, owner.heroPeaks[(size_t) l], lane, colour);
         }
@@ -598,7 +600,7 @@ struct IdeasScreen::Content : public juce::Component
         auto note = L.sparkButtons.withY (L.sparkButtons.getBottom() + 8).withHeight (36);
         g.setColour (col::inkDim);
         g.setFont (small (13.0f));
-        static const char* const opens[8] = { "DRUMS", "PADS", "the SAMPLER", "SYNTH", "CHORDS", "the VOCODER", "LOOPS on the mic", "DRONE" };
+        static const char* const opens[8] = { "DRUMS", "PADS", "the SAMPLER", "SYNTH", "CHORDS", "the VOCODER", "the LOOPER on the mic", "DRONE" };
         const auto& kits = factoryKits();
         const juce::String kit = juce::isPositiveAndBelow (s.kit, (int) kits.size()) ? juce::String (kits[(size_t) s.kit].name) : juce::String ("factory");
         g.drawFittedText ("Sets " + juce::String (s.bpm) + " BPM and " + s.keyName() + ", loads the " + kit + " and opens "
@@ -646,10 +648,10 @@ IdeasScreen::IdeasScreen (Ideas& i) : ideas (i)
         g.setFont (spaced (condensed (19.0f)));
         g.drawText ("NEW SONG", r, juce::Justification::centred);
     };
-    playCurrent.glyph = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour)
+    playCurrent.glyph = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour ink)
     {
         auto* h = hero();
-        drawPlayGlyph (g, r, col::ink, h != nullptr && isPlaying && isPlaying (h->id));
+        drawPlayGlyph (g, r, ink, h != nullptr && isPlaying && isPlaying (h->id));
     };
     openCurrent.setFontHeight (18.0f);
     startSpark.setFontHeight (17.0f);

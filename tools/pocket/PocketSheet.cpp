@@ -4,7 +4,7 @@ using namespace pocket;
 
 void pocket::drawGrabber (juce::Graphics& g, int sheetWidth)
 {
-    g.setColour (juce::Colour (0xffa59a85));
+    g.setColour (juce::Colour (0xff8e7fa0));
     g.fillRoundedRectangle ((float) sheetWidth * 0.5f - 22.0f, 8.0f, 44.0f, 5.0f, 2.5f);
 }
 

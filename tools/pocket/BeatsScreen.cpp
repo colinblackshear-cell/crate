@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include "BeatsScreen.h"
 #include "StepMarks.h"
 #include "PocketFactory.h"
@@ -86,7 +87,7 @@ public:
                     g.fillRoundedRectangle (r.withTrimmedBottom (3), 11.0f);
                 }
                 crate::drums::steptools::drawHitMarks (g, r.withTrimmedBottom (4).reduced (9.0f, 8.0f), hits, p.shape[(size_t) v][(size_t) s],
-                                                       col::ink.withAlpha (0.8f), true, condensedBold (13.0f));
+                                                       col::onBright.withAlpha (0.8f), true, condensedBold (13.0f));
             }
             if (! on && (hints >> box & 1u) != 0)
             {
@@ -99,7 +100,7 @@ public:
                 g.drawRoundedRectangle (body.reduced (1.5f), 10.0f, 2.6f);
             }
             g.setFont (condensed (10.5f));
-            g.setColour (on ? col::ink.withAlpha (0.45f) : juce::Colour (0x55f1e7d1));
+            g.setColour (on ? col::onBright.withAlpha (0.45f) : juce::Colour (0x55f3eadb));
             g.drawText (juce::String (s + 1), r.withTrimmedBottom (5).reduced (7, 3), juce::Justification::bottomRight);
             if (on && p.accent[(size_t) s])
             {
@@ -190,7 +191,7 @@ public:
             const bool isPicked = v == picked;
             if (isPicked)
             {
-                g.setColour (juce::Colour (0xff3a3226));
+                g.setColour (juce::Colour (0xff3a2f4f));
                 g.fillRoundedRectangle (4, y - 0.5f, r.getWidth() - 8, rowH + 1.0f, 3.0f);
                 g.setColour (col::amber);
                 g.drawRoundedRectangle (4, y - 0.5f, r.getWidth() - 8, rowH + 1.0f, 3.0f, 1.4f);
@@ -204,7 +205,7 @@ public:
             for (int s = 0; s < 16; ++s)
             {
                 const bool on = p.hits[(size_t) v][(size_t) (pageStart + s)] > 0 && pageStart + s < p.length;
-                g.setColour (on ? (isPicked ? col::amber : col::amber.withAlpha (0.8f)) : juce::Colour (isPicked ? 0xff4d4437 : 0xff3a332c));
+                g.setColour (on ? (isPicked ? col::amber : col::amber.withAlpha (0.8f)) : juce::Colour (isPicked ? 0xff3a2f4f : 0xff3a2f4f));
                 g.fillRoundedRectangle (left + (float) s * colW + 1.5f, y + 1.6f, colW - 3.0f, rowH - 3.2f, 1.4f);
             }
         }
@@ -222,6 +223,186 @@ public:
         if (v >= 0 && v < 12 && onPick)
             onPick (v);
     }
+};
+
+// STEPS, the easy way (Colin's 2026-11-26 companion redesign): six sounds at once, one row each, eight boxes across
+// (half a bar). Tap a sound's name to hear it and pick it (the knobs follow it); tap a box to put that sound there with
+// the picked tool; hold a box for an accent. SOUNDS 1-6 / 7-12 and STEPS 1-8 / 9-16 swap what shows.
+class BeatAllGrid : public juce::Component, private juce::Timer
+{
+public:
+    // The two sets of six, the most used first: kick, snare, clap, the hats, rim; then the toms, clave, cowbell, cymbal.
+    static int voiceAt (int set, int row)
+    {
+        static const int order[2][6] = { { 0, 1, 2, 9, 10, 3 }, { 4, 5, 6, 7, 8, 11 } };
+        return order[juce::jlimit (0, 1, set)][juce::jlimit (0, 5, row)];
+    }
+
+    std::function<crate::drums::Pattern&()> pattern;
+    std::function<int()> playhead, voice, page, rollCount;
+    std::function<crate::drums::steptools::Tool()> tool;
+    std::function<bool (int)> hasSound;              // a sound of your own on that voice (a violet dot)
+    std::function<void()> beforeEdit;
+    std::function<void (int voice, int step, bool accent)> onEdit;
+    std::function<void (int voice)> onPickVoice;     // a tap on a name (or a box, quietly) picks that sound
+    int set = 0, half = 0;
+
+    static constexpr float nameW = 74.0f;
+    float rowH() const { return juce::jmin (54.0f, (float) getHeight() / 6.0f); }
+    juce::Rectangle<float> nameCell (int row) const { return { 0.0f, (float) row * rowH(), nameW - 6.0f, rowH() - 5.0f }; }
+    juce::Rectangle<float> box (int row, int col) const
+    {
+        const float gap = 4.0f, w = ((float) getWidth() - nameW - gap * 7.0f - 3.0f) / 8.0f;
+        return { nameW + (float) col * (w + gap) + (col >= 4 ? 3.0f : 0.0f), (float) row * rowH(), w, rowH() - 5.0f };
+    }
+    int stepOf (int col) const { return juce::jlimit (0, 3, page ? page() : 0) * 16 + half * 8 + col; }
+
+    // What a tap on a box does (the self-checks tap with it too).
+    void tapBox (int row, int col)
+    {
+        const int v = voiceAt (set, row), step = stepOf (col);
+        if (onPickVoice)
+            onPickVoice (v);
+        auto& pat = pattern();
+        if (beforeEdit)
+            beforeEdit();
+        crate::drums::steptools::extendTo (pat, step);
+        crate::drums::steptools::apply (pat, tool ? tool() : crate::drums::steptools::Tool::hit, v, step, rollCount ? rollCount() : 3);
+        if (onEdit)
+            onEdit (v, step, false);
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto& p = pattern();
+        const int now = playhead ? playhead() : -1, picked = voice ? voice() : -1;
+        for (int row = 0; row < 6; ++row)
+        {
+            const int v = voiceAt (set, row);
+            auto n = nameCell (row);
+            drawRaised (g, n, v == picked ? Look::green : Look::dark, false, 10.0f);
+            g.setColour (v == picked ? col::onBright : col::ink);
+            g.setFont (condensedBold (15.0f));
+            g.drawFittedText (juce::String (voiceLabels[v]).toUpperCase(), n.withTrimmedBottom (3).reduced (4, 0).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+            if (hasSound && hasSound (v))
+            {
+                g.setColour (col::blue);
+                g.fillEllipse (n.getRight() - 11.0f, n.getY() + 5.0f, 6.0f, 6.0f);
+            }
+            for (int c = 0; c < 8; ++c)
+            {
+                const int s = stepOf (c);
+                auto r = box (row, c);
+                const bool inside = s < p.length;
+                const int hits = p.hits[(size_t) v][(size_t) s];
+                const bool on = inside && hits > 0;
+                const bool beat = c % 4 == 0;
+                drawRaised (g, r, on ? Look::amber : Look::dark, false, 8.0f);
+                if (! on && beat && inside)   // the first box of each beat is a touch lighter, so the count reads at a glance
+                {
+                    g.setColour (juce::Colours::white.withAlpha (0.05f));
+                    g.fillRoundedRectangle (r.withTrimmedBottom (3), 8.0f);
+                }
+                if (! inside)
+                {
+                    g.setColour (juce::Colours::black.withAlpha (0.4f));
+                    g.fillRoundedRectangle (r.withTrimmedBottom (3), 8.0f);
+                }
+                else if (on)
+                {
+                    const int level = p.velocity[(size_t) v][(size_t) s];
+                    if (level < 100)
+                    {
+                        g.setColour (juce::Colours::black.withAlpha (level > 45 ? 0.28f : 0.5f));
+                        g.fillRoundedRectangle (r.withTrimmedBottom (3), 8.0f);
+                    }
+                    if (hits > 1 || p.shape[(size_t) v][(size_t) s] != 0)
+                        crate::drums::steptools::drawHitMarks (g, r.withTrimmedBottom (4).reduced (4.0f, 6.0f), hits, p.shape[(size_t) v][(size_t) s],
+                                                               col::onBright.withAlpha (0.8f), true, condensedBold (11.0f));
+                    if (p.accent[(size_t) s])
+                    {
+                        g.setColour (col::red);
+                        g.fillEllipse (r.getX() + 4, r.getY() + 4, 7, 7);
+                    }
+                }
+                if (s == now)
+                {
+                    g.setColour (col::green);
+                    g.drawRoundedRectangle (r.reduced (1).withTrimmedBottom (3), 8.0f, 2.2f);
+                }
+            }
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        held = hitTest (e.position);
+        longPress = false;
+        if (held.x >= 0 && held.y >= 0 && (! tool || tool() == crate::drums::steptools::Tool::hit))
+            startTimer (420);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        stopTimer();
+        const auto at = hitTest (e.position);
+        if (! longPress && at == held && held.x >= 0)
+        {
+            if (held.y < 0)
+            {
+                if (onPickVoice)
+                    onPickVoice (voiceAt (set, held.x));
+                if (onHear)
+                    onHear (voiceAt (set, held.x));
+            }
+            else
+                tapBox (held.x, held.y);
+        }
+        held = { -1, -1 };
+    }
+
+    std::function<void (int voice)> onHear;   // a tap on a name sounds it
+
+private:
+    // x: the row (-1 none), y: the box (-1 = the name)
+    juce::Point<int> hitTest (juce::Point<float> p) const
+    {
+        for (int row = 0; row < 6; ++row)
+        {
+            if (nameCell (row).expanded (2).contains (p))
+                return { row, -1 };
+            for (int c = 0; c < 8; ++c)
+                if (box (row, c).expanded (2).contains (p))
+                    return { row, c };
+        }
+        return { -1, -1 };
+    }
+
+    void timerCallback() override
+    {
+        stopTimer();
+        if (held.x < 0 || held.y < 0)
+            return;
+        longPress = true;
+        const int v = voiceAt (set, held.x), step = stepOf (held.y);
+        if (onPickVoice)
+            onPickVoice (v);
+        auto& pat = pattern();
+        if (beforeEdit)
+            beforeEdit();
+        crate::drums::steptools::extendTo (pat, step);
+        auto& hit = pat.hits[(size_t) v][(size_t) step];
+        if (hit == 0)
+            hit = 1;
+        pat.accent[(size_t) step] = ! pat.accent[(size_t) step];
+        if (onEdit)
+            onEdit (v, step, true);
+        repaint();
+    }
+
+    juce::Point<int> held { -1, -1 };
+    bool longPress = false;
 };
 
 // PLAY LIVE: the 12 voices as big pads, three across. A hit sounds at once on touch-down.
@@ -263,7 +444,7 @@ public:
             auto r = padRect (slot);
             drawRaised (g, r, lit ? Look::amber : Look::dark, lit, 14.0f);
             const bool used = hasHits != nullptr && hasHits (v);
-            g.setColour (lit ? col::ink : used ? col::lcdAmber : juce::Colour (0xfff1e7d1));
+            g.setColour (lit ? col::onBright : used ? col::lcdAmber : juce::Colour (0xfff3eadb));
             g.setFont (condensedBold (r.getHeight() > 60.0f ? 22.0f : 18.0f));
             g.drawText (voiceLabels[v], r.withTrimmedBottom (4), juce::Justification::centred);
         }
@@ -399,6 +580,46 @@ public:
         };
         addAndMakeVisible (grid);
 
+        allGrid.pattern = [this]() -> crate::drums::Pattern& { return d.edited(); };
+        allGrid.playhead = [this] { return playhead(); };
+        allGrid.voice = [this] { return owner.voice; };
+        allGrid.page = [this] { return owner.drumPage; };
+        allGrid.tool = [this] { return owner.drumTool; };
+        allGrid.rollCount = [this] { return owner.drumRoll; };
+        allGrid.hasSound = [this] (int v) { return owner.drumHasSound (v); };
+        allGrid.beforeEdit = [this] { owner.rememberDrums(); };
+        allGrid.onPickVoice = [this] (int v)
+        {
+            if (owner.voice != v)
+            {
+                owner.voice = v;
+                refresh();   // (the knobs follow the picked sound)
+            }
+        };
+        allGrid.onHear = [this] (int v) { owner.beatsEngine.hitVoice (v); };
+        allGrid.onEdit = [this] (int v, int step, bool accent)
+        {
+            const bool on = d.edited().hits[(size_t) v][(size_t) step] > 0;
+            owner.drumsChanged();
+            if (on)
+                owner.beatsEngine.hitVoice (v, 0.85f, accent && d.edited().accent[(size_t) step]);
+            refresh();
+        };
+        addChildComponent (allGrid);
+        static const char* const setNames[] = { "SOUNDS 1\xe2\x80\x93" "6", "7\xe2\x80\x93" "12" };
+        static const char* const halfNames[] = { "STEPS 1\xe2\x80\x93" "8", "9\xe2\x80\x93" "16" };
+        for (int i = 0; i < 2; ++i)
+        {
+            setChips[i].setText (juce::String (juce::CharPointer_UTF8 (setNames[i])));
+            halfChips[i].setText (juce::String (juce::CharPointer_UTF8 (halfNames[i])));
+            setChips[i].setFontHeight (15.0f);
+            halfChips[i].setFontHeight (15.0f);
+            setChips[i].onClick = [this, i] { allGrid.set = i; refresh(); };
+            halfChips[i].onClick = [this, i] { allGrid.half = i; refresh(); };
+            addChildComponent (setChips[i]);
+            addChildComponent (halfChips[i]);
+        }
+
         overview.pattern = [this]() -> const crate::drums::Pattern& { return d.edited(); };
         overview.playhead = [this] { return playhead(); };
         overview.voice = [this] { return owner.voice; };
@@ -506,7 +727,10 @@ public:
             owner.drumTool = Tool::hit;   // (the Make a beat lesson taps plain hits on bar 1)
             owner.drumPage = 0;
         }
-        grid.setVisible (! live);
+        grid.setVisible (! live && compact);   // (the lesson keeps the one-sound grid; STEPS shows every sound at once)
+        allGrid.setVisible (! live && ! compact);
+        for (auto* b : { &setChips[0], &setChips[1], &halfChips[0], &halfChips[1] })
+            b->setVisible (! live && ! compact);
         chipView.setVisible (! live && ! compact);
         for (auto& b : barBtns)
             b.setVisible (! live && ! compact);
@@ -550,8 +774,14 @@ public:
         knobs[2]->setValue (vs.decay);
         knobs[3]->setValue (vs.tone);
         knobs[4]->setValue (d.settings.swing);
+        for (int i = 0; i < 2; ++i)
+        {
+            setChips[i].setLook (allGrid.set == i ? Look::green : Look::cream);
+            halfChips[i].setLook (allGrid.half == i ? Look::amber : Look::cream);
+        }
         variation.repaint();
         play.repaint();
+        allGrid.repaint();
         repaint();
     }
 
@@ -570,6 +800,7 @@ public:
         {
             lastPlayhead = now;
             grid.repaint();
+            allGrid.repaint();
             overview.repaint();
         }
         if (playingShown != owner.beatsEngine.isPlaying())
@@ -588,6 +819,8 @@ public:
     {
         if (owner.drumModeValue == 1)
             return;   // (the strip, the buttons and the pads draw themselves)
+        if (! owner.lessonLayout)
+            return;   // (STEPS: the all-sounds grid draws itself)
         auto well = juce::Rectangle<float> (16, (float) wellY, (float) getWidth() - 32, 100);
         drawWell (g, well, 16.0f);
         const int v = owner.voice;
@@ -599,7 +832,7 @@ public:
             for (int s = 0; s < crate::drums::kMaxSteps; ++s)
                 hasHits = hasHits || pat.hits[(size_t) i][(size_t) s] > 0;
             drawRaised (g, r, i == v ? Look::green : Look::dark, false, 11.0f);
-            g.setColour (i == v ? col::ink : hasHits ? col::lcdAmber : juce::Colour (0xfff1e7d1));
+            g.setColour (i == v ? col::onBright : hasHits ? col::lcdAmber : juce::Colour (0xfff3eadb));
             g.setFont (condensed (15.0f));
             g.drawText (voiceLabels[i], r.withTrimmedBottom (3), juce::Justification::centred);
             if (owner.drumHasSound (i))   // a sound of your own is on it: a blue dot
@@ -652,6 +885,7 @@ public:
         {
             // What it writes (the whole pattern, read-only), UNDO HIT and CLEAR PATTERN, then the pads low.
             overview.setBounds (16, 108, W, 92);
+            overview.setVisible (true);
             const int half = (W - 8) / 2;
             undoHit.setBounds (16, 206, half, 44);
             clearPattern.setBounds (16 + half + 8, 206, W - half - 8, 44);
@@ -665,9 +899,18 @@ public:
         int gridY = wellY + 136;
         if (! compact)
         {
-            // Under the caption: the step tools (they scroll sideways), then Bar 1-4, the length and UNDO.
-            gridY = wellY + 230;
-            const int chipsY = wellY + 108;
+            // The sound sets and the half bar on top, every sound's row under them, then the step tools and the bars.
+            const int top = 108;
+            grid.setVisible (false);
+            allGrid.setVisible (true);
+            for (auto* b : { &setChips[0], &setChips[1], &halfChips[0], &halfChips[1] })
+                b->setVisible (true);
+            setChips[0].setBounds (16, top, 108, 44);
+            setChips[1].setBounds (16 + 112, top, 64, 44);
+            halfChips[1].setBounds (16 + W - 64, top, 64, 44);
+            halfChips[0].setBounds (halfChips[1].getX() - 4 - 100, top, 100, 44);
+            const int rowY = knobY - 8 - 44, chipsY = rowY - 48;
+            allGrid.setBounds (16, top + 52, W, juce::jmax (180, chipsY - 6 - (top + 52)));
             chipView.setBounds (16, chipsY, W, 44);
             const int widths[kTools] = { 62, 100, 86, 70, 84, 104, 74 };
             int x = 0;
@@ -677,13 +920,17 @@ public:
                 x += widths[t] + 6;
             }
             chipRow.setSize (x - 6, 44);
-            const int rowY = chipsY + 48;
             const int lenW = 74, undoW = 64, gap = 5;
             const int barW = (W - lenW - undoW - gap * 5) / 4;
             for (int b = 0; b < 4; ++b)
                 barBtns[b].setBounds (16 + b * (barW + gap), rowY, barW, 44);
             lengthBtn.setBounds (16 + 4 * (barW + gap), rowY, lenW, 44);
             undoBtn.setBounds (16 + W - undoW, rowY, undoW, 44);
+            overview.setVisible (false);
+            const int w = W / 5;
+            for (int i = 0; i < knobs.size(); ++i)
+                knobs[i]->setBounds (16 + i * w, knobY, w, 108);
+            return;
         }
         grid.setBounds (16, gridY, W, 98);
         const int overviewBottom = compact ? H - owner.lessonReserve - 8 : knobY - 8;
@@ -697,7 +944,7 @@ public:
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (owner.drumModeValue == 1)
+        if (owner.drumModeValue == 1 || ! owner.lessonLayout)
             return;
         for (int i = 0; i < 12; ++i)
             if (voiceCell (i).contains (e.position))
@@ -720,6 +967,8 @@ public:
     juce::Component chipRow;
     int wellY = 108;
     BeatStepGrid grid;
+    BeatAllGrid allGrid;
+    PButton setChips[2], halfChips[2];
     BeatStepOverview overview;
     BeatLivePads pads;
     juce::OwnedArray<KnobView> knobs;
@@ -763,13 +1012,8 @@ public:
         addAndMakeVisible (repeatStrip);
 
         editPads.setFontHeight (15.0f);
-        editPads.onClick = [this]
-        {
-            const int pad = owner.selected;
-            if (pad < 0 || owner.padKit.pads[(size_t) pad].empty())
-                return owner.host.toast ("Tap a pad that has a sound, then EDIT PADS");
-            owner.host.openPadSheet (pad);
-        };
+        editPads.setLamp (true, false);
+        editPads.onClick = [this] { owner.setPadEdit (! owner.padEdit); };
         addAndMakeVisible (editPads);
 
         toMac.setFontHeight (15.0f);
@@ -814,6 +1058,15 @@ public:
             m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&undoButton));
         };
         refresh();
+    }
+
+    void showEditing (bool on)
+    {
+        editPads.setText (on ? "Editing" : "Edit");
+        editPads.setLook (on ? Look::amber : Look::cream);
+        editPads.setLamp (true, on);
+        hold.release();
+        repaint();
     }
 
     void refresh()
@@ -874,7 +1127,7 @@ public:
         for (int b = 0; ! p.hits.empty() && b <= (int) len; ++b)   // (an empty one shows its hint instead)
         {
             const float x = inner.getX() + inner.getWidth() * (float) (b / len);
-            g.setColour (juce::Colour (b % 4 == 0 ? 0x55f1e7d1 : 0x22f1e7d1));
+            g.setColour (juce::Colour (b % 4 == 0 ? 0x55f3eadb : 0x22f3eadb));
             g.fillRect (x, inner.getY(), 1.0f, inner.getHeight());
         }
         // the pads in it, one row each (in the order they first come)
@@ -884,7 +1137,7 @@ public:
                 rows.push_back (h.pad);
         const int numRows = juce::jmax (1, juce::jmin (6, (int) rows.size()));
         const float rowH = inner.getHeight() / (float) numRows;
-        const juce::Colour colours[] = { col::lcdText, col::amber, col::blue, col::green, juce::Colour (0xffb9a3dc), juce::Colour (0xfff6dfa0) };
+        const juce::Colour colours[] = { col::lcdText, col::amber, col::blue, col::green, juce::Colour (0xff9a5cf0), juce::Colour (0xfff6dfa0) };
         for (auto& h : p.hits)
         {
             const int row = (int) (std::find (rows.begin(), rows.end(), h.pad) - rows.begin()) % numRows;
@@ -894,7 +1147,7 @@ public:
         }
         if (p.hits.empty())
         {
-            g.setColour (juce::Colour (0x99f1e7d1));
+            g.setColour (juce::Colour (0x99f3eadb));
             g.setFont (small (13.5f));
             g.drawText (owner.recPads ? "Play the pads: they go into the pattern" : U8("Press REC, then play the pads: a beat that loops"),
                         inner, juce::Justification::centred);
@@ -955,20 +1208,20 @@ public:
             {
                 // 16 LEVELS: how loud each pad plays, as a bar and a number
                 auto bar = juce::Rectangle<float> (inner.getX() + 8, inner.getBottom() - 10, inner.getWidth() - 16, 4.0f);
-                g.setColour (juce::Colour (0x33f1e7d1));
+                g.setColour (juce::Colour (0x33f3eadb));
                 g.fillRoundedRectangle (bar, 2.0f);
-                g.setColour (lit ? col::ink : col::amber);
+                g.setColour (lit ? col::onBright : col::amber);
                 g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) (i + 1) / 16.0f), 2.0f);
                 g.setFont (condensedBold (22.0f));
-                g.setColour (lit ? col::ink : juce::Colour (0xfff1e7d1));
+                g.setColour (lit ? col::onBright : juce::Colour (0xfff3eadb));
                 g.drawText (juce::String (i + 1), inner.withTrimmedBottom (10), juce::Justification::centred);
                 continue;
             }
             g.setFont (lcdFont (17.0f));
-            g.setColour (lit ? col::ink.withAlpha (0.6f) : juce::Colour (0x99f1e7d1));
+            g.setColour (lit ? col::onBright.withAlpha (0.6f) : juce::Colour (0x99f3eadb));
             g.drawText (Kit::padLabel (index), inner.reduced (9, 6).withHeight (18), juce::Justification::topLeft);
             g.setFont (condensed (15.0f));
-            g.setColour (lit ? col::ink : pad.empty() ? juce::Colour (0x88f1e7d1) : juce::Colour (0xfff1e7d1));
+            g.setColour (lit ? col::onBright : pad.empty() ? juce::Colour (0x88f3eadb) : juce::Colour (0xfff3eadb));
             g.drawFittedText (pad.empty() ? juce::String (U8("—")) : pad.name, inner.reduced (9, 7).toNearestInt(), juce::Justification::bottomLeft, 2, 0.9f);
         }
 
@@ -1056,7 +1309,8 @@ public:
             owner.beatsEngine.padOn (pad);
             owner.recordHit (pad, 1.0f);
         }
-        if (! owner.recPads)
+        // PLAY: a pad only plays (a hold just keeps it sounding). EDIT: a hold opens the pad menu, a tap its sheet.
+        if (owner.padEdit && ! owner.recPads)
             hold.press (at);
         repaint();
     }
@@ -1079,8 +1333,22 @@ public:
     // A finger lifts: its pad lets go (the others keep sounding and repeating).
     void liftPad (int source = 0)
     {
+        const bool tapped = hold.isArmed();   // EDIT: let go before the hold time = a tap, which opens the pad's sheet
         hold.release();
         auto& pad = padOfSource[(size_t) source];
+        if (tapped && pad >= 0 && owner.padEdit && owner.levelsOf < 0 && owner.copyFrom < 0)
+        {
+            const int tappedPad = pad;
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<juce::Component> (this), o = &owner, tappedPad]
+            {
+                if (safe == nullptr)
+                    return;
+                if (o->padKit.pads[(size_t) tappedPad].empty())
+                    o->holdPad (tappedPad);   // (an empty pad: PUT A SOUND ON IT, RECORD A NEW SOUND)
+                else
+                    o->host.openPadSheet (tappedPad);
+            });
+        }
         if (pad >= 0)
             owner.beatsEngine.padOff (owner.levelsOf >= 0 ? owner.levelsOf : pad);
         if (held == pad)
@@ -1103,7 +1371,7 @@ public:
     }
 
     juce::Rectangle<float> padRectFor (int pad) const { return padBounds (pad % 16); }
-    void fireHoldNow() { hold.fireNow(); }
+    void fireHoldNow() { if (hold.isArmed()) hold.fireNow(); }   // (PLAY never arms it)
     bool holdIsArmed() const { return hold.isArmed(); }
 
 private:
@@ -1119,7 +1387,7 @@ private:
         g.drawFittedText (owner.levelsOf >= 0 ? U8("16 LEVELS \xc2\xb7 ") + Kit::padLabel (src) + " " + p.name.toUpperCase()
                                               : U8("COPY ") + Kit::padLabel (src) + " " + p.name.toUpperCase() + U8(" TO\xe2\x80\xa6"),
                           in.withHeight (r.getHeight() * 0.5f + 4.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
-        g.setColour (juce::Colour (0xffcdbfa5));
+        g.setColour (juce::Colour (0xffb7a9c2));
         g.setFont (small (12.5f));
         g.drawFittedText (owner.levelsOf >= 0 ? "Quiet on the first pad, loud on the last. Hits record at the level you play."
                                               : "Tap the pad it goes to. Any bank: pick the bank first.",
@@ -1127,7 +1395,7 @@ private:
     }
 
     BeatsScreen& owner;
-    PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit pads" }, toMac { "To mac" };
+    PButton exportButton { "Export MPC" }, soundsButton { "Sounds", Look::amber }, banks[4], editPads { "Edit" }, toMac { "To mac" };
     PButton barsButton { "2 bars" }, quantButton { "1/16" }, undoButton { "Undo" }, recordSound { U8("\xe2\x97\x8f Sample a sound") },
             modeExit { "Exit", Look::amber };
     pocket::HoldDetector hold { [this] { holdFired(); } };
@@ -1158,7 +1426,7 @@ private:
             g.saveState();
             g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, b.getCentreX(), b.getCentreY()));
             juce::Rectangle<float> rot (b.getCentreX() - b.getHeight() / 2, b.getCentreY() - b.getWidth() / 2, b.getHeight(), b.getWidth());
-            const auto ink = lit ? col::ink : col::cream;
+            const auto ink = lit ? juce::Colours::white : col::ink;
             g.setColour (ink);
             g.setFont (spaced (condensedBold (21.0f), 0.14f));
             g.drawText (latched ? "REPEAT LATCHED" : "REPEAT", rot.removeFromTop (rot.getHeight() * 0.58f), juce::Justification::centred);
@@ -1260,7 +1528,7 @@ HoldSpec BeatsScreen::padMenuSpec (int pad)
     s.items.push_back ({ "SOUND PAGE", U8("the whole sound \xc2\xb7 in / out"), false, true, [this, pad] { host.openSamplePage (pad); } });
     s.items.push_back ({ U8("SWAP SOUND\xe2\x80\xa6"), {}, false, true, swap });
     s.items.push_back ({ "RECORD A NEW SOUND", "sampler", false, true, [this, pad] { host.openSampler (pad); } });
-    s.items.push_back ({ U8("VOLUME \xc2\xb7 PAN \xc2\xb7 TUNE"), {}, false, true, [this, pad] { host.openPadSheet (pad); } });
+    s.items.push_back ({ U8("PITCH \xc2\xb7 VOLUME \xc2\xb7 PAN"), "play as keys", false, true, [this, pad] { host.openPadSheet (pad); } });
     s.items.push_back ({ "16 LEVELS", {}, false, true, [this, pad] { startLevels (pad); } });
     s.items.push_back ({ "COPY TO ANOTHER PAD", {}, false, true, [this, pad] { startCopy (pad); } });
     s.items.push_back ({ "REMOVE SOUND", "undo brings it back", true, true, [this, pad] { removePad (pad); } });
@@ -1418,6 +1686,51 @@ void BeatsScreen::testLiftSource (int source) { padsView->liftPad (source); }
 void BeatsScreen::testHoldElapsed() { padsView->fireHoldNow(); }
 void BeatsScreen::testLiftPad() { padsView->liftPad(); }
 juce::Rectangle<float> BeatsScreen::testPadBounds (int pad) const { return padsView->padRectFor (pad) + padsView->getPosition().toFloat(); }
+
+void BeatsScreen::setPadEdit (bool on)
+{
+    padEdit = on;
+    padsView->showEditing (on);
+    host.toast (on ? juce::String ("EDIT: tap a pad to change its pitch, volume and sound. Hold it for more.")
+                   : juce::String ("PLAY: pads just play"));
+}
+
+void BeatsScreen::playAsKeys (int pad)
+{
+    if (! juce::isPositiveAndBelow (pad, kPads) || padKit.pads[(size_t) pad].empty())
+        return;
+    const auto key = songKey ? songKey() : pocket::SongKey();
+    const auto source = padKit.pads[(size_t) pad];
+    const int first = pad / 16 * 16;
+    std::array<KitPad, 16> before;
+    for (int i = 0; i < 16; ++i)
+        before[(size_t) i] = padKit.pads[(size_t) (first + i)];
+    // A01 is the lowest: the bank climbs the key from an octave below the sound (A01) to an octave above (A15);
+    // A16 is the sound as it is (A08 too), so the original is always under a thumb.
+    const auto baseName = source.name.isNotEmpty() ? source.name : juce::String ("Sound");
+    for (int i = 0; i < 16; ++i)
+    {
+        const int degree = i < 15 ? i - 7 : 0;
+        const int semis = juce::jlimit (-12, 12, key.degreeSemis (degree));
+        auto p = source;
+        p.tune = semis * 10;
+        p.name = semis == 0 ? baseName : baseName + (semis > 0 ? " +" : " ") + juce::String (semis);
+        beatsEngine.padOff (first + i);
+        padKit.pads[(size_t) (first + i)] = p;
+    }
+    padsChanged();
+    selectPad (first + 7);
+    host.toastAction ("Bank " + juce::String::charToString ((juce::juce_wchar) ('A' + first / 16)) + " plays \"" + baseName
+                          + "\" as keys in " + key.label().toLowerCase() + ". A08 is the original.",
+                      "UNDO", [safe = juce::Component::SafePointer<BeatsScreen> (this), first, before]
+                      {
+                          if (safe == nullptr)
+                              return;
+                          for (int i = 0; i < 16; ++i)
+                              safe->padKit.pads[(size_t) (first + i)] = before[(size_t) i];
+                          safe->padsChanged();
+                      });
+}
 
 void BeatsScreen::holdPad (int pad)
 {
@@ -2058,6 +2371,15 @@ juce::Rectangle<int> BeatsScreen::stepsBounds() const
 {
     return getLocalArea (drumView.get(), drumView->grid.getBounds());
 }
+
+void BeatsScreen::tapEverySoundBox (int set, int half, int row, int box)
+{
+    drumView->allGrid.set = juce::jlimit (0, 1, set);
+    drumView->allGrid.half = juce::jlimit (0, 1, half);
+    drumView->allGrid.tapBox (juce::jlimit (0, 5, row), juce::jlimit (0, 7, box));
+}
+
+bool BeatsScreen::everySoundGridShown() const { return drumView->allGrid.isVisible() && drumView->allGrid.getHeight() >= 180; }
 
 void BeatsScreen::tapStep (int step)
 {

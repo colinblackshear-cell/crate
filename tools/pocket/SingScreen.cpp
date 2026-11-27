@@ -7,8 +7,8 @@ using namespace pocket;
 namespace
 {
 const char* const kModes[3] = { "MY VOICE", "VOCODER", "BOTH" };
-const juce::Colour kPadLit { 0xffb9a3dc }, kPadDark { 0xff4a4037 }, kPadText { 0xfff1e7d1 }, kGreenBg { 0xffe6f2e2 }, kGreenEdge { 0xff8fc06a },
-                   kAmberBg { 0xfffbe9c4 };
+const juce::Colour kPadLit { 0xff9a5cf0 }, kPadDark { 0xff4a3d63 }, kPadText { 0xfff3eadb }, kGreenBg { 0xff17332f }, kGreenEdge { 0xff2fc6a8 },
+                   kAmberBg { 0xff3a2f1c };
 }
 
 SingScreen::SingScreen (PocketHost& h, LoopsScreen& l, VocoderEngine& v, ChordsTool& c, AppSettings& s)
@@ -255,7 +255,7 @@ void SingScreen::paint (juce::Graphics& g)
         auto button = [&] (juce::Rectangle<float> r, const juce::String& text, bool lit, int id)
         {
             drawRaised (g, r, lit ? Look::amber : Look::cream, pressed == id, 10.0f);
-            g.setColour (col::ink);
+            g.setColour (lit ? col::onBright : col::ink);
             g.setFont (spaced (condensedBold (13.0f), 0.08f));
             g.drawFittedText (text, r.withTrimmedBottom (3).reduced (4, 0).toNearestInt(), juce::Justification::centred, 1, 0.8f);
         };
@@ -323,7 +323,7 @@ void SingScreen::paint (juce::Graphics& g)
             const float v = std::sqrt (juce::jlimit (0.0f, 1.0f, levels[(size_t) ((levelAt + i) % n)] * 1.5f));
             const float h = juce::jmax (2.0f, v * w.getHeight());
             const bool recent = i > n * 2 / 5;
-            g.setColour (rec >= 0 && recent ? col::lcdText : (recent ? col::lcdText.withAlpha (0.75f) : juce::Colour (0xff5a4a3c)));
+            g.setColour (rec >= 0 && recent ? col::lcdText : (recent ? col::lcdText.withAlpha (0.75f) : juce::Colour (0xff8e7fa0)));
             g.fillRoundedRectangle (w.getX() + (float) i * pitch, w.getCentreY() - h * 0.5f, juce::jmax (1.5f, pitch - 1.5f), h, 0.8f);
         }
     }
@@ -332,7 +332,7 @@ void SingScreen::paint (juce::Graphics& g)
     auto smallButton = [&] (juce::Rectangle<float> b, const juce::String& text, bool lit, int id)
     {
         drawRaised (g, b, lit ? Look::amber : Look::cream, pressed == id, 10.0f);
-        g.setColour (col::ink);
+        g.setColour (lit ? col::onBright : col::ink);
         g.setFont (spaced (condensed (14.0f), 0.08f));
         g.drawFittedText (text, b.withTrimmedBottom (3).reduced (4, 0).toNearestInt(), juce::Justification::centred, 1, 0.75f);
     };
@@ -345,7 +345,7 @@ void SingScreen::paint (juce::Graphics& g)
         juce::AttributedString a;
         a.append ("CHORDS ", spaced (condensedBold (16.0f), 0.08f), col::ink);
         a.append (U8("\xc2\xb7 ") + (sending.isNotEmpty() ? sending : SongKey::pitchName (chords.key.root) + (chords.key.minor ? " MINOR" : " MAJOR")),
-                  spaced (condensedBold (16.0f), 0.04f), sending.isNotEmpty() ? juce::Colour (0xff6a4f9a) : col::ink);
+                  spaced (condensedBold (16.0f), 0.04f), sending.isNotEmpty() ? juce::Colour (0xffa877f5) : col::ink);
         if (progression)
             a.append (U8("  \xc2\xb7 PROGRESSION"), spaced (condensed (12.0f), 0.08f), col::inkDim);
         a.setJustification (juce::Justification::centredLeft);
@@ -363,14 +363,14 @@ void SingScreen::paint (juce::Graphics& g)
         auto p = padRect (i);
         const bool lit = chords.soundingPad() == i;
         const float down = pressed == padBase + i ? 2.0f : 0.0f;
-        g.setColour (juce::Colour (0xff120f0c));
+        g.setColour (juce::Colour (0xff0f0c15));
         g.fillRoundedRectangle (p.translated (0, 3), 10.0f);
         g.setColour (lit ? kPadLit : kPadDark);
         g.fillRoundedRectangle (p.translated (0, down), 10.0f);
-        g.setColour (lit ? col::ink : kPadText);
+        g.setColour (lit ? col::onBright : kPadText);
         g.setFont (condensedBold (19.0f));
         g.drawFittedText (chords.padName (i), p.translated (0, down).withTrimmedBottom (p.getHeight() * 0.38f).toNearestInt(), juce::Justification::centredBottom, 1, 0.7f);
-        g.setColour (lit ? juce::Colour (0xff3a2a55) : juce::Colour (0xffa89a86));
+        g.setColour (lit ? juce::Colour (0xff0f0c15) : juce::Colour (0xffb7a9c2));
         g.setFont (lcdFont (16.0f));
         g.drawText (chords.padNumeral (i), p.translated (0, down).withTrimmedTop (p.getHeight() * 0.6f), juce::Justification::centredTop);
     }
