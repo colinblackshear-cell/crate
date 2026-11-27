@@ -112,6 +112,10 @@ target_sources(KaleidoboxPocket PRIVATE
 crate_rename_vocoder_entry()
 target_include_directories(KaleidoboxPocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${VOCODER_INCLUDE})
 
+# TestFlight crash reports need the debug symbols (a dSYM) in the Release archive.
+set_target_properties(KaleidoboxPocket PROPERTIES
+    XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT[variant=Release] "dwarf-with-dsym")
+
 # Whether the sound is going to headphones: the phone asks the audio session, a computer says yes.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(KaleidoboxPocket PRIVATE PocketRoute.mm)
