@@ -2,7 +2,9 @@
 # a twelve-fold kaleidoscope in the Rig's panel colours, seen through a brass eyepiece on a
 # dark panel. Run: python3 make_icon.py
 # With --phone it also draws the phone web app's full-bleed square icons (no rounded corners or
-# shadow, since iOS rounds them itself) into tools/phone/icon-180.png and icon-512.png.
+# shadow, since iOS rounds them itself) into tools/phone/icon-180.png and icon-512.png, and the
+# iPhone app's 1024 x 1024 icon (no transparency, as the App Store requires) into
+# tools/pocket/icon/pocket-icon.png.
 import numpy as np
 from PIL import Image, ImageFilter
 import os, sys
@@ -144,6 +146,11 @@ if PHONE:
         path = os.path.normpath(os.path.join(phone, "icon-%d.png" % size))
         im.convert("RGB").resize((size, size), Image.LANCZOS).save(path)
         print("wrote", path)
+    pocket = os.path.normpath(os.path.join(phone, "..", "pocket", "icon"))
+    os.makedirs(pocket, exist_ok=True)
+    path = os.path.join(pocket, "pocket-icon.png")
+    im.convert("RGB").save(path)
+    print("wrote", path)
 else:
     im.save(out)
     print("wrote", out)
