@@ -133,6 +133,10 @@ public:
     RigScenes& getScenes() { return scenes; }
     // The chord builder: your own chords, onto any instrument (saved with the show; kept by New song).
     RigChords& getChords() { return chords; }
+    // To loop on the Chords: the chords are going onto loop `layer`. Once its take is set, the
+    // progression stops at the take's end (the loop plays it from then on, not both); a take that
+    // finishes early stops it then. -1: none. Any thread.
+    void chordsOntoLayer (int layer) { chordsLoopLayer = layer; }
     // Automation: knob moves on any tool or its effects, recorded over the beat and played back
     // (saved with the show; New song clears it). Rec moves arms it from the next bar, starting
     // the clock if it's stopped (over the song, its lanes play Once along the song).
@@ -688,6 +692,10 @@ private:
     void applyTiming();   // from loadShow, until readLoopAudio brings their sound
     std::array<int, RigLooper::kLayers> loopNameVersions {};
     std::atomic<bool> notesOffRequested { false };
+    std::atomic<int> chordsLoopLayer { -1 };   // chordsOntoLayer()
+    void watchChordsLayer();                   // audio thread, before the chords play
+    int chordsLayerWatched = -1, chordsLayerWait = 0;   // audio thread: the layer, blocks before its press lands
+    bool chordsLayerSeen = false;                        // audio thread: it was armed or recording
     std::array<float* const*, numStems> stemOut {};
     std::array<std::atomic<bool>, numStems> stemOn {};
 

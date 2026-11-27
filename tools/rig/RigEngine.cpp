@@ -678,6 +678,54 @@ void RigEngine::applyControls (const RigRouting::Result& r)
         controlsMoved = true;
 }
 
+void RigEngine::watchChordsLayer()
+{
+    const int l = chordsLoopLayer.load();
+    if (l < 0 || l >= RigLooper::kLayers)
+        return;
+    if (l != chordsLayerWatched)
+    {
+        chordsLayerWatched = l;
+        chordsLayerSeen = false;
+        chordsLayerWait = 0;
+    }
+    const auto& layer = looper.getLayer (l);
+    switch (looper.getState (l))
+    {
+        case RigLooper::State::armed:
+        {
+            chordsLayerSeen = true;
+            // Its take is set: from startsAt for its bars. The progression lets go right there.
+            const double from = layer.startsAt.load();
+            const int bars = layer.bars.load();
+            if (from >= 0 && bars > 0)
+                chords.progressionUntil = from + bars * juce::jmax (1, transport.getBeatsPerBar());
+            break;
+        }
+        case RigLooper::State::recording:
+            chordsLayerSeen = true;
+            break;
+        case RigLooper::State::playing:
+        case RigLooper::State::overdubbing:
+            // The take is in (perhaps ended early, by a press): the loop plays the chords now.
+            if (chords.progressionOn.load())
+                chords.progressionUntil = juce::jmax (0.0, transport.getBlockPosition());
+            chordsLoopLayer = -1;
+            chordsLayerWatched = -1;
+            break;
+        case RigLooper::State::empty:
+        default:
+            // Its press hasn't landed yet (the looper takes it after the chords play).
+            if (! chordsLayerSeen && ++chordsLayerWait < 64)
+                break;
+            // Changed your mind (or cleared): the progression plays on.
+            chords.progressionUntil = -1.0;
+            chordsLoopLayer = -1;
+            chordsLayerWatched = -1;
+            break;
+    }
+}
+
 void RigEngine::processChunk (const float* const* inputs, int numInputs, int offset, int n)
 {
     // What came in from the keyboards, and what the window or tests queued.
@@ -778,6 +826,7 @@ void RigEngine::processChunk (const float* const* inputs, int numInputs, int off
         chordClock.sampleRate = sampleRate;
         chordClock.beatsPerBar = transport.getBeatsPerBar();
         chordClock.playing = transport.isPlayingThisBlock();
+        watchChordsLayer();
         chords.process (chordClock, n, routing.keysTo.load(), destinations);
         // In a one-tool plugin the chords play its tool too, wherever the chord builder sends them.
         allToOnlyTool();

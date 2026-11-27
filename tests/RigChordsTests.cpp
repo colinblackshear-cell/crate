@@ -517,6 +517,117 @@ public:
             expectEquals (synthCount (engine), 0);
         }
 
+        beginTest ("To loop: the progression stops at the end of its take, so the chords don't play twice");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            ChordsView cv (engine);
+            auto& chords = engine.getChords();
+            chords.target = (int) RigRouting::Dest::synth;
+            chords.setPad (0, notes ({ 48, 52, 55 }));
+            chords.setPad (1, notes ({ 53, 57, 60 }));
+            for (auto& s : chords.steps)
+                s = -1;
+            chords.steps[0] = 0;
+            chords.steps[1] = 1;
+            chords.stepLength = 2;   // a bar each: two bars
+            chords.progressionOn = true;
+            engine.getTransport().setBpm (120.0);
+            engine.getTransport().play();
+            run (engine);
+            expect (synthHas (engine, 52), "the progression plays");
+            const auto said = cv.pressToLoop();
+            expect (said.contains ("layer 1"), said);
+            // The take: from the next bar (beat 4) for two bars, to beat 12; a beat is 50 blocks.
+            run (engine, 570);
+            expectEquals ((int) engine.getLooper().getState (0), (int) RigLooper::State::recording);
+            expect (chords.progressionOn.load(), "still playing into the take");
+            expect (synthCount (engine) > 0);
+            run (engine, 40);
+            expectEquals ((int) engine.getLooper().getState (0), (int) RigLooper::State::playing);
+            expect (! chords.progressionOn.load(), "the loop plays it now, not the progression too");
+            expectEquals (synthCount (engine), 0, "no chord left playing live over the loop");
+            expectEquals (chords.getPlayingStep(), -1);
+            // Change a pad: the loop keeps the old chord and nothing new plays on top of it.
+            chords.setPad (0, notes ({ 50, 53, 57 }));
+            run (engine, 200);
+            expectEquals (synthCount (engine), 0, "a changed pad doesn't stack on the loop");
+            cv.refresh();
+            // Play it brings it back, and it plays on.
+            cv.pressPlayProgression();
+            expect (chords.progressionOn.load());
+            run (engine, 450);
+            expect (chords.progressionOn.load() && synthCount (engine) > 0, "back on, it keeps playing");
+
+            // Changed your mind (To loop again before the take starts): the progression plays on.
+            const auto again = cv.pressToLoop();   // the next free layer
+            expect (again.contains ("layer 2"), again);
+            run (engine, 2);
+            expectEquals ((int) engine.getLooper().getState (1), (int) RigLooper::State::armed);
+            engine.getLooper().pressRecord (1);   // cancel
+            run (engine, 900);
+            expectEquals ((int) engine.getLooper().getState (1), (int) RigLooper::State::empty);
+            expect (chords.progressionOn.load() && synthCount (engine) > 0, "a cancelled take leaves it playing");
+        }
+
+        beginTest ("All off, and Chords off, stop every chord (a latched one, the progression)");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            ChordsView cv (engine);
+            auto& chords = engine.getChords();
+            chords.target = (int) RigRouting::Dest::synth;
+            chords.setPad (0, notes ({ 48, 52, 55 }));
+            chords.setPad (1, notes ({ 53, 57, 60 }));
+            for (auto& s : chords.steps)
+                s = -1;
+            chords.steps[0] = 1;
+            chords.hold = true;
+            chords.press (0);
+            engine.getTransport().play();
+            chords.progressionOn = true;
+            run (engine, 2);
+            expect (synthCount (engine) >= 6, "a latched chord and the progression");
+            cv.pressAllOff();
+            run (engine, 2);
+            expectEquals (synthCount (engine), 0, "All off: nothing plays");
+            run (engine, 200);
+            expectEquals (synthCount (engine), 0, "and nothing comes back on the next step");
+            expect (! chords.progressionOn.load());
+
+            chords.progressionOn = true;
+            run (engine, 2);
+            expect (synthCount (engine) >= 3);
+            cv.pressChordsOn();   // off
+            run (engine, 200);
+            expectEquals (synthCount (engine), 0, "Chords off stops the progression too");
+            cv.pressChordsOn();   // on again
+            chords.hold = false;
+        }
+
+        beginTest ("Your keys copied from the map keep its Bass and Octave once, not twice");
+        {
+            RigChords chords;
+            chords.fillFromKey (0, 0, 0);   // C major
+            chords.mapLayout = (int) RigChords::MapLayout::scaleNotes;
+            chords.mapBass = true;
+            chords.mapOctave = 1;
+            chords.rebuildMap();
+            std::array<juce::Array<int>, 3> before;
+            const int keys[] = { 48, 62, 67 };
+            for (int i = 0; i < 3; ++i)
+                before[(size_t) i] = chords.mapNotesFor (keys[i]);
+            chords.copyMapToYourKeys();
+            expectEquals (chords.mapLayout.load(), (int) RigChords::MapLayout::yourKeys);
+            for (int i = 0; i < 3; ++i)
+                expect (chords.mapNotesFor (keys[i]) == before[(size_t) i],
+                        "key " + juce::String (keys[i]) + " plays what it did: " + juce::String (chords.mapNotesFor (keys[i]).size()) + " notes");
+            chords.mapBass = false;
+            chords.mapOctave = 0;
+            expectEquals (chords.mapNotesFor (48).size(), before[0].size() - 1, "the chord alone: the bass wasn't copied into it");
+            expectEquals (chords.mapNotesFor (48).getFirst(), before[0][1] - 12, "and the octave wasn't either");
+        }
+
         beginTest ("saved with the show, kept by New song, and as sets");
         {
             RigEngine engine;

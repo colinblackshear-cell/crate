@@ -352,7 +352,7 @@ void ChordsScreen::pressChordsOn()
 {
     tool.setChordsOn (! tool.chordsOn);
     if (toast)
-        toast (tool.chordsOn ? "Chords on: each pad plays its chord." : "Chords off: each pad plays one note, its chord's lowest.");
+        toast (tool.chordsOn ? "Chords on: each pad plays its chord." : "Chords off: each pad plays one note, its chord's lowest. The progression stopped too.");
     changed();
 }
 

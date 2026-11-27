@@ -65,6 +65,7 @@ public:
     void setTarget (int target);   // RigChords::kFollowKeys or a RigRouting::Dest
     void setTrigger (int trigger);
     void pressHold();
+    void pressAllOff();            // All off: every chord stops now (latched, held, the progression)
     void pressChordsOn();          // Chords on / off: chords, or plain single notes
     void showChordsOnMenu();       // its right-click: put it on a keyboard button (Learn), or forget it
     void pressFill();
@@ -125,6 +126,7 @@ private:
     };
     OnOffButton chordsOnButton;
     bool shownChordsOn = true;
+    juce::TextButton allOffButton { "All off" };
     juce::TextButton holdButton { "Hold" }, fillButton { "Fill pads 1-8" }, setsButton { "Sets" }, closeButton { "Close" },
         lowerButton { "Lower" }, higherButton { "Higher" }, octDown { "Oct -" }, octUp { "Oct +" }, spreadButton { "Spread" },
         closeVoicing { "Tight" }, catchButton { "Catch" }, nameButton { "Name" }, clearButton { "Clear" },
@@ -146,6 +148,7 @@ private:
     int learningLive = -1;
     juce::File lastFile;
     int loopLayer = -1;
+    bool loopHadProgression = false;   // the progression was on when To loop was pressed
     int shownKeysTo = -2;
     int shownMapKey = -1;
     int triggerBeforeMap = (int) RigChords::Trigger::screen;

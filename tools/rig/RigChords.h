@@ -92,6 +92,14 @@ public:
     // Plays a pad for `ms` then lets it go (hearing a chord as you build it).
     void audition (int pad, int ms = 450);
     void stopAll();
+    // All off: every chord sounding now lets go, a latched one and the progression too (stopAll()
+    // alone leaves the progression running). Message thread.
+    void stopEverything()
+    {
+        progressionOn = false;
+        progressionUntil = -1.0;
+        stopAll();
+    }
     // The pad sounding now (the latest pressed), or -1. And whether any is.
     int getSounding() const { return sounding.load(); }
     bool isPadDown (int pad) const;
@@ -107,13 +115,19 @@ public:
     std::atomic<int> shapePad { 0 };            // Every key plays this pad's shape (the pad being edited)
     // Chords on / off: off, what you play plays plain single notes instead of chords, on the same
     // instrument. The keys that played chords (Low keys, Every key, the key map) play their own
-    // note; a pad (on the screen or the Launchkey's pads) plays its chord's lowest note. The
-    // progression keeps playing its chords underneath. A chord you hold when it flips plays on
+    // note; a pad (on the screen or the Launchkey's pads) plays its chord's lowest note. Turning
+    // them off stops a progression that's playing (one started again plays its chords). A chord you hold when it flips plays on
     // until you let go (no stuck notes); a chord Hold latched stops. Saved with the show.
     // Any thread (the screen, or a learned keyboard button on the audio thread).
     std::atomic<bool> chordsOn { true };
-    void setChordsOn (bool on) { chordsOn = on; }
-    void toggleChords() { chordsOn = ! chordsOn.load(); }
+    // Turning them off also stops a progression that's playing, so off is off (Play it starts it again).
+    void setChordsOn (bool on)
+    {
+        if (! on && chordsOn.load())
+            progressionOn = false;
+        chordsOn = on;
+    }
+    void toggleChords() { setChordsOn (! chordsOn.load()); }
     bool areChordsOn() const { return chordsOn.load(); }
 
     // Where a press went: the instrument (a RigRouting::Dest) the chords play now.
@@ -240,6 +254,10 @@ public:
     int progressionSteps() const;
     double progressionBeats() const;
     int getPlayingStep() const { return playingStep.load(); }
+    // The progression went onto a loop layer (To loop): it stops at this clock beat, the end of the
+    // take, so the loop plays its chords and the live progression doesn't play them again on top
+    // (Play it brings it back). -1: it plays on. Any thread (RigEngine sets it from the layer).
+    std::atomic<double> progressionUntil { -1.0 };
 
     //==========================================================================
     // MIDI files for Logic. Rec MIDI records what the chord builder plays from now (on any
@@ -290,7 +308,8 @@ private:
     std::atomic<int> lastMapKey { -1 };
     double lastMapCentre = -1;   // audio thread: Smooth voicing's last chord (mean note), or -1
     // A key's chord, voiced (any thread: reads the live copies). Count of notes into `out`.
-    int voiceMapKey (int note, std::array<int, kMaxNotes>& out, double& centre) const;   // the pad's notes, to the audio thread's copy
+    // `extras` false: without the map's Octave and Bass (what Your keys copies, as they're added on top when played).
+    int voiceMapKey (int note, std::array<int, kMaxNotes>& out, double& centre, bool extras = true) const;   // the pad's notes, to the audio thread's copy
     std::array<Pad, kPads> pads;
 
     // The audio thread's copy of each pad: kMaxNotes notes (-1 past the last).
