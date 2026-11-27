@@ -29,9 +29,20 @@ public:
     void resized() override;
     void pick (int choice) { if (onPick) onPick (choice); }   // (the self-checks)
 
+    // MY VOICE asks how: TO A CLICK (a click in your headphones and a count-in) or FREE (no click: your beat is found
+    // after and the take fitted to the song's). onVoice(free).
+    std::function<void (bool free)> onVoice;
+    std::function<bool()> wearingPhones;
+    void showVoicePage (bool shown);
+    bool voicePageShown() const { return voicePage; }
+    void pickVoice (bool free) { if (onVoice) onVoice (free); }
+
 private:
     class Tile;
     juce::OwnedArray<Tile> tiles;
+    std::unique_ptr<Tile> clickTile, freeTile;
+    PButton back { U8("\xe2\x80\xb9 Back"), Look::ghost };
+    bool voicePage = false;
     PButton change { "Change" }, chords { "Chords" }, drone { "Drone" }, song { "Song" }, effects { "Effects" };
     juce::Rectangle<float> setupCard;
 };

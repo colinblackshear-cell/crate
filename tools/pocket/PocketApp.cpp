@@ -297,6 +297,7 @@ PocketApp::PocketApp (Options o)
         s.undoPass = undoPassNow();
         s.playing = beats.engine().clockRunning();
         s.visuals = visualsShown();
+        s.toLooper = canSendToLooper();
         return s;
     };
     thumb.onPress = [this] (int b) { thumbPressed (b); };
@@ -1784,7 +1785,8 @@ void PocketApp::togglePlay()
 
 void PocketApp::applyClick()
 {
-    beats.engine().setClick (appSettings.click || beats.recordingPads() || beats.recordingDrums() || lessonClick || (synthLock() && ! lockArmed));
+    beats.engine().setClick (appSettings.click || beats.recordingPads() || beats.recordingDrums() || lessonClick || (synthLock() && ! lockArmed)
+                             || (voiceTakeClick && loopsScreen.busyLayer() >= 0));
 }
 
 //==============================================================================
@@ -2134,7 +2136,12 @@ void PocketApp::thumbPressed (int button)
             break;
         case ThumbBar::rec: recPressed(); break;
         case ThumbBar::play: togglePlay(); break;
-        case ThumbBar::visuals: showVisuals (! visualsShown()); break;
+        case ThumbBar::visuals:
+            if (canSendToLooper())
+                sendToLooper();
+            else
+                showVisuals (! visualsShown());
+            break;
         case ThumbBar::undo:
         {
             if (undoPassNow())
@@ -2142,6 +2149,8 @@ void PocketApp::thumbPressed (int button)
                 undoPass();   // looping REC: the last pass comes off, the recording goes on
                 break;
             }
+            sentFingerprint = {};   // what TO LOOPER sent can be sent again
+            sentDrumsValid = false;
             // the last take; a SYNTH part comes back into the pattern with its layer taken off
             const int top = loopsScreen.lastTakeUndoLayer();
             loopsScreen.undo();
@@ -2364,8 +2373,61 @@ bool PocketApp::closeLoopRec()
 
 void PocketApp::recLoops()
 {
-    // The source picked on the LOOPS screen. A take that starts the song counts in first.
+    // The source picked on the LOOPS screen. A take that starts the song counts in first. The mic goes the way the
+    // last MY VOICE take went: to a click, or free (fitted to the beat after).
+    if (loopsScreen.source() == (int) LoopSource::mic)
+        return startVoiceTake (appSettings.voiceFree);
     loopsScreen.recordTake (appSettings.recBars());
+}
+
+void PocketApp::startVoiceTake (bool free)
+{
+    if (appSettings.voiceFree != free)
+    {
+        appSettings.voiceFree = free;
+        appSettings.save();
+    }
+    if (page != Page::tool || tool != Tool::loops)
+        showTool (Tool::loops, false);
+    loopsScreen.setSource ((int) LoopSource::mic);
+    if (! micOn)
+        return askForMic ([this, free] { startVoiceTake (free); });
+    if (recBusy())
+        return;
+    voiceTakeClick = ! free;
+    const int layer = loopsScreen.recordFrom ((int) LoopSource::mic, free ? 0 : appSettings.recBars());
+    if (layer < 0)
+    {
+        voiceTakeClick = false;
+        return;
+    }
+    voiceFitLayer = free ? layer : -1;
+    applyClick();
+    headerTickNow();
+    thumb.repaint();
+    if (free)
+        toast (U8("Sing your way, no click. Tap STOP when you\xe2\x80\x99re done: Pocket finds your beat and fits it to the song."));
+    else
+        toast (route == pocket::Route::none ? U8("The click plays to the beat. With headphones on it stays out of your take.")
+                                            : U8("The click is in your headphones. Sing on the beat: it lands on layer ") + juce::String (layer + 1) + ".");
+}
+
+void PocketApp::voiceTakeLanded (int layer)
+{
+    voiceTakeClick = false;
+    applyClick();
+    if (layer != voiceFitLayer)
+        return;
+    voiceFitLayer = -1;
+    const double heard = loopsScreen.fitToBeat (layer);
+    if (heard < 0.0)
+        return;
+    const int bpm = juce::roundToInt (beats.drums().bpm);
+    if (heard > 0.0 && std::abs (heard - bpm) >= 1.0)
+        toast ("Found your beat: you sang at about " + juce::String (juce::roundToInt (heard)) + " BPM. It's fitted to the song's " + juce::String (bpm)
+               + " and pulled onto the beat. UNDO puts it back as you sang it.");
+    else
+        toast (U8("Found your beat and pulled your take onto it. UNDO puts it back as you sang it."));
 }
 
 void PocketApp::recVocoder()
@@ -2441,12 +2503,12 @@ void PocketApp::recDrums()
                + juce::String (layer + 1) + " and keeps looping.");
 }
 
-void PocketApp::recPads()
+void PocketApp::recPads (bool toLooper)
 {
     // Pads: hits you play go into the pattern (snapped), and when it has gone round it is locked onto the
     // next layer from its start, so it keeps looping. A pattern that's already there just locks.
     auto& b = beats.engine();
-    const bool patternOnly = appSettings.padsRecTo == 1;   // Rec setup > PADS RECORD INTO > THE PAD PATTERN
+    const bool patternOnly = ! toLooper && appSettings.padsRecTo == 1;   // Rec setup > PADS RECORD INTO > THE PAD PATTERN
     if (! patternOnly && loopsScreen.nextLayer() < 0)
         return toast ("All 8 layers are used. Clear one in LOOPS to record.");
     auto& p = beats.drums().padPattern;
@@ -2495,6 +2557,68 @@ void PocketApp::recPads()
         toast ("Your beat goes on layer " + juce::String (loopsScreen.nextLayer() + 1) + U8(" in the looper from its next start. Hits you play before then go in too."));
 }
 
+// TO LOOPER: what DRUMS, PADS or SYNTH holds right now, said as text, so the button hides once it's sent.
+juce::String PocketApp::looperFingerprint()
+{
+    if (tool == Tool::drums)
+    {
+        auto& d = beats.drums();
+        const auto& a = d.patterns[(size_t) d.slot][0];
+        const auto& b = d.patterns[(size_t) d.slot][1];
+        if (a.isEmpty() && b.isEmpty())
+            return {};
+        if (sentDrumsValid && sentDrumSlot == d.slot && sentDrums[0] == a && sentDrums[1] == b)
+            return sentFingerprint;   // the same beat as was sent
+        return "d" + juce::String (d.slot) + "." + juce::String ((juce::int64) juce::Time::getHighResolutionTicks());
+    }
+    if (tool == Tool::pads)
+        return beats.drums().padPattern.hits.empty() ? juce::String() : "p" + juce::JSON::toString (beats.drums().padPattern.toVar(), true);
+    if (tool == Tool::synth)
+        return synthPart.pattern.empty() ? juce::String() : "s" + juce::JSON::toString (synthPart.pattern.toVar(), true);
+    return {};
+}
+
+bool PocketApp::canSendToLooper()
+{
+    if (page != Page::tool || recBusy() || lockKind != LockKind::none || loopsScreen.nextLayer() < 0)
+        return false;
+    if (tool != Tool::drums && tool != Tool::pads && tool != Tool::synth)
+        return false;
+    const auto f = looperFingerprint();
+    return f.isNotEmpty() && f != sentFingerprint;
+}
+
+void PocketApp::sendToLooper()
+{
+    const int layer = loopsScreen.nextLayer();
+    sentFingerprint = looperFingerprint();
+    if (tool == Tool::drums)
+    {
+        auto& d = beats.drums();
+        sentDrums[0] = d.patterns[(size_t) d.slot][0];
+        sentDrums[1] = d.patterns[(size_t) d.slot][1];
+        sentDrumSlot = d.slot;
+        sentDrumsValid = true;
+    }
+    switch (tool)
+    {
+        case Tool::drums: recDrums(); break;
+        case Tool::pads: recPads (true); break;
+        case Tool::synth: recSynth (true); break;
+        default: return;
+    }
+    if (lockKind == LockKind::none && loopsScreen.busyLayer() < 0)
+    {
+        sentFingerprint = {};   // it didn't go (it said why)
+        sentDrumsValid = false;
+        return;
+    }
+    applyClick();
+    headerTickNow();
+    toastAction ("On its way to layer " + juce::String (layer + 1) + U8(" in the looper, from the loop\xe2\x80\x99s next start. Keep going, or add another layer."),
+                 "SEE IT", [this] { showTool (Tool::loops, false); });
+}
+
 void PocketApp::startClockForRec()
 {
     if (beats.engine().clockRunning())
@@ -2515,7 +2639,7 @@ void PocketApp::finishSynthTake()
 // SYNTH: in KEYS or ARP, a count-in (from stopped), then what you play goes into the synth's pattern for the
 // take's length, snapped by REC SNAP; it loops, and from its next start it is locked onto the next layer. In
 // PATTERN, the pattern is locked as it is from its next start. Once the layer plays the pattern is cleared.
-void PocketApp::recSynth()
+void PocketApp::recSynth (bool toLooper)
 {
     auto& b = beats.engine();
     const int layer = loopsScreen.nextLayer();
@@ -2526,7 +2650,7 @@ void PocketApp::recSynth()
     padsFrom = running ? now : appSettings.countInBars * 4.0;   // the clock starts at 0: the count-in comes first
     synthScreen.leave();
 
-    if (synthPart.mode == SynthPart::patternMode)
+    if (toLooper || synthPart.mode == SynthPart::patternMode)
     {
         if (synthPart.pattern.empty())
             return toast ("The pattern is empty. Tap a step, then a key. Or switch to KEYS and press REC to play it in.");
@@ -3740,6 +3864,8 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     // the companion flow: + ADD A LAYER, and the sheet after a take (on the synth layer)
     openAddLayer();
     savePng (folder.getChildFile ("50-add-a-layer.png"));
+    addSheet.showVoicePage (true);
+    savePng (folder.getChildFile ("50b-add-my-voice.png"));
     closeAddLayer();
     showTool (Tool::synth, false);
     openTakeSheet (1, true);
@@ -4525,6 +4651,45 @@ juce::String PocketApp::runRecChecks (juce::String& report)
             report << "a beat already made: REC sent it straight to layer " << (want + 1) << "\n";
         loopsScreen.undo();
         pump (2048);
+        // TO LOOPER (Colin 2026-11-26 "I want the push to loop"): shown with a beat made, sends it, then hides
+        {
+            sentFingerprint = {};
+            sentDrumsValid = false;
+            const bool shown = canSendToLooper();
+            want = loopsScreen.nextLayer();
+            thumbPressed (ThumbBar::visuals);
+            const bool landed = waitPlaying (want, 10);
+            const bool hidden = ! canSendToLooper();
+            report << "TO LOOPER on PADS: shown " << (shown ? "yes" : "no") << ", landed on layer " << (want + 1) << " " << (landed ? "yes" : "no")
+                   << ", hidden after " << (hidden ? "yes" : "no") << "\n";
+            if (! shown || ! landed || ! hidden)
+                problems.add ("TO LOOPER on PADS: shown " + juce::String (shown ? "yes" : "no") + ", landed " + juce::String (landed ? "yes" : "no")
+                              + ", hidden after " + juce::String (hidden ? "yes" : "no"));
+            thumbPressed (ThumbBar::undo);
+            pump (2048);
+            if (! canSendToLooper())
+                problems.add ("TO LOOPER on PADS: not offered again after UNDO");
+            // SYNTH in KEYS with notes in its pattern: TO LOOPER sends the pattern (REC there would record a new take)
+            synthPart.reset();
+            synthPart.mode = SynthPart::keysMode;
+            synthPart.pattern.setBars (1);
+            synthPart.pattern.setStep (0, 45);
+            synthPart.pattern.setStep (8, 48);
+            synthPart.patternChanged();
+            showTool (Tool::synth, false);
+            want = loopsScreen.nextLayer();
+            const bool sShown = canSendToLooper();
+            thumbPressed (ThumbBar::visuals);
+            const bool sLanded = waitPlaying (want, 10);
+            report << "TO LOOPER on SYNTH (KEYS): shown " << (sShown ? "yes" : "no") << ", landed " << (sLanded ? "yes" : "no") << "\n";
+            if (! sShown || ! sLanded)
+                problems.add ("TO LOOPER on SYNTH (KEYS): shown " + juce::String (sShown ? "yes" : "no") + ", landed " + juce::String (sLanded ? "yes" : "no"));
+            thumbPressed (ThumbBar::undo);
+            pump (2048);
+            synthPart.reset();
+            synthScreen.partChanged();
+            showTool (Tool::pads, false);
+        }
         beats.clearPattern();
         want = loopsScreen.nextLayer();
         recPressed();
@@ -5510,7 +5675,9 @@ void PocketApp::setupCompanion()
         closeTakeSheet();
         openVibeSheet (l, vibe);
     };
-    loopsScreen.onTakeLanded = [this] (int layer) { openTakeSheet (layer); };
+    loopsScreen.onTakeLanded = [this] (int layer) { voiceTakeLanded (layer); openTakeSheet (layer); };
+    addSheet.onVoice = [this] (bool free) { closeAddLayer(); startVoiceTake (free); };
+    addSheet.wearingPhones = [this] { return route != pocket::Route::none; };
     loopsScreen.onEffects = [this] (int layer) { openVibeSheet (layer); };
 
     auto applyVibe = [this] (int vibe, juce::Point<float> xy)
@@ -5580,6 +5747,7 @@ void PocketApp::openAddLayer()
         return;
     closeAllSheets();
     addOpen = true;
+    addSheet.showVoicePage (false);
     addSheet.refresh();
     dim->setVisible (true);
     addSheet.setBounds (addLayerBounds().withY (getHeight()));

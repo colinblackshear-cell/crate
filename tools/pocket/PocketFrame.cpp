@@ -313,6 +313,18 @@ void ThumbBar::paint (juce::Graphics& g)
     drawRaised (g, undoR, Look::cream, pressed == undo, 12.0f);
     label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", s.undoPass ? "LAST PASS" : "LAST TAKE", col::ink, 18.0f);
 
+    // TO LOOPER (in VISUALS' place): the looper's icon on teal, what this tool made goes on a layer.
+    if (s.toLooper)
+    {
+        auto r = buttonRect (visuals);
+        drawRaised (g, r, Look::green, pressed == visuals, 12.0f);
+        auto body = r.withTrimmedBottom (3).translated (0, pressed == visuals ? 2.0f : 0.0f);
+        drawToolIcon (g, Tool::loops, body.getCentre().translated (0, -8.0f), col::onBright);
+        g.setColour (col::onBright);
+        g.setFont (spaced (condensedBold (11.0f), 0.04f));
+        g.drawFittedText ("TO LOOPER", body.withTrimmedTop (body.getHeight() * 0.6f).reduced (2, 0).toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
+    }
+    else
     // VISUALS: a little kaleidoscope of the tools' colours; amber while the light show is on.
     {
         auto r = buttonRect (visuals);

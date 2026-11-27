@@ -149,9 +149,33 @@ AddLayerSheet::AddLayerSheet()
     {
         auto* t = tiles.add (new Tile (defs[i].name, defs[i].line, toolColour (defs[i].colourOf)));
         t->icon = [i, tool = defs[i].colourOf] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawChoiceIcon (g, i, tool, c, ink); };
-        t->onClick = [this, i] { pick (i); };
+        t->onClick = [this, i] { if (i == voice) showVoicePage (true); else pick (i); };
         addAndMakeVisible (t);
     }
+    clickTile = std::make_unique<Tile> ("To a click", "A click in your headphones and a count-in, so you sing right on the beat", toolColour (Tool::drums));
+    clickTile->icon = [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink)
+    {
+        // a metronome: the body, its arm and the weight
+        juce::Path body;
+        body.startNewSubPath (c.x - 8, c.y + 9);
+        body.lineTo (c.x - 4, c.y - 9);
+        body.lineTo (c.x + 4, c.y - 9);
+        body.lineTo (c.x + 8, c.y + 9);
+        body.closeSubPath();
+        g.setColour (ink);
+        g.strokePath (body, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.drawLine (c.x, c.y + 6, c.x + 7, c.y - 11, 2.2f);
+        g.fillEllipse (c.x + 2.0f, c.y - 5.0f, 5.0f, 5.0f);
+    };
+    clickTile->onClick = [this] { pickVoice (false); };
+    freeTile = std::make_unique<Tile> ("Sing free", "No click. Sing your way: Pocket finds your beat and fits the take to the song", toolColour (Tool::loops));
+    freeTile->icon = [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawChoiceIcon (g, voice, Tool::loops, c, ink); };
+    freeTile->onClick = [this] { pickVoice (true); };
+    addChildComponent (*clickTile);
+    addChildComponent (*freeTile);
+    back.setFontHeight (15.0f);
+    back.onClick = [this] { showVoicePage (false); };
+    addChildComponent (back);
     change.setFontHeight (15.0f);
     change.onClick = [this] { if (onRecSetup) onRecSetup(); };
     addAndMakeVisible (change);
@@ -174,11 +198,44 @@ AddLayerSheet::AddLayerSheet()
 
 AddLayerSheet::~AddLayerSheet() = default;
 
+void AddLayerSheet::showVoicePage (bool shown)
+{
+    voicePage = shown;
+    for (auto* t : tiles)
+        t->setVisible (! shown);
+    for (auto* b : { &change, &chords, &drone, &song, &effects })
+        b->setVisible (! shown);
+    clickTile->setVisible (shown);
+    freeTile->setVisible (shown);
+    back.setVisible (shown);
+    resized();
+    repaint();
+}
+
 void AddLayerSheet::paint (juce::Graphics& g)
 {
     g.setColour (col::cream);
     g.fillRoundedRectangle (getLocalBounds().toFloat().withTrimmedBottom (-20.0f), 24.0f);
     drawGrabber (g, getWidth());
+    if (voicePage)
+    {
+        g.setColour (col::ink);
+        g.setFont (fraunces (28.0f));
+        g.drawText ("My voice", 20, 16, getWidth() - 40, 36, juce::Justification::centredLeft);
+        g.setColour (col::inkDim);
+        g.setFont (small (14.5f));
+        g.drawFittedText ("Sing to a click, or sing free and let Pocket put it in time.",
+                          juce::Rectangle<int> (20, 52, getWidth() - 40, 36), juce::Justification::topLeft, 2);
+        const bool phones = wearingPhones && wearingPhones();
+        auto note = juce::Rectangle<float> (16.0f, (float) freeTile->getBottom() + 16.0f, (float) getWidth() - 32.0f, 62.0f);
+        drawWell (g, note, 14.0f);
+        g.setColour (phones ? col::lcdAmber : col::inkDim);
+        g.setFont (small (14.0f));
+        g.drawFittedText (phones ? U8("Headphones on: the click is only in your ears, never in the take.")
+                                 : U8("Put headphones on for the click, so it stays out of your take. Free needs none."),
+                          note.reduced (14.0f, 8.0f).toNearestInt(), juce::Justification::centredLeft, 2, 1.0f);
+        return;
+    }
     g.setColour (col::ink);
     g.setFont (fraunces (28.0f));
     g.drawText ("Add a layer", 20, 16, getWidth() - 40, 36, juce::Justification::centredLeft);
@@ -205,6 +262,12 @@ void AddLayerSheet::paint (juce::Graphics& g)
 void AddLayerSheet::resized()
 {
     const int w = getWidth(), x0 = 16, iw = w - 32, gap = 10;
+    if (clickTile != nullptr)
+    {
+        clickTile->setBounds (x0, 100, iw, 112);
+        freeTile->setBounds (x0, 100 + 112 + gap, iw, 112);
+        back.setBounds (w - 16 - 100, 16, 100, 40);
+    }
     const int tileW = (iw - gap) / 2, tileH = 98;
     for (int i = 0; i < tiles.size(); ++i)   // all the same size: no one choice is the most important
         tiles[i]->setBounds (x0 + (i % 2) * (tileW + gap), 94 + (i / 2) * (tileH + gap), tileW, tileH);

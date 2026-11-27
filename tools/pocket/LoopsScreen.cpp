@@ -902,6 +902,19 @@ void LoopsScreen::warpLayer (int layer, const crate::Warp::Plan& plan)
     runJob (layer, [copy, fx, plan, bpm] { return warpTake (*copy, fx, plan, bpm); }, true);
 }
 
+double LoopsScreen::fitToBeat (int layer)
+{
+    auto take = loops.takeOf (layer);
+    if (take == nullptr || loops.state (layer) != LoopState::playing || jobLayer >= 0)
+        return -1.0;
+    double like = 0.0;
+    const auto plan = fitToBeatPlan (warpSourceOf (*take), take->sampleRate, loops.bpm(), like);
+    if (! plan.isValid())
+        return -1.0;
+    warpLayer (layer, plan);
+    return like;
+}
+
 bool LoopsScreen::playingOriginal (int layer) const
 {
     const auto& o = abOriginal[(size_t) layer];

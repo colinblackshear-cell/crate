@@ -35,6 +35,9 @@ public:
     int recordFrom (int source, int bars, int tool = -1, int tap = 0);   // tap: the layer a LoopSource::layerTap take records
     // REC on the LOOPS tool: the source picked here, for `bars` bars.
     int recordTake (int bars) { return recordFrom (sourceChoice, bars); }
+    // FIT TO THE BEAT: a free take's beat found and the take warped onto the song's (UNDO puts it back as sung).
+    // Returns the tempo it heard it at (0: couldn't tell), or -1 when the layer can't be fitted now.
+    double fitToBeat (int layer);
     int source() const { return sourceChoice; }   // pocket::LoopSource
     void setSource (int s) { if (juce::isPositiveAndBelow (s, 4) && s != sourceChoice) { sourceChoice = s; settingsDirty = true; if (onSourceChanged) onSourceChanged(); repaint(); } }
     // Arms `layer` with an undo step (LOCK BEAT and REC on DRUMS use it). False when it couldn't. tool: a LayerTool.

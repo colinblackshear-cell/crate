@@ -198,9 +198,23 @@ private:
     void stopRec();
     void recLoops();
     void recDrums();
-    void recPads();
+    void recPads (bool toLooper = false);
     void recVocoder();
-    void recSynth();
+    void recSynth (bool toLooper = false);
+    // TO LOOPER (the thumb bar, where VISUALS sits, on DRUMS, PADS and SYNTH): what you've made goes on the next layer
+    // from its next start, as it is. Shown only when there's something new to send.
+    bool canSendToLooper();
+    void sendToLooper();
+    juce::String sentFingerprint;   // what TO LOOPER last sent (cleared by UNDO), so it isn't offered twice
+    juce::String looperFingerprint();
+    // MY VOICE: to a click (heard while the take counts in and records) or free (fitted to the beat once it lands).
+    bool voiceTakeClick = false;
+    int voiceFitLayer = -1;
+    void startVoiceTake (bool free);
+    void voiceTakeLanded (int layer);
+    crate::drums::Pattern sentDrums[2];
+    int sentDrumSlot = -1;
+    bool sentDrumsValid = false;
     void recChords();
     void recDrone();
     // SAMPLER (PocketAppSampler.cpp): the pads that play a sound after it was trimmed or the trim undone (`shift`: how far

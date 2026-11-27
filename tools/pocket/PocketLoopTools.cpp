@@ -488,6 +488,23 @@ double warpSoundsLike (const WarpSource& w, const std::vector<double>& hits, dou
     return crate::Warp::soundsLikeBpm (s, songBpm);
 }
 
+crate::Warp::Plan fitToBeatPlan (const WarpSource& w, double sampleRate, double songBpm, double& soundsLike)
+{
+    soundsLike = 0.0;
+    crate::Warp::Plan p;
+    p.sourceBeats = p.targetBeats = w.originalBeats;
+    p.settings.style = crate::Warp::Style::voice;
+    if (w.original.size() < 2 || w.originalBeats <= 0.0 || sampleRate <= 0.0 || songBpm <= 0.0)
+        return p;
+    const auto hits = warpHits (w, sampleRate, 0.5f);
+    soundsLike = hits.size() >= 4 ? warpSoundsLike (w, hits, sampleRate, songBpm) : 0.0;
+    const double seconds = (double) w.original.size() / sampleRate;
+    const double sungBeats = soundsLike > 0.0 ? seconds * soundsLike / 60.0 : w.originalBeats;
+    crate::Warp::setLength (p, juce::jmax (4.0, std::round (sungBeats / 4.0) * 4.0));
+    crate::Warp::snap (p, hits, 0.5, 0.85f);
+    return p;
+}
+
 SharedTake tempoTake (const LoopTake& t, double bpm)
 {
     const int len = t.length.load();
@@ -571,6 +588,37 @@ juce::String loopToolsSelfCheck (juce::String& report)
 {
     juce::StringArray problems;
     const double sr = 44100.0;
+
+    // FIT TO THE BEAT: sung free at 90 BPM (a sound on every beat, 8 beats and a little late) over a song at 100: it
+    // hears ~90, stretches to 8 beats (2 bars), and every hit lands near a 1/8 line.
+    {
+        const double songBpm = 100.0, sungBpm = 90.0, lead = 0.07;
+        const int n = (int) ((8.0 * 60.0 / sungBpm + lead + 0.05) * sr);
+        WarpSource w;
+        w.original.assign ((size_t) n, 0.0f);
+        juce::Random rng (5);
+        for (int b = 0; b < 8; ++b)
+        {
+            const int at = (int) ((lead + b * 60.0 / sungBpm) * sr);
+            for (int i = 0; i < (int) (0.18 * sr) && at + i < n; ++i)
+                w.original[(size_t) (at + i)] = (rng.nextFloat() * 2 - 1) * 0.7f * (float) std::exp (-i / (0.04 * sr));
+        }
+        w.originalBeats = (double) n / sr * songBpm / 60.0;
+        double like = 0;
+        const auto plan = fitToBeatPlan (w, sr, songBpm, like);
+        double worst = 0;
+        for (int b = 1; b < 8; ++b)   // (the first sits at the take's very start, which stays pinned)
+        {
+            const double srcBeat = (lead + b * 60.0 / sungBpm) * songBpm / 60.0;
+            const double t = plan.targetAt (srcBeat);
+            worst = juce::jmax (worst, std::abs (t - std::round (t * 2.0) / 2.0));
+        }
+        report << "fit to the beat: heard " << juce::String (like, 1) << " BPM, " << juce::String (w.originalBeats, 2) << " beats became "
+               << juce::String (plan.targetBeats, 2) << ", hits at most " << juce::String (worst, 3) << " beats off a 1/8\n";
+        if (std::abs (like - sungBpm) > 4.0 || std::abs (plan.targetBeats - 8.0) > 1.0e-6 || worst > 0.06)
+            problems.add ("fit to the beat: heard " + juce::String (like, 1) + " BPM (90 sung), length " + juce::String (plan.targetBeats, 2)
+                          + " (8 expected), a hit " + juce::String (worst, 3) + " beats off the grid");
+    }
 
     // FIT: a free take 4.2 bars long at 92 BPM, fitted to 4 bars (and to 8): exact length, the same pitch
     {

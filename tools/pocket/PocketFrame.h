@@ -32,6 +32,7 @@ public:
         double bpm = 97.0;
         bool click = false, recBusy = false, recCounting = false, playing = false, visuals = false;
         bool undoPass = false;   // looping REC: UNDO takes back the last pass
+        bool toLooper = false;   // VISUALS' place shows TO LOOPER: what this tool made can go on a layer
     };
     std::function<State()> state;
     std::function<void (int)> onPress;   // a Button
