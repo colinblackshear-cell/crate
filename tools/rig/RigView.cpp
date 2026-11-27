@@ -31,6 +31,8 @@
 #include "QuantizePanel.h"
 #include "ControllersPanel.h"
 #include "core/visuals/VisualSettings.h"
+#include "RigAsker.h"
+#include "RigDocFlow.h"
 
 namespace Theme = crate::Theme;
 
@@ -46,6 +48,92 @@ juce::File showsFolder()
 {
     return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Crate").getChildFile ("Rig");
 }
+
+// The document flow's questions and windows, as the app shows them (RigAsker.h). A file window
+// keeps itself alive until it answers (its callback holds it), as the Rig's other choosers do.
+class WindowAsker final : public rigdirty::Asker
+{
+public:
+    explicit WindowAsker (juce::Component& c) : owner (c) {}
+
+    void ask (const rigdirty::Question& q, std::function<void (rigdirty::Choice)> done) override
+    {
+        auto options = juce::MessageBoxOptions()
+                           .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                           .withTitle (q.title)
+                           .withMessage (q.message)
+                           .withButton (q.saveLabel)
+                           .withButton (q.dontSaveLabel)
+                           .withButton (q.cancelLabel)
+                           .withAssociatedComponent (&owner);
+        // 1, 2, then 0 for the last button (Cancel), or a window closed.
+        juce::AlertWindow::showAsync (options, [done] (int result)
+                                      {
+                                          done (result == 1 ? rigdirty::Choice::save : result == 2 ? rigdirty::Choice::dontSave : rigdirty::Choice::cancel);
+                                      });
+    }
+    void chooseSaveFile (const juce::File& suggested, std::function<void (const juce::File&)> done) override
+    {
+        auto chooser = std::make_shared<juce::FileChooser> ("Save the show", suggested, "*.crateshow");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [chooser, done] (const juce::FileChooser& fc) { done (fc.getResult()); });
+    }
+    void chooseOpenFile (const juce::File& folder, std::function<void (const juce::File&)> done) override
+    {
+        auto chooser = std::make_shared<juce::FileChooser> ("Open a show", folder, "*.crateshow");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [chooser, done] (const juce::FileChooser& fc) { done (fc.getResult()); });
+    }
+    void chooseFolder (const juce::String& title, const juce::File& start, std::function<void (const juce::File&)> done) override
+    {
+        auto chooser = std::make_shared<juce::FileChooser> (title, start);
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                              [chooser, done] (const juce::FileChooser& fc) { done (fc.getResult()); });
+    }
+    void showError (const juce::String& title, const juce::String& message) override
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, title, message);
+    }
+
+private:
+    juce::Component& owner;
+};
+
+juce::File theShowsFolder() { return showsFolder(); }
+}
+
+// What the window does for the document flow.
+struct RigView::DocHost final : RigDocFlow::Host
+{
+    explicit DocHost (RigView& v) : view (v) {}
+    juce::File getCurrentShow() const override { return view.currentShow; }
+    void setCurrentShow (const juce::File& f) override { view.currentShow = f; }
+    void say (const juce::String& text) override { view.say (text); }
+    juce::File showsFolder() const override { return theShowsFolder(); }
+    void replaced (Replaced kind) override
+    {
+        view.refresh();
+        if (view.song != nullptr)
+            view.song->forgetUndo();
+        if (kind == Replaced::opened)
+            view.restoreWindows();
+        else
+        {
+            view.takeLayer = -1;
+            view.lastTake.fill (-1);
+        }
+    }
+    RigView& view;
+};
+
+bool RigView::hostedDocuments() const
+{
+    return ! standaloneDocuments || toolMode();
+}
+
+void RigView::setAskerForTests (rigdirty::Asker* a)
+{
+    docFlow->setAsker (a != nullptr ? *a : *asker);
 }
 
 //==============================================================================
@@ -338,6 +426,9 @@ RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     setLookAndFeel (&vintageLook);
     setWantsKeyboardFocus (true);
     setOpaque (true);
+    asker = std::make_unique<WindowAsker> (*this);
+    docHost = std::make_unique<DocHost> (*this);
+    docFlow = std::make_unique<RigDocFlow> (engine, *asker, *docHost);
     if (engine.getDirty().isEnabled())
     {
         activity = std::make_unique<Activity> (engine);
@@ -2623,6 +2714,18 @@ void RigView::showShowMenu()
 // Make a beat
 void RigView::startLesson()
 {
+    if (! hostedDocuments())
+    {
+        docFlow->newSong (RigDocFlow::lessonWords(), [this] (const RigDocFlow::Outcome& o)
+                          {
+                              if (o.cleared)
+                                  sayNewSong (o.saved);
+                              if (engine.isBlank())
+                                  beginLesson();
+                          }, false);
+        return;
+    }
+    // (Logic and the one-tool plugins: as before.)
     if (engine.isBlank())
         return beginLesson();
     const auto name = currentShow != juce::File() ? currentShow.getFileNameWithoutExtension() : juce::String ("this song");
@@ -3835,6 +3938,11 @@ void RigView::showAudioSettings()
 
 void RigView::saveShowAs()
 {
+    if (! hostedDocuments())
+    {
+        docFlow->saveAs();
+        return;
+    }
     showsFolder().createDirectory();
     auto chooser = std::make_shared<juce::FileChooser> ("Save the show", showsFolder().getChildFile ("My show.crateshow"), "*.crateshow");
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
@@ -3858,18 +3966,17 @@ bool RigView::writeShowTo (const juce::File& file)
         return false;
     }
     currentShow = file;
-    int loops = 0;
-    for (int i = 0; i < RigLooper::kLayers; ++i)
-        if (const auto st = engine.getLooper().getState (i); st == RigLooper::State::playing || st == RigLooper::State::overdubbing)
-            ++loops;
-    say ("Saved " + file.getFileNameWithoutExtension() + ": the show" + (loops > 0 ? " and " + juce::String (loops) + (loops == 1 ? " loop" : " loops") : juce::String())
-         + ", in " + file.getParentDirectory().getFullPathName() + ". Cmd+S saves it again."
-         + (result.warning.isNotEmpty() ? " " + result.warning : juce::String()));
+    say (RigDocFlow::savedMessage (engine, file, result));
     return true;
 }
 
 void RigView::saveShow()
 {
+    if (! hostedDocuments())
+    {
+        docFlow->save();
+        return;
+    }
     if (currentShow != juce::File() && currentShow.getParentDirectory().isDirectory())
         writeShowTo (currentShow);
     else
@@ -3922,6 +4029,11 @@ void RigView::exportForLogic()
 
 void RigView::openShow()
 {
+    if (! hostedDocuments())
+    {
+        docFlow->openChooser();
+        return;
+    }
     auto chooser = std::make_shared<juce::FileChooser> ("Open a show", showsFolder(), "*.crateshow");
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                           [this, chooser] (const juce::FileChooser& fc)
@@ -3936,6 +4048,7 @@ void RigView::openShowFile (const juce::File& file)
 {
     if (auto xml = juce::parseXML (file))
     {
+        docFlow->abandon();   // (a show opened another way: what the flow had under way is over)
         engine.loadShow (juce::ValueTree::fromXml (*xml));
         engine.readLoopAudio (file);
         currentShow = file;
@@ -3956,6 +4069,15 @@ void RigView::askOpenSong (const juce::File& file, std::function<void()> then)
         then = [this] { showView ("Play"); };
     if (file == currentShow)
         return then();
+    if (! hostedDocuments())
+    {
+        docFlow->openFile (file, [this, file, then] (const RigDocFlow::Outcome&)
+                           {
+                               say ("Opened " + file.getFileNameWithoutExtension() + ".");
+                               then();
+                           });
+        return;
+    }
     auto open = [this, file, then]
     {
         openShowFile (file);
@@ -3992,6 +4114,16 @@ void RigView::askOpenSong (const juce::File& file, std::function<void()> then)
 
 void RigView::startFresh (const juce::String& what, std::function<void()> then)
 {
+    if (! hostedDocuments())
+    {
+        docFlow->newSong (RigDocFlow::startWords (what), [this, then] (const RigDocFlow::Outcome& o)
+                          {
+                              if (o.cleared)
+                                  sayNewSong (o.saved);
+                              then();
+                          }, false);
+        return;
+    }
     if (engine.isBlank())
     {
         currentShow = juce::File();
@@ -4512,6 +4644,15 @@ void RigView::updateNavButtons()
 //==============================================================================
 void RigView::askNewSong()
 {
+    if (! hostedDocuments())
+    {
+        docFlow->newSong (RigDocFlow::newSongWords(), [this] (const RigDocFlow::Outcome& o)
+                          {
+                              sayNewSong (o.saved);
+                              showPatternMenu();
+                          });
+        return;
+    }
     // Nothing made yet: no need to ask.
     if (engine.isBlank())
     {
@@ -4550,6 +4691,7 @@ void RigView::newSong (bool saveFirst, bool askWhatNext)
     }
     const auto saved = saveFirst ? currentShow.getFileNameWithoutExtension() : juce::String();
 
+    docFlow->abandon();   // (cleared another way: what the flow had under way is over)
     engine.getTransport().stop();
     engine.allNotesOff();
     engine.newShow();
@@ -4559,15 +4701,29 @@ void RigView::newSong (bool saveFirst, bool askWhatNext)
         song->forgetUndo();
     takeLayer = -1;
     lastTake.fill (-1);
-    say ((saved.isNotEmpty() ? "Saved " + saved + ". " : juce::String()) + "New song: everything's clear. Pick what to start with "
-         "(New pattern), set the tempo, and press Play.");
+    sayNewSong (saved);
     if (askWhatNext)
         showPatternMenu();
+}
+
+void RigView::sayNewSong (const juce::String& saved)
+{
+    say ((saved.isNotEmpty() ? "Saved " + saved + ". " : juce::String()) + "New song: everything's clear. Pick what to start with "
+         "(New pattern), set the tempo, and press Play.");
 }
 
 //==============================================================================
 void RigView::askImportFromLogic()
 {
+    if (! hostedDocuments())
+    {
+        docFlow->importFromLogic ([this] (const RigDocFlow::Outcome& o)
+                                  {
+                                      showView ("Song");
+                                      say (o.said);
+                                  });
+        return;
+    }
     auto pick = [safe = juce::Component::SafePointer<RigView> (this)]
     {
         if (safe == nullptr)
@@ -4609,6 +4765,7 @@ juce::String RigView::importFromLogic (const juce::File& folder)
     auto song = rigimport::read (folder, engine.getTransport().getBpm());
     if (song.layers.empty())
         return song.notes.joinIntoString (". ") + ".";
+    docFlow->abandon();   // (imported another way: what the flow had under way is over)
     engine.getTransport().stop();
     const auto said = rigimport::apply (engine, std::move (song));
     refresh();

@@ -12,6 +12,8 @@
 #include "core/visuals/VisualsView.h"
 
 namespace crate::spark { struct Spark; }
+namespace rigdirty { class Asker; }
+class RigDocFlow;
 
 // The Rig's window, built like a piece of 70s/80s studio gear: the top bar (your show, transport,
 // tempo, where the song is, VU meters), the view buttons (Play, Edit, Song, Mix; F1-F4) with
@@ -181,6 +183,14 @@ public:
     class RigIdeas* getIdeas() const { return ideas; }
     // The opening title (the app sets titleAtLaunch: not in Logic, not in the tests).
     static inline bool titleAtLaunch = false;
+    // The standalone app's Save / Don't save / Cancel flow (RigDocFlow) for New song, Open, an
+    // idea, Import, the lesson, the ways to start and Cmd+S: the app sets it. Off (the Logic
+    // plugins, the one-tool plugins, and the tests unless they set it), those keep their old way.
+    static inline bool standaloneDocuments = false;
+    bool hostedDocuments() const;
+    RigDocFlow& getDocFlow() { return *docFlow; }
+    // Tests: their own answers to the flow's questions and windows (null: the window's own).
+    void setAskerForTests (rigdirty::Asker*);
     class RigTitle* getTitle() const { return title.get(); }
     void showTitle (bool show);
     // Opens a saved song (as Open show does, without the chooser).
@@ -500,6 +510,14 @@ private:
         RigEngine& engine;
     };
     std::unique_ptr<Activity> activity;
+
+    // The document flow (the standalone app's), with the window's questions and what it does
+    // for the flow. The flow goes first.
+    void sayNewSong (const juce::String& saved);
+    struct DocHost;
+    std::unique_ptr<rigdirty::Asker> asker;
+    std::unique_ptr<DocHost> docHost;
+    std::unique_ptr<RigDocFlow> docFlow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RigView)
 };
