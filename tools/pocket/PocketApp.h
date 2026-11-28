@@ -452,6 +452,7 @@ private:
     void openMoves();
     void closeMoves();
     bool movesSlot() const { return page == Page::tool && (tool == Tool::loops || tool == Tool::song); }
+    juce::String runRedoChecks (juce::String& report, const juce::File& folder);   // PocketAppHistory.cpp
     juce::String runMovesChecks (juce::String& report, const juce::File& folder);   // PocketAppMoves.cpp
     bool quantOpen = false;
     int quantTarget = 0;              // 0 SYNTH, 1 BASS, 2 PADS
@@ -558,6 +559,8 @@ private:
     void restoreStep (const HistoryStep&);
     static juce::String describeChange (const HistoryStep& from, const HistoryStep& to);
     bool historyCanRun();
+    bool canRedoNow();             // something to REDO, and not mid-recording (the thumb bar's REDO)
+    bool thumbCanRedo = false;     // what the thumb bar last showed
     std::vector<HistoryStep> historyPast, historyFuture;
     HistoryStep historyNow;
     bool historyValid = false;
