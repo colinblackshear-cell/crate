@@ -132,6 +132,30 @@ public:
             expect (! RigView::hasPart (GrooveView::vocoder) && ! RigView::hasPart (GrooveView::loops), "no part to send");
         }
 
+        beginTest ("hot keys: Cmd+K the click, Cmd+Up the tempo, Cmd+3 the bass, Cmd+L To looper, Cmd+Z and Cmd+Shift+Z");
+        {
+            RigEngine engine;
+            engine.prepare (48000.0, 480);
+            engine.getTransport().metronome = false;
+            engine.getTransport().setBpm (100.0);
+            RigView view (engine, nullptr);
+            view.setSize (1440, 960);
+            view.showView ("Play");
+            const auto cmd = juce::ModifierKeys::commandModifier;
+            expect (view.keyPressed (juce::KeyPress ('k', cmd, 0)));
+            expect (engine.getTransport().metronome.load(), "Cmd+K: click on");
+            expect (view.keyPressed (juce::KeyPress (juce::KeyPress::upKey, cmd, 0)));
+            expectWithinAbsoluteError (engine.getTransport().getBpm(), 101.0, 1.0e-6, "Cmd+Up: a BPM faster");
+            expect (view.keyPressed (juce::KeyPress ('3', cmd, 0)));
+            expectEquals (view.getTrack(), (int) GrooveView::bass, "Cmd+3: the third instrument on the rail");
+            busyBass (engine, 16);
+            expect (view.keyPressed (juce::KeyPress ('l', cmd, 0)));
+            expectEquals (view.getPrintLayer(), 0, "Cmd+L: To looper");
+            expect (view.keyPressed (juce::KeyPress ('z', cmd, 0)), "Cmd+Z");
+            expectEquals (view.getPrintLayer(), -1, "called off");
+            expect (view.keyPressed (juce::KeyPress ('z', cmd | juce::ModifierKeys::shiftModifier, 0)), "Cmd+Shift+Z is taken");
+        }
+
         beginTest ("Sing free: a voice take with no click or count-in, until Rec again");
         {
             RigEngine engine;
