@@ -5126,6 +5126,42 @@ bool RigView::keyPressed (const juce::KeyPress& key)
         historyRedo();
         return true;
     }
+    // The bottom bar from the keys (letters alone play notes, so these take Cmd): Cmd+R Rec,
+    // Cmd+L To looper, Cmd+K the click, Cmd+Up / Cmd+Down the tempo, Cmd+1-9 pick an instrument.
+    if (key == juce::KeyPress ('r', juce::ModifierKeys::commandModifier, 0))
+    {
+        pressRec();
+        return true;
+    }
+    if (key == juce::KeyPress ('l', juce::ModifierKeys::commandModifier, 0))
+    {
+        pressToLooper();
+        return true;
+    }
+    if (key == juce::KeyPress ('k', juce::ModifierKeys::commandModifier, 0))
+    {
+        engine.getTransport().metronome = ! engine.getTransport().metronome.load();
+        updateDock();
+        say (engine.getTransport().metronome.load() ? "Click on." : "Click off.");
+        return true;
+    }
+    if (key == juce::KeyPress (juce::KeyPress::upKey, juce::ModifierKeys::commandModifier, 0)
+        || key == juce::KeyPress (juce::KeyPress::downKey, juce::ModifierKeys::commandModifier, 0))
+    {
+        nudgeTempo (key.getKeyCode() == juce::KeyPress::upKey ? 1.0 : -1.0);
+        return true;
+    }
+    if (key.getModifiers().isCommandDown() && ! key.getModifiers().isShiftDown() && ! key.getModifiers().isAltDown()
+        && key.getKeyCode() >= '1' && key.getKeyCode() <= '9')
+    {
+        const int t = key.getKeyCode() - '1';
+        if (t < (int) GrooveView::numTracks)
+        {
+            railClicked (t);
+            say (GrooveView::trackName (t) + " picked (Cmd+1 to Cmd+9 pick an instrument).");
+        }
+        return true;
+    }
     // Delete (or backspace) on the Song screen: the picked section.
     if ((key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) && getView() == "Song" && song != nullptr && ! song->isShowingBars())
     {

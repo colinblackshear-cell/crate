@@ -206,6 +206,9 @@ const std::vector<HelpPanel::Stop>& HelpPanel::tour()
         { "The view buttons",
           "Under the top bar:\n\n"
           "- Back and Forward (Cmd+[ and Cmd+]) step through the screens you've been on.\n"
+          "- Hot keys: space plays and stops. Cmd+Z undoes and Cmd+Shift+Z redoes, on every screen. Cmd+R is Rec, Cmd+L To looper, "
+          "Cmd+K the click, Cmd+Up and Cmd+Down the tempo, Cmd+1 to Cmd+9 pick an instrument, Cmd+U quantizes, Cmd+S saves. "
+          "1 to 8 play the song's sections.\n"
           "- Play (F1): the picked track's quick strip: steps, patterns, 8 knobs, keys.\n"
           "- Edit (F2): the picked track's whole tool: the MPC, the 808, the Bass and Synth panels, the vocoder's pedalboard, the Looper.\n"
           "- Song (F3): the song, section by section. Mix (F4): faders, effects and the FX pad.\n"

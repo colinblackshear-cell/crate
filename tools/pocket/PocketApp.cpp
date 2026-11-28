@@ -301,6 +301,7 @@ PocketApp::PocketApp (Options o)
         s.click = appSettings.click;
         s.recBusy = recBusy();
         s.undoPass = undoPassNow();
+        s.canRedo = canRedoNow();
         s.playing = beats.engine().clockRunning();
         s.visuals = visualsShown();
         s.toLooper = canSendToLooper();
@@ -2487,6 +2488,9 @@ void PocketApp::thumbPressed (int button)
             historyUndo();   // one history: whatever you did last, in order
             break;
         }
+        case ThumbBar::redo:
+            historyRedo();   // (toasts "Nothing to redo" / "Stop the recording first" itself)
+            break;
         default: break;
     }
     thumb.repaint();
@@ -5049,6 +5053,11 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     if (const auto why = runMovesChecks (movesReport, folder); why.isNotEmpty())
         problems.add ("Moves: " + why);
 
+    // REDO on the thumb bar: lit after UNDO, puts the change back, dims after a new change
+    juce::String redoReport;
+    if (const auto why = runRedoChecks (redoReport, folder); why.isNotEmpty())
+        problems.add ("Redo: " + why);
+
     // SONG: REC LIVE through the app (in and out on the bar, MARK, STOP + KEEP), played back, edited, punched, saved
     juce::String songReport;
     if (const auto why = runSongChecks (songReport, folder); why.isNotEmpty())
@@ -5142,6 +5151,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nSampler (trim onto a pad, save, reopen):\n" + samplerReport
                           + "\nOwn chords (EDIT CHORD, save, reopen, key change):\n" + ownChordReport
                           + "\nMoves (the FX pad over the mix):\n" + movesReport
+                          + "\nREDO (thumb bar):\n" + redoReport
                           + "\nSong (REC LIVE, play, edit, punch, save; 120 BPM):\n" + songReport
                           + "\nFriend's track (100 BPM, bar 1 at 0.5 s):\n" + trackReport);
     for (auto& line : problems)

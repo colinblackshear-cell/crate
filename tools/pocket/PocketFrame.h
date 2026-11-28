@@ -25,13 +25,14 @@ void drawChip (juce::Graphics&, juce::Rectangle<float>, const juce::String& text
 class ThumbBar : public juce::Component
 {
 public:
-    enum Button { bpm, click, rec, play, undo, visuals, count };   // visuals: Kaleidobox Visuals on / off
+    enum Button { bpm, click, rec, play, undo, redo, visuals, count };   // visuals: Kaleidobox Visuals on / off
 
     struct State
     {
         double bpm = 97.0;
         bool click = false, recBusy = false, recCounting = false, playing = false, visuals = false;
         bool undoPass = false;   // looping REC: UNDO takes back the last pass
+        bool canRedo = false;    // something to REDO, and not mid-recording (else REDO is dimmed)
         bool toLooper = false;   // VISUALS' place shows TO LOOPER: what this tool made can go on a layer
         bool moves = false, movesOpen = false;   // LOOPER and SONG: VISUALS' place shows MOVES (the FX pad over the mix)
         int power = -1;          // else, on an instrument: its ON / OFF (1 on, 0 off; -1 shows VISUALS)
