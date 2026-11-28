@@ -4,6 +4,10 @@ A family of music tools that work together. Each one runs as a Mac app, as an Au
 Logic and as a VST3, and they all share one sound library. The plan is in the
 [design doc](https://claude.ai/artifact/6vyRDxa4mE4HjedWpG4XMQ).
 
+## Roadmap
+
+The authoritative product and development specification is [docs/ROADMAP.md](docs/ROADMAP.md). It is updated in place as work is completed. A description of every tool as built is in [docs/KALEIDOBOX_TOOLS_ANALYSIS.md](docs/KALEIDOBOX_TOOLS_ANALYSIS.md).
+
 ## Tools
 
 ### Sample Editor
