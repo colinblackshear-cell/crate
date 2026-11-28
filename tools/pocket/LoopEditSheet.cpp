@@ -46,7 +46,7 @@ void boxTitle (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
 LoopEditSheet::LoopEditSheet (LoopsEngine& l) : loops (l)
 {
     for (auto* b : { &done, &tabShape, &tabFx, &setIn, &setOut, &hear, &trimButton, &swingButton, &half50, &full100, &halfButton, &doubleButton,
-                     &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &fullBoard })
+                     &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &fullBoard, &notesButton })
         addAndMakeVisible (*b);
     for (auto* b : { &tabWarp, &warpSnap, &warpUndo, &hitsMinus, &hitsPlus, &pitchMinus, &pitchPlus, &fineMinus, &finePlus, &formantMinus, &formantPlus,
                      &originalButton, &printButton, &resetButton })
@@ -71,6 +71,8 @@ LoopEditSheet::LoopEditSheet (LoopsEngine& l) : loops (l)
     for (auto* b : { &halfButton, &doubleButton, &reverseButton, &undo, &recMoves, &clearMoves, &undoFx, &trimButton, &fullBoard })
         b->setFontHeight (16.0f);
     fullBoard.onClick = [this] { if (onFullBoard) onFullBoard(); };
+    notesButton.setFontHeight (13.5f);
+    notesButton.onClick = [this] { if (! busy() && onNotes) onNotes(); };
 
     done.onClick = [this] { if (onDone) onDone(); };
     tabShape.onClick = [this] { showPage (shapePage); };
@@ -206,6 +208,12 @@ bool LoopEditSheet::hasPart() const
 {
     auto t = current >= 0 ? loops.takeOf (current) : nullptr;
     return t != nullptr && t->part != nullptr;
+}
+
+bool LoopEditSheet::hasNotes() const
+{
+    auto t = current >= 0 ? loops.takeOf (current) : nullptr;
+    return t != nullptr && t->part != nullptr && t->part->kind == pocket::NotePart::synth;
 }
 
 bool LoopEditSheet::markersMoved() const
@@ -442,6 +450,7 @@ void LoopEditSheet::layout()
         b->setVisible (shape);
     for (auto* b : { &swingButton, &half50, &full100 })
         b->setVisible (shape && hasPart());
+    notesButton.setVisible (shape && hasNotes());
     for (auto* b : { &recMoves, &clearMoves, &undoFx, &fullBoard })
         b->setVisible (fx);
     for (auto* b : { &warpSnap, &warpUndo, &hitsMinus, &hitsPlus, &pitchMinus, &pitchPlus, &fineMinus, &finePlus, &formantMinus, &formantPlus,
@@ -488,6 +497,7 @@ void LoopEditSheet::layout()
         if (hasPart())
         {
             quantBox = { 16, y, inner, 82 };
+            notesButton.setBounds (juce::Rectangle<float> (16 + inner - 8 - 104, y + 3, 104, 26).toNearestInt());
             const float qy = y + 30, cw = (inner - 16 - 5 * 5 - 10) / 6.0f;
             float qx = 24;
             for (auto& b : grids)
@@ -816,7 +826,7 @@ void LoopEditSheet::paint (juce::Graphics& g)
             if (take != nullptr && take->part != nullptr)
                 rest << take->part->describe();
             rest << (take != nullptr && take->quant.grid > 0 ? U8(" \xc2\xb7 tap the lit grid for as played") : U8(" \xc2\xb7 as played now"));
-            boxTitle (g, qb.reduced (10, 0).withHeight (28).translated (0, 1), "QUANTIZE", rest);
+            boxTitle (g, qb.reduced (10, 0).withHeight (28).translated (0, 1).withTrimmedRight (hasNotes() ? 110.0f : 0.0f), "QUANTIZE", rest);
         }
         if (busy())
         {

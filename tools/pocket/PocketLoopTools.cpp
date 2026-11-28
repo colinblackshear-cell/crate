@@ -504,6 +504,22 @@ Edited quantizeTake (const LoopTake& t, const LayerFxState& fx, const LoopQuanti
     return e;
 }
 
+Edited notesTake (const LoopTake& t, const LayerFxState& fx, std::shared_ptr<const NotePart> part, double bpm)
+{
+    Edited e;
+    if (part == nullptr)
+        return e.error = "This layer is audio: only a layer made from notes can have its notes fixed.", e;
+    const int samples = (int) std::llround (part->lengthBeats * 60.0 / juce::jlimit (40.0, 240.0, bpm) * t.sampleRate);
+    auto out = renderPart (*part, t.quant, bpm, t.sampleRate, samples);
+    e.take = like (t, samples);
+    std::copy (out.begin(), out.end(), e.take->data.begin());
+    e.take->lengthBeats = part->lengthBeats;
+    e.take->part = part;
+    e.take->quant = t.quant;
+    e.fx = fx;
+    return e;
+}
+
 namespace
 {
 SharedTake renderWarp (const LoopTake& t, std::shared_ptr<const WarpSource> src, double bpm)

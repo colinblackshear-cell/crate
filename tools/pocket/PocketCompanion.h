@@ -55,7 +55,7 @@ public:
 
     TakeSheet();
     ~TakeSheet() override;
-    void show (int layer, const juce::String& what);   // "Synth", "My voice"...
+    void show (int layer, const juce::String& what, bool hasNotes = false);   // "Synth", "My voice"...; hasNotes: FIX NOTES
     int layer() const { return shownLayer; }
     void setVibe (int v) { vibe = v; refresh(); }
     int currentVibe() const { return vibe; }
@@ -64,7 +64,7 @@ public:
     static const char* vibeName (int v);
 
     std::function<void (int vibe)> onVibe;
-    std::function<void()> onKeep, onTryAgain, onMakePad, onMoreEffects;
+    std::function<void()> onKeep, onTryAgain, onMakePad, onMoreEffects, onFixNotes;
 
     int preferredHeight() const { return 440; }
     void paint (juce::Graphics&) override;
@@ -73,8 +73,9 @@ public:
 private:
     void refresh();
     int shownLayer = -1, vibe = none;
+    bool notes = false;
     juce::String takeName;
-    PButton vibes[kVibes], more { U8("More effects and knobs \xe2\x80\xba"), Look::ghost }, again { "Try again" }, makePad { "Make it a pad" },
+    PButton vibes[kVibes], more { U8("More effects and knobs \xe2\x80\xba"), Look::ghost }, again { "Try again" }, makePad { "Make it a pad" }, fixNotes { "Fix notes" },
             keep { "Keep it", Look::green };
 };
 

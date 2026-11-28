@@ -119,6 +119,12 @@ public:
     void trimLayer (int layer, double fromBeat, double toBeat) { editLayer (layer, LoopEditSheet::trim, fromBeat, toBeat); }
     void fitLayer (int layer, int bars, double fromBeat, double toBeat);
     void quantizeLayer (int layer, const pocket::LoopQuantize&);
+    // FIX NOTES: a SYNTH or BASS layer rendered again from its notes as edited (one UNDO step each). One asked for while
+    // the last renders waits and runs after it (only the newest one waits). The notes of a layer, or null.
+    void setLayerNotes (int layer, const pocket::SynthPattern&);
+    std::shared_ptr<const pocket::NotePart> notesOf (int layer) const;
+    // The editor's NOTES button: the app opens FIX NOTES on the layer.
+    std::function<void (int layer)> onEditNotes;
     void setSyncJobs (bool s) { syncJobs = s; }
     bool working() const { return jobLayer >= 0; }
     void followTempo();                     // stretches layers that aren't at the song's tempo (the timer does this)
@@ -218,6 +224,7 @@ private:
     const pocket::LoopTake* jobWas = nullptr;
     double shownBpm = 0.0;
     std::optional<std::pair<int, crate::Warp::Plan>> pendingWarp;
+    std::optional<std::pair<int, pocket::SynthPattern>> pendingNotes;
     std::array<pocket::SharedTake, pocket::kLoopLayers> abWarped, abOriginal;   // ORIGINAL's two takes
     juce::uint32 bpmChangedAt = 0;
 

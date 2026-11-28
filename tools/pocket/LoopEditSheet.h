@@ -36,6 +36,7 @@ public:
     std::function<void (int bars, double fromBeat, double toBeat)> onFit;
     std::function<void (const pocket::LoopQuantize&)> onQuantize;
     std::function<void()> onUndo, onDone, onPlay, onFxChanged;
+    std::function<void()> onNotes;       // NOTES (a SYNTH or BASS layer): FIX NOTES on its notes
     std::function<void()> onFullBoard;   // FULL BOARD: the EFFECTS tool on this layer's pedalboard
     std::function<void (const juce::String&)> onToast;
     std::function<void (const crate::Warp::Plan&)> onWarp;   // the plan to render the layer by
@@ -93,6 +94,7 @@ private:
     double regionBars() const;          // what BEAT MATCH talks about, in bars at the song's tempo
     bool markersMoved() const;
     bool hasPart() const;
+    bool hasNotes() const;              // a SYNTH or BASS part (FIX NOTES can edit it)
     juce::String placeText (double beat) const;
     void startRecMoves();
     void fit (int which);               // 0 nearest, 1 smaller, 2 larger
@@ -144,6 +146,7 @@ private:
     pocket::PButton halfButton { "Half" }, doubleButton { "Double" }, reverseButton { "Reverse" }, undo { "Undo" };
     pocket::PButton recMoves { U8("\xe2\x97\x8f Rec moves"), pocket::Look::red }, clearMoves { "Clear moves" }, undoFx { "Undo" };
     pocket::PButton fullBoard { U8("Full board \xe2\x80\xba") };
+    pocket::PButton notesButton { U8("Fix notes \xe2\x80\xba"), pocket::Look::amber };
 
     pocket::PButton tabWarp { "Warp" }, warpSnap { "Snap" }, warpUndo { "Undo" }, hitsMinus { U8("\xe2\x88\x92") }, hitsPlus { "+" };
     pocket::PButton gridChips[4] { pocket::PButton ("Beat"), pocket::PButton ("1/8"), pocket::PButton ("1/16"), pocket::PButton ("1/32") };

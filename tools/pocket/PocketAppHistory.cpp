@@ -136,6 +136,7 @@ juce::String PocketApp::describeChange (const HistoryStep& a, const HistoryStep&
 
 void PocketApp::restoreStep (const HistoryStep& h)
 {
+    closeFixNotes();   // (its notes are the layer's as they were before this step)
     loadSongVar (h.song);
     chordsTool.engine().setProgressionMuted (h.chordsMuted);
     if (h.chordsMuted)
