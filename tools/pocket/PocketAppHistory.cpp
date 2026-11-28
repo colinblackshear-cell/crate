@@ -42,8 +42,18 @@ void PocketApp::historyReset()
     historyTick.startTimer (kHistoryMs);
 }
 
+bool PocketApp::canRedoNow()
+{
+    return ! historyFuture.empty() && historyCanRun();
+}
+
 void PocketApp::historyTickNow()
 {
+    if (const bool can = canRedoNow(); can != thumbCanRedo)   // REDO lights and dims at the right time (a recording starts or ends)
+    {
+        thumbCanRedo = can;
+        thumb.repaint();
+    }
     if (! historyCanRun())
     {
         historyPendingTicks = 0;   // (what a recording makes becomes one step once it lands)
@@ -77,6 +87,8 @@ void PocketApp::historyTickNow()
     historyFuture.clear();
     historyPendingSig = {};
     historyPendingTicks = 0;
+    thumbCanRedo = false;
+    thumb.repaint();
 }
 
 // Before something that changes the song in one go (REC, TO LOOPER): what's there now is a step of its own, settled or not.
@@ -97,6 +109,8 @@ void PocketApp::historyCommitNow()
             historyPast.erase (historyPast.begin());
         historyNow = std::move (now);
         historyFuture.clear();
+        thumbCanRedo = false;
+        thumb.repaint();
     }
     historyPendingSig = {};
     historyPendingTicks = 0;
@@ -200,4 +214,75 @@ void PocketApp::historyRedo()
         toast ("Redid: " + what + ".");
     else
         toastAction ("Redid: " + what + ".", "REDO", [this] { historyRedo(); });
+}
+
+// REDO on the thumb bar: after a change and UNDO it is lit and puts the change back; a new change makes it dim again.
+// Also draws the thumb bar at 393 and 375 pt wide, REDO dimmed and lit (PNGs in `folder`), and notes the button widths.
+juce::String PocketApp::runRedoChecks (juce::String& report, const juce::File& folder)
+{
+    juce::StringArray problems;
+    auto expect = [&problems] (bool ok, const juce::String& what) { if (! ok) problems.add (what); };
+    hideToast();
+    stopEverything();
+    switchIdea (ideas.create ("Redo check"));
+    showTool (Tool::drums);
+    historyTickNow();   // the starting point
+    expect (! thumb.state().canRedo, "REDO lit before anything was undone");
+
+    const auto before = captureStep().sig;
+    beats.tapStep (0);
+    historyCommitNow();
+    const auto changed = captureStep().sig;
+    expect (changed != before, "a tap on a drum step did not change the song (the check cannot go on)");
+
+    thumbPressed (ThumbBar::undo);
+    expect (captureStep().sig == before, "UNDO did not take the change back");
+    expect (thumb.state().canRedo, "REDO not lit after UNDO");
+    thumbPressed (ThumbBar::redo);
+    expect (captureStep().sig == changed, "REDO on the thumb bar did not put the change back");
+    expect (! thumb.state().canRedo, "REDO still lit with nothing left to redo");
+
+    // undo again, then a new change throws the redo away
+    thumbPressed (ThumbBar::undo);
+    expect (thumb.state().canRedo, "REDO not lit after the second UNDO");
+    beats.tapStep (5);
+    historyCommitNow();
+    expect (! thumb.state().canRedo, "a new change did not clear REDO");
+    thumbPressed (ThumbBar::redo);   // dim: it only says so
+    expect (historyFuture.empty(), "REDO with nothing to redo left a future behind");
+
+    // the bar itself: the layout and the dimmed / lit look at two phone widths
+    for (int width : { 393, 375 })
+    {
+        ThumbBar bar;
+        bar.setSize (width, thumb.getHeight() > 0 ? thumb.getHeight() : 86);
+        juce::String widths;
+        float narrowest = 1.0e9f, prevRight = -1.0f;
+        for (int b = 0; b < ThumbBar::count; ++b)
+        {
+            const auto r = bar.buttonRect (b);
+            widths << (b ? ", " : "") << juce::String (r.getWidth(), 1);
+            narrowest = juce::jmin (narrowest, r.getWidth());
+            expect (r.getX() >= prevRight, "thumb bar buttons overlap at " + juce::String (width) + " pt");
+            prevRight = r.getRight();
+        }
+        expect (prevRight <= (float) width, "thumb bar runs off the screen at " + juce::String (width) + " pt");
+        expect (narrowest >= 40.0f, "a thumb bar button is narrower than 40 pt at " + juce::String (width) + " pt");
+        report << width << " pt button widths (BPM, CLICK, REC, PLAY, UNDO, REDO, VISUALS): " << widths << "\n";
+        for (bool lit : { false, true })
+        {
+            bar.state = [lit] { ThumbBar::State s; s.canRedo = lit; return s; };
+            auto image = bar.createComponentSnapshot (bar.getLocalBounds(), true, 3.0f);
+            auto file = folder.getChildFile ("thumb-" + juce::String (width) + (lit ? "-redo-lit.png" : "-redo-dim.png"));
+            file.deleteFile();
+            if (auto out = file.createOutputStream())
+            {
+                juce::PNGImageFormat png;
+                png.writeImageToStream (image, *out);
+            }
+        }
+    }
+    stopEverything();
+    report << (problems.isEmpty() ? "REDO: lit after UNDO, puts the change back, dims after a new change\n" : "REDO: failed\n");
+    return problems.joinIntoString ("; ");
 }

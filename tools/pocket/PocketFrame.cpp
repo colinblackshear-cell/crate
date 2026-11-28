@@ -227,9 +227,9 @@ void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
 //==============================================================================
 juce::Rectangle<float> ThumbBar::buttonRect (int b) const
 {
-    // the mockup's proportions: BPM, CLICK, the big REC, PLAY, UNDO, and VISUALS at the end
+    // the mockup's proportions: BPM, CLICK, the big REC, PLAY, UNDO, REDO, and VISUALS at the end
     const float x0 = 10.0f, total = (float) getWidth() - 20.0f;
-    const float weights[count] = { 62, 60, 76, 70, 64, 50 }, gap = 6.0f;
+    const float weights[count] = { 54, 52, 68, 64, 58, 52, 50 }, gap = 6.0f;
     float sum = 0;
     for (auto w : weights)
         sum += w;
@@ -332,6 +332,17 @@ void ThumbBar::paint (juce::Graphics& g)
     auto undoR = buttonRect (undo);
     drawRaised (g, undoR, Look::cream, pressed == undo, 12.0f);
     label2 (g, undoR.withTrimmedBottom (3).translated (0, pressed == undo ? 2.0f : 0.0f), "UNDO", s.undoPass ? "LAST PASS" : "LAST STEP", col::ink, 18.0f);
+
+    // REDO: always there (the bar must not jump), dimmed with nothing to redo or while a looping REC runs
+    {
+        const bool on = s.canRedo && ! s.undoPass;
+        auto redoR = buttonRect (redo);
+        juce::Graphics::ScopedSaveState keep (g);
+        g.beginTransparencyLayer (on ? 1.0f : 0.38f);
+        drawRaised (g, redoR, Look::cream, on && pressed == redo, 12.0f);
+        label2 (g, redoR.withTrimmedBottom (3).translated (0, on && pressed == redo ? 2.0f : 0.0f), "REDO", "STEP", col::ink, 18.0f);
+        g.endTransparencyLayer();
+    }
 
     // TO LOOPER (in VISUALS' place): the looper's icon on teal, what this tool made goes on a layer.
     if (s.toLooper)
