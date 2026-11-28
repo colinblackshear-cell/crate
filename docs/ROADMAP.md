@@ -1118,6 +1118,12 @@ The transaction-safe saving, the unsaved-changes tracker, and the copy-without-d
 5. Start a new untitled idea, record one loop, force-quit, reopen: it is offered back.
 6. Check the saved project's file date after all of this: unchanged until you pressed Save.
 
+### 17.7a Findings from the code after #137 (2026-11-28)
+
+- The unsaved-changes model, and quit protection with it, is still switched off by default. Recovery is built behind the same switch. Switching all three on for everyday use is a separate, later step.
+- Recovery writes run in the background and copy only audio that changed, because today's saving runs on the screen's thread and copies every loop.
+- A recovery copy holds only what differs from the saved project, and refers to audio already in it.
+
 ### 17.8 Not in this PR
 
 The `.kbox` format. Any change to how Save works. The phone, which already saves on every change. Any later roadmap item.
@@ -1145,8 +1151,8 @@ Updated in place as work lands. A blank cell means "not yet".
 
 | Item | Implemented | Automatically tested | Hardware validated | Musically accepted |
 |---|---|---|---|---|
-| 0.1 Quit protection (PR #137) | Open PR, not merged | Yes, on the PR | Yes, in an isolated test app on the owner's Mac, including real recording and overdub | |
-| 0.2 Autosave and crash recovery | Scope to be approved after 0.1 | | | |
+| 0.1 Quit protection (PR #137) | Merged 2026-11-28 (main 5be76c1). **Switched off by default** with the unsaved-changes model. | Yes | Yes, in an isolated test app on the owner's Mac, including real recording and overdub | Not yet: needs the model switched on for everyday use |
+| 0.2 Autosave and crash recovery | Scope presented 2026-11-28, awaiting approval | | | |
 
 Features merged before this roadmap are listed with their hands-on status in section 13 and in `KALEIDOBOX_TOOLS_ANALYSIS.md` (section 11).
 
