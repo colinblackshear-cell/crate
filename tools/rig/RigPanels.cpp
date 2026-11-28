@@ -460,7 +460,7 @@ Dock::Dock()
     }
     up.setTooltip ("Tempo up (hold Shift for a tenth).");
     down.setTooltip ("Tempo down (hold Shift for a tenth).");
-    for (auto* b : { &click, &countIn, &length, &undo, &toLooper, &recMoves, &moves, &quantize })
+    for (auto* b : { &click, &countIn, &length, &undo, &redo, &toLooper, &recMoves, &moves, &quantize })
     {
         b->fontSize = 17.0f;
         b->subSize = 10.5f;
@@ -480,9 +480,14 @@ Dock::Dock()
                      "any notes still sounding.");
     addAndMakeVisible (play);
     undo.text = "Undo";
-    undo.sub = "last take";
-    undo.setTooltip ("Takes back the last take: clears the loop it recorded (or calls off one that hasn't started). With no take to undo, "
-                     "the last Clear or overdub (Cmd+Z).");
+    undo.sub = "nothing yet";
+    undo.setTooltip ("Takes back the last thing you did (Cmd+Z): a take (its loop is cleared), an overdub, a Clear, To looper, a song edit, "
+                     "a quantize... Again goes back another step. A take still recording is thrown away first. The words under it say "
+                     "what it takes back.");
+    redo.text = "Redo";
+    redo.sub = {};
+    redo.setEnabled (false);
+    redo.setTooltip ("Does again what Undo took back (Cmd+Shift+Z). A new change clears it.");
     toLooper.sub = "the part";
     toLooper.setTooltip ("To looper: the picked instrument's part (the MPC's beat, the drum machine's or the bass's pattern, the synth, "
                          "the sampler, the drone) goes onto the next empty loop layer from the next bar, as long as the part. Once it "
@@ -550,7 +555,7 @@ void Dock::paint (juce::Graphics& g)
     if (moves.isVisible())
     {
         // A line between the take's buttons and the rest.
-        const int x = undo.getRight() + 9;
+        const int x = redo.getRight() + 9;
         g.fillRect (x, 18, 2, getHeight() - 32);
     }
 }
@@ -560,10 +565,10 @@ void Dock::resized()
     auto r = getLocalBounds().reduced (22, 0).withTrimmedTop (2);
     const int h = juce::jmin (62, r.getHeight() - 20);
     auto centreY = [&] (juce::Rectangle<int> b, int height) { return b.withSizeKeepingCentre (b.getWidth(), height); };
-    // Narrow windows drop Automation, then shrink the boxes.
-    const bool roomy = r.getWidth() >= 1180;
-    const int box = roomy ? 104 : 88;
-    tempo.setBounds (centreY (r.removeFromLeft (roomy ? 118 : 100), h));
+    // Narrow windows drop Automation, then shrink the boxes (and Rec, in the narrowest).
+    const bool roomy = r.getWidth() >= 1180, tight = r.getWidth() < 1100;
+    const int box = roomy ? 104 : tight ? 78 : 88;
+    tempo.setBounds (centreY (r.removeFromLeft (roomy ? 118 : tight ? 92 : 100), h));
     r.removeFromLeft (6);
     {
         auto col = centreY (r.removeFromLeft (38), h);
@@ -580,11 +585,13 @@ void Dock::resized()
             b->setBounds (centreY (r.removeFromLeft (box), h));
         }
     r.removeFromLeft (16);
-    rec.setBounds (centreY (r.removeFromLeft (roomy ? 260 : 220), h + 12));
+    rec.setBounds (centreY (r.removeFromLeft (roomy ? 260 : tight ? 180 : 220), h + 12));
     r.removeFromLeft (16);
     play.setBounds (centreY (r.removeFromLeft (box - 14), h));
     r.removeFromLeft (8);
     undo.setBounds (centreY (r.removeFromLeft (box), h));
+    r.removeFromLeft (6);
+    redo.setBounds (centreY (r.removeFromLeft (roomy ? box - 20 : box - 26), h));
     if (toLooper.isVisible())
     {
         r.removeFromLeft (8);

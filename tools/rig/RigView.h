@@ -3,6 +3,8 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
+#include "RigHistory.h"
+#include "RigLoopHistory.h"
 #include "StripFxPanel.h"
 #include "core/ui/Theme.h"
 #include "core/ui/ParamControls.h"
@@ -158,9 +160,17 @@ public:
     static bool isVoiceTrack (int track);
     int getRecCountIn() const { return recCountIn; }
     int getRecLength() const { return recLength; }
-    // Undo last take: throws away the take recording, or the last one recorded (its loop is
-    // cleared); with no take, the last Clear or overdub (Cmd+Z). False if nothing was undone.
+    // Undo (the bottom bar's, Cmd+Z): a take recording (or waiting to) is thrown away first, and
+    // To looper on its way called off; otherwise Undo's history goes back a step. False if
+    // nothing was undone.
     bool undoLastTake();
+    // Undo and Redo (RigHistory): one history for the whole Mac, as on the phone, up to 64 steps.
+    // Each says what it did on the status line; false when there was nothing to do.
+    bool historyUndo();
+    bool historyRedo();
+    RigHistory& getHistory() { return history; }
+    // The window's timer's part (the tests call it): the takes and overdubs that have landed.
+    void tickHistory();
     // Make a beat, as on the phone: a coach card over the drum machine's grid (RigLesson.h). A song
     // with something in it asks to save first and the lesson starts a new one.
     void startLesson();
@@ -393,7 +403,7 @@ public:
     void closeMixerPanel();
     // Opens (or closes) the how-to guide, on the current screen's guide.
     void showHelp (bool show);
-    // Cmd+Z: the last Clear on Play, or the last overdub on a loop. False if nothing to undo.
+    // Cmd+Z: the bottom bar's Undo (Bars view keeps its own). False if nothing to undo.
     bool undoLast();
     HelpPanel* getHelp() const { return helpPanel.get(); }
 private:
@@ -408,6 +418,20 @@ private:
 
     RigEngine& engine;
     juce::AudioDeviceManager* devices;
+    // Undo and Redo: the history, and the looper's part of it (it watches the layers).
+    RigHistory history;
+    std::unique_ptr<RigLoopHistory> loopHistory;
+    void wireHistory();
+    void forgetHistory();      // a new show: nothing from before can be taken back into it
+    void catchUpHistory();     // changes not yet seen (a take just landed, a song edit)
+    bool undoThroughHistory (const juce::String& site);   // a screen's own Undo, while its step is the newest
+    void updateUndoButtons();
+    // The chords (pads, key, key map): a change is seen by comparing them (RigChords' saved
+    // state, less where the live key is) and becomes a step.
+    juce::ValueTree chordsKept;
+    void tickChordsHistory();
+    bool updatingUndo = false;
+    int undoButtonsTick = 0;
     float micMeter = 0.0f;
     // First, before any tool is made: the tools inside take the panel's warm wells.
     struct WarmWells { WarmWells() { crate::Theme::useWarmWells(); } } warmWells;

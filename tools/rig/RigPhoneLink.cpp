@@ -366,7 +366,7 @@ void RigPhoneLink::handle (const Message& m, std::function<void (const Message&)
         {
             if (juce::isPositiveAndBelow (remoteLayer, RigLooper::kLayers) && looper.getState (remoteLayer) != RigLooper::State::empty)
             {
-                looper.clear (remoteLayer);
+                engine.clearLoop (remoteLayer);
                 tell ("Loop " + juce::String (remoteLayer + 1) + " is cleared.");
                 remoteLayer = -1;
                 return;

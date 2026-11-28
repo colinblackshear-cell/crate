@@ -76,7 +76,14 @@ SamplerScreen::SamplerScreen (RigEngine& e, EditorView& full)
     openButton.setTooltip ("Open a sound file (or drop one here).");
     openButton.onClick = [this] { editor.chooseSoundFile(); };
     clearButton.setTooltip ("Empties the Sampler for a new sound (the pads keep theirs). Then it says Undo clear, to bring it back.");
-    clearButton.onClick = [this] { canUndoClear() ? editor.runEdit ("undo") : pressClear(); updateClearButton(); };
+    clearButton.onClick = [this]
+    {
+        if (! canUndoClear())
+            pressClear();
+        else if (undoThrough == nullptr || ! undoThrough ("sampler clear"))
+            editor.runEdit ("undo");
+        updateClearButton();
+    };
     editorButton.setTooltip ("The full sample editor: record, trim, fades, effects, keys.");
     editorButton.onClick = [this] { setEditMode (true); };
 
@@ -526,12 +533,20 @@ void SamplerScreen::pressRemovePad()
             onSay ("Pad " + padLabel (pad) + " is already empty.");
         return;
     }
+    const KitPads before = project.currentBank().pads;
     removedPad = slot;
     removedPadIndex = pad;
     removedPadKit = project.getCurrentIndex();
     engine.getMpc().releasePad (pad);
     slot = {};
     project.changed();
+    pushPadsStep ("sampler remove", "remove pad " + padLabel (pad), project.getCurrentIndex(), before, {}, {}, {},
+                  [this, removed = removedPad, pad, kit = removedPadKit]
+                  {
+                      removedPad = removed;
+                      removedPadIndex = pad;
+                      removedPadKit = kit;
+                  });
     updateKnobs();
     updateRemoveButton();
     repaint();
@@ -549,6 +564,8 @@ bool SamplerScreen::canUndoRemovePad() const
 void SamplerScreen::pressUndoRemovePad()
 {
     if (! canUndoRemovePad())
+        return;
+    if (undoThrough != nullptr && undoThrough ("sampler remove"))
         return;
     auto& project = engine.getMpc().getProject();
     project.currentBank().pads[(size_t) removedPadIndex] = removedPad;
@@ -860,6 +877,7 @@ void SamplerScreen::pressClear()
     const auto name = doc.getName().isNotEmpty() ? doc.getName() : juce::String ("the sound");
     editor.clearSound();
     selectedSlice = 0;
+    pushClearStep();
     if (onSay)
         onSay ("Cleared " + name + " from the Sampler. The pads keep their sounds; Undo clear brings it back.");
     refresh();
@@ -1010,6 +1028,8 @@ bool SamplerScreen::loadSetFile (const juce::File& folder)
     }
     auto& project = engine.getMpc().getProject();
     const int bank = engine.getMpc().padBankOnScreen.load();
+    const int kit = project.getCurrentIndex();
+    const KitPads before = project.currentBank().pads;
     setUndoKit = -1;
     if (! set->wholeKit)
     {
@@ -1021,6 +1041,8 @@ bool SamplerScreen::loadSetFile (const juce::File& folder)
         setUndoName = set->name;
     }
     const auto said = engine.loadSet (*set, bank);
+    if (! set->wholeKit)
+        pushPadsStep ("sampler set", "load " + set->name, kit, before);
     if (set->wholeKit)
         pressBank (0);
     refresh();
@@ -1037,6 +1059,8 @@ bool SamplerScreen::canUndoLoadSet() const
 void SamplerScreen::pressUndoLoadSet()
 {
     if (! canUndoLoadSet())
+        return;
+    if (undoThrough != nullptr && undoThrough ("sampler set"))
         return;
     auto& kit = engine.getMpc().getProject().getBanks()[(size_t) setUndoKit];
     for (int p = 0; p < kPadsPerBank; ++p)
@@ -1337,7 +1361,14 @@ void SamplerScreen::makeSixteenPads()
     if (mpcView == nullptr || type == levels::off)
         return;
     const auto name = mpc.getProject().currentBank().pads[(size_t) juce::jlimit (0, mpc::kPadCount - 1, mpc.levelsPad.load())].name;
+    const int kit = mpc.getProject().getCurrentIndex();
+    const KitPads before = mpc.getProject().currentBank().pads;
     mpcView->makeSixteenPads();
+    if (! samePads (before, mpc.getProject().currentBank().pads))
+        pushPadsStep ("sampler 16", "Make 16 pads", kit, before,
+                      [this] { engine.getMpc().undoBankEdit(); },
+                      [this] { engine.getMpc().redoBankEdit(); },
+                      [this] (bool undoing) { return undoing ? engine.getMpc().canUndoBankEdit() : engine.getMpc().canRedoBankEdit(); });
     updatePadTools();
     if (onSay)
         onSay ("Made 16 pads from " + name + " (" + levels::typeName (type) + "): each pad is its own pad now, with its step's "
@@ -1350,11 +1381,118 @@ void SamplerScreen::undoMakeSixteenPads()
     auto& mpc = engine.getMpc();
     if (! mpc.canUndoBankEdit())
         return;
+    if (undoThrough != nullptr && undoThrough ("sampler 16"))
+        return;
     mpc.undoBankEdit();
     updatePadTools();
     if (onSay)
         onSay ("Undone: the 16 pads are back as they were.");
     repaint();
+}
+
+void SamplerScreen::putKitPads (int kit, const KitPads& pads)
+{
+    auto& mpc = engine.getMpc();
+    auto& banks = mpc.getProject().getBanks();
+    if (! juce::isPositiveAndBelow (kit, (int) banks.size()))
+        return;
+    auto& now = banks[(size_t) kit].pads;
+    for (int p = 0; p < mpc::kPadCount; ++p)
+    {
+        if (now[(size_t) p].audio != pads[(size_t) p].audio && kit == mpc.getProject().getCurrentIndex())
+            mpc.releasePad (p);
+        now[(size_t) p] = pads[(size_t) p];
+    }
+    mpc.getProject().changed();
+}
+
+bool SamplerScreen::samePads (const KitPads& a, const KitPads& b)
+{
+    for (size_t p = 0; p < a.size(); ++p)
+    {
+        const auto& x = a[p];
+        const auto& y = b[p];
+        if (x.audio != y.audio || x.name != y.name || x.volume != y.volume || x.pan != y.pan || x.tune != y.tune || x.mode != y.mode
+            || x.mono != y.mono || x.reverse != y.reverse || x.normalize != y.normalize || x.muteGroup != y.muteGroup
+            || x.beats != y.beats || x.playNormal != y.playNormal || x.cutoff != y.cutoff || x.resonance != y.resonance
+            || x.attack != y.attack || x.decay != y.decay || x.delaySend != y.delaySend || x.reverbSend != y.reverbSend)
+            return false;
+    }
+    return true;
+}
+
+void SamplerScreen::pushPadsStep (const juce::String& site, const juce::String& what, int kit, const KitPads& before,
+                                  std::function<void()> undoToo, std::function<void()> redoToo,
+                                  std::function<bool (bool)> alsoValid, std::function<void()> redoneToo)
+{
+    auto& banks = engine.getMpc().getProject().getBanks();
+    if (history == nullptr || ! juce::isPositiveAndBelow (kit, (int) banks.size()))
+        return;
+    auto was = std::make_shared<KitPads> (before);
+    auto now = std::make_shared<KitPads> (banks[(size_t) kit].pads);
+    auto undone = std::make_shared<bool> (false);
+    RigHistory::Step step;
+    step.what = what;
+    step.site = site;
+    step.stillValid = [this, kit, was, now, undone, alsoValid]
+    {
+        auto& kits = engine.getMpc().getProject().getBanks();
+        if (! juce::isPositiveAndBelow (kit, (int) kits.size()) || ! samePads (kits[(size_t) kit].pads, *undone ? *was : *now))
+            return false;
+        return alsoValid == nullptr || alsoValid (! *undone);
+    };
+    auto settle = [this]
+    {
+        // The screen's own one-step undos are spent: what they'd put back is the history's now.
+        removedPad = {};
+        removedPadIndex = removedPadKit = -1;
+        setUndoKit = -1;
+        refresh();
+    };
+    step.undo = [this, kit, was, undone, undoToo, settle]
+    {
+        if (undoToo != nullptr)
+            undoToo();
+        else
+            putKitPads (kit, *was);
+        *undone = true;
+        settle();
+    };
+    step.redo = [this, kit, now, undone, redoToo, settle, redoneToo]
+    {
+        if (redoToo != nullptr)
+            redoToo();
+        else
+            putKitPads (kit, *now);
+        *undone = false;
+        settle();
+        if (redoneToo != nullptr)
+        {
+            redoneToo();   // (the screen's own undo for it, as the change left it)
+            refresh();
+        }
+    };
+    history->push (std::move (step));
+}
+
+void SamplerScreen::pushClearStep()
+{
+    if (history == nullptr)
+        return;
+    RigHistory::Step step;
+    step.what = "clear the Sampler";
+    step.site = "sampler clear";
+    auto undone = std::make_shared<bool> (false);
+    step.stillValid = [this, undone]
+    {
+        auto& doc = engine.getSampler().getDocument();
+        if (! *undone)
+            return canUndoClear();
+        return doc.hasAudio() && doc.canRedo() && doc.getRedoName() == EditorView::kClearAction;
+    };
+    step.undo = [this, undone] { editor.runEdit ("undo"); *undone = true; selectedSlice = 0; refresh(); };
+    step.redo = [this, undone] { editor.runEdit ("redo"); *undone = false; selectedSlice = 0; refresh(); };
+    history->push (std::move (step));
 }
 
 void SamplerScreen::updatePadTools()

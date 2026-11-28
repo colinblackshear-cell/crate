@@ -1775,23 +1775,19 @@ bool SongView::undo()
         return true;
     }
     // A change not yet seen by the timer counts too.
-    if (! sameAsKept())
-    {
-        undoStack.push_back (kept);
-        kept = { timeline().getBlocks(), timeline().getMarkers() };
-    }
+    noticeEdits();
+    // Its step the newest: Undo and Redo know it's taken back.
+    if (undoThrough != nullptr && undoThrough ("song"))
+        return true;
     if (undoStack.empty())
     {
         say ("Nothing to undo on the song.");
         return false;
     }
-    timeline().getBlocks() = undoStack.back().first;
-    timeline().getMarkers() = undoStack.back().second;
+    const auto back = undoStack.back();
     undoStack.pop_back();
-    timeline().changed();
-    kept = { timeline().getBlocks(), timeline().getMarkers() };
-    select (-1, -1);
-    edited();
+    putSnapshot (back);
+    historySite.touch();   // (a step that isn't the newest can't bring this back now)
     say ("Undone." + juce::String (undoStack.empty() ? "" : " Again takes back the change before."));
     return true;
 }
@@ -1800,6 +1796,49 @@ void SongView::forgetUndo()
 {
     undoStack.clear();
     kept = { timeline().getBlocks(), timeline().getMarkers() };
+    historySite.touch();
+}
+
+void SongView::noticeEdits()
+{
+    if (! sameAsKept())
+        keepEdit();
+}
+
+void SongView::putSnapshot (const Snapshot& snap)
+{
+    timeline().getBlocks() = snap.first;
+    timeline().getMarkers() = snap.second;
+    timeline().changed();
+    kept = snap;
+    select (-1, -1);
+    edited();
+}
+
+void SongView::keepEdit()
+{
+    undoStack.push_back (kept);
+    if (undoStack.size() > 100)
+        undoStack.erase (undoStack.begin());
+    auto was = std::make_shared<Snapshot> (kept);
+    kept = { timeline().getBlocks(), timeline().getMarkers() };
+    if (history == nullptr || history->isBusy())
+        return;
+    auto now = std::make_shared<Snapshot> (kept);
+    const int before = historySite.token;
+    historySite.touch();
+    history->push (RigHistory::siteStep (historySite, "song", "a change to the song", before,
+        [this, was]
+        {
+            if (! undoStack.empty())
+                undoStack.pop_back();
+            putSnapshot (*was);
+        },
+        [this, was, now]
+        {
+            undoStack.push_back (*was);
+            putSnapshot (*now);
+        }));
 }
 
 void SongView::showLane (int lane)
@@ -1891,6 +1930,7 @@ void SongView::timerCallback()
         // are how a run comes undone.
         lastHash = hash;
         kept = { timeline().getBlocks(), timeline().getMarkers() };
+        historySite.touch();   // nor is a step put back over it
         keptTake = lastTake;
         wasLive = liveNow;
         edited();
@@ -1901,12 +1941,7 @@ void SongView::timerCallback()
         lastHash = hash;
         // The song changed (here, in Bars view, or from another screen): what it was can come back.
         if (! sameAsKept())
-        {
-            undoStack.push_back (kept);
-            if (undoStack.size() > 100)
-                undoStack.erase (undoStack.begin());
-            kept = { timeline().getBlocks(), timeline().getMarkers() };
-        }
+            keepEdit();
         edited();
     }
     else if (engine.getTransport().isPlaying() || isMouseOverOrDragging (true))

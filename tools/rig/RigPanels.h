@@ -89,7 +89,8 @@ private:
 // Along the bottom of every screen, as the phone's thumb bar: the tempo (click to tap, drag or
 // scroll to change, the arrows for a tenth with Shift), the click, the count-in and length for
 // the next take, one big Rec (its arrow: where Rec lands, and the rest of the record options),
-// Play, Undo last take, To looper, then Rec moves (and Automation) and Quantize.
+// Play, Undo and Redo (the history: a take, a Clear, a song edit...), To looper, then Rec moves
+// (and Automation) and Quantize.
 class Dock : public juce::Component
 {
 public:
@@ -133,7 +134,7 @@ public:
     PanelButton up { "+" }, down { juce::String::fromUTF8 ("\xe2\x88\x92") };
     PanelButton click { "Click" }, countIn { "Count-in" }, length { "Length" };
     RecButton rec;
-    PanelButton play { "Play" }, undo { "Undo" };
+    PanelButton play { "Play" }, undo { "Undo" }, redo { "Redo" };
     // TO LOOPER, as on the phone: the picked instrument's part onto the next empty loop layer, then
     // that instrument off so it doesn't play twice (hidden for tracks that have no part to send).
     PanelButton toLooper { "To looper" };

@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
+#include "RigHistory.h"
 #include "StepTools.h"
 #include "Vintage.h"
 
@@ -55,6 +56,10 @@ public:
     // change that pattern again). Cmd+Z does it too. True if there was one to take back.
     bool undoClear();
     bool canUndoClear() const { return clearUndo.track >= 0 && clearUndo.track == track; }
+    // Undo and Redo (RigHistory): a Clear or Mutate here is a step there (the window sets
+    // these). The Clear button's own Undo goes through it while its step is the newest.
+    RigHistory* history = nullptr;
+    std::function<bool (const juce::String& site)> undoThrough;
     void pressPattern (int index);
     void pressPart (int part);
     void pressSolo (int track);
@@ -147,6 +152,12 @@ private:
         crate::bass::Pattern bass;
         crate::synthtool::Rhythm synth;
     } clearUndo;
+    // The same track and pattern as `like`, as it is now; putting one back; and whether two are the same.
+    ClearUndo captureLike (const ClearUndo& like) const;
+    void applyTrackState (const ClearUndo&);
+    static bool sameTrackState (const ClearUndo&, const ClearUndo&);
+    // A step for a change from `before` to what the track holds now.
+    void pushPlayStep (const juce::String& site, const juce::String& what, const ClearUndo& before);
 
     // Pattern life (crate::life) on the step grids: what a click on a lit step changes (the hit
     // itself, its chance, its condition or its nudge), Mutate, and each row's menu (its own

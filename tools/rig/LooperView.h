@@ -71,6 +71,9 @@ public:
 
     // Status messages for the Rig's message line.
     std::function<void (const juce::String&)> onSay;
+    // Undo's history (RigHistory): Undo here goes through it while its step there is the newest
+    // one for this button (the window sets it; true when it did).
+    std::function<bool (const juce::String& site)> undoThrough;
 
     // The top row, as clicks do (the tests use these).
     void pressRecNext();

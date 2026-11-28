@@ -448,7 +448,7 @@ private:
 
     void clearLayer()
     {
-        engine.getLooper().clear (index);
+        engine.clearLoop (index);
         juce::Timer::callAfterDelay (100, [safe = juce::Component::SafePointer<Row> (this)]
                                      { if (safe != nullptr) safe->engine.getLooper().makeRoom (safe->index); });
     }
@@ -631,7 +631,7 @@ LooperView::LooperView (RigEngine& e) : engine (e)
         if (! juce::isPositiveAndBelow (selected, RigLooper::kLayers) || looper.getState (selected) == RigLooper::State::empty)
             return say ("Pick a layer with a loop first (click its row), then Clear empties it.");
         const int layer = selected;
-        looper.clear (layer);
+        engine.clearLoop (layer);
         juce::Timer::callAfterDelay (100, [safe = juce::Component::SafePointer<LooperView> (this), layer]
                                      { if (safe != nullptr) safe->engine.getLooper().makeRoom (layer); });
         say ("Cleared layer " + juce::String (layer + 1) + ". Click its number to record it again from the next bar.");
@@ -922,7 +922,15 @@ void LooperView::pressOverdub()
 
 void LooperView::pressUndo()
 {
-    // The last overdub on the picked layer, or else what Clear all took away.
+    // The last overdub on the picked layer, or else what Clear all took away (through Undo's
+    // history when its step there is the newest).
+    if (undoThrough != nullptr
+        && ((selected >= 0 && engine.getLooper().canUndo (selected) && undoThrough ("loop " + juce::String (selected + 1)))
+            || (engine.canUndoClearAllLoops() && undoThrough ("loops"))))
+    {
+        refresh();
+        return;
+    }
     if (selected >= 0 && engine.getLooper().canUndo (selected) && engine.getLooper().getState (selected) == RigLooper::State::playing)
         engine.getLooper().undo (selected);
     else if (engine.canUndoClearAllLoops())

@@ -70,6 +70,7 @@ target_sources(CrateTests PRIVATE
     RigLevelTests.cpp
     RigControllersTests.cpp
     RigClearTests.cpp
+    RigHistoryTests.cpp
     RigFactoryKitTests.cpp
     RigLessonTests.cpp
     RigPhoneLinkTests.cpp
