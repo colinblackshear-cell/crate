@@ -47,6 +47,15 @@ public:
         // The engine has the new show: the window follows it (refresh, undo, windows...).
         enum class Replaced { blank, opened, imported };
         virtual void replaced (Replaced) = 0;
+        // Around a document save (Save, Save As), for the app's launch record (riglaunch).
+        virtual void documentSaving (const juce::File&) {}
+        virtual void documentSaved (const juce::File&, const rigshow::Result&) {}
+        // Saving over the show's own file asks first (the Save As window, which asks before
+        // replacing it): the file isn't as Kaleidobox last saved or opened it.
+        virtual bool confirmBeforeSaving (const juce::File&) const { return false; }
+        // A file that's never the show you're on (the Last show, with the dirty model on): opened
+        // untitled, never saved to.
+        virtual bool reserved (const juce::File&) const { return false; }
     };
 
     // What a replacement did, for the entry point's own next step.
@@ -56,6 +65,7 @@ public:
         juce::String said;    // Import's report
         juce::File file;      // the show opened
         bool cleared = false; // the Rig was made a new song
+        bool discarded = false; // Don't Save was the answer
     };
     using Then = std::function<void (const Outcome&)>;
 
@@ -82,6 +92,10 @@ public:
     // Cmd+S and Save show: to the show's file, or Save As. Save show as...: always Save As.
     bool save();
     bool saveAs();
+    // Quitting (the app's Quit and close button, with the dirty model on): the same question
+    // (Save / Don't Save / Cancel), nothing replaced; `then` runs when it may quit now (a blank
+    // untitled show, a named one checked clean, saved and checked again, or Don't Save).
+    bool quit (Then);
 
     bool isBusy() const { return current != nullptr; }
     // The show was replaced another way: what's under way is dropped (its answers are stale).
@@ -93,6 +107,7 @@ public:
     static Wording startWords (const juce::String& what);
     static Wording openWords (const juce::File& file);
     static Wording importWords();
+    static Wording quitWords();
     // What a document save says ("Saved My song: the show and 2 loops, in ...").
     static juce::String savedMessage (RigEngine&, const juce::File&, const rigshow::Result&);
     // The folder for Import's window.
@@ -101,7 +116,7 @@ public:
     struct Stats
     {
         int questions = 0, saves = 0, failedSaves = 0, saveAsCancelled = 0, replacements = 0;
-        int ignored = 0, stale = 0, unresolved = 0, roundsExceeded = 0;
+        int ignored = 0, stale = 0, unresolved = 0, roundsExceeded = 0, quits = 0;
     };
     const Stats& getStats() const { return stats; }
 
@@ -116,7 +131,7 @@ public:
     static inline std::atomic<int> requestsForTests { 0 };
 
 private:
-    enum class Kind { blank, open, import, saveOnly };
+    enum class Kind { blank, open, import, saveOnly, quit };
     struct Request
     {
         Kind kind = Kind::blank;
@@ -152,7 +167,7 @@ private:
     void answered (rigdirty::Choice);
     void saveFirst();
     void saveTo (const juce::File&);
-    void replaceNow();
+    void replaceNow (bool discarding = false);
     juce::String showName() const;
 
     JUCE_DECLARE_NON_COPYABLE (RigDocFlow)

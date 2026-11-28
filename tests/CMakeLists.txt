@@ -25,6 +25,7 @@ target_sources(CrateTests PRIVATE
     RigDirtyLoopLabTests.cpp
     RigDocFlowTests.cpp
     RigDocFlowHostedTests.cpp
+    RigQuitFlowTests.cpp
     LoopShapeTests.cpp
     WarpTests.cpp
     IdeaTempoTests.cpp

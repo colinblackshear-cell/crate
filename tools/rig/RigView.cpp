@@ -23,6 +23,8 @@
 #include "GuideView.h"
 #include "RigIdeas.h"
 #include "RigTitle.h"
+#include "RigLaunch.h"
+#include "RigLastShow.h"
 #include "core/Spark.h"
 #include "core/IdeaTempo.h"
 #include "core/ui/LanePeaks.h"
@@ -114,6 +116,8 @@ struct RigView::DocHost final : RigDocFlow::Host
     void replaced (Replaced kind) override
     {
         view.catchLayer = -1;   // (a Catch an idea take under way was the show before's)
+        view.showReplaced (kind != Replaced::opened || view.currentShow != juce::File());
+        view.noteDocument();
         view.refresh();
         if (view.song != nullptr)
             view.song->forgetUndo();
@@ -125,6 +129,24 @@ struct RigView::DocHost final : RigDocFlow::Host
             view.takeLayer = -1;
             view.lastTake.fill (-1);
         }
+    }
+    void documentSaving (const juce::File& f) override
+    {
+        if (view.documentModel() && view.launchTracker != nullptr)
+            view.launchTracker->saving (f);
+    }
+    void documentSaved (const juce::File& f, const rigshow::Result& result) override
+    {
+        if (view.documentModel() && view.launchTracker != nullptr)
+            view.launchTracker->saved (f, result);
+    }
+    bool confirmBeforeSaving (const juce::File& f) const override
+    {
+        return view.documentModel() && view.launchTracker != nullptr && view.launchTracker->confirmBeforeSaving (f);
+    }
+    bool reserved (const juce::File& f) const override
+    {
+        return view.documentModel() && riglastshow::isLastShow (f);
     }
     RigView& view;
 };
@@ -144,6 +166,80 @@ bool RigView::hostedDocuments() const
 void RigView::setAskerForTests (rigdirty::Asker* a)
 {
     docFlow->setAsker (a != nullptr ? *a : *asker);
+}
+
+//==============================================================================
+// CP4: the quit question, the launch record and the unsaved dot (the app, its dirty model on).
+bool RigView::documentModel() const
+{
+    return ! hostedDocuments() && riglaunch::active (engine);
+}
+
+bool RigView::requestQuit (std::function<void()> quitNow)
+{
+    if (! documentModel())
+        return false;
+    return docFlow->quit ([this, quitNow] (const RigDocFlow::Outcome&)
+    {
+        // The decision first (what to open next time, and a clean quit), then the app quits.
+        if (launchTracker != nullptr)
+            launchTracker->quitting (currentShow);
+        if (quitNow)
+            quitNow();
+    });
+}
+
+void RigView::noteDocument()
+{
+    if (! documentModel() || launchTracker == nullptr)
+        return;
+    if (currentShow == juce::File())
+        launchTracker->untitled();
+    else
+        launchTracker->opened (currentShow);
+}
+
+void RigView::showReplaced (bool fromBlank)
+{
+    confirmedDot = DocDot::none;
+    confirmedForShow = false;
+    untitledFromBlank = fromBlank;
+    ringSinceMs = 0;
+}
+
+// What the dot shows: the dirty model's published state (no check of its own). Pending is never
+// drawn as saved: the dot stays if it was last seen unsaved, otherwise a faint ring.
+RigView::DocDot RigView::docDot()
+{
+    if (! documentModel())
+        // The app with its dirty model off: as it always was, a dot while the song has no file
+        // yet. Logic and the one-tool plugins: never (the host keeps the song).
+        return ! hostedDocuments() && currentShow == juce::File() ? DocDot::filled : DocDot::none;
+    if (currentShow == juce::File() && ! untitledFromBlank)
+        return DocDot::filled;   // untitled, and it didn't start as a new song: never saved
+    const auto state = engine.getDirty().getState();
+    if (state != RigDirty::State::pending)
+    {
+        confirmedDot = state == RigDirty::State::dirty ? DocDot::filled : DocDot::none;
+        confirmedForShow = true;
+        ringSinceMs = 0;
+        return confirmedDot;
+    }
+    if (confirmedForShow && confirmedDot == DocDot::filled)
+        return DocDot::filled;
+    if (ringSinceMs <= 0)
+        ringSinceMs = juce::Time::getMillisecondCounterHiRes();
+    return DocDot::ring;
+}
+
+RigView::DocDot RigView::getDocDot() const
+{
+    return header.show.dot ? DocDot::filled : header.show.ring ? DocDot::ring : DocDot::none;
+}
+
+juce::String RigView::getShowTitle() const
+{
+    return header.show.getTitle();
 }
 
 //==============================================================================
@@ -431,6 +527,8 @@ void RigView::showLayerFx (int layer)
 RigView::RigView (RigEngine& e, juce::AudioDeviceManager* d)
     : engine (e), devices (d), header (d != nullptr), footer (e)
 {
+    if (standaloneDocuments)
+        currentShow = std::exchange (launchShow, juce::File());   // (the show the app opened at launch)
     // Every part of the window in the vintage look, panels and pop-ups included (the tools that
     // bring their own look still use the panel's warm wells, see WarmWells).
     setLookAndFeel (&vintageLook);
@@ -3975,18 +4073,32 @@ void RigView::timerCallback()
             sub = juce::String::fromUTF8 ("Get from box \xc2\xb7 Send to box");
         }
         const auto lit = vintage::Lit::none;
-        // A small dot after the name while the song isn't saved anywhere yet.
-        const bool dot = ! toolMode() && name.isEmpty();
-        if (! toolMode() && name.isEmpty())
+        // A small dot after the name while the show has changes that aren't saved; a faint ring
+        // while that's being checked after it was last seen saved (the app with its dirty model
+        // on; nothing otherwise, and never in Logic or the one-tool plugins).
+        const auto shown = docDot();
+        const bool dot = shown == DocDot::filled, ring = shown == DocDot::ring;
+        // (The ring fades in, so a moment's check after a click hardly shows.)
+        const float ringAlpha = ring ? std::round (juce::jlimit (0.15f, 0.45f, 0.15f + (float) ((juce::Time::getMillisecondCounterHiRes() - ringSinceMs) / 800.0) * 0.3f) * 20.0f) / 20.0f
+                                     : header.show.ringAlpha;
+        const bool untitled = ! toolMode() && name.isEmpty();
+        if (untitled)
             text = "Untitled song";
-        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit || header.show.dot != dot)
+        if (header.show.text != text || header.show.sub != sub || header.show.lit != lit || header.show.dot != dot
+            || header.show.ring != ring || header.show.ringAlpha != ringAlpha)
         {
             header.show.text = text;
             header.show.sub = sub;
             header.show.lit = lit;
             header.show.dot = dot;
+            header.show.ring = ring;
+            header.show.ringAlpha = ringAlpha;
             header.show.repaint();
         }
+        // What a screen reader says: the name as shown, and whether it's saved.
+        const auto access = text + (! documentModel() ? (untitled ? ", not saved yet" : "") : dot ? ", unsaved changes" : ring ? ", checking for unsaved changes" : "");
+        if (header.show.getTitle() != access)
+            header.show.setTitle (access);
     }
 
     if (++ticks % 60 == 0)
@@ -4600,6 +4712,8 @@ void RigView::openShowFile (const juce::File& file)
         engine.loadShow (juce::ValueTree::fromXml (*xml));
         engine.readLoopAudio (file);
         currentShow = file;
+        showReplaced (true);
+        noteDocument();
         refresh();
         if (engine.getLoopAudioProblem().isNotEmpty())
             say (engine.getLoopAudioProblem());
@@ -4866,6 +4980,8 @@ void RigView::renameSong (const juce::File& file)
         if (safe->currentShow == file)
         {
             safe->currentShow = renamed;
+            if (safe->documentModel() && safe->launchTracker != nullptr)
+                safe->launchTracker->renamed (renamed);
             safe->refresh();
         }
         safe->ideas->refresh();
@@ -5320,6 +5436,8 @@ void RigView::newSong (bool saveFirst, bool askWhatNext)
     engine.allNotesOff();
     engine.newShow();
     currentShow = juce::File();
+    showReplaced (true);
+    noteDocument();
     refresh();
     if (song != nullptr)
         song->forgetUndo();

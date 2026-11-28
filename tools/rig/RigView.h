@@ -15,6 +15,7 @@
 
 namespace crate::spark { struct Spark; }
 namespace rigdirty { class Asker; }
+namespace riglaunch { class Tracker; }
 class RigDocFlow;
 
 // The Rig's window, built like a piece of 70s/80s studio gear: the top bar (your show, transport,
@@ -225,6 +226,22 @@ public:
     // Tests: the old way's questions (Logic, the one-tool plugins) come here instead of an
     // AlertWindow, with the answer's number (1, 2, or 0 for Cancel), so they can be seen headless.
     static inline std::function<void (const juce::MessageBoxOptions&, std::function<void (int)>)> legacyQuestionForTests;
+    // The standalone app with its dirty model on (riglaunch::active): the quit question, the
+    // launch record and the unsaved dot. Never in Logic or the one-tool plugins.
+    bool documentModel() const;
+    // The show the app opened at launch (named), for the window made next; the app sets it.
+    static inline juce::File launchShow;
+    // Where the window keeps the launch record (the app's; null: none).
+    void setLaunchTracker (riglaunch::Tracker* t) { launchTracker = t; }
+    // Quit (with documentModel): asks Save / Don't Save / Cancel as the document flow does, and
+    // calls `quitNow` once it may quit, after the launch record has the decision. False if it
+    // didn't start (something else is under way: nothing happens).
+    bool requestQuit (std::function<void()> quitNow);
+    // The dot after the show's name: none, filled (unsaved changes), or a faint ring (not checked
+    // yet, after it was last seen saved). Only with documentModel. And the name's accessible title.
+    enum class DocDot { none, filled, ring };
+    DocDot getDocDot() const;
+    juce::String getShowTitle() const;
     class RigTitle* getTitle() const { return title.get(); }
     void showTitle (bool show);
     // Opens a saved song (as Open show does, without the chooser).
@@ -583,6 +600,16 @@ private:
     std::unique_ptr<rigdirty::Asker> asker;
     std::unique_ptr<DocHost> docHost;
     std::unique_ptr<RigDocFlow> docFlow;
+    // The launch record (the app's), told when the show you're on changes.
+    riglaunch::Tracker* launchTracker = nullptr;
+    void noteDocument();
+    // The dot: what the dirty model last said for this show (until a show replaces it), when it
+    // started checking again, and whether this untitled show began blank.
+    DocDot confirmedDot = DocDot::none;
+    bool confirmedForShow = false, untitledFromBlank = true;
+    double ringSinceMs = 0;
+    DocDot docDot();
+    void showReplaced (bool fromBlank);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RigView)
 };

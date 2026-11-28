@@ -10,6 +10,17 @@ namespace riglastshow
 {
 static constexpr const char* kFailedKey = "lastShowSaveFailed";
 
+// Where it is (in the shows folder), and whether a file is it.
+inline juce::File& fileForTests() { static juce::File f; return f; }   // (tests: somewhere else)
+inline juce::File file()
+{
+    if (fileForTests() != juce::File())
+        return fileForTests();
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+        .getChildFile ("Crate").getChildFile ("Rig").getChildFile ("Last show.crateshow");
+}
+inline bool isLastShow (const juce::File& f) { return f != juce::File() && f == file(); }
+
 inline rigshow::Result save (RigEngine& engine, const juce::File& file, juce::PropertiesFile& settings)
 {
     const auto result = engine.saveShowFile (file);
