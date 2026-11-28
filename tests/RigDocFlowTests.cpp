@@ -10,6 +10,7 @@
 #include "RigDocFlow.h"
 #include "PluginSlot.h"
 #include "RigPluginFakes.h"
+#include "IdeaTempoSounds.h"
 
 #include <deque>
 
@@ -1018,6 +1019,32 @@ struct RigDocFlowTests final : juce::UnitTest
             expect (v->getCurrentShow() == juce::File(), "a new song");
             expect (v->getLesson() != nullptr, "the lesson started (on a new song)");
             v->endLesson();
+
+            // Catch an idea under way, then a saved idea is opened: the opened show isn't taken for
+            // the caught idea (its tempo and its one loop stay as saved).
+            {
+                const auto idea = newFile ("Saved idea");
+                {
+                    RigEngine saved;
+                    saved.prepare (48000.0, 480);
+                    saved.getTransport().setBpm (120.0);
+                    saved.getLooper().setLayerAudio (0, ideatempo::jingle (96.0, 0.8, 16.0), 32.0);
+                    expect (saved.saveShowFile (idea, rigshow::SaveKind::document).ok);
+                }
+                const int before = asker.questions();
+                v->catchIdea();
+                if (asker.questions() > before)
+                    asker.answer (Choice::dontSave);
+                const int mid = asker.questions();
+                v->askOpenSong (idea, [] {});
+                if (asker.questions() > mid)
+                    asker.answer (Choice::dontSave);
+                expect (v->getCurrentShow() == idea, "the saved idea opened");
+                expect (e->getLooper().getState (0) == RigLooper::State::playing, "its one loop plays");
+                expect (! v->checkCaughtIdea(), "the opened show isn't taken for the caught idea");
+                expectWithinAbsoluteError (e->getTransport().getBpm(), 120.0, 1.0e-9, "its tempo as saved");
+                expectWithinAbsoluteError (e->getLooper().getLayer (0).lengthBeats.load(), 32.0, 1.0e-9, "its loop as saved");
+            }
             v->setAskerForTests (nullptr);
         }
         {
