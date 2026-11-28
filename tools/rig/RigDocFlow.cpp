@@ -42,6 +42,11 @@ RigDocFlow::Wording RigDocFlow::importWords()
              "Save, then import", "Import, don't save" };
 }
 
+RigDocFlow::Wording RigDocFlow::quitWords()
+{
+    return { "Quit Kaleidobox?", "Save {name} before quitting? If you don't save, your changes are lost.", "Save", "Don't Save" };
+}
+
 juce::String RigDocFlow::savedMessage (RigEngine& engine, const juce::File& file, const rigshow::Result& result)
 {
     int loops = 0;
@@ -197,6 +202,18 @@ bool RigDocFlow::save()
     return true;
 }
 
+bool RigDocFlow::quit (Then then)
+{
+    auto r = std::make_unique<Request>();
+    r->kind = Kind::quit;
+    r->words = quitWords();
+    r->then = std::move (then);
+    if (! begin (std::move (r)))
+        return false;
+    decide();
+    return true;
+}
+
 bool RigDocFlow::saveAs()
 {
     auto r = std::make_unique<Request>();
@@ -251,6 +268,9 @@ juce::String RigDocFlow::whyProtect (const Request& r)
         if (const auto st = engine.getLooper().getState (i);
             st == RigLooper::State::armed || st == RigLooper::State::recording || st == RigLooper::State::overdubbing)
             return "a loop is still recording";
+    // Quitting with its file gone (moved, deleted): what's open is the only copy.
+    if (r.kind == Kind::quit && ! host.getCurrentShow().existsAsFile())
+        return "its file isn't there any more";
     auto& dirty = engine.getDirty();
     if (dirty.isEnabled())
     {
@@ -276,7 +296,8 @@ void RigDocFlow::decide()
     if (r.rounds >= maxRounds)
     {
         ++stats.roundsExceeded;
-        host.say (showName() + " keeps changing (" + why + "), so it wasn't replaced. Stop what's recording, save it, then try again.");
+        host.say (showName() + " keeps changing (" + why + (r.kind == Kind::quit ? "), so Kaleidobox didn't quit." : "), so it wasn't replaced.")
+                  + " Stop what's recording, save it, then try again.");
         return end();
     }
     ++r.rounds;
@@ -297,7 +318,7 @@ void RigDocFlow::answered (rigdirty::Choice c)
     switch (c)
     {
         case rigdirty::Choice::save:     return saveFirst();
-        case rigdirty::Choice::dontSave: return replaceNow();
+        case rigdirty::Choice::dontSave: return replaceNow (true);
         case rigdirty::Choice::cancel:
         default:                         return end();   // nothing changes; playback goes on
     }
@@ -308,12 +329,15 @@ void RigDocFlow::saveFirst()
 {
     auto& r = *current;
     const auto file = host.getCurrentShow();
-    if (! r.saveAsOnly && file != juce::File() && file.getParentDirectory().isDirectory())
+    const bool there = file != juce::File() && file.getParentDirectory().isDirectory();
+    // (Its file isn't as Kaleidobox left it: the Save As window, on that file, asks before replacing it.)
+    const bool confirm = there && ! r.saveAsOnly && host.confirmBeforeSaving (file);
+    if (! r.saveAsOnly && there && ! confirm)
         return saveTo (file);
 
     const auto folder = host.showsFolder();
     folder.createDirectory();
-    const auto suggested = file != juce::File() ? folder.getChildFile (file.getFileName()) : folder.getChildFile ("My show.crateshow");
+    const auto suggested = confirm ? file : file != juce::File() ? folder.getChildFile (file.getFileName()) : folder.getChildFile ("My show.crateshow");
     asker->chooseSaveFile (suggested, guard<const juce::File&> ([this] (const juce::File& picked)
     {
         if (picked == juce::File())
@@ -324,6 +348,13 @@ void RigDocFlow::saveFirst()
             return end();
         }
         const auto target = picked.withFileExtension ("crateshow");
+        if (host.reserved (target))
+        {
+            ++stats.failedSaves;
+            host.say ("\"" + target.getFileNameWithoutExtension() + "\" is the one Kaleidobox keeps for you, so nothing was saved"
+                      + (current->kind != Kind::saveOnly ? " or replaced" : "") + ". Pick another name.");
+            return end();
+        }
         // The window asked before replacing what you picked, not this one (the name had no
         // .crateshow): never replace a show it didn't ask about.
         if (target != picked && target.exists())
@@ -340,16 +371,18 @@ void RigDocFlow::saveFirst()
 void RigDocFlow::saveTo (const juce::File& file)
 {
     auto& r = *current;
+    host.documentSaving (file);
     const auto result = engine.saveShowFile (file, rigshow::SaveKind::document);
     if (! result.ok)
     {
         ++stats.failedSaves;
         host.say ("Couldn't save " + file.getFileName() + ": " + result.error
-                  + (r.kind != Kind::saveOnly ? " Nothing was replaced." : ""));
+                  + (r.kind == Kind::quit ? " Kaleidobox is still open." : r.kind != Kind::saveOnly ? " Nothing was replaced." : ""));
         asker->showError ("Couldn't save " + file.getFileNameWithoutExtension(), result.error);
         return end();
     }
     ++stats.saves;
+    host.documentSaved (file, result);
     host.setCurrentShow (file);
     r.startShow = file;
     host.say (savedMessage (engine, file, result));
@@ -364,12 +397,13 @@ void RigDocFlow::saveTo (const juce::File& file)
 }
 
 // Step 5: the show is replaced, here and now.
-void RigDocFlow::replaceNow()
+void RigDocFlow::replaceNow (bool discarding)
 {
     auto r = std::move (current);
     ++serial;   // (anything still on its way for it is stale)
     Outcome out;
     out.saved = r->savedName;
+    out.discarded = discarding;
     auto& transport = engine.getTransport();
     switch (r->kind)
     {
@@ -386,7 +420,7 @@ void RigDocFlow::replaceNow()
         case Kind::open:
             engine.loadShow (r->tree);
             engine.readLoopAudio (r->file);
-            host.setCurrentShow (r->file);
+            host.setCurrentShow (host.reserved (r->file) ? juce::File() : r->file);   // (the Last show opens untitled)
             out.file = r->file;
             host.replaced (Host::Replaced::opened);
             if (engine.getLoopAudioProblem().isNotEmpty())
@@ -401,6 +435,11 @@ void RigDocFlow::replaceNow()
             out.said = rigimport::apply (engine, std::move (*r->song));
             host.replaced (Host::Replaced::imported);
             break;
+        case Kind::quit:
+            ++stats.quits;   // nothing replaced: the app quits now
+            if (r->then)
+                r->then (out);
+            return;
         case Kind::saveOnly:
         default:
             return;

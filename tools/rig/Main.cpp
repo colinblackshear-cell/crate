@@ -3,6 +3,7 @@
 #include "RigEngine.h"
 #include "RigView.h"
 #include "RigLastShow.h"
+#include "RigLaunch.h"
 #include "PluginSlot.h"
 
 // The Rig: a standalone app that plays the Crate tools live, together, on one clock.
@@ -35,8 +36,9 @@ public:
         // way (RigDocFlow; not in Logic or the one-tool plugins).
         RigView::standaloneDocuments = true;
         engine = std::make_unique<RigEngine>();
-        // The show's changed-since-saved model, for measuring it on a real Mac (nothing shows it
-        // yet): KALEIDOBOX_DIRTY=1 switches it on and logs to ~/Library/Logs/Kaleidobox/dirty.log.
+        // The show's changed-since-saved model: KALEIDOBOX_DIRTY=1 switches it on and logs to
+        // ~/Library/Logs/Kaleidobox/dirty.log. With it on (and only then), Quit asks Save / Don't
+        // Save / Cancel, the launch opens the show you were on, and the unsaved dot shows (CP4).
         if (juce::SystemStats::getEnvironmentVariable ("KALEIDOBOX_DIRTY", {}) == "1")
         {
            #if JUCE_MAC
@@ -53,8 +55,20 @@ public:
             engine->getDirty().setEnabled (true);
         }
 
+        // With the dirty model on (riglaunch::active): the show you were on, as you last saved it
+        // (or a new song), from the launch record; the Last show is neither read nor written.
+        juce::String launchTitle, launchNotice;
+        if (riglaunch::active (*engine))
+        {
+            launchTracker = std::make_unique<riglaunch::Tracker> (*settings);
+            const auto launched = riglaunch::launch (*engine, *launchTracker);
+            if (launched.opened)
+                RigView::launchShow = launched.document;
+            launchTitle = launched.title;
+            launchNotice = launched.notice;
+        }
         // Pick up where the last show left off.
-        if (auto xml = juce::parseXML (lastShowFile()))
+        else if (auto xml = juce::parseXML (lastShowFile()))
         {
             engine->loadShow (juce::ValueTree::fromXml (*xml));
             engine->readLoopAudio (lastShowFile());
@@ -83,6 +97,8 @@ public:
         });
 
         window = std::make_unique<Window> (*engine, devices);
+        if (auto* view = window->getView())
+            view->setLaunchTracker (launchTracker.get());
 
         // A plugin that froze or crashed Kaleidobox while it opened last time isn't opened again
         // by itself: say which.
@@ -94,10 +110,19 @@ public:
                 + (leftClosed.size() == 1 ? "it" : "them") + ". Your show keeps its settings. To try again, pick it "
                   "from the Synth or Bass page's plugin menu.");
 
-        // A Last show that couldn't be saved at the last quit: say so (this is the one from before).
-        const auto lastQuit = riglastshow::takeFailureFromLastQuit (*settings);
-        if (lastQuit.isNotEmpty())
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Your show wasn't saved last time", lastQuit);
+        if (launchTracker != nullptr)
+        {
+            // What the launch found (a show missing, changed elsewhere, a quit that didn't finish).
+            if (launchNotice.isNotEmpty())
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, launchTitle, launchNotice);
+        }
+        else
+        {
+            // A Last show that couldn't be saved at the last quit: say so (this is the one from before).
+            const auto lastQuit = riglastshow::takeFailureFromLastQuit (*settings);
+            if (lastQuit.isNotEmpty())
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Your show wasn't saved last time", lastQuit);
+        }
     }
 
     void shutdown() override
@@ -106,7 +131,9 @@ public:
             return;   // the scan helper
         if (engine != nullptr)
         {
-            if (! lastShowSaved)
+            // (With the dirty model on there's no Last show: a quit that wasn't decided leaves the
+            // launch record saying so, and the next launch opens the show as last saved.)
+            if (! lastShowSaved && launchTracker == nullptr)
                 saveLastShow();   // (if it fails here, the next launch says so)
             devices.removeMidiInputDeviceCallback ({}, engine.get());
             devices.removeAudioCallback (engine.get());
@@ -124,7 +151,18 @@ public:
     // anyway (the Last show from before stays) or keep the app open to save elsewhere.
     void systemRequestedQuit() override
     {
-        if (engine == nullptr || lastShowSaved || askingToQuit)
+        if (launchTracker != nullptr && engine != nullptr && ! quitDecided)
+        {
+            // The dirty model on: Save / Don't Save / Cancel (RigDocFlow, through the window).
+            // Asked once at a time; once it's decided, the record is written and it quits (a quit
+            // asked for again from here on just quits).
+            auto* view = window != nullptr ? window->getView() : nullptr;
+            if (view == nullptr || ! view->documentModel())
+                return quit();
+            view->requestQuit ([this] { quitDecided = true; quit(); });
+            return;
+        }
+        if (engine == nullptr || lastShowSaved || askingToQuit || quitDecided)
         {
             quit();
             return;
@@ -171,11 +209,7 @@ private:
         devices.setAudioDeviceSetup (setup, true);
     }
 
-    static juce::File lastShowFile()
-    {
-        return juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-            .getChildFile ("Crate").getChildFile ("Rig").getChildFile ("Last show.crateshow");
-    }
+    static juce::File lastShowFile() { return riglastshow::file(); }
 
     // A failed save leaves the Last show from before as it was, and is kept in the settings so
     // the next launch says so (RigLastShow.h).
@@ -184,7 +218,7 @@ private:
         lastShowSaved = true;
         return riglastshow::save (*engine, lastShowFile(), *settings);
     }
-    bool lastShowSaved = false, askingToQuit = false;
+    bool lastShowSaved = false, askingToQuit = false, quitDecided = false;
 
     class Window : public juce::DocumentWindow
     {
@@ -205,9 +239,11 @@ private:
         }
 
         void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+        RigView* getView() const { return dynamic_cast<RigView*> (getContentComponent()); }
     };
 
     std::unique_ptr<juce::PropertiesFile> settings;
+    std::unique_ptr<riglaunch::Tracker> launchTracker;   // the launch record, with the dirty model on (else null)
     juce::AudioDeviceManager devices;
     std::unique_ptr<RigEngine> engine;
     std::unique_ptr<Window> window;

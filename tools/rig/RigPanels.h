@@ -25,8 +25,9 @@ public:
     float fontSize = 18.0f, subSize = 12.0f;
     bool inWell = false, empty = false, redRing = false;
     // Flat: no face, just the words on the panel (the song's name in the top bar), with a dot
-    // after them when `dot` (not saved).
-    bool flat = false, dot = false;
+    // after them when `dot` (not saved), or a faint ring when `ring` (not checked yet; ringAlpha).
+    bool flat = false, dot = false, ring = false;
+    float ringAlpha = 0.4f;
 };
 
 //==============================================================================

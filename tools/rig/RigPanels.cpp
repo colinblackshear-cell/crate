@@ -37,10 +37,16 @@ void PanelButton::paintButton (juce::Graphics& g, bool over, bool down)
         auto area = getLocalBounds().reduced (8, 0);
         const auto font = barlow (fontSize);
         g.setFont (font);
-        const float w = juce::jmin ((float) area.getWidth() - (dot ? 22.0f : 0.0f), juce::GlyphArrangement::getStringWidth (font, text) + 4.0f);
+        const float w = juce::jmin ((float) area.getWidth() - (dot || ring ? 22.0f : 0.0f), juce::GlyphArrangement::getStringWidth (font, text) + 4.0f);
         g.drawFittedText (text, area.removeFromLeft ((int) w), juce::Justification::centredLeft, 1, 0.8f);
+        const auto spot = juce::Rectangle<float> (9.0f, 9.0f).withCentre ({ (float) area.getX() + 14.0f, (float) area.getCentreY() });
         if (dot)
-            g.fillEllipse (juce::Rectangle<float> (9.0f, 9.0f).withCentre ({ (float) area.getX() + 14.0f, (float) area.getCentreY() }));
+            g.fillEllipse (spot);
+        else if (ring)
+        {
+            g.setColour (p.ink.withAlpha (ringAlpha));
+            g.drawEllipse (spot.reduced (0.75f), 1.5f);
+        }
         return;
     }
     if (empty)
@@ -166,7 +172,7 @@ Header::Header (bool isStandalone) : standalone (isStandalone)
     addChildComponent (jam);
     show.flat = true;
     show.text = "Untitled song";
-    show.dot = true;
+    show.dot = false;   // (RigView's timer sets it: only the app with its dirty model on shows it)
     show.fontSize = 24.0f;
     show.subSize = 11.0f;
     show.sub = juce::String::fromUTF8 ("Not saved yet \xc2\xb7 menu");
