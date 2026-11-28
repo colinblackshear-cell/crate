@@ -1328,6 +1328,29 @@ struct RigQuitFlowTests final : juce::UnitTest
             settle (*r->e);
             tick (*r->v);
             expect (r->v->getDocDot() == Dot::none, "overdub undone: gone");
+            // The same through the window's one Undo / Redo history (Cmd+Z, Cmd+Shift+Z).
+            tick (*r->v);
+            run.input = true;
+            r->e->getLooper().pressRecord (0);
+            run.beats (2.0);
+            tick (*r->v);   // (the window sees the overdub under way, as its timer does)
+            run.beats (2.5);
+            r->e->getLooper().pressRecord (0);
+            run.input = false;
+            run.beats (1.0);
+            settle (*r->e);
+            tick (*r->v);
+            expect (r->v->getDocDot() == Dot::filled, "overdubbed again: the dot");
+            expect (r->v->historyUndo(), "Undo takes the overdub back");
+            run.beats (1.0);
+            settle (*r->e);
+            tick (*r->v);
+            expect (r->v->getDocDot() == Dot::none, "Undo back to as saved: gone");
+            expect (r->v->historyRedo(), "Redo brings it back");
+            run.beats (1.0);
+            settle (*r->e);
+            tick (*r->v);
+            expect (r->v->getDocDot() == Dot::filled, "Redo: unsaved again, the dot");
         }
         for (int kind = 0; kind < 3; ++kind)
         {
