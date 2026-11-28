@@ -465,6 +465,9 @@ TakeSheet::TakeSheet()
     more.onClick = [this] { if (onMoreEffects) onMoreEffects(); };
     again.onClick = [this] { if (onTryAgain) onTryAgain(); };
     makePad.onClick = [this] { if (onMakePad) onMakePad(); };
+    fixNotes.onClick = [this] { if (onFixNotes) onFixNotes(); };
+    fixNotes.setFontHeight (16.0f);
+    addChildComponent (fixNotes);
     keep.onClick = [this] { if (onKeep) onKeep(); };
     giveIcon (again, "Try again", [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawActionIcon (g, ActionIcon::again, c, ink); }, 17.0f);
     giveIcon (makePad, "Make it a pad", [] (juce::Graphics& g, juce::Point<float> c, juce::Colour ink) { drawActionIcon (g, ActionIcon::pad, c, ink); }, 17.0f);
@@ -475,9 +478,14 @@ TakeSheet::TakeSheet()
 
 TakeSheet::~TakeSheet() = default;
 
-void TakeSheet::show (int l, const juce::String& what)
+void TakeSheet::show (int l, const juce::String& what, bool hasNotes)
 {
     shownLayer = l;
+    notes = hasNotes;
+    fixNotes.setVisible (hasNotes);
+    again.setFontHeight (hasNotes ? 15.0f : 17.0f);
+    makePad.setFontHeight (hasNotes ? 15.0f : 17.0f);
+    resized();
     takeName = what;
     vibe = none;
     keep.setText ("Keep it as layer " + juce::String (l + 1));
@@ -518,9 +526,19 @@ void TakeSheet::resized()
     for (int i = 0; i < kVibes; ++i)
         vibes[i].setBounds (x0 + (i % 3) * (vw + gap), 94 + (i / 3) * (52 + gap), vw, 52);
     more.setBounds (x0, 94 + 2 * 52 + gap + 6, iw, 40);
-    const int half = (iw - 10) / 2;
-    again.setBounds (x0, 262, half, 52);
-    makePad.setBounds (x0 + half + 10, 262, half, 52);
+    if (notes)   // TRY AGAIN, FIX NOTES (a SYNTH or BASS take), MAKE IT A PAD
+    {
+        const int third = (iw - 16) / 3;
+        again.setBounds (x0, 262, third, 52);
+        fixNotes.setBounds (x0 + third + 8, 262, third, 52);
+        makePad.setBounds (x0 + 2 * (third + 8), 262, iw - 2 * (third + 8), 52);
+    }
+    else
+    {
+        const int half = (iw - 10) / 2;
+        again.setBounds (x0, 262, half, 52);
+        makePad.setBounds (x0 + half + 10, 262, half, 52);
+    }
     keep.setBounds (x0, 326, iw, 66);
 }
 

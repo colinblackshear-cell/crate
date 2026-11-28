@@ -448,6 +448,21 @@ PocketApp::PocketApp (Options o)
         closeQuantize();
         toast (said);
     };
+    notesSheet.onChange = [this] (const pocket::SynthPattern& p) { loopsScreen.setLayerNotes (notesSheet.layer(), p); };
+    notesSheet.onDone = [this] { closeFixNotes(); };
+    notesSheet.onDismiss = [this] { closeFixNotes(); };
+    notesSheet.playBeat = [this]
+    {
+        const int l = notesSheet.layer();
+        auto part = loopsScreen.notesOf (l);
+        auto& eng = loopsScreen.engine();
+        if (part == nullptr || ! eng.transportRunning())
+            return -1.0;
+        const double len = juce::jmax (1.0, part->lengthBeats);
+        double at = std::fmod (beats.engine().clockBeat() - eng.startBeat (l), len);
+        return at < 0 ? at + len : at;
+    };
+    loopsScreen.onEditNotes = [this] (int layer) { loopsScreen.closeEditor(); openFixNotes (layer); };
     quantSheet.onCancel = [this] { closeQuantize(); };
     quantSheet.onDismiss = [this] { closeQuantize(); };
     singScreen.onKeyMenu = [this] (juce::Component& c, juce::Rectangle<int> r) { openKeyMenu (c, r); };
@@ -603,6 +618,7 @@ PocketApp::PocketApp (Options o)
     addChildComponent (takeSheet);
     addChildComponent (exportSheet);
     addChildComponent (quantSheet);
+    addChildComponent (notesSheet);
     addChildComponent (movesSheet);
     movesSheet.fx = &loopsScreen.engine().moves();
     loopsScreen.engine().moves().beatsPerBar = 4;
@@ -725,6 +741,44 @@ void PocketApp::openQuantize (int target)
     slide (quantSheet, quantBounds(), true);
 }
 
+juce::Rectangle<int> PocketApp::notesBounds() const
+{
+    const int h = juce::jmin (getHeight() - insets.getTop() - 10, notesSheet.preferredHeight() + insets.getBottom());
+    return { 0, getHeight() - h, getWidth(), h };
+}
+
+void PocketApp::openFixNotes (int layer)
+{
+    auto part = loopsScreen.notesOf (layer);
+    if (part == nullptr)
+        return toast ("FIX NOTES works on a layer made from SYNTH or BASS notes, before it's trimmed or dubbed.");
+    closeAllSheets();
+    notesOpen = true;
+    notesSheet.show (layer, part->describe(), part->notes, songKey);
+    notesSheet.setBounds (notesBounds().withY (getHeight()));
+    notesSheet.setVisible (true);
+    notesSheet.toFront (false);
+    toastBox->toFront (false);
+    slide (notesSheet, notesBounds(), true);
+}
+
+void PocketApp::closeFixNotes()
+{
+    if (! notesOpen)
+        return;
+    notesOpen = false;
+    slide (notesSheet, notesBounds(), false);
+    if (! animate)
+        notesSheet.setVisible (false);
+    else
+        juce::Timer::callAfterDelay (260, [safe = juce::Component::SafePointer<PocketApp> (this)]
+        {
+            if (safe != nullptr && ! safe->notesOpen)
+                safe->notesSheet.setVisible (false);
+        });
+    repaint();
+}
+
 void PocketApp::closeQuantize()
 {
     if (! quantOpen)
@@ -826,7 +880,7 @@ void PocketApp::toastAction (const juce::String& text, const juce::String& butto
 void PocketApp::applyAnimate()
 {
     drawer.animated = animate;
-    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet, &vibeSheet, &exportSheet, &quantSheet, &movesSheet })
+    for (auto* s : std::initializer_list<pocket::DragSheet*> { &sheet, &padSheet, &tempoSheet, &trackSheet, &soundBank, &recSetup, &headphones, sendSheet.get(), &padPicker, &chordEdit, &drumKit, &addSheet, &takeSheet, &vibeSheet, &exportSheet, &quantSheet, &movesSheet, &notesSheet })
         s->animated = animate;
     loopsScreen.editorSheet().animated = animate;
 }
@@ -1088,7 +1142,7 @@ bool PocketApp::edgeSwipeAllowed (juce::Point<float> p) const
         return false;
     if (title->isVisible() || tour->isVisible() || drawer.isVisible() || holdCard.isOpen())
         return false;
-    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen || vibeOpen || exportOpen || quantOpen || movesOpen)
+    if (sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen || drumKitOpen || addOpen || takeOpen || vibeOpen || exportOpen || quantOpen || movesOpen || notesOpen)
         return false;
     if (page == Page::recorder)
         return false;   // (the sound's wave has handles to drag)
@@ -1422,6 +1476,7 @@ void PocketApp::closeAllSheets()
     closeExport();
     closeQuantize();
     closeMoves();
+    closeFixNotes();
 }
 
 void PocketApp::slide (juce::Component& c, juce::Rectangle<int> open, bool shown)
@@ -3985,6 +4040,7 @@ void PocketApp::resized()
     takeSheet.setBounds (takeOpen ? takeSheetBounds() : takeSheetBounds().withY (h));
     exportSheet.setBounds (exportOpen ? exportBounds() : exportBounds().withY (h));
     quantSheet.setBounds (quantOpen ? quantBounds() : quantBounds().withY (h));
+    notesSheet.setBounds (notesOpen ? notesBounds() : notesBounds().withY (h));
     movesSheet.setBounds (movesOpen ? movesBounds() : movesBounds().withY (h));
     vibeSheet.setBounds (vibeOpen ? vibeBounds() : vibeBounds().withY (h));
     headphones.setBounds (phonesOpen ? headphonesBounds() : headphonesBounds().withY (h));
@@ -5019,6 +5075,9 @@ void PocketApp::writeSnapshots (const juce::File& folder)
     juce::String editReport;
     if (const auto why = runLoopEditChecks (editReport); why.isNotEmpty())
         problems.add ("Loop editor in the app: " + why);
+    juce::String fixNotesReport;
+    if (const auto why = runFixNotesChecks (fixNotesReport, folder); why.isNotEmpty())
+        problems.add ("Fix notes: " + why);
 
     // EFFECTS: the pedals themselves, then through the app (bit-identical when untouched, REC through a board, ...)
     juce::String boardsReport;
@@ -5133,6 +5192,7 @@ void PocketApp::writeSnapshots (const juce::File& folder)
                           + "\nLoops self-check (97 BPM, 44.1 kHz):\n" + loopsReport
                           + "\nLoop editor (offline):\n" + toolsReport
                           + "\nLoop editor in the app (96 BPM, 44.1 kHz):\n" + editReport
+                          + "\nFix notes (a BASS layer, 100 BPM, 44.1 kHz):\n" + fixNotesReport
                           + "\nVocoder self-check (44.1 kHz):\n" + vocoderReport
                           + "\nREC, count-in and mic checks (97 BPM, 44.1 kHz):\n" + recReport
                           + "\nEffect pedals (44.1 kHz):\n" + boardsReport
@@ -6485,6 +6545,12 @@ void PocketApp::setupCompanion()
             showTool (takeTool, false);
         recPressed();
     };
+    takeSheet.onFixNotes = [this]
+    {
+        const int l = takeSheet.layer();
+        closeTakeSheet();
+        openFixNotes (l);
+    };
     takeSheet.onMakePad = [this]
     {
         const int l = takeSheet.layer();
@@ -6653,13 +6719,13 @@ void PocketApp::openTakeSheet (int layer, bool force)
     if (! force && (! animate || lessonOn || page != Page::tool || title->isVisible() || tour->isVisible()))
         return;
     if (takeOpen || sheetOpen || padSheetOpen || sendOpen || tempoOpen || bankOpen || recSetupOpen || phonesOpen || padPickOpen || chordEditOpen
-        || drumKitOpen || addOpen || exportOpen || quantOpen || movesOpen || holdCard.isOpen())
+        || drumKitOpen || addOpen || exportOpen || quantOpen || movesOpen || notesOpen || holdCard.isOpen())
         return;
     takeTool = tool;
     const juce::String what = tool == Tool::loops && loopsScreen.source() == (int) LoopSource::mic ? juce::String ("My voice")
                             : juce::String (toolName (tool)).toLowerCase().replaceSection (0, 1, juce::String (toolName (tool)).substring (0, 1));
     takeOpen = true;
-    takeSheet.show (layer, what);
+    takeSheet.show (layer, what, loopsScreen.notesOf (layer) != nullptr);
     takeSheet.setBounds (takeSheetBounds().withY (getHeight()));
     takeSheet.setVisible (true);
     takeSheet.toFront (false);

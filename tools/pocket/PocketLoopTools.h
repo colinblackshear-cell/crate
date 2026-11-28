@@ -109,6 +109,8 @@ struct Edited
 Edited trimTake (const LoopTake&, const LayerFxState&, double fromBeat, double toBeat);
 Edited fitTake (const LoopTake&, const LayerFxState&, double fromBeat, double toBeat, int bars, double bpm);
 Edited quantizeTake (const LoopTake&, const LayerFxState&, const LoopQuantize&, double bpm);
+// FIX NOTES: the layer rendered again from `part` (its notes edited), the way it was quantized kept.
+Edited notesTake (const LoopTake&, const LayerFxState&, std::shared_ptr<const NotePart> part, double bpm);
 // The take at a new tempo (stretched from its origin, or rendered again from its notes). Null when it's already there.
 SharedTake tempoTake (const LoopTake&, double bpm);
 // LOOP LAB's WARP. warpSourceOf: the take's warp, or a fresh one (its recording, a straight plan) when it has none.

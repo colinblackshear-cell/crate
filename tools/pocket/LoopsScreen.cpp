@@ -62,6 +62,7 @@ LoopsScreen::LoopsScreen (PocketHost& h, Library& l, BeatsEngine& b, AppSettings
     editor.onEdit = [this] (int edit, double a, double b) { editLayer (editor.layer(), edit, a, b); };
     editor.onFit = [this] (int bars, double a, double b) { fitLayer (editor.layer(), bars, a, b); };
     editor.onQuantize = [this] (const LoopQuantize& q) { quantizeLayer (editor.layer(), q); };
+    editor.onNotes = [this] { if (onEditNotes && editor.layer() >= 0) onEditNotes (editor.layer()); };
     editor.onFxChanged = [this] { repaint(); };
     editor.onWarp = [this] (const crate::Warp::Plan& p) { warpLayer (editor.layer(), p); };
     editor.onOriginal = [this] (bool on) { setOriginal (editor.layer(), on); };
@@ -182,7 +183,9 @@ void LoopsScreen::layoutPanel()
     static const char* grids[] = { "", " 1/4", " 1/8", " 1/16" };
     panel[pQuant].setText (notes ? juce::String ("Quantize") + grids[juce::jlimit (0, 3, take->quant.grid)] : juce::String ("Fit"));
     panel[pQuant].setLook (notes && take->quant.grid > 0 ? Look::amber : Look::cream);
-    panel[pInOut].setText ("In / Out");
+    // a SYNTH or BASS layer: FIX NOTES in IN / OUT's place (IN / OUT stays on the editor's page, under QUANTIZE)
+    const bool fixable = notes && take->part->kind == NotePart::synth && onEditNotes != nullptr;
+    panel[pInOut].setText (fixable ? "Fix notes" : "In / Out");
     panel[pFx].setText ("Effects");
     panel[pFx].setLook (loops.fxOf (l).isNeutral() ? Look::cream : Look::amber);
     const bool dubbing = st == LoopState::overdubbing || st == LoopState::overdubWait;
@@ -511,6 +514,8 @@ void LoopsScreen::pressPanel (int which)
     if (! hasLoop (st) || take == nullptr)
         return;
     const bool dubbing = st == LoopState::overdubbing || st == LoopState::overdubWait;
+    if (which == pInOut && ! dubbing && take->part != nullptr && take->part->kind == NotePart::synth && onEditNotes)
+        return onEditNotes (l);
     switch (which)
     {
         case pQuant:
@@ -631,7 +636,19 @@ HoldSpec LoopsScreen::layerMenuSpec (int l)
         };
     };
     s.title = "LAYER " + juce::String (l + 1) + U8(" \xc2\xb7 ") + layerToolName (take->tool);
-    s.items.push_back ({ U8("IN / OUT \xc2\xb7 TRIM"), {}, false, true, run (pInOut) });
+    s.items.push_back ({ U8("IN / OUT \xc2\xb7 TRIM"), {}, false, true,
+                         [this, l, dubbing]
+                         {
+                             selected = lastLayer = l;
+                             layoutPanel();
+                             if (dubbing)
+                                 host.toast ("Let the dub finish first (or STOP DUB).");
+                             else
+                                 openEditor (l, LoopEditSheet::shapePage);
+                             repaint();
+                         } });
+    if (notes && take->part->kind == NotePart::synth && onEditNotes)
+        s.items.push_back ({ "FIX NOTES", "move a wrong note", false, true, [this, l] { selected = lastLayer = l; layoutPanel(); if (onEditNotes) onEditNotes (l); } });
     s.items.push_back ({ notes ? "QUANTIZE" : "FIT", notes ? juce::String (grids[juce::jlimit (0, 3, take->quant.grid)]) : barsText (take->lengthBeats.load()),
                          false, true, run (pQuant) });
     s.items.push_back ({ "EFFECTS", boardOn ? "board on" : "board off", false, true, run (pFx) });
@@ -813,6 +830,34 @@ void LoopsScreen::quantizeLayer (int layer, const LoopQuantize& q)
     runJob (layer, [copy, fx, q, bpm] { return quantizeTake (*copy, fx, q, bpm); }, true);
 }
 
+std::shared_ptr<const NotePart> LoopsScreen::notesOf (int layer) const
+{
+    if (! juce::isPositiveAndBelow (layer, kLoopLayers))
+        return nullptr;
+    auto take = loops.takeOf (layer);
+    if (take == nullptr || take->part == nullptr || take->part->kind != NotePart::synth || loops.state (layer) != LoopState::playing)
+        return nullptr;
+    return take->part;
+}
+
+void LoopsScreen::setLayerNotes (int layer, const SynthPattern& notes)
+{
+    auto was = notesOf (layer);
+    if (was == nullptr)
+        return host.toast ("FIX NOTES works on a layer made from SYNTH or BASS notes, before it's trimmed or dubbed.");
+    if (jobLayer >= 0)
+    {
+        pendingNotes = std::make_pair (layer, notes);
+        return;
+    }
+    auto part = std::make_shared<NotePart> (*was);
+    part->notes = notes;
+    auto copy = loops.copyOf (layer);
+    auto fx = loops.fxOf (layer);
+    const double bpm = loops.bpm();
+    runJob (layer, [copy, fx, part, bpm] { return notesTake (*copy, fx, part, bpm); }, true);
+}
+
 void LoopsScreen::followTempo()
 {
     if (jobLayer >= 0)
@@ -882,6 +927,12 @@ void LoopsScreen::jobDone (int id, Edited e)
     if (take == nullptr || take.get() != was || loops.state (layer) != LoopState::playing)
     {
         pendingWarp.reset();
+        if (pendingNotes.has_value())
+        {
+            const auto next = *pendingNotes;   // (the tempo changed it meanwhile: the newest notes still go in)
+            pendingNotes.reset();
+            setLayerNotes (next.first, next.second);
+        }
         return;   // it changed meanwhile: the tempo follower looks again, an edit (and a warp waiting) is simply dropped
     }
     if (withUndo)
@@ -899,6 +950,12 @@ void LoopsScreen::jobDone (int id, Edited e)
         const auto next = *pendingWarp;
         pendingWarp.reset();
         warpLayer (next.first, next.second);
+    }
+    else if (pendingNotes.has_value())
+    {
+        const auto next = *pendingNotes;
+        pendingNotes.reset();
+        setLayerNotes (next.first, next.second);
     }
     repaint();
 }

@@ -23,6 +23,7 @@
 #include "ExportSheet.h"
 #include "MovesSheet.h"
 #include "QuantizeSheet.h"
+#include "FixNotesSheet.h"
 #include "TrackInSheet.h"
 #include "SoundBankSheet.h"
 #include "VocoderScreen.h"
@@ -459,6 +460,14 @@ private:
     void openQuantize (int target);
     void closeQuantize();
     juce::String quantizePart (int target, const pocket::QuantizeSpec&);   // does it; what to say (also for the self-checks)
+    // FIX NOTES on a SYNTH or BASS layer (the take sheet's FIX NOTES, the loop editor's): its notes on a grid, each change
+    // rendered onto the layer as it loops. No dim: the layers stay in view and keep playing.
+    FixNotesSheet notesSheet;
+    bool notesOpen = false;
+    juce::Rectangle<int> notesBounds() const;
+    void openFixNotes (int layer);
+    void closeFixNotes();
+    juce::String runFixNotesChecks (juce::String& report, const juce::File& folder);   // the self-check (PocketAppNotes.cpp)
     juce::Rectangle<int> exportBounds() const;
     void openExport (SongScreen::Bounce::What what);
     void closeExport();

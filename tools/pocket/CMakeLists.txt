@@ -78,6 +78,7 @@ target_sources(KaleidoboxPocket PRIVATE
     ExportSheet.cpp
     MovesSheet.cpp
     QuantizeSheet.cpp
+    FixNotesSheet.cpp
     IdeasScreen.cpp
     PocketTheme.cpp
     PocketWave.cpp
@@ -108,6 +109,7 @@ target_sources(KaleidoboxPocket PRIVATE
     PocketAppNav.cpp
     PocketAppSong.cpp
     PocketAppMoves.cpp
+    PocketAppNotes.cpp
     PocketAppHistory.cpp
     PocketAppTrack.cpp
     PocketAppSampler.cpp
