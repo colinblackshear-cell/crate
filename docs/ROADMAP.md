@@ -1130,6 +1130,23 @@ The `.kbox` format. Any change to how Save works. The phone, which already saves
 
 ---
 
+
+### 17.9 Owner approval and added acceptance requirements (2026-11-28)
+
+Approved: built behind the existing switch, off by default; recovery copies in the application's support folder; restored work returns as unsaved changes on the original project, and the saved version is not modified; Discard invalidates and removes the recovery copy at once.
+
+Added requirements:
+
+- Publication is atomic and durable, including directory metadata, not checksums alone.
+- The last valid recovery generation is kept until its replacement is committed.
+- A stale background write cannot bring back discarded work.
+- Recovered work stays protected if the application crashes again before it is saved.
+- Several running copies of the application cannot overwrite or discard each other's recovery data.
+- Recovery failures are visible without interrupting playback or recording.
+- All existing recording, saving and Logic workflows are preserved.
+
+After autosave, crash recovery and quit protection have passed automated and real-hardware acceptance, a separate small PR switches all three on by default. Basic protection against losing musical work should not require configuration.
+
 ## 18. Decisions: all settled on 2026-11-28
 
 | # | Decision | Outcome |
@@ -1152,7 +1169,8 @@ Updated in place as work lands. A blank cell means "not yet".
 | Item | Implemented | Automatically tested | Hardware validated | Musically accepted |
 |---|---|---|---|---|
 | 0.1 Quit protection (PR #137) | Merged 2026-11-28 (main 5be76c1). **Switched off by default** with the unsaved-changes model. | Yes | Yes, in an isolated test app on the owner's Mac, including real recording and overdub | Not yet: needs the model switched on for everyday use |
-| 0.2 Autosave and crash recovery | Scope presented 2026-11-28, awaiting approval | | | |
+| 0.2 Autosave and crash recovery | Scope approved 2026-11-28 (four decisions yes, seven added acceptance requirements, section 17.9). Build in progress, behind the existing switch. | | | |
+| 0.2a Switch on by default: unsaved-changes model, quit protection, recovery | Not started. A separate small PR, presented only after 0.1 and 0.2 pass automated and real-hardware acceptance. | | | |
 
 Features merged before this roadmap are listed with their hands-on status in section 13 and in `KALEIDOBOX_TOOLS_ANALYSIS.md` (section 11).
 
