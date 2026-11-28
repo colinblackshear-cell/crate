@@ -5,6 +5,7 @@
 
 #include "core/Warp.h"
 #include "RigLooper.h"
+#include "RigHistory.h"
 
 #include <array>
 #include <memory>
@@ -81,6 +82,9 @@ public:
     void setFollow (int layer, bool on);
     bool canUndo (int layer) const;
     void undo (int layer);
+    // Undo's history (RigHistory): each layer's plan changes its token (an edit, an undo, a
+    // fresh open), so a step there knows when the lab has moved on.
+    std::array<RigHistorySite, RigLooper::kLayers> historySites;
     // ORIGINAL: play the recording as it was (true) or the warped loop again (false).
     void setOriginal (int layer, bool playOriginal);
     // Puts the warped loop on the next empty layer: returns it (-1 when none is empty).

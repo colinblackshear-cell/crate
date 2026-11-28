@@ -274,6 +274,11 @@ void AutomationPanel::pressUndo()
         say ("Nothing to undo.");
         return;
     }
+    if (a.undoThroughHistory != nullptr && a.undoThroughHistory())
+    {
+        update();
+        return;
+    }
     a.undo();
     say ("Undone.");
     update();

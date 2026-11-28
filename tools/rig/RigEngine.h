@@ -530,6 +530,28 @@ public:
     juce::String clearAllLoops();
     juce::String undoClearAllLoops();
     bool canUndoClearAllLoops() const;
+    // Undo and Redo (RigHistory): one layer kept as it is, to put back later. Message thread.
+    // keepLoop copies the loop only while it plays (copyLayerAudio, as Clear all does); with no
+    // loop it keeps the rest (source, length, level, mute, effects) and no sound.
+    struct KeptLoop
+    {
+        LoopBank::Layer layer;
+        juce::String name;
+        bool hasSound() const { return layer.audio != nullptr; }
+    };
+    std::shared_ptr<const KeptLoop> keepLoop (int layer);
+    // Puts a kept layer back now (its sound from the top, level, mute, effects and name), or
+    // empties it for one with no sound. Anything waiting on the layer (a press, a clear, a bank
+    // switch) is dropped first, so nothing changes it after.
+    void putLoopBack (int layer, const KeptLoop&);
+    // Empties a layer now (its effects stay, as a Clear by hand leaves them).
+    void emptyLoop (int layer);
+    // A Clear by hand (the Looper, Play, the iPhone): a loop that plays is kept first and emptied
+    // now, and onLoopCleared hears of it (for Undo); one that records is called off as before.
+    void clearLoop (int layer);
+    std::function<void (int layer, std::shared_ptr<const KeptLoop>)> onLoopCleared;
+    // Clear all kept something to bring back (for Undo).
+    std::function<void()> onAllLoopsCleared;
     // The timer's part: puts each layer's effects on as its new loop comes in.
     void serviceLoopBanks();
 

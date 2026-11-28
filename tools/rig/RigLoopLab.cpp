@@ -80,6 +80,7 @@ bool RigLoopLab::open (int layer)
     l.playingVersion = version;
     l.renderedBpm = l.originalBpm = transport.getBpm();
     l.open = true;
+    historySites[(size_t) layer].touch();
     return true;
 }
 
@@ -93,6 +94,7 @@ void RigLoopLab::edit (int layer, const Warp::Plan& plan)
         l.undo.erase (l.undo.begin());
     l.plan = plan;
     Warp::tidy (l.plan);
+    historySites[(size_t) layer].touch();
     render (layer);
 }
 
@@ -241,6 +243,7 @@ void RigLoopLab::undo (int layer)
     auto& l = layers[(size_t) layer];
     l.plan = l.undo.back();
     l.undo.pop_back();
+    historySites[(size_t) layer].touch();
     l.snapOn = std::any_of (l.plan.markers.begin(), l.plan.markers.end(), [] (const Warp::Marker& m) { return ! m.manual; });
     render (layer);
 }

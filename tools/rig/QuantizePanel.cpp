@@ -89,7 +89,13 @@ void QuantizePanel::pressQuantize()
 
 void QuantizePanel::pressUndo()
 {
-    say (engine.getQuantizer().undo());
+    auto& q = engine.getQuantizer();
+    if (q.canUndo() && q.undoThroughHistory != nullptr && q.undoThroughHistory())
+    {
+        update();
+        return;
+    }
+    say (q.undo());
     update();
 }
 

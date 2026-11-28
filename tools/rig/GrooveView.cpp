@@ -355,6 +355,9 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     };
     undoButton.onClick = [this]
     {
+        // Through Undo's history while the overdub is its newest step (so Redo can bring it back).
+        if (undoThrough != nullptr && engine.getLooper().canUndo (pickedLayer) && undoThrough ("loop " + juce::String (pickedLayer + 1)))
+            return updateButtons();
         engine.getLooper().undo (pickedLayer);
         say ("Took back the last recording on top of layer " + juce::String (pickedLayer + 1) + ".");
         updateButtons();
@@ -363,7 +366,7 @@ GrooveView::GrooveView (RigEngine& e) : engine (e)
     {
         // Clear it, then record it again from the next bar (the clear goes first).
         auto& looper = engine.getLooper();
-        looper.clear (pickedLayer);
+        engine.clearLoop (pickedLayer);
         looper.pressRecord (pickedLayer);
         say ("Layer " + juce::String (pickedLayer + 1) + " records again from the next bar. Press the layer (or Redo's layer) to close the loop.");
         updateButtons();
@@ -1781,7 +1784,7 @@ void GrooveView::clearPattern()
     switch (track)
     {
         case loops:
-            engine.getLooper().clear (pickedLayer);
+            engine.clearLoop (pickedLayer);
             say ("Cleared loop layer " + juce::String (pickedLayer + 1) + ". Press it to record it again from the next bar.");
             break;
         case drums:
@@ -1812,6 +1815,8 @@ void GrooveView::clearPattern()
             break;
         default: break;
     }
+    if (clearUndo.track >= 0)
+        pushPlayStep ("play clear", "clear on the " + trackName (clearUndo.track), clearUndo);
     repaint();
 }
 
@@ -1819,7 +1824,43 @@ bool GrooveView::undoClear()
 {
     if (! canUndoClear())
         return false;
+    if (undoThrough != nullptr && undoThrough ("play clear"))
+        return true;
     const auto u = std::exchange (clearUndo, {});
+    if (u.track != drums && u.track != machine && u.track != bass && u.track != synth)
+        return false;
+    applyTrackState (u);
+    say ("Put back what Clear took away.");
+    updateButtons();
+    repaint();
+    return true;
+}
+
+GrooveView::ClearUndo GrooveView::captureLike (const ClearUndo& like) const
+{
+    ClearUndo u;
+    u.track = like.track;
+    u.index = like.index;
+    u.variation = like.variation;
+    switch (like.track)
+    {
+        case drums:
+        {
+            auto& seqs = engine.getMpc().getProject().getSequences();
+            if (juce::isPositiveAndBelow (like.index, (int) seqs.size()))
+                u.mpcTracks = seqs[(size_t) like.index].tracks;
+            break;
+        }
+        case machine: u.machine = engine.getDrums().getPattern (like.index, like.variation); break;
+        case bass:    u.bass = engine.getBass().getPattern (like.index); break;
+        case synth:   u.synth = engine.getSynth().getRhythm(); break;
+        default: break;
+    }
+    return u;
+}
+
+void GrooveView::applyTrackState (const ClearUndo& u)
+{
     switch (u.track)
     {
         case drums:
@@ -1834,21 +1875,74 @@ bool GrooveView::undoClear()
             }
             break;
         }
-        case machine:
-            engine.getDrums().setPattern (u.index, u.machine, u.variation);
-            break;
-        case bass:
-            engine.getBass().setPattern (u.index, u.bass);
-            break;
-        case synth:
-            engine.getSynth().setRhythm (u.synth);
-            break;
-        default: return false;
+        case machine: engine.getDrums().setPattern (u.index, u.machine, u.variation); break;
+        case bass:    engine.getBass().setPattern (u.index, u.bass); break;
+        case synth:   engine.getSynth().setRhythm (u.synth); break;
+        default: break;
     }
-    say ("Put back what Clear took away.");
-    updateButtons();
-    repaint();
-    return true;
+}
+
+bool GrooveView::sameTrackState (const ClearUndo& a, const ClearUndo& b)
+{
+    if (a.track != b.track || a.index != b.index || a.variation != b.variation)
+        return false;
+    switch (a.track)
+    {
+        case drums:
+        {
+            if (a.mpcTracks.size() != b.mpcTracks.size())
+                return false;
+            for (size_t i = 0; i < a.mpcTracks.size(); ++i)
+            {
+                const auto& x = a.mpcTracks[i];
+                const auto& y = b.mpcTracks[i];
+                if (x.name != y.name || x.mute != y.mute || x.solo != y.solo || x.notes != y.notes)
+                    return false;
+            }
+            return true;
+        }
+        case machine: return a.machine == b.machine;
+        case bass:
+        {
+            if (a.bass.length != b.bass.length)
+                return false;
+            for (size_t i = 0; i < a.bass.steps.size(); ++i)
+            {
+                const auto& x = a.bass.steps[i];
+                const auto& y = b.bass.steps[i];
+                if (x.on != y.on || x.note != y.note || x.accent != y.accent || x.slide != y.slide || x.chance != y.chance || x.cond != y.cond)
+                    return false;
+            }
+            return true;
+        }
+        case synth: return a.synth.on == b.synth.on && a.synth.accent == b.synth.accent && a.synth.length == b.synth.length;
+        default: return true;
+    }
+}
+
+void GrooveView::pushPlayStep (const juce::String& site, const juce::String& what, const ClearUndo& before)
+{
+    if (history == nullptr)
+        return;
+    // The step holds both: it's good only while the track still holds what it left there.
+    auto was = std::make_shared<ClearUndo> (before);
+    auto now = std::make_shared<ClearUndo> (captureLike (before));
+    auto undone = std::make_shared<bool> (false);
+    RigHistory::Step step;
+    step.what = what;
+    step.site = site;
+    step.stillValid = [this, was, now, undone] { return sameTrackState (captureLike (*was), *undone ? *was : *now); };
+    auto put = [this] (const ClearUndo& u)
+    {
+        applyTrackState (u);
+        clearUndo = {};
+        lifeUndo = {};
+        updateButtons();
+        repaint();
+    };
+    step.undo = [put, was, undone] { put (*was); *undone = true; };
+    step.redo = [put, now, undone] { put (*now); *undone = false; };
+    history->push (std::move (step));
 }
 
 juce::String GrooveView::rowName (int row) const
@@ -3284,6 +3378,8 @@ void GrooveView::mutate (float amount)
         lifeUndo = {};
         return;
     }
+    if (changes > 0 && lifeUndo.track >= 0)
+        pushPlayStep ("play mutate", "mutate on the " + trackName (lifeUndo.track), lifeUndo);
     say (changes > 0 ? "Mutated: " + juce::String (changes) + (changes == 1 ? " change" : " changes") + ". Mutate again to grow it, or Undo the last mutate."
                      : juce::String ("Nothing to mutate yet: light a few steps first."));
     updateButtons();
@@ -3294,25 +3390,12 @@ bool GrooveView::undoMutate()
 {
     if (lifeUndo.track != track)
         return false;
+    if (undoThrough != nullptr && undoThrough ("play mutate"))
+        return true;
     const auto u = std::exchange (lifeUndo, {});
-    switch (u.track)
-    {
-        case machine: engine.getDrums().setPattern (u.index, u.machine, u.variation); break;
-        case bass:    engine.getBass().setPattern (u.index, u.bass); break;
-        case drums:
-        {
-            auto& mpc = engine.getMpc();
-            auto& seqs = mpc.getProject().getSequences();
-            if (juce::isPositiveAndBelow (u.index, (int) seqs.size()))
-            {
-                mpc.beginEdit();
-                seqs[(size_t) u.index].tracks = u.mpcTracks;
-                mpc.getProject().sequenceChanged();
-            }
-            break;
-        }
-        default: return false;
-    }
+    if (u.track != machine && u.track != bass && u.track != drums)
+        return false;
+    applyTrackState (u);
     say ("Put back what Mutate changed.");
     repaint();
     return true;

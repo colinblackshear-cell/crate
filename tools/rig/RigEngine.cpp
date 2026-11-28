@@ -3768,6 +3768,8 @@ juce::String RigEngine::clearAllLoops()
     dirty.banksChanged();
     for (int i = 0; i < RigLooper::kLayers; ++i)
         dirty.authoredField (RigDirty::loopMute, i);
+    if (onAllLoopsCleared)
+        onAllLoopsCleared();
     return "Cleared all " + juce::String (loops) + (loops == 1 ? " loop" : " loops")
            + " and their effects: empty layers, ready to record. Undo brings them back.";
 }
@@ -3817,6 +3819,100 @@ juce::String RigEngine::undoClearAllLoops()
         dirty.authoredField (RigDirty::loopMute, i);
     const int loops = kept->loopCount();
     return "Brought back " + juce::String (loops) + (loops == 1 ? " loop" : " loops") + " and their effects.";
+}
+
+std::shared_ptr<const RigEngine::KeptLoop> RigEngine::keepLoop (int i)
+{
+    auto kept = std::make_shared<KeptLoop>();
+    if (! juce::isPositiveAndBelow (i, RigLooper::kLayers))
+        return kept;
+    const auto& live = looper.getLayer (i);
+    auto& l = kept->layer;
+    const auto state = looper.getState (i);
+    if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
+    {
+        auto audio = looper.copyLayerAudio (i);
+        if (audio.getNumSamples() > 0 && live.lengthBeats.load() > 0)
+        {
+            l.beats = live.lengthBeats.load();
+            l.audio = std::make_shared<const juce::AudioBuffer<float>> (std::move (audio));
+        }
+    }
+    l.source = live.source.load();
+    l.bars = live.bars.load();
+    l.level = live.level.load();
+    l.mute = live.mute.load();
+    if (loopFx[(size_t) i].isActiveToSave())
+        loopFx[(size_t) i].getStateInformation (l.fx);
+    kept->name = getLoopName (i);
+    return kept;
+}
+
+void RigEngine::putLoopBack (int i, const KeptLoop& kept)
+{
+    if (! juce::isPositiveAndBelow (i, RigLooper::kLayers))
+        return;
+    const auto& l = kept.layer;
+    auto& live = looper.getLayer (i);
+    looper.cancelSwap (i);
+    bankFxPending[(size_t) i] = false;
+    pendingBankFx[(size_t) i].reset();
+    looper.reset (i);   // (drops a press, clear or undo still waiting)
+    live.source = l.source;
+    live.bars = l.bars;
+    juce::AudioBuffer<float> audio;
+    if (l.audio != nullptr)
+        audio.makeCopyOf (*l.audio);
+    looper.queueLayerAudio (i, std::move (audio), l.audio != nullptr ? l.beats : 0.0, -1.0, l.level, l.mute);
+    // The effects only when they differ (putting the same ones on again would cut their tails).
+    juce::MemoryBlock now;
+    if (loopFx[(size_t) i].isActiveToSave())
+        loopFx[(size_t) i].getStateInformation (now);
+    if (now != l.fx)
+    {
+        if (l.fx.isEmpty())
+            loopFx[(size_t) i].reset();
+        else
+            loopFx[(size_t) i].setStateInformation (l.fx.getData(), (int) l.fx.getSize());
+    }
+    if (l.audio != nullptr && kept.name.isNotEmpty())
+        setLoopName (i, kept.name);
+    if (looper.getState (i) == RigLooper::State::empty)
+        looper.makeRoom (i);
+    dirty.banksChanged();
+    dirty.authoredField (RigDirty::loopMute, i);
+}
+
+void RigEngine::emptyLoop (int i)
+{
+    if (! juce::isPositiveAndBelow (i, RigLooper::kLayers))
+        return;
+    const auto& live = looper.getLayer (i);
+    looper.cancelSwap (i);
+    looper.reset (i);
+    looper.queueLayerAudio (i, {}, 0.0, -1.0, live.level.load(), live.mute.load());
+    looper.makeRoom (i);
+    dirty.banksChanged();
+    dirty.authoredField (RigDirty::loopMute, i);
+}
+
+void RigEngine::clearLoop (int i)
+{
+    if (! juce::isPositiveAndBelow (i, RigLooper::kLayers))
+        return;
+    const auto state = looper.getState (i);
+    if (state == RigLooper::State::playing || state == RigLooper::State::overdubbing)
+    {
+        auto kept = keepLoop (i);
+        if (kept->hasSound())
+        {
+            emptyLoop (i);
+            if (onLoopCleared)
+                onLoopCleared (i, std::move (kept));
+            return;
+        }
+    }
+    looper.clear (i);
 }
 
 juce::String RigEngine::switchLoopBank (int index)

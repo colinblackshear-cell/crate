@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "RigEngine.h"
+#include "RigHistory.h"
 #include "Vintage.h"
 #include "BankBrowser.h"
 #include "NoteRepeatControls.h"
@@ -111,6 +112,10 @@ public:
     // button says Undo clear and brings the sound back (the editor's Undo does too).
     void pressClear();
     bool canUndoClear() const;
+    // Undo and Redo (RigHistory): Remove, loading a set, Clear and Make 16 pads are steps there
+    // too (the window sets these). Each one's own Undo goes through it while its step is the newest.
+    RigHistory* history = nullptr;
+    std::function<bool (const juce::String& site)> undoThrough;
     // Kits (under the pads): the factory kits, your kits, and putting a factory kit's sounds back.
     void showKitsMenu();
     void pressRestoreFactoryPad();
@@ -197,6 +202,16 @@ private:
     void updateSampleToolButton();
     Pad removedPad;
     int removedPadIndex = -1, removedPadKit = -1;
+    // A step for a change to a kit's pads, from `before` to what they are now: good only while
+    // the kit still has what it left. `undoToo` / `redoToo` do it instead of putting the pads
+    // back (Make 16 pads uses the MPC's own bank undo), `alsoValid` can ask more.
+    using KitPads = std::array<Pad, mpc::kPadCount>;
+    void pushPadsStep (const juce::String& site, const juce::String& what, int kit, const KitPads& before,
+                       std::function<void()> undoToo = {}, std::function<void()> redoToo = {},
+                       std::function<bool (bool undoing)> alsoValid = {}, std::function<void()> redoneToo = {});
+    void putKitPads (int kit, const KitPads&);
+    static bool samePads (const KitPads&, const KitPads&);
+    void pushClearStep();
     void updateRemoveButton();
     void showPadMenu (int padInBank);
     void updateTopButtons();

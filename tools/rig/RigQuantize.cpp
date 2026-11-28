@@ -438,11 +438,25 @@ double RigQuantizer::stepBeatsOf (int t) const
 
 void RigQuantizer::forgetUndo()
 {
-    undoTarget = none;
+    undoTarget = redoTarget = none;
     undoLoops.clear();
+    redoLoops.clear();
 }
 
 juce::String RigQuantizer::apply (int t)
+{
+    const int before = historySite.token, serial = keptSerial;
+    auto said = applyNow (t);
+    if (keptSerial != serial)
+    {
+        historySite.touch();
+        if (onUndoable)
+            onUndoable (t, before);
+    }
+    return said;
+}
+
+juce::String RigQuantizer::applyNow (int t)
 {
     const auto how = quantize::gridName (settings.grid)
                    + (settings.strength < 0.995f ? " at " + juce::String (juce::roundToInt (settings.strength * 100)) + "%" : juce::String())
@@ -476,6 +490,7 @@ juce::String RigQuantizer::apply (int t)
             undoSequence = copy;
             undoSequenceIndex = project.getCurrentSequenceIndex();
             undoTarget = mpc;
+            ++keptSerial;
             return "Quantized " + juce::String (moved) + (moved == 1 ? " note" : " notes") + " of the MPC's " + targetDetail (mpc)
                  + " to " + how + ".";
         }
@@ -494,6 +509,7 @@ juce::String RigQuantizer::apply (int t)
             undoDrumVariation = d.editVariation;
             d.setEditedPattern (p);
             undoTarget = machine;
+            ++keptSerial;
             return "Quantized " + juce::String (moved) + (moved == 1 ? " hit" : " hits") + " of the drum machine's " + targetDetail (machine)
                  + " to " + how + ".";
         }
@@ -512,6 +528,7 @@ juce::String RigQuantizer::apply (int t)
             undoBassIndex = index;
             b.setPattern (index, p);
             undoTarget = bass;
+            ++keptSerial;
             return "Quantized " + juce::String (moved) + (moved == 1 ? " note" : " notes") + " of the Bass's " + targetDetail (bass)
                  + " to " + how + ".";
         }
@@ -528,6 +545,7 @@ juce::String RigQuantizer::apply (int t)
             undoRhythm = before;
             sy.setRhythm (r);
             undoTarget = synth;
+            ++keptSerial;
             return "Quantized " + juce::String (moved) + (moved == 1 ? " step" : " steps") + " of the Synth's arp to " + how + ".";
         }
         case allLoops:
@@ -546,6 +564,7 @@ juce::String RigQuantizer::apply (int t)
                            : juce::String ("There are no loops to quantize yet.");
             }
             undoTarget = allLoops;
+            ++keptSerial;
             return "Quantized " + juce::String (done) + (done == 1 ? " loop" : " loops") + " to " + how + ".";
         }
         default: break;
@@ -555,7 +574,10 @@ juce::String RigQuantizer::apply (int t)
         forgetUndo();
         auto said = applyLoop (t - firstLoop, true);
         if (! undoLoops.empty())
+        {
             undoTarget = t;
+            ++keptSerial;
+        }
         return said;
     }
     return "Pick what to quantize.";
@@ -588,44 +610,81 @@ juce::String RigQuantizer::applyLoop (int layer, bool keepUndo)
          + quantize::gridName (settings.grid) + ".";
 }
 
-juce::String RigQuantizer::undo()
+juce::String RigQuantizer::undo() { return swapBack (undoTarget, true); }
+juce::String RigQuantizer::redo() { return swapBack (redoTarget, false); }
+
+juce::String RigQuantizer::swapBack (int t, bool undoing)
 {
-    const int t = undoTarget;
-    undoTarget = none;
+    // Undo puts back what it kept and keeps what's there for redo; redo the other way round.
+    auto& other = undoing ? redoTarget : undoTarget;
+    (undoing ? undoTarget : redoTarget) = none;
+    other = none;
+    if (t == none)
+        return undoing ? "Nothing to undo." : "Nothing to redo.";
+    historySite.touch();
+    auto& seqFrom = undoing ? undoSequence : redoSequence;
+    auto& seqKeep = undoing ? redoSequence : undoSequence;
+    auto& drumsFrom = undoing ? undoDrums : redoDrums;
+    auto& drumsKeep = undoing ? redoDrums : undoDrums;
+    auto& bassFrom = undoing ? undoBass : redoBass;
+    auto& bassKeep = undoing ? redoBass : undoBass;
+    auto& rhythmFrom = undoing ? undoRhythm : redoRhythm;
+    auto& rhythmKeep = undoing ? redoRhythm : undoRhythm;
     switch (t)
     {
-        case none: return "Nothing to undo.";
         case mpc:
         {
             auto& project = engine.getMpc().getProject();
             if (undoSequenceIndex >= (int) project.getSequences().size())
                 return "That sequence is gone.";
             engine.getMpc().beginEdit();
-            project.getSequences()[(size_t) undoSequenceIndex] = undoSequence;
+            auto& sq = project.getSequences()[(size_t) undoSequenceIndex];
+            seqKeep = sq;
+            sq = seqFrom;
             project.sequenceChanged();
-            return "Put the MPC's notes back where they were.";
+            other = mpc;
+            return undoing ? "Put the MPC's notes back where they were." : "Quantized the MPC's notes again.";
         }
         case machine:
-        {
-            engine.getDrums().setPattern (undoDrumIndex, undoDrums, undoDrumVariation);
-            return "Put the drum machine's pattern back.";
-        }
+            drumsKeep = engine.getDrums().getPattern (undoDrumIndex, undoDrumVariation);
+            engine.getDrums().setPattern (undoDrumIndex, drumsFrom, undoDrumVariation);
+            other = machine;
+            return undoing ? "Put the drum machine's pattern back." : "Quantized the drum machine's pattern again.";
         case bass:
-            engine.getBass().setPattern (undoBassIndex, undoBass);
-            return "Put the Bass's pattern back.";
+            bassKeep = engine.getBass().getPattern (undoBassIndex);
+            engine.getBass().setPattern (undoBassIndex, bassFrom);
+            other = bass;
+            return undoing ? "Put the Bass's pattern back." : "Quantized the Bass's pattern again.";
         case synth:
-            engine.getSynth().setRhythm (undoRhythm);
-            return "Put the arp's steps back.";
+            rhythmKeep = engine.getSynth().getRhythm();
+            engine.getSynth().setRhythm (rhythmFrom);
+            other = synth;
+            return undoing ? "Put the arp's steps back." : "Quantized the arp's steps again.";
         default: break;
     }
+    auto& from = undoing ? undoLoops : redoLoops;
+    auto& keep = undoing ? redoLoops : undoLoops;
+    keep.clear();
+    auto& looper = engine.getLooper();
     int back = 0;
-    for (auto& u : undoLoops)
-        if (engine.getLooper().getLayer (u.layer).version.load() == u.version
-            && engine.getLooper().replaceLayerAudio (u.layer, std::move (u.audio)))
+    for (auto& u : from)
+    {
+        if (looper.getLayer (u.layer).version.load() != u.version)
+            continue;
+        auto now = looper.copyLayerAudio (u.layer);
+        if (looper.replaceLayerAudio (u.layer, std::move (u.audio)))
+        {
             ++back;
-    undoLoops.clear();
-    return back > 0 ? "Put " + juce::String (back) + (back == 1 ? " loop" : " loops") + " back as they were."
-                    : juce::String ("The loop has changed since, so there's nothing to put back.");
+            keep.push_back ({ u.layer, std::move (now), looper.getLayer (u.layer).version.load() });
+        }
+    }
+    from.clear();
+    if (! keep.empty())
+        other = t;
+    if (back == 0)
+        return "The loop has changed since, so there's nothing to put back.";
+    return (undoing ? "Put " : "Quantized ") + juce::String (back) + (back == 1 ? " loop" : " loops")
+           + (undoing ? " back as they were." : " again.");
 }
 
 juce::String RigQuantizer::service()
@@ -638,10 +697,16 @@ juce::String RigQuantizer::service()
         const int was = std::exchange (lastStates[(size_t) i], now);
         if (settings.newLoops && was == (int) RigLooper::State::recording && now == (int) RigLooper::State::playing)
         {
+            const int before = historySite.token;
             forgetUndo();
             said = applyLoop (i, true);
             if (! undoLoops.empty())
+            {
                 undoTarget = loopTarget (i);
+                historySite.touch();
+                if (onUndoable)
+                    onUndoable (undoTarget, before);
+            }
         }
     }
     if (said.isNotEmpty())
